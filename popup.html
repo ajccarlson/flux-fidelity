@@ -155,6 +155,13 @@
     .v.ok { color: var(--success); }
     .v.no { color: var(--danger); }
 
+    button:disabled,
+    input:disabled,
+    select:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
     #drm-banner {
       display: none;
       margin: 0;
@@ -165,6 +172,20 @@
       color: var(--danger);
       font-size: 12px;
     }
+
+    #operation-status,
+    #runtime-status {
+      min-height: 1.25em;
+      margin: 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    #operation-status[data-tone="error"] { color: var(--danger); }
+    #operation-status[data-tone="success"] { color: var(--success); }
+    #operation-status:empty,
+    #runtime-status:empty { min-height: 0; }
 
     .control-stack {
       display: grid;
@@ -357,7 +378,7 @@
       button { transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease; }
     }
   </style>
-  <script src="popup.js" defer></script>
+  <script type="module" src="popup.js"></script>
 </head>
 <body>
   <header>
@@ -371,7 +392,7 @@
   <main>
     <section aria-labelledby="status-heading">
       <h2 id="status-heading">Current page</h2>
-      <dl class="status" aria-live="polite">
+      <dl class="status">
         <div>
           <dt>WebGPU</dt>
           <dd id="s-webgpu" class="v">—</dd>
@@ -389,9 +410,11 @@
           <dd id="s-frames" class="v">0</dd>
         </div>
       </dl>
+      <p id="runtime-status" aria-live="polite" aria-atomic="true"></p>
     </section>
 
     <p id="drm-banner" role="alert" aria-live="assertive"></p>
+    <p id="operation-status" role="status" aria-live="polite" aria-atomic="true"></p>
 
     <section aria-labelledby="upscaler-heading">
       <h2 id="upscaler-heading">Upscaler</h2>
@@ -417,7 +440,7 @@
             <select id="neural-model">
               <option value="">Loading models…</option>
             </select>
-            <span id="neural-note" aria-live="polite"></span>
+            <span id="neural-note"></span>
           </div>
         </div>
 
@@ -475,9 +498,9 @@
       <fieldset>
         <legend id="mode-heading">Mode</legend>
         <div class="modes">
-          <button type="button" data-mode="off" data-active="1">Off</button>
-          <button type="button" data-mode="passthrough" data-active="0">Passthrough</button>
-          <button type="button" data-mode="upscale" data-active="0">Upscale</button>
+          <button type="button" data-mode="off" data-active="1" aria-pressed="true">Off</button>
+          <button type="button" data-mode="passthrough" data-active="0" aria-pressed="false">Passthrough</button>
+          <button type="button" data-mode="upscale" data-active="0" aria-pressed="false">Upscale</button>
         </div>
       </fieldset>
     </section>
@@ -500,7 +523,7 @@
               <strong>Upscale every video</strong>
               <small>Process all qualifying videos on this page. Uses more GPU memory.</small>
             </span>
-            <span id="multi-count" class="count" aria-live="polite"></span>
+            <span id="multi-count" class="count"></span>
           </label>
 
           <label class="switch-row" for="images">
@@ -509,7 +532,7 @@
               <strong>Upscale images</strong>
               <small>Enhance images on this site. Uses more GPU time.</small>
             </span>
-            <span id="image-count" class="count" aria-live="polite"></span>
+            <span id="image-count" class="count"></span>
           </label>
         </div>
 
@@ -521,7 +544,7 @@
               <small>Generate intermediate frames with RIFE or frame blending.</small>
             </span>
           </label>
-          <span id="interp-stats" aria-live="polite"></span>
+          <span id="interp-stats"></span>
 
           <div id="interp-res-row">
             <div class="interp-controls">
@@ -555,7 +578,7 @@
                   <option value="165">165 fps</option>
                   <option value="240">240 fps</option>
                 </select>
-                <span id="interp-target-hz" aria-live="polite"></span>
+                <span id="interp-target-hz"></span>
               </div>
 
               <div class="av-row">

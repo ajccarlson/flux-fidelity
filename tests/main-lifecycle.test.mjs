@@ -30,6 +30,11 @@ function section(source, startMarker, endMarker) {
 
 async function loadInterpolationLifecycle(deps) {
   const original = await readFile(mainUrl, "utf8");
+  const settingsContract = section(
+    original,
+    "// ---- validated setting contracts",
+    "// ---- end validated setting contracts",
+  );
   const sourceIdentity = section(
     original,
     "function captureVideoSource(target)",
@@ -86,9 +91,11 @@ async function loadInterpolationLifecycle(deps) {
     let interpAutoFallbackPref = true;
     let interpLadderPref = false;
     let interpInvertPref = true;
+    let interpStaticPassthroughPref = true;
     let pageSuspended = false;
     function cancelPreferenceRestore() { preferenceRestoreGeneration++; }
     function pauseInterpolationForNeural() { interpPausedByNeural = true; }
+    ${settingsContract}
     ${sourceIdentity}
     ${injected}
     export { scheduleInterpolatorGpuRestart };
