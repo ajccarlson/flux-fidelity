@@ -1,4 +1,4 @@
-export const EXPECTED_PACKAGE_FILE_COUNT = 55;
+export const EXPECTED_PACKAGE_FILE_COUNT = 56;
 
 // These assets are selected indirectly from runtime model catalogs, so static
 // import/getURL scanning cannot prove their exact package membership. Keep this
@@ -47,6 +47,7 @@ export const PACKAGE_FILES = Object.freeze([
   "fsrcnnx-sharpen.js",
   "fsrcnnx-ssimds-runtime.js",
   "fsrcnnx-ssimds.js",
+  "fsrcnnx-video-controller.js",
   "icons/icon-128.png",
   "icons/icon-16.png",
   "icons/icon-32.png",

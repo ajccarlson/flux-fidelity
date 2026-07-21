@@ -11,12 +11,98 @@
 // Pipeline: grab current frame → RIFE(prev, cur, 0.5) tween → enqueue tween+real
 // → buffered strict-cadence scheduler draws to our canvas → audio delayed to match.
 
+// Chromium installs native loadedmetadata/ended listeners for the lifetime of an
+// element every time captureStream() is called. Cache the first successful stream
+// per element so toggles, model restarts, and source replacements cannot accumulate
+// those listeners. Weak keys let a removed element and its native listener/stream
+// cycle be collected with the document.
+const elementCaptureRecords = new WeakMap();
+
+function mediaStreamProvider(video) {
+  let provider = null;
+  try { provider = video?.srcObject || null; } catch { return null; }
+  return provider && typeof provider.getTracks === "function" &&
+    typeof provider.getAudioTracks === "function" ? provider : null;
+}
+
+function configurePersistentCaptureTrack(record, track) {
+  if (!record || !track) return;
+  const provider = mediaStreamProvider(record.video);
+  // A cached URL capture follows later loadedmetadata events. Chromium can add
+  // components from a page-owned srcObject to that old stream, so mark and leave
+  // them untouched forever; active srcObject routing uses the provider directly.
+  if (provider) {
+    record.borrowedTracks.add(track);
+    return;
+  }
+  if (record.borrowedTracks.has(track)) return;
+  if (track.kind === "video") {
+    if (track.readyState !== "ended") {
+      try { track.stop?.(); } catch {}
+    }
+    return;
+  }
+  if (track.kind === "audio" && track.readyState !== "ended") {
+    const current = record.trackGenerations.get(track) === record.sourceGeneration;
+    try { track.enabled = current && !!record.owner; } catch {}
+  }
+}
+
+function updatePersistentCaptureRecord(record, event = null) {
+  if (!record) return;
+  if (event?.type === "ended" && event?.target === record.video) record.exhausted = true;
+  const metadataBoundary = event?.type === "loadedmetadata" && event?.target === record.video;
+  if (metadataBoundary) {
+    record.exhausted = false;
+    record.hadAudio = false;
+    ++record.sourceGeneration;
+  }
+  let tracks = [];
+  try { tracks = Array.from(record.stream.getTracks()); } catch {}
+  if (event?.type === "addtrack" && event.track && !tracks.includes(event.track)) {
+    // Chromium dispatches addtrack asynchronously. A faster subsequent source
+    // replacement can remove the component before this queued event arrives;
+    // never promote that stale (possibly provider-backed) wrapper into the new
+    // generation or mutate its enabled/stop state.
+    record.borrowedTracks.add(event.track);
+  }
+  for (const track of tracks) {
+    // The native Chromium listener runs before ours and synchronously updates
+    // stream membership. Treat every live member at that boundary as current;
+    // this also tolerates implementations that dispatch addtrack eagerly.
+    if ((metadataBoundary && track?.readyState !== "ended") ||
+        !record.trackGenerations.has(track)) {
+      record.trackGenerations.set(track, record.sourceGeneration);
+    }
+    configurePersistentCaptureTrack(record, track);
+  }
+  if (tracks.some((track) => track?.kind === "audio" && track?.readyState !== "ended" &&
+      record.trackGenerations.get(track) === record.sourceGeneration &&
+      !record.borrowedTracks.has(track))) record.hadAudio = true;
+  const session = record.owner;
+  if (session && !session.disposed) {
+    session.interpolator?._handleAudioCaptureChange?.(session, event);
+  }
+}
+
 export class Interpolator {
-  constructor({ findVideo, log, warn, chain }) {
-    this.findVideo = findVideo;
+  constructor(options = {}) {
+    const { findVideo, log, warn, chain, onTerminalFailure } = options;
+    this.findVideo = typeof findVideo === "function" ? findVideo : () => null;
     this.log = log || console.log;
     this.warn = warn || console.warn;
+    this.onTerminalFailure = typeof onTerminalFailure === "function" ? onTerminalFailure : null;
     this.chain = chain || null; // upscaler chain accessors { tap, info, available, device }
+    // An explicitly supplied source (element or getter) is authoritative, including
+    // an explicit null.
+    // This prevents the interpolator and renderer from independently scoring the
+    // page and silently operating on different video elements.  start(video) is
+    // also supported so existing constructor call sites can opt in incrementally.
+    this._sourceProvided = Object.prototype.hasOwnProperty.call(options, "sourceVideo")
+      || Object.prototype.hasOwnProperty.call(options, "video");
+    this._sourceVideo = Object.prototype.hasOwnProperty.call(options, "sourceVideo")
+      ? options.sourceVideo
+      : options.video;
     this.running = false;
     this._state = "idle";       // "idle" | "starting" | "running"
     this._lifecycleGen = 0;      // invalidates asynchronous work after stop/restart
@@ -26,12 +112,27 @@ export class Interpolator {
     this._deviceRecoveryDevice = null;
     this._pendingDeviceLoss = null;
     this._gpuResourceStopQueued = false;
+    this._pipelineFailureStopQueued = false;
+    this._pipelineFailureStreaks = Object.create(null);
+    this._pipelineFailureLimit = 5;
     this._deviceLossUnsubscribe = null;
     this._cpuGrabInit = null;
     this._cpuGrabRecovery = null;
     this._cpuGrabRecoveryDelays = [0, 100, 500];
     this.video = null;
     this.overlay = null;
+    this._takeoverActive = false;
+    this._chainPresentationSuspended = false;
+    this._mediaBoundaryVideo = null;
+    this._mediaBoundaryHandlers = null;
+    this._audioBoundaryPending = false;
+    this._audioAttemptGeneration = 0;
+    this._audioPreparation = null;
+    this._audioCaptureSession = null;
+    this._audioRoute = null;
+    this._audioTimer = null;
+    this._audioBlocks = new Set();
+    this._productionWasEligible = true;
     this.processor = null;
     this.abort = null;
     // resolution control: "full" | "half" | "quarter" | "auto"
@@ -63,6 +164,41 @@ export class Interpolator {
     this._detectedHz = null;             // measured display refresh (rAF)
     this._maxTweensPerGap = 7;           // cap N-1 (so up to 8x) to bound cost/memory
     this.stats = { framesIn: 0, framesOut: 0, started: 0, lastReport: 0, maxDriftMs: 0, maxGapMs: 0, lastGapMs: 0, stutters: 0 };
+  }
+
+  _resolveSourceVideo() {
+    if (this._sourceProvided) {
+      try {
+        return typeof this._sourceVideo === "function" ? this._sourceVideo() : this._sourceVideo;
+      } catch (error) {
+        this.warn("interpolation: source accessor failed:", error.message);
+        return null;
+      }
+    }
+    // A chain source accessor is also authoritative.  In particular, null means
+    // that the renderer currently owns no video; falling through to findVideo()
+    // here would recreate the cross-video ownership bug this accessor prevents.
+    if (typeof this.chain?.source === "function") {
+      try { return this.chain.source(); }
+      catch (error) {
+        this.warn("interpolation: source accessor failed:", error.message);
+        return null;
+      }
+    }
+    return this.findVideo();
+  }
+
+  _chainOwnsVideo(video) {
+    if (!this.chain) return false;
+    if (typeof this.chain.source !== "function") return true;
+    try { return this.chain.source() === video; }
+    catch { return false; }
+  }
+
+  _chainCanInvert(video) {
+    if (!this._chainOwnsVideo(video) || typeof this.chain?.canInvert !== "function") return false;
+    try { return this.chain.canInvert(video) === true; }
+    catch { return false; }
   }
 
   setResMode(mode) {
@@ -334,7 +470,7 @@ export class Interpolator {
   // constant cadence (the old approach) placed the spatial-t=0.5 tween at a
   // non-0.5 time, which made static high-detail regions appear to jitter. Mapping
   // each frame to its own timestamp keeps spatial and temporal position matched.
-  _present() {
+  _present(generation = this._lifecycleGen) {
     const FILL_MS = 100;
     let started = false;
     let anchorWall = 0;   // wall-clock (ms) mapped to anchorSrc
@@ -344,7 +480,7 @@ export class Interpolator {
     let hzSamples = [];
     let hzLast = 0;
     const loop = () => {
-      if (!this.overlay) return;
+      if (!this._isCurrent(generation) || !this.overlay) return;
       const q = this.queue;
       const now = performance.now();
       const interval = this._targetInterval || 16.7;
@@ -408,37 +544,84 @@ export class Interpolator {
             const dueWall = anchorWall + (item.ts / 1000 - anchorSrc);
             if (now >= dueWall) {
               q.shift();
-              this._lastPresentAt = now;
-              this._lastPresentedTs = item.ts;
-              if (item.tex) {
-                // GPU present: render the pooled texture via WebGPU, then recycle.
-                // Inverted chain: the pooled tex is SOURCE-RES — hand it to the
-                // upscaler (full pass chain to its canvas) instead of blitting.
-                if (this._chainInverted && this.chain && this.chain.upscaleTex) {
-                  if (!this.chain.upscaleTex(item.tex, item.tex._w, item.tex._h) && !this._invUpWarned) {
-                    this._invUpWarned = true;
-                    this.warn("interp: INVERTED upscale REJECTED (upscaler off/deviceless?) — frames are being dropped");
+              let itemReleased = false;
+              const releaseItem = () => {
+                if (itemReleased) return;
+                itemReleased = true;
+                if (item.tex) { this._rifeMod && this._rifeMod.gpuRelease(item.tex); }
+                else { item.bmp.close && item.bmp.close(); }
+              };
+              // Audio routing is prepared behind a closed gain gate before either
+              // visual sink runs. Native audio is muted only after the output and
+              // overlay commit, so preparation failure always remains reversible.
+              let takeover;
+              try {
+                takeover = this._stageTakeover(generation);
+              } catch (error) {
+                releaseItem();
+                this._handlePipelineFailure(generation, error, "display takeover", { terminal: true });
+                continue;
+              }
+              if (!takeover) {
+                releaseItem();
+                continue;
+              }
+              let outputReady = false;
+              let outputError = null;
+              let terminalOutputFailure = false;
+              try {
+                if (item.tex) {
+                  // GPU present: render the pooled texture via WebGPU, then recycle.
+                  // Inverted chain is legal only while the renderer continues to
+                  // advertise an upscale path for this exact source video.
+                  if (this._chainInverted && this.chain && this.chain.upscaleTex) {
+                    if (!this._chainCanInvert(this.video)) {
+                      terminalOutputFailure = true;
+                      throw new Error("inverted upscale capability is no longer available");
+                    }
+                    outputReady = this.chain.upscaleTex(item.tex, item.tex._w, item.tex._h) === true;
+                    if (!outputReady && !this._invUpWarned) {
+                      this._invUpWarned = true;
+                      this.warn("interp: INVERTED upscale REJECTED (upscaler off/deviceless?) — frames are being dropped");
+                    }
+                  } else {
+                    outputReady = this._rifeMod?.gpuPresent?.(item.tex) === true;
                   }
                 } else {
-                  this._rifeMod && this._rifeMod.gpuPresent(item.tex);
-                }
-              } else {
-                // bitmap present: lazily grab a 2D context if WebGPU didn't claim it
-                if (!this._octx && !this._gpuPresent) { try { this._octx = this.overlay.getContext("2d"); } catch {} }
-                if (this._octx) {
-                  if (this.overlay.width !== item.bmp.width || this.overlay.height !== item.bmp.height) {
-                    this.overlay.width = item.bmp.width; this.overlay.height = item.bmp.height;
+                  // bitmap present: lazily grab a 2D context if WebGPU didn't claim it
+                  if (!this._octx && !this._gpuPresent) { try { this._octx = this.overlay.getContext("2d"); } catch {} }
+                  if (this._octx) {
+                    if (this.overlay.width !== item.bmp.width || this.overlay.height !== item.bmp.height) {
+                      this.overlay.width = item.bmp.width; this.overlay.height = item.bmp.height;
+                    }
+                    this._octx.drawImage(item.bmp, 0, 0);
+                    outputReady = true;
                   }
-                  this._octx.drawImage(item.bmp, 0, 0);
                 }
+              } catch (error) {
+                outputError = error;
+              } finally {
+                releaseItem();
               }
+              if (!outputReady) {
+                takeover.audioTransaction?.rollback?.();
+                this._handlePipelineFailure(
+                  generation,
+                  outputError || new Error("presentation returned no output"),
+                  "presentation",
+                  { terminal: terminalOutputFailure },
+                );
+                continue;
+              }
+              this._recordPipelineSuccess("presentation");
+              if (!this._activateTakeover(generation, takeover)) continue;
+              this._lastPresentAt = now;
+              this._lastPresentedTs = item.ts;
               const dwell = now - item.enq;
               if (dwell >= 0 && dwell < 1000) {
                 if (this._discontinuity) { this._videoLatencyMs = dwell; this._discontinuity = false; this._snapAudio = true; }
                 else this._videoLatencyMs = this._videoLatencyMs == null ? dwell : this._videoLatencyMs * 0.9 + dwell * 0.1;
               }
-              if (item.tex) { this._rifeMod && this._rifeMod.gpuRelease(item.tex); }
-              else { item.bmp.close && item.bmp.close(); }
               presented = true;
             } else break;
           }
@@ -452,86 +635,996 @@ export class Interpolator {
       } else if (started) {
         started = false;
       }
-      this._raf = requestAnimationFrame(loop);
+      if (this._isCurrent(generation)) this._raf = requestAnimationFrame(loop);
     };
     this._raf = requestAnimationFrame(loop);
   }
 
-  // Route the original element's audio through a Web Audio DelayNode so we can
-  // delay it to match the video's presentation latency (the buffer we added for
-  // smoothness put video ~100ms behind audio). MediaElementAudioSourceNode
-  // redirects the element's audio into the graph, so the element no longer outputs
-  // directly — no double audio. Only one source node may exist per element, ever.
-  _setupAudioDelay(video) {
+  // Audio takeover is intentionally reversible. HTMLMediaElement audio source
+  // nodes permanently redirect an element into one AudioContext, which can strand
+  // a later CORS-opaque resource in silence. Instead we capture temporary audio
+  // tracks, stage their graph behind a zero-gain gate, and mute the element only
+  // after the replacement frame and overlay have both succeeded.
+  _setAudioBlocked(reason, blocked) {
+    if (!reason) return;
+    if (blocked) this._audioBlocks.add(reason);
+    else this._audioBlocks.delete(reason);
+    this._audioBoundaryPending = this._audioBlocks.size > 0;
+  }
+
+  _clearAudioBlocks() {
+    this._audioBlocks.clear();
+    this._audioBoundaryPending = false;
+  }
+
+  _readMediaSinkId(video) {
+    try { return typeof video?.sinkId === "string" ? video.sinkId : ""; }
+    catch { return ""; }
+  }
+
+  _audioSinkMatches(preparation, video = preparation?.video) {
+    if (!preparation || this._readMediaSinkId(video) !== preparation.sinkId) return false;
+    if (!preparation.sinkId) return true;
     try {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return;
-      // A MediaElementAudioSourceNode permanently belongs to the AudioContext that
-      // created it. Cache the pair, not just the source: reconnecting a cached node
-      // to a newly-created context is invalid and made every restart lose audio.
-      let state = video._fsrcnnxAudioState;
-      if (!state && video._fsrcnnxAudioSrc) {
-        state = { context: video._fsrcnnxAudioSrc.context, source: video._fsrcnnxAudioSrc };
-        video._fsrcnnxAudioState = state;
-      }
-      if (!state) {
-        const context = new AC();
-        const source = context.createMediaElementSource(video);
-        state = { context, source };
-        video._fsrcnnxAudioState = state;
-        video._fsrcnnxAudioSrc = source; // compatibility with pre-v0.50 sessions
-      }
-      if (!state.context || state.context.state === "closed") {
-        throw new Error("cached media audio context is closed");
-      }
-      this._audioState = state;
-      this._audioCtx = state.context;
-      this._audioSrc = state.source;
-      // Always rebuild from a known graph. disconnect() prevents duplicate direct
-      // and delayed routes when interpolation is toggled repeatedly.
-      try { this._audioSrc.disconnect(); } catch {}
-      this._delayNode = this._audioCtx.createDelay(1.0);
-      this._delayNode.delayTime.value = 0.1;
-      this._audioSrc.connect(this._delayNode);
-      this._delayNode.connect(this._audioCtx.destination);
-      this._audioCtx.resume?.();
-      this._audioTimer = setInterval(() => {
-        if (!this._delayNode || this._videoLatencyMs == null) return;
-        // _videoLatencyMs is now the measured buffer dwell (the real gap); audio
-        // delay = that + an optional manual fine-trim (default 0).
-        const target = Math.max(0, Math.min(0.95, (this._videoLatencyMs + this._avOffsetMs) / 1000));
-        if (this._snapAudio) {
-          this._delayNode.delayTime.cancelScheduledValues(this._audioCtx.currentTime);
-          this._delayNode.delayTime.setValueAtTime(target, this._audioCtx.currentTime);
-          this._snapAudio = false;
-          return;
-        }
-        const cur = this._delayNode.delayTime.value;
-        const next = cur * 0.85 + target * 0.15;
-        this._delayNode.delayTime.setTargetAtTime(next, this._audioCtx.currentTime, 0.05);
-      }, 250);
-    } catch (e) {
-      try { this._audioSrc?.disconnect(); } catch {}
-      try { this._delayNode?.disconnect(); } catch {}
-      try { if (this._audioSrc && this._audioCtx) this._audioSrc.connect(this._audioCtx.destination); } catch {}
-      this._delayNode = null;
-      this.warn("audio delay setup failed (video will lead audio):", e.message);
+      return preparation.context?.sinkId === preparation.sinkId;
+    } catch {
+      return false;
     }
   }
 
-  _teardownAudioDelay() {
-    if (this._audioTimer) { clearInterval(this._audioTimer); this._audioTimer = null; }
-    try { this._audioSrc?.disconnect(); } catch {}
-    try { this._delayNode?.disconnect(); } catch {}
-    // Keep the context/source pair alive because an element can only be wrapped
-    // once. Reconnect exactly once to direct output until interpolation restarts.
+  _clearAudioPreparationWait(preparation) {
+    if (!preparation) return;
+    if (preparation.timeout != null) {
+      clearTimeout(preparation.timeout);
+      preparation.timeout = null;
+    }
+    if (preparation.visibilityListener) {
+      try { globalThis.document?.removeEventListener?.("visibilitychange", preparation.visibilityListener); } catch {}
+      preparation.visibilityListener = null;
+    }
+    this._setAudioBlocked(preparation.blockReason, false);
+  }
+
+  _closeAudioContext(preparation) {
+    if (!preparation) return;
+    this._clearAudioPreparationWait(preparation);
+    preparation.setupPromise = null;
+    if (!preparation.context || preparation.contextClosed) return;
+    preparation.contextClosed = true;
     try {
-      if (this._audioSrc && this._audioCtx) this._audioSrc.connect(this._audioCtx.destination);
+      const closing = preparation.context.close?.();
+      if (closing && typeof closing.catch === "function") closing.catch(() => {});
     } catch {}
+  }
+
+  _failAudioPreparation(preparation, error) {
+    if (!preparation) return;
+    const current = this._audioPreparation === preparation &&
+      preparation.token === this._audioAttemptGeneration;
+    preparation.status = "blocked";
+    preparation.error = error;
+    this._closeAudioContext(preparation);
+    if (!current || preparation.failureReported || !this._isCurrent(preparation.generation)) return;
+    preparation.failureReported = true;
+    this._setAudioBlocked("audio-terminal", true);
+    this._handlePipelineFailure(
+      preparation.generation,
+      error || new Error("audio delay unavailable"),
+      "audio takeover",
+      { terminal: true },
+    );
+  }
+
+  _resumeAudioPreparation(preparation) {
+    if (!preparation || preparation.status === "blocked" || preparation.contextClosed) return preparation;
+    if (preparation.setupPromise) return preparation;
+    const { context } = preparation;
+    if (!context || context.state === "closed") {
+      this._failAudioPreparation(preparation, new Error("AudioContext is closed"));
+      return preparation;
+    }
+    if (globalThis.document?.hidden) {
+      preparation.status = "waiting-visible";
+      this._setAudioBlocked(preparation.blockReason, true);
+      if (!preparation.visibilityListener) {
+        preparation.visibilityListener = () => {
+          if (globalThis.document?.hidden || this._audioPreparation !== preparation) return;
+          try { globalThis.document.removeEventListener("visibilitychange", preparation.visibilityListener); } catch {}
+          preparation.visibilityListener = null;
+          preparation.status = "idle";
+          this._resumeAudioPreparation(preparation);
+        };
+        try { globalThis.document.addEventListener("visibilitychange", preparation.visibilityListener); } catch {}
+      }
+      return preparation;
+    }
+
+    preparation.status = "pending";
+    this._setAudioBlocked(preparation.blockReason, true);
+    const setup = (async () => {
+      if (preparation.sinkId) {
+        if (typeof context.setSinkId !== "function") {
+          throw new Error("AudioContext cannot mirror the media output device");
+        }
+        await context.setSinkId(preparation.sinkId);
+        if (this._readMediaSinkId(preparation.video) !== preparation.sinkId) {
+          const error = new Error("media output device changed during audio preparation");
+          error.code = "AUDIO_SINK_STALE";
+          throw error;
+        }
+        if (!this._audioSinkMatches(preparation)) {
+          throw new Error("AudioContext output device did not match the media element");
+        }
+      }
+      if (context.state !== "running") await context.resume?.();
+      if (context.state !== "running") throw new Error("AudioContext remained suspended");
+    })();
+    preparation.setupPromise = setup;
+    const armTimeout = () => {
+      if (preparation.timeout != null) clearTimeout(preparation.timeout);
+      preparation.timeout = null;
+      if (globalThis.document?.hidden) return;
+      preparation.timeout = setTimeout(() => {
+        if (this._audioPreparation === preparation && preparation.setupPromise === setup &&
+            !globalThis.document?.hidden) {
+          this._failAudioPreparation(preparation, new Error("AudioContext preparation timed out"));
+        }
+      }, 3000);
+    };
+    preparation.visibilityListener = () => {
+      if (this._audioPreparation !== preparation || preparation.setupPromise !== setup) return;
+      if (globalThis.document?.hidden) {
+        if (preparation.timeout != null) clearTimeout(preparation.timeout);
+        preparation.timeout = null;
+        preparation.status = "waiting-visible";
+      } else {
+        preparation.status = "pending";
+        armTimeout();
+      }
+    };
+    try { globalThis.document?.addEventListener?.("visibilitychange", preparation.visibilityListener); } catch {}
+    armTimeout();
+    setup.then(() => {
+      const current = this._audioPreparation === preparation &&
+        preparation.token === this._audioAttemptGeneration &&
+        this._isCurrent(preparation.generation) && this.video === preparation.video;
+      if (!current) {
+        this._closeAudioContext(preparation);
+        return;
+      }
+      this._clearAudioPreparationWait(preparation);
+      preparation.setupPromise = null;
+      preparation.status = "ready";
+    }).catch((error) => {
+      if (preparation.setupPromise === setup) preparation.setupPromise = null;
+      const current = this._audioPreparation === preparation &&
+        preparation.token === this._audioAttemptGeneration &&
+        this._isCurrent(preparation.generation) && this.video === preparation.video;
+      const staleSink = error?.code === "AUDIO_SINK_STALE" ||
+        this._readMediaSinkId(preparation.video) !== preparation.sinkId;
+      if (staleSink) {
+        preparation.stagedTransaction?.rollback?.();
+        preparation.status = "stale";
+        if (current) {
+          this._audioPreparation = null;
+          ++this._audioAttemptGeneration;
+        }
+        this._closeAudioContext(preparation);
+        return;
+      }
+      if (current && globalThis.document?.hidden) {
+        this._clearAudioPreparationWait(preparation);
+        preparation.status = "idle";
+        this._resumeAudioPreparation(preparation);
+        return;
+      }
+      this._failAudioPreparation(preparation, error);
+    });
+    return preparation;
+  }
+
+  _prepareAudioDelay(video, generation) {
+    const sinkId = this._readMediaSinkId(video);
+    const existing = this._audioPreparation;
+    if (existing && existing.video === video && existing.generation === generation &&
+        existing.sinkId === sinkId) {
+      if (existing.status === "ready" && existing.context?.state !== "running") {
+        existing.status = "idle";
+        this._resumeAudioPreparation(existing);
+      }
+      return existing;
+    }
+    if (existing) {
+      existing.stagedTransaction?.rollback?.();
+      this._closeAudioContext(existing);
+    }
+    const token = ++this._audioAttemptGeneration;
+    const AC = globalThis.window?.AudioContext || globalThis.window?.webkitAudioContext;
+    const preparation = {
+      token,
+      generation,
+      video,
+      sinkId,
+      status: "idle",
+      context: null,
+      contextClosed: false,
+      failureReported: false,
+      setupPromise: null,
+      timeout: null,
+      visibilityListener: null,
+      stagedTransaction: null,
+      blockReason: `audio-context-${token}`,
+    };
+    this._audioPreparation = preparation;
+    if (!AC) {
+      this._failAudioPreparation(preparation, new Error("Web Audio is unavailable"));
+      return preparation;
+    }
+    try { preparation.context = new AC(); }
+    catch (error) {
+      this._failAudioPreparation(preparation, error);
+      return preparation;
+    }
+    return this._resumeAudioPreparation(preparation);
+  }
+
+  _audioSourceEligible(video) {
+    if (!video) return false;
+    const hasProvider = video.srcObject != null;
+    if (!hasProvider) {
+      const raw = video.currentSrc || video.src || "";
+      if (!raw) return false;
+      let sourceUrl;
+      let pageUrl;
+      try {
+        const base = globalThis.document?.baseURI || globalThis.location?.href;
+        sourceUrl = new URL(raw, base);
+        pageUrl = new URL(base);
+      } catch {
+        return false;
+      }
+      // Data URLs have opaque resource origins. Blob/MSE URLs are safe only when
+      // they belong to this document; ordinary cross-origin URLs require the media
+      // element to have requested CORS explicitly. A playable CORS-mode element has
+      // already passed response validation, while a no-CORS resource would be
+      // required by Web Audio to emit silence without throwing.
+      if (sourceUrl.protocol === "data:") return false;
+      const sameOrigin = sourceUrl.origin === pageUrl.origin;
+      const corsRequested = typeof video.crossOrigin === "string" ||
+        video.hasAttribute?.("crossorigin") === true;
+      if (sourceUrl.protocol === "blob:") {
+        if (!sameOrigin) return false;
+      } else if (!sameOrigin && !corsRequested) {
+        return false;
+      }
+    }
+
+    // URL checks cannot see a same-origin URL that redirected to a no-CORS
+    // cross-origin response. Verify that the selected frame is origin-clean before
+    // accepting its capture tracks as the replacement audio path.
+    const canvas = globalThis.document?.createElement?.("canvas");
+    if (canvas) {
+      try {
+        canvas.width = 1;
+        canvas.height = 1;
+        const context = canvas.getContext("2d", { willReadFrequently: true });
+        if (!context) return false;
+        context.drawImage(video, 0, 0, 1, 1);
+        context.getImageData(0, 0, 1, 1);
+      } catch {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  _audioSourceSnapshot(video) {
+    return {
+      video,
+      currentSrc: video?.currentSrc || "",
+      src: video?.src || "",
+      srcObject: video?.srcObject || null,
+    };
+  }
+
+  _audioSourceMatches(snapshot, video) {
+    return !!snapshot && snapshot.video === video &&
+      snapshot.currentSrc === (video?.currentSrc || "") &&
+      snapshot.src === (video?.src || "") &&
+      snapshot.srcObject === (video?.srcObject || null);
+  }
+
+  _capturedAudioTracksHealthy(owner) {
+    return !!owner && owner.audioTracks.length > 0 && owner.audioTracks.some((track) =>
+      track?.readyState !== "ended" && track?.muted !== true);
+  }
+
+  _syncOwnedAudioTracks(route) {
+    if (!route || route.disposed) return false;
+    for (const pair of route.trackPairs || []) {
+      if (!pair.source || !pair.output) return false;
+      try {
+        pair.output.enabled = pair.source.readyState !== "ended" && pair.output.readyState !== "ended" &&
+          pair.source.enabled !== false && pair.source.muted !== true;
+      }
+      catch { return false; }
+    }
+    return true;
+  }
+
+  _refreshAudioCaptureTracks(session) {
+    if (!session || session.disposed) return;
+    for (const [track, type, listener] of session.trackListeners) {
+      try { track.removeEventListener?.(type, listener); } catch {}
+    }
+    session.trackListeners = [];
+    let tracks = [];
+    try {
+      tracks = Array.from(session.stream.getAudioTracks())
+        .filter((track) => track?.readyState !== "ended" &&
+          !session.captureRecord?.borrowedTracks?.has(track) &&
+          (!session.captureRecord || session.captureRecord.trackGenerations.get(track) ===
+            session.captureRecord.sourceGeneration));
+    } catch {}
+    session.audioTracks = tracks;
+    const changed = (event) => this._handleAudioCaptureChange(session, event);
+    for (const track of tracks) {
+      for (const type of ["mute", "unmute", "ended"]) {
+        try {
+          track.addEventListener?.(type, changed);
+          session.trackListeners.push([track, type, changed]);
+        } catch {}
+      }
+    }
+  }
+
+  _handleAudioCaptureChange(session, event = null) {
+    if (!session || session !== this._audioCaptureSession || session.disposed ||
+        !this._isCurrent(session.generation) || this.video !== session.video) return;
+    if (!this._audioSourceMatches(session.snapshot, session.video)) {
+      this._relinquishPresentation({ preserveAudioContext: true, retireCapture: true });
+      return;
+    }
+    if (session.captureRecord?.exhausted && session.captureRecord.hadAudio) {
+      this._setAudioBlocked("audio-terminal", true);
+      this._handlePipelineFailure(
+        session.generation,
+        new Error("the media element's cached audio capture ended; a new source is required"),
+        "audio takeover",
+        { terminal: true },
+      );
+      return;
+    }
+    this._refreshAudioCaptureTracks(session);
+    const healthy = this._capturedAudioTracksHealthy(session);
+    const noAudio = session.audioTracks.length === 0;
+    this._setAudioBlocked(session.blockReason, !healthy && !noAudio);
+    const staged = this._audioPreparation?.stagedTransaction;
+    if (this._audioRoute || staged) {
+      this._relinquishPresentation({ preserveAudioContext: true });
+    }
+  }
+
+  _disposeAudioCaptureSession(session = this._audioCaptureSession) {
+    if (!session || session.disposed) return;
+    session.disposed = true;
+    this._setAudioBlocked(session.blockReason, false);
+    if (!session.captureRecord) {
+      try { session.stream.removeEventListener?.("addtrack", session.onTrackChange); } catch {}
+      try { session.stream.removeEventListener?.("removetrack", session.onTrackChange); } catch {}
+    }
+    for (const [track, type, listener] of session.trackListeners || []) {
+      try { track.removeEventListener?.(type, listener); } catch {}
+    }
+    session.trackListeners = [];
+    if (session.captureRecord?.owner === session) {
+      session.captureRecord.owner = null;
+      updatePersistentCaptureRecord(session.captureRecord);
+    }
+    if (this._audioCaptureSession === session) this._audioCaptureSession = null;
+    session.audioTracks = [];
+    session.captureRecord = null;
+    session.stream = null;
+  }
+
+  _ensureAudioCaptureSession(video, generation) {
+    const snapshot = this._audioSourceSnapshot(video);
+    const existing = this._audioCaptureSession;
+    if (existing && !existing.disposed && existing.generation === generation &&
+        this._audioSourceMatches(existing.snapshot, video)) return existing;
+    if (existing) this._disposeAudioCaptureSession(existing);
+    if (!this._audioSourceEligible(video)) {
+      this._setAudioBlocked("audio-terminal", true);
+      this._handlePipelineFailure(
+        generation,
+        new Error("media is not safely audio-capturable"),
+        "audio takeover",
+        { terminal: true },
+      );
+      return null;
+    }
+
+    const provider = mediaStreamProvider(video);
+    const providerIsStream = !!provider;
+    let stream;
+    let rawTracksOwned = false;
+    let captureRecord = null;
+    try {
+      if (providerIsStream) {
+        stream = provider;
+      } else {
+        captureRecord = elementCaptureRecords.get(video) || null;
+        if (!captureRecord) {
+          if (typeof video?.captureStream !== "function") {
+            throw new Error("HTMLMediaElement.captureStream is unavailable");
+          }
+          stream = video.captureStream();
+          if (!stream || typeof stream.getTracks !== "function" ||
+              typeof stream.getAudioTracks !== "function") {
+            throw new Error("audio capture returned an invalid MediaStream");
+          }
+          captureRecord = {
+            video,
+            stream,
+            owner: null,
+            borrowedTracks: new WeakSet(),
+            exhausted: false,
+            hadAudio: false,
+            sourceGeneration: 0,
+            trackGenerations: new WeakMap(),
+            onTrackChange: null,
+            onMediaLifecycle: null,
+          };
+          captureRecord.onTrackChange = (event) => updatePersistentCaptureRecord(captureRecord, event);
+          captureRecord.onMediaLifecycle = (event) => updatePersistentCaptureRecord(captureRecord, event);
+          try { stream.addEventListener?.("addtrack", captureRecord.onTrackChange); } catch {}
+          try { stream.addEventListener?.("removetrack", captureRecord.onTrackChange); } catch {}
+          try { video.addEventListener?.("loadedmetadata", captureRecord.onMediaLifecycle); } catch {}
+          try { video.addEventListener?.("ended", captureRecord.onMediaLifecycle); } catch {}
+          elementCaptureRecords.set(video, captureRecord);
+          updatePersistentCaptureRecord(captureRecord);
+        } else {
+          stream = captureRecord.stream;
+        }
+        if (captureRecord.owner?.disposed) captureRecord.owner = null;
+        if (captureRecord.owner) {
+          throw new Error("media capture is already owned by another interpolation lifecycle");
+        }
+        rawTracksOwned = true;
+      }
+      if (!stream || typeof stream.getTracks !== "function" ||
+          typeof stream.getAudioTracks !== "function") {
+        throw new Error("audio capture returned an invalid MediaStream");
+      }
+    } catch (error) {
+      this._setAudioBlocked("audio-terminal", true);
+      this._handlePipelineFailure(generation, error, "audio takeover", { terminal: true });
+      return null;
+    }
+
+    const session = {
+      generation,
+      video,
+      snapshot,
+      stream,
+      rawTracksOwned,
+      captureRecord,
+      interpolator: this,
+      audioTracks: [],
+      trackListeners: [],
+      onTrackChange: null,
+      blockReason: `audio-tracks-${generation}-${this._audioAttemptGeneration}`,
+      disposed: false,
+    };
+    session.onTrackChange = (event) => this._handleAudioCaptureChange(session, event);
+    if (!captureRecord) {
+      try { stream.addEventListener?.("addtrack", session.onTrackChange); } catch {}
+      try { stream.addEventListener?.("removetrack", session.onTrackChange); } catch {}
+    }
+    this._audioCaptureSession = session;
+    if (captureRecord) {
+      captureRecord.owner = session;
+      updatePersistentCaptureRecord(captureRecord);
+    }
+    this._refreshAudioCaptureTracks(session);
+    this._setAudioBlocked(
+      session.blockReason,
+      session.audioTracks.length > 0 && !this._capturedAudioTracksHealthy(session),
+    );
+    return session;
+  }
+
+  _listenAudioRoute(route, target, type, listener) {
+    if (!target?.addEventListener) return;
+    target.addEventListener(type, listener);
+    route.listeners.push([target, type, listener]);
+  }
+
+  _setAudioGain(route, value) {
+    const parameter = route?.gain?.gain;
+    if (!parameter) return;
+    const next = Math.max(0, Math.min(1, Number.isFinite(value) ? value : 1));
+    try {
+      if (typeof parameter.setValueAtTime === "function") {
+        parameter.setValueAtTime(next, route.context.currentTime || 0);
+      } else {
+        parameter.value = next;
+      }
+    } catch {
+      try { parameter.value = next; } catch {}
+    }
+  }
+
+  _mediaMuteAccess(video) {
+    const NativeMedia = globalThis.HTMLMediaElement;
+    let descriptor = null;
+    if (NativeMedia?.prototype) {
+      try {
+        // A page-owned shadow can report a successful write while leaving the
+        // native sink untouched. Refuse takeover instead of risking double audio.
+        if (Object.prototype.hasOwnProperty.call(video, "muted")) return null;
+        descriptor = Object.getOwnPropertyDescriptor(NativeMedia.prototype, "muted") || null;
+      } catch { return null; }
+    }
+    if (descriptor?.get && descriptor?.set) {
+      return {
+        read: () => !!descriptor.get.call(video),
+        write(value) {
+          descriptor.set.call(video, !!value);
+          return !!descriptor.get.call(video) === !!value;
+        },
+      };
+    }
+    if (NativeMedia?.prototype) return null;
+    // Plain-object fallback is for deterministic tests/non-DOM embedders only.
+    return {
+      read: () => !!video.muted,
+      write(value) {
+        video.muted = !!value;
+        return !!video.muted === !!value;
+      },
+    };
+  }
+
+  _readMediaVolume(video) {
+    const prototype = globalThis.HTMLMediaElement?.prototype;
+    try {
+      const descriptor = prototype && Object.getOwnPropertyDescriptor(prototype, "volume");
+      const value = descriptor?.get ? Number(descriptor.get.call(video)) : Number(video?.volume);
+      return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 1;
+    } catch {
+      return 1;
+    }
+  }
+
+  _disposeAudioRoute(route, { restoreMute = true } = {}) {
+    if (!route || route.disposed) return;
+    route.disposed = true;
+    // Close the processed route before restoring native audio so the two sinks can
+    // never overlap, even if teardown was caused by context or source failure.
+    this._setAudioGain(route, 0);
+    if (route.timer != null) clearInterval(route.timer);
+    for (const [target, type, listener] of route.listeners || []) {
+      try { target.removeEventListener?.(type, listener); } catch {}
+    }
+    route.listeners = [];
+    let stillOwnsMute = false;
+    try { stillOwnsMute = route.muteAccess?.read?.() === true; } catch {}
+    if (restoreMute && route.muteOwned && stillOwnsMute) {
+      let restored = false;
+      try { restored = route.muteAccess.write(route.mutedBefore); } catch {}
+      if (!restored) {
+        this.warn("interpolation: native audio mute state could not be restored");
+      }
+    }
+    for (const source of route.sources || []) {
+      try { source.disconnect?.(); } catch {}
+    }
+    try { route.delay?.disconnect?.(); } catch {}
+    try { route.gain?.disconnect?.(); } catch {}
+    for (const track of route.ownedTracks || []) {
+      try { track.stop?.(); } catch {}
+    }
+    route.audioTracks = [];
+    route.ownedTracks = [];
+    route.trackPairs = [];
+    route.sources = [];
+    if (this._audioRoute === route) this._audioRoute = null;
+    if (this._audioTimer === route.timer) this._audioTimer = null;
+    if (this._delayNode === route.delay) this._delayNode = null;
+    if (this._audioCtx === route.context) {
+      this._audioCtx = null;
+      this._audioSrc = null;
+    }
+  }
+
+  _stageAudioDelay(video, generation) {
+    const muteAccess = this._mediaMuteAccess(video);
+    if (!muteAccess) {
+      this._setAudioBlocked("audio-terminal", true);
+      this._handlePipelineFailure(
+        generation,
+        new Error("media mute ownership is shadowed by the page"),
+        "audio takeover",
+        { terminal: true },
+      );
+      return null;
+    }
+    let muted = false;
+    let volume = 1;
+    try {
+      muted = muteAccess.read();
+      volume = this._readMediaVolume(video);
+    } catch {}
+    const explicitlySilent = muted || (Number.isFinite(volume) && volume <= 0);
+    if (explicitlySilent) {
+      this._audioPreparation?.stagedTransaction?.rollback?.();
+      return this._stageSilentAudio(video, generation, "element-silent", null, muteAccess);
+    }
+
+    const session = this._ensureAudioCaptureSession(video, generation);
+    if (!session) return null;
+    if (session.captureRecord?.exhausted && session.captureRecord.hadAudio) {
+      this._setAudioBlocked("audio-terminal", true);
+      this._handlePipelineFailure(
+        generation,
+        new Error("the media element's cached audio capture ended; a new source is required"),
+        "audio takeover",
+        { terminal: true },
+      );
+      return null;
+    }
+    if (session.audioTracks.length === 0) {
+      this._audioPreparation?.stagedTransaction?.rollback?.();
+      return this._stageSilentAudio(video, generation, "no-audio-track", session, muteAccess);
+    }
+    if (!this._capturedAudioTracksHealthy(session)) {
+      this._audioPreparation?.stagedTransaction?.rollback?.();
+      this._setAudioBlocked(session.blockReason, true);
+      return null;
+    }
+    this._setAudioBlocked(session.blockReason, false);
+
+    const preparation = this._prepareAudioDelay(video, generation);
+    if (!preparation || preparation.status !== "ready") return null;
+    const { context } = preparation;
+    if (!context || context.state !== "running" || !this._audioSinkMatches(preparation, video)) {
+      preparation.status = "idle";
+      this._resumeAudioPreparation(preparation);
+      return null;
+    }
+
+    let transaction = preparation.stagedTransaction;
+    if (transaction) {
+      const route = transaction.route;
+      const valid = transaction.status === "staged" && !route.disposed &&
+        route.session === session && this._audioSourceMatches(route.snapshot, video) &&
+        this._capturedAudioTracksHealthy(session) && context.state === "running" &&
+        this._audioSinkMatches(preparation, video);
+      if (!valid) {
+        transaction.rollback();
+        transaction = null;
+      } else if ((context.currentTime || 0) >= route.primeReadyAt) {
+        return transaction;
+      } else {
+        return null;
+      }
+    }
+
+    const route = {
+      generation,
+      preparation,
+      session,
+      context,
+      video,
+      snapshot: this._audioSourceSnapshot(video),
+      audioTracks: [],
+      ownedTracks: [],
+      trackPairs: [],
+      sources: [],
+      delay: null,
+      gain: null,
+      listeners: [],
+      timer: null,
+      muteAccess,
+      muteOwned: false,
+      mutedBefore: false,
+      disposed: false,
+      silent: false,
+      primeReadyAt: 0,
+    };
+    try {
+      for (const track of session.audioTracks) {
+        if (!session.rawTracksOwned) {
+          // A page-owned srcObject track remains the authority for enabled/muted
+          // state. Feeding it directly preserves later page-side track toggles;
+          // route disposal only disconnects the node and never stops the track.
+          route.audioTracks.push(track);
+          continue;
+        }
+        if (typeof track?.clone !== "function") {
+          throw new Error("captured audio track cannot be cloned safely");
+        }
+        const ownedTrack = track.clone();
+        if (!ownedTrack || ownedTrack === track) {
+          throw new Error("captured audio track clone is not independently owned");
+        }
+        try { ownedTrack.enabled = track.enabled !== false; } catch {}
+        route.ownedTracks.push(ownedTrack);
+        route.trackPairs.push({ source: track, output: ownedTrack });
+        route.audioTracks.push(ownedTrack);
+      }
+      if (!this._capturedAudioTracksHealthy(route) || !this._syncOwnedAudioTracks(route)) {
+        throw new Error("captured audio became unavailable while staging");
+      }
+      const initialDelay = Math.max(0, Math.min(
+        0.95,
+        ((this._videoLatencyMs == null ? 100 : this._videoLatencyMs) + this._avOffsetMs) / 1000,
+      ));
+      route.delay = context.createDelay(1.0);
+      route.delay.delayTime.value = initialDelay;
+      route.gain = context.createGain();
+      this._setAudioGain(route, 0);
+      for (const track of route.audioTracks) {
+        let source;
+        if (typeof context.createMediaStreamTrackSource === "function") {
+          source = context.createMediaStreamTrackSource(track);
+        } else {
+          const SingleTrackStream = globalThis.MediaStream;
+          if (typeof SingleTrackStream !== "function" || typeof context.createMediaStreamSource !== "function") {
+            throw new Error("per-track Web Audio capture is unavailable");
+          }
+          source = context.createMediaStreamSource(new SingleTrackStream([track]));
+        }
+        route.sources.push(source);
+        source.connect(route.delay);
+      }
+      route.delay.connect(route.gain);
+      route.gain.connect(context.destination);
+      route.primeReadyAt = (context.currentTime || 0) + initialDelay + 0.025;
+    } catch (error) {
+      this._disposeAudioRoute(route, { restoreMute: false });
+      this._failAudioPreparation(preparation, error);
+      return null;
+    }
+
+    const owner = this;
+    transaction = {
+      bypass: false,
+      silent: false,
+      status: "staged",
+      context,
+      route,
+      rollback() {
+        if (this.status !== "staged") return;
+        this.status = "rolled-back";
+        if (preparation.stagedTransaction === this) preparation.stagedTransaction = null;
+        owner._disposeAudioRoute(route, { restoreMute: false });
+      },
+    };
+    preparation.stagedTransaction = transaction;
+    return null;
+  }
+
+  _stageSilentAudio(video, generation, reason, session, muteAccess) {
+    const route = {
+      generation,
+      preparation: null,
+      session,
+      context: null,
+      video,
+      snapshot: this._audioSourceSnapshot(video),
+      audioTracks: [],
+      ownedTracks: [],
+      trackPairs: [],
+      sources: [],
+      delay: null,
+      gain: null,
+      listeners: [],
+      timer: null,
+      muteAccess,
+      muteOwned: false,
+      mutedBefore: false,
+      disposed: false,
+      silent: true,
+      silentReason: reason,
+    };
+    const owner = this;
+    return {
+      bypass: false,
+      silent: true,
+      status: "staged",
+      context: null,
+      route,
+      rollback() {
+        if (this.status !== "staged") return;
+        this.status = "rolled-back";
+        owner._disposeAudioRoute(route, { restoreMute: false });
+      },
+    };
+  }
+
+  _silentAudioRouteValid(route) {
+    if (!route?.silent || !this._audioSourceMatches(route.snapshot, route.video)) return false;
+    if (route.silentReason === "no-audio-track") {
+      return route.session === this._audioCaptureSession && route.session?.audioTracks.length === 0;
+    }
+    try {
+      return route.muteAccess.read() || this._readMediaVolume(route.video) <= 0;
+    } catch {
+      return false;
+    }
+  }
+
+  _commitAudioDelay(transaction, generation) {
+    if (!transaction || transaction.status !== "staged") return false;
+    if (transaction.bypass) {
+      transaction.status = "committed";
+      return true;
+    }
+    const route = transaction.route;
+    if (transaction.silent) {
+      if (!route || !this._isCurrent(generation) || this.video !== route.video ||
+          !this._silentAudioRouteValid(route)) {
+        transaction.rollback();
+        return false;
+      }
+      route.onVolumeChange = () => {
+        if (this._audioRoute === route && !this._silentAudioRouteValid(route)) {
+          this._relinquishPresentation();
+        }
+      };
+      this._listenAudioRoute(route, route.video, "volumechange", route.onVolumeChange);
+      this._audioRoute = route;
+      transaction.status = "committed";
+      return true;
+    }
+    const preparation = route?.preparation;
+    if (!route || !this._isCurrent(generation) || this.video !== preparation?.video ||
+        route.context.state !== "running" || !this._audioSourceMatches(route.snapshot, this.video) ||
+        route.session !== this._audioCaptureSession || !this._capturedAudioTracksHealthy(route) ||
+        !this._capturedAudioTracksHealthy(route.session) ||
+        !this._syncOwnedAudioTracks(route) ||
+        !this._audioSinkMatches(preparation, this.video) ||
+        (route.context.currentTime || 0) < route.primeReadyAt) {
+      transaction.rollback();
+      return false;
+    }
+
+    const relinquish = () => {
+      if (this._audioRoute !== route) return;
+      this._relinquishPresentation();
+    };
+    route.onStateChange = () => {
+      if (route.context.state === "running" || this._audioRoute !== route) return;
+      const state = route.context.state;
+      if (state === "closed") {
+        this._failAudioPreparation(preparation, new Error("AudioContext closed during takeover"));
+        this._relinquishPresentation({ preserveAudioContext: false });
+        return;
+      }
+      this._relinquishPresentation({ preserveAudioContext: true });
+      preparation.status = "idle";
+      preparation.setupPromise = null;
+      this._resumeAudioPreparation(preparation);
+    };
+    route.onTrackBoundary = (event) => this._handleAudioCaptureChange(route.session, event);
+    route.onVolumeChange = () => {
+      if (this._audioRoute !== route) return;
+      let ownsMute = false;
+      try { ownsMute = route.muteOwned && route.muteAccess.read() === true; } catch {}
+      if (!ownsMute) {
+        this._setAudioGain(route, 0);
+        this._relinquishPresentation({ preserveAudioContext: false });
+        this._handlePipelineFailure(
+          generation,
+          new Error("page reclaimed media mute ownership"),
+          "audio takeover",
+          { terminal: true },
+        );
+        return;
+      }
+      this._setAudioGain(route, this._readMediaVolume(route.video));
+    };
+    this._listenAudioRoute(route, route.context, "statechange", route.onStateChange);
+    for (const track of route.audioTracks) {
+      this._listenAudioRoute(route, track, "mute", route.onTrackBoundary);
+      this._listenAudioRoute(route, track, "ended", route.onTrackBoundary);
+    }
+    this._listenAudioRoute(route, route.video, "volumechange", route.onVolumeChange);
+
+    this._audioRoute = route;
+    this._audioCtx = route.context;
+    this._audioSrc = route.sources[0] || null;
+    this._delayNode = route.delay;
+    try {
+      if (!this._audioSourceMatches(route.snapshot, this.video) ||
+          !this._capturedAudioTracksHealthy(route) || !this._syncOwnedAudioTracks(route) ||
+          route.context.state !== "running" || route.session !== this._audioCaptureSession ||
+          !this._capturedAudioTracksHealthy(route.session) ||
+          !this._audioSinkMatches(preparation, this.video)) {
+        throw new Error("media source changed during audio takeover");
+      }
+      route.mutedBefore = route.muteAccess.read();
+      route.muteOwned = !route.mutedBefore;
+      if (!route.muteOwned) {
+        throw new Error("media became muted during audio takeover");
+      }
+      if (!route.muteAccess.write(true)) {
+        throw new Error("native audio could not be muted");
+      }
+      if (this._audioRoute !== route || route.disposed || route.muteAccess.read() !== true) {
+        throw new Error("native audio mute ownership was rejected");
+      }
+      this._setAudioGain(route, this._readMediaVolume(route.video));
+    } catch (error) {
+      this._disposeAudioRoute(route);
+      transaction.status = "rolled-back";
+      this._handlePipelineFailure(
+        generation,
+        error || new Error("native audio takeover failed"),
+        "audio takeover",
+        { terminal: true },
+      );
+      return false;
+    }
+
+    transaction.status = "committed";
+    if (preparation.stagedTransaction === transaction) preparation.stagedTransaction = null;
+    route.timer = setInterval(() => {
+      if (this._audioRoute !== route) return;
+      if (!this._audioSourceMatches(route.snapshot, route.video)) {
+        this._relinquishPresentation({ preserveAudioContext: true, retireCapture: true });
+        return;
+      }
+      if (!this._audioSinkMatches(preparation, route.video)) {
+        this._relinquishPresentation({ preserveAudioContext: false });
+        return;
+      }
+      if (!this._syncOwnedAudioTracks(route)) {
+        this._relinquishPresentation({ preserveAudioContext: true });
+        return;
+      }
+      if (this._videoLatencyMs == null) return;
+      const target = Math.max(0, Math.min(0.95, (this._videoLatencyMs + this._avOffsetMs) / 1000));
+      if (this._snapAudio) {
+        route.delay.delayTime.cancelScheduledValues(route.context.currentTime);
+        route.delay.delayTime.setValueAtTime(target, route.context.currentTime);
+        this._snapAudio = false;
+        return;
+      }
+      const cur = route.delay.delayTime.value;
+      const next = cur * 0.85 + target * 0.15;
+      route.delay.delayTime.setTargetAtTime(next, route.context.currentTime, 0.05);
+    }, 250);
+    this._audioTimer = route.timer;
+    return true;
+  }
+
+  _teardownAudioDelay({
+    preserveContext = false,
+    preserveCapture = false,
+    retireCapture = false,
+  } = {}) {
+    const route = this._audioRoute;
+    if (route) this._disposeAudioRoute(route);
+    const preparation = this._audioPreparation;
+    const staged = preparation?.stagedTransaction;
+    if (staged?.status === "staged") staged.rollback();
+    const shouldRetireCapture = retireCapture || (!preserveContext && !preserveCapture);
+    if (shouldRetireCapture) this._disposeAudioCaptureSession();
+    if (preserveContext) {
+      if (!preparation || (preparation.context?.state !== "closed" && !preparation.contextClosed)) {
+        return;
+      }
+    }
+    ++this._audioAttemptGeneration;
+    this._audioPreparation = null;
+    this._closeAudioContext(preparation);
+    this._audioTimer = null;
     this._delayNode = null;
     this._audioSrc = null;
     this._audioCtx = null;
-    this._audioState = null;
   }
 
   supported() {
@@ -543,6 +1636,358 @@ export class Interpolator {
 
   _isCurrent(generation) {
     return generation === this._lifecycleGen && !this._stopped;
+  }
+
+  _recordPipelineSuccess(stage) {
+    if (this._pipelineFailureStreaks) this._pipelineFailureStreaks[stage] = 0;
+  }
+
+  _notifyTerminalFailure(generation, stage, error) {
+    if (!this._isCurrent(generation) || !this.onTerminalFailure) return;
+    try {
+      this.onTerminalFailure({
+        generation,
+        stage,
+        error,
+        detail: error?.message || String(error || "unknown failure"),
+        video: this.video,
+        source: this._audioSourceSnapshot(this.video),
+      });
+    } catch {}
+  }
+
+  _handlePipelineFailure(generation, error, stage = "capture", { terminal = false } = {}) {
+    if (!this._isCurrent(generation)) return false;
+    const streaks = this._pipelineFailureStreaks || (this._pipelineFailureStreaks = Object.create(null));
+    const count = (streaks[stage] || 0) + 1;
+    streaks[stage] = count;
+    if (!terminal && count < this._pipelineFailureLimit) return false;
+    if (this._pipelineFailureStopQueued) return true;
+    this._pipelineFailureStopQueued = true;
+    const detail = error?.message || String(error || "unknown failure");
+    this._notifyTerminalFailure(generation, stage, error);
+    this.warn(`interp: ${stage} failed ${terminal ? "terminally" : `${count} consecutive times`}; restoring original video (${detail})`);
+    Promise.resolve().then(() => {
+      if (this._isCurrent(generation)) this.stop();
+    }).catch((stopError) => {
+      this.warn("interp: failure cleanup failed:", stopError.message);
+    }).finally(() => {
+      this._pipelineFailureStopQueued = false;
+    });
+    return true;
+  }
+
+  // DOM visibility and audio routing are a transaction committed only after an
+  // output frame has actually rendered. Until then the original element remains
+  // the page's display/audio source, so unsupported or tainted capture paths fail
+  // as passthrough instead of exposing a black canvas or silent audio graph.
+  _videoWithin(root) {
+    if (!root || !this.video) return false;
+    let current = this.video;
+    while (current) {
+      if (current === root) return true;
+      if (current.parentElement) current = current.parentElement;
+      else {
+        const tree = current.getRootNode?.();
+        current = tree?.host || null;
+      }
+    }
+    return false;
+  }
+
+  _overlayMountTarget() {
+    if (globalThis.document?.pictureInPictureElement === this.video) return null;
+    const fullscreen = globalThis.document?.fullscreenElement || null;
+    if (!fullscreen) return globalThis.document?.body || null;
+    const sourceRoot = this.video?.getRootNode?.();
+    const innerFullscreen = sourceRoot?.fullscreenElement || null;
+    if (innerFullscreen) {
+      if (innerFullscreen === this.video || !this._videoWithin(innerFullscreen)) return null;
+      return innerFullscreen;
+    }
+    // A canvas cannot be rendered as a child of a fullscreen <video> replaced
+    // element. Keep the original source visible for that interval. Player-
+    // container fullscreen is eligible because descendants join the top layer.
+    if (fullscreen === this.video || !this._videoWithin(fullscreen)) return null;
+    // If the source lives in a shadow tree, light-DOM children appended to its
+    // fullscreen host may be unslotted and therefore never rendered. Mount next
+    // to the video in its actual shadow root; that root is within the eligible
+    // fullscreen subtree and the fixed overlay remains visible in the top layer.
+    if (sourceRoot?.host && typeof sourceRoot.appendChild === "function") return sourceRoot;
+    return fullscreen;
+  }
+
+  _sourceCanPresent() {
+    const source = this.video;
+    if (!source) return false;
+    try {
+      if (typeof source.checkVisibility === "function" &&
+          !source.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return false;
+    } catch {}
+    try {
+      const style = globalThis.getComputedStyle?.(source);
+      if (style && (style.display === "none" || style.visibility === "hidden" ||
+          style.visibility === "collapse" || Number(style.opacity) === 0)) return false;
+    } catch {}
+    return true;
+  }
+
+  _removeTakeoverListeners() {
+    if (this._onScroll) {
+      try { window.removeEventListener("scroll", this._onScroll, { capture: true }); } catch {}
+      try { window.removeEventListener("resize", this._onScroll); } catch {}
+    }
+    if (this._onFullscreen) {
+      try { document.removeEventListener("fullscreenchange", this._onFullscreen); } catch {}
+    }
+    this._onScroll = null;
+    this._onFullscreen = null;
+  }
+
+  _installMediaBoundaryListeners(video, generation) {
+    if (!video || (this._mediaBoundaryVideo === video && this._mediaBoundaryHandlers)) return;
+    this._removeMediaBoundaryListeners();
+    const current = () => this._isCurrent(generation) && this.video === video;
+    const suspendAudio = ({ retireCapture = false } = {}) => {
+      if (!current()) return;
+      this._setAudioBlocked("media-boundary", true);
+      this._flush?.();
+      if (this._takeoverActive || this._audioRoute || this._audioPreparation?.stagedTransaction ||
+          (this._chainInverted && !this._chainPresentationSuspended) || retireCapture) {
+        this._relinquishPresentation({ preserveAudioContext: true, retireCapture });
+      }
+    };
+    const resumeAudio = () => {
+      if (!current()) return;
+      this._setAudioBlocked("media-boundary", false);
+      if (this._audioCaptureSession) this._handleAudioCaptureChange(this._audioCaptureSession);
+      this._flush?.();
+    };
+    const ordinarySuspend = () => suspendAudio();
+    const sourceSuspend = () => suspendAudio({ retireCapture: true });
+    const handlers = new Map([
+      ["seeking", ordinarySuspend],
+      ["seeked", resumeAudio],
+      ["loadstart", sourceSuspend],
+      ["emptied", sourceSuspend],
+      ["loadedmetadata", resumeAudio],
+      ["pause", ordinarySuspend],
+      ["ended", ordinarySuspend],
+      ["waiting", ordinarySuspend],
+      ["play", resumeAudio],
+      ["playing", resumeAudio],
+      ["canplay", resumeAudio],
+      ["enterpictureinpicture", ordinarySuspend],
+      ["leavepictureinpicture", resumeAudio],
+    ]);
+    this._onSeeking = ordinarySuspend;
+    this._onPlay = resumeAudio;
+    this._mediaBoundaryVideo = video;
+    this._mediaBoundaryHandlers = handlers;
+    for (const [type, listener] of handlers) video.addEventListener(type, listener);
+  }
+
+  _removeMediaBoundaryListeners() {
+    const video = this._mediaBoundaryVideo;
+    if (video && this._mediaBoundaryHandlers) {
+      for (const [type, listener] of this._mediaBoundaryHandlers) {
+        try { video.removeEventListener(type, listener); } catch {}
+      }
+    }
+    this._mediaBoundaryVideo = null;
+    this._mediaBoundaryHandlers = null;
+    this._setAudioBlocked("media-boundary", false);
+    this._onSeeking = null;
+    this._onPlay = null;
+  }
+
+  _relinquishPresentation({ preserveAudioContext = true, retireCapture = false } = {}) {
+    this._removeTakeoverListeners();
+    this._teardownAudioDelay({
+      preserveContext: preserveAudioContext,
+      preserveCapture: !retireCapture,
+      retireCapture,
+    });
+    // In inverted mode the normal renderer deliberately pauses while the
+    // interpolator drives its presentation surface. Temporarily hand that surface
+    // back whenever interpolation cannot present, otherwise fullscreen, PiP,
+    // buffering, or audio recovery would leave the last frame frozen indefinitely.
+    if (this._chainInverted && !this._chainPresentationSuspended) {
+      try { this.chain?.setInverted?.(false); } catch {}
+      this._chainPresentationSuspended = true;
+    }
+    try { this.overlay?.remove?.(); } catch {}
+    this._takeoverActive = false;
+  }
+
+  _productionEligible() {
+    if (this._audioBlocks.size > 0) {
+      if (this._takeoverActive || this._audioRoute || this._audioPreparation?.stagedTransaction ||
+          (this._chainInverted && !this._chainPresentationSuspended)) {
+        this._relinquishPresentation();
+      }
+      return false;
+    }
+    const presentable = this._sourceCanPresent() && !!this._overlayMountTarget();
+    if (!presentable && (this._takeoverActive || this._audioRoute ||
+        this._audioPreparation?.stagedTransaction ||
+        (this._chainInverted && !this._chainPresentationSuspended))) {
+      this._relinquishPresentation();
+    }
+    return presentable;
+  }
+
+  _stageTakeover(generation) {
+    if (!this._isCurrent(generation) || !this.video || !this.overlay) return null;
+    if (this._audioBoundaryPending) return null;
+    if (!this._sourceCanPresent()) {
+      this._relinquishPresentation();
+      return null;
+    }
+    const mount = this._overlayMountTarget();
+    if (!mount) {
+      this._relinquishPresentation();
+      return null;
+    }
+    if (this._takeoverActive) {
+      if (this._audioRoute) {
+        if (this._audioRoute.silent) {
+          if (!this._silentAudioRouteValid(this._audioRoute)) {
+            this._relinquishPresentation();
+            return null;
+          }
+        } else {
+          const route = this._audioRoute;
+          let ownsMute = false;
+          try { ownsMute = route.muteOwned && route.muteAccess.read() === true; } catch {}
+          if (!this._audioSourceMatches(route.snapshot, this.video)) {
+            this._relinquishPresentation({ preserveAudioContext: true, retireCapture: true });
+            return null;
+          }
+          const sinkMatches = this._audioSinkMatches(route.preparation, this.video);
+          if (!sinkMatches) {
+            this._relinquishPresentation({ preserveAudioContext: false });
+            return null;
+          }
+          if (route.context.state !== "running") {
+            if (route.context.state === "closed") {
+              this._failAudioPreparation(route.preparation, new Error("AudioContext closed during takeover"));
+            }
+            this._relinquishPresentation({ preserveAudioContext: route.context.state !== "closed" });
+            return null;
+          }
+          if (route.session !== this._audioCaptureSession ||
+              !this._capturedAudioTracksHealthy(route.session) ||
+              !this._capturedAudioTracksHealthy(route) || !this._syncOwnedAudioTracks(route)) {
+            if (route.session === this._audioCaptureSession) {
+              this._handleAudioCaptureChange(route.session);
+            } else {
+              this._relinquishPresentation({ preserveAudioContext: true });
+            }
+            return null;
+          }
+          if (!ownsMute) {
+            this._setAudioGain(route, 0);
+            this._relinquishPresentation({ preserveAudioContext: false });
+            this._handlePipelineFailure(
+              generation,
+              new Error("page reclaimed media mute ownership"),
+              "audio takeover",
+              { terminal: true },
+            );
+            return null;
+          }
+        }
+      }
+      return { mount, audioTransaction: null };
+    }
+    const audioTransaction = this._stageAudioDelay(this.video, generation);
+    if (!audioTransaction) return null;
+    if (!audioTransaction.bypass && !audioTransaction.silent &&
+        audioTransaction.context.state !== "running") {
+      audioTransaction.rollback();
+      return null;
+    }
+    if (this._chainInverted && this._chainPresentationSuspended) {
+      try {
+        if (this.chain?.setInverted?.(true) === false) {
+          audioTransaction.rollback?.();
+          return null;
+        }
+        this._chainPresentationSuspended = false;
+      } catch {
+        audioTransaction.rollback?.();
+        return null;
+      }
+    }
+    return { mount, audioTransaction };
+  }
+
+  _activateTakeover(generation, staged = null) {
+    let takeover = staged;
+    if (!takeover) {
+      try { takeover = this._stageTakeover(generation); }
+      catch (error) {
+        this._handlePipelineFailure(generation, error, "display takeover", { terminal: true });
+        return false;
+      }
+    }
+    const audioTransaction = takeover?.audioTransaction;
+    if (!takeover || !this._isCurrent(generation) || !this.video || !this.overlay) {
+      audioTransaction?.rollback?.();
+      return false;
+    }
+    try {
+      const mount = takeover.mount;
+      if (!this._chainInverted) {
+        if (!this.overlay.isConnected || this.overlay.parentNode !== mount) mount.appendChild(this.overlay);
+        if (!this.overlay.isConnected) throw new Error("interpolation overlay did not connect to its mount");
+      }
+      this.position();
+      if (!this._takeoverActive) {
+        // The source remains visible beneath the opaque output canvas. If the
+        // overlay is removed, becomes fullscreen-ineligible, or fails to mount,
+        // presentation therefore degrades to the site's original video rather
+        // than a black surface. Only audio is transactionally rerouted.
+        if (!this._commitAudioDelay(audioTransaction, generation)) {
+          const preserveAudioContext = audioTransaction?.context?.state === "running" &&
+            this._audioSinkMatches(audioTransaction?.route?.preparation, this.video);
+          this._relinquishPresentation({ preserveAudioContext });
+          return false;
+        }
+        this._onScroll = () => this.position();
+        this._onFullscreen = () => {
+          if (!this._isCurrent(generation) || this._chainInverted) return;
+          const mount = this._overlayMountTarget();
+          if (!mount) {
+            this._relinquishPresentation();
+            return;
+          }
+          try {
+            if (!this.overlay?.isConnected || this.overlay.parentNode !== mount) mount.appendChild(this.overlay);
+            this.position();
+          } catch { this._relinquishPresentation(); }
+        };
+        window.addEventListener("scroll", this._onScroll, { passive: true, capture: true });
+        window.addEventListener("resize", this._onScroll, { passive: true });
+        document.addEventListener("fullscreenchange", this._onFullscreen);
+        this._takeoverActive = true;
+      }
+      return true;
+    } catch (error) {
+      audioTransaction?.rollback?.();
+      this._removeTakeoverListeners();
+      this._teardownAudioDelay({ retireCapture: true });
+      this._takeoverActive = false;
+      try { this.overlay.remove(); } catch {}
+      this._handlePipelineFailure(generation, error, "display takeover", { terminal: true });
+      return false;
+    }
+  }
+
+  refreshLayout() {
+    if (!this._takeoverActive) return false;
+    return this._activateTakeover(this._lifecycleGen);
   }
 
   _scheduleDimsRestart(generation, width, height) {
@@ -571,9 +2016,10 @@ export class Interpolator {
     // presentation textures may be released shortly. Drop this source tick and
     // retry without advancing curTex; only a request that cannot ever fit is
     // terminal for the current interpolation lifecycle.
-    if (error.details?.transient) return false;
+    if (error.details?.transient) return true;
     if (this._gpuResourceStopQueued) return true;
     this._gpuResourceStopQueued = true;
+    this._notifyTerminalFailure(generation, "GPU resource limit", error);
     this.warn(`interp: GPU resource limit reached; restoring original video (${error.message})`);
     Promise.resolve().then(() => {
       if (this._isCurrent(generation)) this.stop();
@@ -622,8 +2068,9 @@ export class Interpolator {
     return true;
   }
 
-  _commitCpuTweenBitmap(generation, cur, tweenBitmap, timestamp, stats) {
-    if (!this._isCurrent(generation)) {
+  _commitCpuTweenBitmap(generation, cur, tweenBitmap, timestamp, stats, flushGeneration = null) {
+    if (!this._isCurrent(generation) ||
+        (flushGeneration != null && (this._flushGen || 0) !== flushGeneration)) {
       // The tween bitmap and both copies of the current frame still belong to the
       // stale async continuation. Close all three before the caller can enqueue a
       // frame or replace its prevFrame lookahead reference.
@@ -642,7 +2089,23 @@ export class Interpolator {
   // Idempotent public lifecycle entry point. Concurrent callers share one start;
   // a start requested after stop waits for the cancelled start to unwind before
   // creating another pipeline, preventing two module initializers from racing.
-  start() {
+  start(sourceVideo) {
+    if (arguments.length > 0) {
+      let requestedVideo = sourceVideo;
+      try { if (typeof sourceVideo === "function") requestedVideo = sourceVideo(); }
+      catch (error) {
+        this.warn("interpolation: source accessor failed:", error.message);
+        return Promise.resolve({ ok: false, reason: "source-failed" });
+      }
+      // A caller must stop before transferring a live instance to another video.
+      // Refusing the ambiguous request keeps the active lifecycle and its source
+      // identity aligned; the requested source is not persisted on failure.
+      if (this._state !== "idle" && this.video && requestedVideo !== this.video) {
+        return Promise.resolve({ ok: false, reason: "source-active" });
+      }
+      this._sourceProvided = true;
+      this._sourceVideo = sourceVideo;
+    }
     if (this._state === "running" && this.running) return Promise.resolve({ ok: true });
     if (this._state === "starting" && this._startPromise) return this._startPromise;
     if (this._startPromise) {
@@ -767,13 +2230,20 @@ export class Interpolator {
       this.warn("interpolation: ImageBitmap/OffscreenCanvas not available in this browser");
       return { ok: false, reason: "unsupported" };
     }
-    const video = this.findVideo();
+    const video = this._resolveSourceVideo();
     if (!video) return { ok: false, reason: "no video" };
     this.video = video;
+    this._takeoverActive = false;
+    this._chainPresentationSuspended = false;
+    this._clearAudioBlocks();
+    this._productionWasEligible = true;
+    this._pipelineFailureStopQueued = false;
+    this._pipelineFailureStreaks = Object.create(null);
     this._interpMode = this._forceBlend ? "blend" : "rife";
     this._fallbackArmed = true; this._srcFrameBase = null;
     this._tweenFailStreak = 0; this._prevTs = null;
     this._lastVW = null; this._lastVH = null;
+    this._tapStaleSince = 0; this._tapStaleLogAt = 0; this._invUpWarned = false;
 
     // Frame source: grab from the <video> ELEMENT directly via drawImage, driven
     // by requestVideoFrameCallback — the SAME kind of clean video-element read the
@@ -824,7 +2294,7 @@ export class Interpolator {
       }
       // CHAIN RULES: blend can join the upscaler's device directly. RIFE owns the
       // ORT device, so the upscaler adopts that device before textures are shared.
-      const chainDev = (this.chain && this.chain.available && this.chain.available())
+      const chainDev = (this._chainOwnsVideo(video) && this.chain.available && this.chain.available())
         ? (this.chain.device ? this.chain.device() : null) : null;
       if (this._forceBlend) {
         // standalone blend (no model download, no ORT session), chained if upscaling
@@ -892,7 +2362,12 @@ export class Interpolator {
               catch (e) { this.warn("interp: old ORT device guard release failed:", e.message); }
               if (!this._isCurrent(generation)) return false;
             }
-            const wantInvert = adopted && this.chain.invert && this.chain.invert()
+            // Inversion is an explicit capability, not merely a saved preference.
+            // The renderer must affirm that it owns this exact video and has an
+            // active upscale path; otherwise hiding both surfaces can black out a
+            // passthrough/standalone run when upscaleTex inevitably rejects.
+            const wantInvert = adopted && this._chainCanInvert(video)
+              && this.chain.invert && this.chain.invert()
               && this.chain.setInverted && this.chain.upscaleTex;
             if (wantInvert) {
               // #4 INVERTED CHAIN: RIFE runs on RAW video frames (source res —
@@ -966,9 +2441,19 @@ export class Interpolator {
 
     // Process one grabbed real frame: { bmp, ts, w, h }. Produces a RIFE tween
     // between the previous and current frame, then queues both.
-    const processFrame = async (cur) => {
-        if (!this._isCurrent(generation)) {
-          try { cur.bmp?.close?.(); cur.prevBmp?.close?.(); } catch {}
+    const processFrame = async (cur, frameFlushGeneration = this._flushGen || 0) => {
+      const frameCurrent = () => this._isCurrent(generation) &&
+        (this._flushGen || 0) === frameFlushGeneration;
+      const closeCurrent = () => {
+        for (const key of ["bmp", "prevBmp"]) {
+          try { cur[key]?.close?.(); } catch {}
+          cur[key] = null;
+        }
+      };
+      let prior = null;
+      try {
+        if (!frameCurrent()) {
+          closeCurrent();
           return;
         }
         stats.framesIn++;
@@ -984,21 +2469,28 @@ export class Interpolator {
         }
         lastFrameWall = now;
 
-        if (prevFrame) {
+        // Claim the lookahead locally before any inference await. A concurrent
+        // seek/source flush can then clear the shared slot without closing a
+        // bitmap still in use by this frame; this continuation owns `prior`.
+        prior = prevFrame;
+        prevFrame = null;
+        if (prior) {
           const w = cur.w, h = cur.h;
-          const tMid = Math.round((prevFrame.ts + cur.ts) / 2);
+          const tMid = Math.round((prior.ts + cur.ts) / 2);
           let tweenCanvas = null;
           if (rife && rife.isReady()) {
             const t0 = performance.now();
             const scale = this._resolveScale();
-            const out = await rife.interpolate(prevFrame.bmp, cur.bmp, w, h, 0.5, scale);
-            if (!this._isCurrent(generation)) {
-              try { cur.bmp?.close?.(); cur.prevBmp?.close?.(); } catch {}
+            const out = await rife.interpolate(prior.bmp, cur.bmp, w, h, 0.5, scale);
+            if (!frameCurrent()) {
+              try { prior.bmp?.close?.(); } catch {}
+              prior = null;
+              closeCurrent();
               return;
             }
             stats.lastInferMs = performance.now() - t0;
             if (stats.lastInferMs > (stats.maxInferMs || 0)) stats.maxInferMs = stats.lastInferMs;
-            this._adaptScale(stats.lastInferMs, prevFrame.ts, cur.ts);
+            this._adaptScale(stats.lastInferMs, prior.ts, cur.ts);
             if (out) {
               if (!this._tw || this._tw.width !== w || this._tw.height !== h) {
                 this._tw = new OffscreenCanvas(w, h); this._twctx = this._tw.getContext("2d");
@@ -1007,22 +2499,37 @@ export class Interpolator {
               tweenCanvas = this._tw;
             }
           }
-          if (!tweenCanvas) tweenCanvas = makeBlend(prevFrame.bmp, cur.bmp, w, h);
+          if (!tweenCanvas) tweenCanvas = makeBlend(prior.bmp, cur.bmp, w, h);
           let tweenBitmap = null;
           try {
             tweenBitmap = await createImageBitmap(tweenCanvas, 0, 0, w, h);
           } catch {}
-          if (!this._commitCpuTweenBitmap(generation, cur, tweenBitmap, tMid, stats)) return;
+          if (!this._commitCpuTweenBitmap(
+            generation, cur, tweenBitmap, tMid, stats, frameFlushGeneration,
+          )) {
+            cur.bmp = null;
+            cur.prevBmp = null;
+            try { prior.bmp?.close?.(); } catch {}
+            prior = null;
+            return;
+          }
           // done with the previous frame's bitmap
-          prevFrame.bmp.close && prevFrame.bmp.close();
+          prior.bmp.close && prior.bmp.close();
+          prior = null;
+        }
+        if (!frameCurrent()) {
+          closeCurrent();
+          return;
         }
         // queue the current real frame (already a clean RGB bitmap). Keep it as
         // prev for the next tween; the scheduler owns/closes the queued copy, so
         // enqueue a clone-equivalent: we enqueue cur.bmp and keep a separate grab
         // for prev (handled by the grab loop passing fresh bitmaps each time).
         this._enqueue(cur.bmp, cur.ts);
+        cur.bmp = null;
         stats.framesOut++;
         prevFrame = { bmp: cur.prevBmp, ts: cur.ts }; // prevBmp = second copy for lookahead
+        cur.prevBmp = null;
 
         if (now - stats.lastReport > 2000) {
           const elapsed = (now - stats.started) / 1000;
@@ -1032,6 +2539,11 @@ export class Interpolator {
           log(`interp: in=${fpsIn.toFixed(1)}fps out=${fpsOut.toFixed(1)}fps ${mode} maxGap=${stats.maxGapMs.toFixed(0)}ms stutters=${stats.stutters || 0}`);
           stats.lastReport = now;
         }
+      } catch (error) {
+        try { prior?.bmp?.close?.(); } catch {}
+        closeCurrent();
+        throw error;
+      }
     };
 
     // 5. Grab loop: on each presented video frame, draw the <video> element to a
@@ -1047,47 +2559,53 @@ export class Interpolator {
       // the end — after `await` on RIFE inference — so source frames arriving during
       // a 30-45ms inference were never observed (dropped frames while the GPU sat
       // mostly idle: latency-serialization, not compute limits).
-      this._rvfcId = video.requestVideoFrameCallback(grabLoop);
+      try {
+        this._rvfcId = video.requestVideoFrameCallback(grabLoop);
+      } catch (error) {
+        this._handlePipelineFailure(generation, error, "frame callback", { terminal: true });
+        return;
+      }
       // Wait until the pipeline decision is finalized (GPU present vs CPU) before
       // processing ANY frame — otherwise early CPU frames grab a 2D context and block
       // the WebGPU-present config (the canvas can't have both).
       if (!this._pipelineReady) return;
+      const productionEligible = this._productionEligible();
+      if (!productionEligible) {
+        if (this._productionWasEligible) this._flush?.();
+        this._productionWasEligible = false;
+        return;
+      }
+      if (!this._productionWasEligible) this._flush?.();
+      this._productionWasEligible = true;
       try {
         const vw = video.videoWidth, vh = video.videoHeight;
         if (vw && vh) {
+          // Decoder geometry is a source boundary for both GPU and CPU paths.
+          // Flush before capturing the first new-size frame so no retained old
+          // lookahead can blend across adaptive-stream replacements.
+          if (this._lastVW !== vw || this._lastVH !== vh) {
+            const firstSight = this._lastVW == null;
+            this._lastVW = vw; this._lastVH = vh;
+            if (!firstSight) {
+              if (this._chainInverted) {
+                this._scheduleDimsRestart(generation, vw, vh);
+                return;
+              }
+              log(`interp: source resized to ${vw}x${vh} — flushing old-size scheduler state`);
+              this._flush && this._flush();
+            }
+            if (!this._forceBlend && this._rifeMod?.gpuRifeCapable?.()) {
+              this._interpMode = "rife"; this._fallbackArmed = true;
+              this._srcFrameBase = null;
+            }
+          }
+          const frameFlushGeneration = this._flushGen || 0;
           // GPU-RESIDENT PATH: capture, pack, inference, composite, queue, and
           // presentation all stay on the shared device. It is selected only when
           // the WebGPU canvas was configured successfully; otherwise the CPU path
           // below performs one clean grab and bitmap presentation.
           if (this._gpuPresent && this._rifeMod && this._rifeMod.gpuActive()) {
             const ts = Math.round((meta && meta.mediaTime != null ? meta.mediaTime : video.currentTime) * 1e6);
-            // A decoder resolution change invalidates every queued/retained pair,
-            // regardless of the selected interpolation engine. Flush before the
-            // first new-size capture so an old _pipePrev/_pendingPair can never be
-            // paired with the new GpuInterp allocation generation.
-            if (this._lastVW !== vw || this._lastVH !== vh) {
-              const firstSight = this._lastVW == null;
-              this._lastVW = vw; this._lastVH = vh;
-              if (!firstSight) {
-                // INVERTED: a mid-play source-resolution switch (YouTube
-                // reattachOnConstraint) must NOT be ridden hot — queued old-dims
-                // textures would interleave with new-dims frames through shared
-                // pool/luma/model allocations (the 1080p storm). Clean restart via
-                // the proven stop→start path; everything re-derives coherently.
-                if (this._chainInverted) {
-                  this._scheduleDimsRestart(generation, vw, vh);
-                  return;
-                }
-                log(`interp: source resized to ${vw}x${vh} — flushing old-size scheduler state`);
-                this._flush && this._flush();
-              }
-              // A new cost profile should retry RIFE and re-measure unless the
-              // user explicitly selected blend.
-              if (!this._forceBlend && this._rifeMod.gpuRifeCapable && this._rifeMod.gpuRifeCapable()) {
-                this._interpMode = "rife"; this._fallbackArmed = true;
-                this._srcFrameBase = null;
-              }
-            }
             // Adaptive fallback evaluation (~every 2s): compare output frames to the
             // SOURCE frames the browser actually presented (meta.presentedFrames
             // captures the ones we drop under load). If RIFE isn't buying ≥50% over
@@ -1120,6 +2638,7 @@ export class Interpolator {
                 const tap = this.chain.info();
                 if (tap && tap.tex && tap.frame !== this._lastTapFrame) {
                   this._lastTapFrame = tap.frame;
+                  this._recordPipelineSuccess("chain tap");
                   // tap size changed (e.g. upscale scale switch): flush the queue so
                   // old-size frames never present interleaved with new-size ones
                   if (this._lastTapW && (this._lastTapW !== tap.w || this._lastTapH !== tap.h)) {
@@ -1136,6 +2655,13 @@ export class Interpolator {
                     this._tapStaleLogAt = now;
                     this.warn(`interp WATCHDOG: chain tap stale ${(now - this._tapStaleSince).toFixed(0)}ms while video playing (upscaler not producing? tap=${tap ? tap.frame : "null"})`);
                   }
+                  if (now - this._tapStaleSince > 2000 && !video.paused) {
+                    this._handlePipelineFailure(
+                      generation,
+                      new Error("upscaler stopped producing source frames"),
+                      "chain tap",
+                    );
+                  }
                   return; // already re-registered at top
                 }
                 this._tapStaleSince = 0;
@@ -1143,11 +2669,15 @@ export class Interpolator {
                 realTex = this._rifeMod.gpuCapture(video);
               }
               // A failed capture did not update curTex. Advancing or counting it
-              // would pair a stale/blank texture with the next frame. Resource
-              // limits are terminal for this resolution: stop once so the hidden
-              // source video is restored instead of leaving a black overlay.
+              // would pair a stale/blank texture with the next frame. Temporary
+              // pool/fence pressure drops only this tick; a request that can never
+              // fit is terminal so presentation returns fully to the source video.
               if (!realTex) {
-                this._handleGpuCaptureFailure(generation);
+                if (!this._handleGpuCaptureFailure(generation)) {
+                  const captureError = this._rifeMod?.gpuLastCaptureError?.()
+                    || new Error("GPU capture returned no texture");
+                  this._handlePipelineFailure(generation, captureError, "capture");
+                }
                 return;
               }
               if (!this._rifeMod.gpuHasPrev()) { this._rifeMod.gpuAdvance(); this._enqueueTex(realTex, ts); this._prevTs = ts; stats.framesIn++; }
@@ -1200,6 +2730,7 @@ export class Interpolator {
                 this._rifeMod.gpuAdvance();
                 this._prevTs = ts; stats.framesIn++;
               }
+              this._recordPipelineSuccess("capture");
             }
           } else {
           // CPU path awaits (readback, createImageBitmap): with rvfc re-registered at
@@ -1216,7 +2747,7 @@ export class Interpolator {
           const gpuGrab = this._gpuGrab;
           if (gpuGrab && gpuGrab.ready) {
             const rgba = await gpuGrab.grab(video);
-            if (!this._isCurrent(generation)) return;
+            if (!this._isCurrent(generation) || (this._flushGen || 0) !== frameFlushGeneration) return;
             if (rgba) {
               grabCtx.putImageData(new ImageData(rgba.data, rgba.width, rgba.height), 0, 0);
               got = true;
@@ -1227,17 +2758,24 @@ export class Interpolator {
             createImageBitmap(grabCanvas),
             createImageBitmap(grabCanvas),
           ]);
-          if (!this._isCurrent(generation)) { bmp.close?.(); prevBmp.close?.(); return; }
+          if (!this._isCurrent(generation) || (this._flushGen || 0) !== frameFlushGeneration) {
+            bmp.close?.(); prevBmp.close?.(); return;
+          }
           const ts = Math.round((meta && meta.mediaTime != null ? meta.mediaTime : video.currentTime) * 1e6);
-          await processFrame({ bmp, prevBmp, ts, w: vw, h: vh });
+          await processFrame({ bmp, prevBmp, ts, w: vw, h: vh }, frameFlushGeneration);
+          if (this._isCurrent(generation) && (this._flushGen || 0) === frameFlushGeneration) {
+            this._recordPipelineSuccess("capture");
+          }
           } finally { cpuTickBusy = false; }
           }
         }
       } catch (e) {
-        if (!this._stopped) this.warn("interp grab error:", e.message);
+        if (!this._stopped) {
+          this.warn("interp grab error:", e.message);
+          this._handlePipelineFailure(generation, e, "capture");
+        }
       }
     };
-    this._rvfcId = video.requestVideoFrameCallback(grabLoop);
 
     // 6. present on a CANVAS we fully control. Every queued bitmap (real or tween)
     //    is drawn with the identical drawImage call, so there is exactly one pixel
@@ -1254,25 +2792,9 @@ export class Interpolator {
     Object.assign(this.overlay.style, {
       position: "fixed", pointerEvents: "none", zIndex: "2147483646", background: "#000",
     });
-    document.body.appendChild(this.overlay);
-    // Context selection is deferred: the .then() above claims a WebGPU context for
-    // present if the GPU path activates. A canvas can't have both context types, so
-    // we must NOT grab 2D synchronously (it would block WebGPU). The present loop
-    // lazily grabs a 2D context if, once RIFE has settled, GPU-present isn't active.
-    this.position();
-    this._present(); // start the rAF loop (no-ops until a context is ready)
-
-    // hide the original (visibility keeps it decoding + audio playing)
-    this._origVisibility = video.style.visibility;
-    video.style.visibility = "hidden";
-
-    // route audio through a DelayNode so it can be held back to match the video
-    // buffer latency (keeps A/V in sync; adaptive to measured video lag).
-    this._setupAudioDelay(video);
-
-    this._onScroll = () => this.position();
-    window.addEventListener("scroll", this._onScroll, { passive: true, capture: true });
-    window.addEventListener("resize", this._onScroll, { passive: true });
+    // Context selection is deferred: pipeline initialization claims WebGPU when
+    // possible. Keep this canvas detached, and leave source visibility/audio alone,
+    // until _present() has produced a real output and commits the takeover.
 
     // Seeking, or playing after a pause, makes the source clock jump relative to
     // our buffered frames — a legitimate latency discontinuity. Flush the stale
@@ -1287,26 +2809,38 @@ export class Interpolator {
       this._discontinuity = true;
       this._reanchor = true;       // presentation anchor is stale after a discontinuity
       this._flushGen = (this._flushGen || 0) + 1; // invalidate in-flight pipelined tweens
+      try { this._closeCpuPrev?.(); } catch {}
+      try { this._rifeMod?.gpuResetFrames?.(); } catch {}
       if (this._pipePrev) { try { this._rifeMod && this._rifeMod.gpuRelease(this._pipePrev.tex); } catch {} this._pipePrev = null; }
       if (this._pendingPair) { try { this._rifeMod.gpuRelease(this._pendingPair.prev.tex); this._rifeMod.gpuRelease(this._pendingPair.cur.tex); } catch {} this._pendingPair = null; }
       this._lastPresentedTs = null;
+      this._prevTs = null;
+      this._lastEnqTs = null;
+      this._targetInterval = 0;
+      lastFrameWall = 0;
       this._videoLatencyMs = null; // force a fresh measurement
     };
+    // Media discontinuities belong to the capture lifecycle, not the optional
+    // canvas/audio takeover. They must flush retained history while startup is
+    // pending and while fullscreen/visibility temporarily restores presentation
+    // to the source element.
+    this._installMediaBoundaryListeners(video, generation);
     // Re-assert persisted prefs on EVERY start: whatever restart path brought us
     // here (watchdog, video swap, toggle restart), the source of truth is main's
     // per-site prefs, not this instance's last life.
     if (this.chain && this.chain.ladder) this._ladderOn = !!this.chain.ladder();
-    this._onSeeking = () => this._flush();
-    this._onPlay = () => this._flush();
-    video.addEventListener("seeking", this._onSeeking);
-    video.addEventListener("seeked", this._onSeeking);
-    video.addEventListener("play", this._onPlay);
-    video.addEventListener("playing", this._onPlay);
 
     const pipelineOk = await pipelinePromise;
     if (this._pipelineInitPromise === pipelinePromise) this._pipelineInitPromise = null;
     if (!this._isCurrent(generation)) return { ok: false, reason: "cancelled" };
     if (!pipelineOk) return { ok: false, reason: "pipeline-unavailable" };
+    try {
+      this._rvfcId = video.requestVideoFrameCallback(grabLoop);
+    } catch (error) {
+      this.warn("interpolation: requestVideoFrameCallback scheduling failed:", error.message);
+      return { ok: false, reason: "rvfc-schedule-failed" };
+    }
+    this._present(generation);
     this.log(`interpolation started (${this._forceBlend ? "blend" : this._rifeModelKey || "default RIFE"})`);
     return { ok: true };
   }
@@ -1328,6 +2862,7 @@ export class Interpolator {
     // Reset even for an already-idle instance so it can never suppress a later run.
     this._dimsRestarting = false;
     this._gpuResourceStopQueued = false;
+    this._pipelineFailureStopQueued = false;
     const active = this._state !== "idle" || this.running || this.video || this.overlay || this.queue;
     if (!active) return { ok: true, stopped: false };
     ++this._lifecycleGen; // invalidate module imports, inference continuations, and rvfc
@@ -1343,17 +2878,13 @@ export class Interpolator {
     }
     this._rvfcId = null;
     if (this._raf) { cancelAnimationFrame(this._raf); this._raf = null; }
-    if (this._onScroll) {
-      window.removeEventListener("scroll", this._onScroll, { capture: true });
-      window.removeEventListener("resize", this._onScroll);
-    }
-    if (this.video && this._onSeeking) {
-      this.video.removeEventListener("seeking", this._onSeeking);
-      this.video.removeEventListener("seeked", this._onSeeking);
-      this.video.removeEventListener("play", this._onPlay);
-      this.video.removeEventListener("playing", this._onPlay);
-    }
-    if (this.video) this.video.style.visibility = this._origVisibility || "";
+    this._removeTakeoverListeners();
+    this._removeMediaBoundaryListeners();
+    // Restore native audio before potentially expensive GPU draining/destruction.
+    // The source stays a valid fallback throughout the remainder of teardown.
+    this._teardownAudioDelay({ retireCapture: true });
+    this._clearAudioBlocks();
+    this._takeoverActive = false;
     try { this._gpuGrab && this._gpuGrab.destroy(); } catch {}
     this._gpuGrab = null;
     // drain queued frames (release textures / close bitmaps) BEFORE freeing the GPU
@@ -1373,20 +2904,22 @@ export class Interpolator {
     if (this._chainInverted) {
       try { this.chain && this.chain.setInverted && this.chain.setInverted(false); } catch {}
       this._chainInverted = false;
+      this._chainPresentationSuspended = false;
       if (this.overlay) this.overlay.style.display = "";
     }
     this._chainActive = false; this._lastTapFrame = null; this._lastTapW = 0; this._lastTapH = 0;
+    this._tapStaleSince = 0; this._tapStaleLogAt = 0; this._invUpWarned = false;
     this._inferBusy = false; this._flushGen = (this._flushGen || 0) + 1;
     this._gpuInterpActive = false; this._gpuPresent = false;
     this._octx = null;            // stale 2D ref would block WebGPU-present on restart
     this._pipelineReady = false;
-    this._teardownAudioDelay();
+    this._pipelineFailureStreaks = Object.create(null);
     this._lastEnqTs = null; this._targetInterval = 0;
     if (this.overlay) { this.overlay.remove(); this.overlay = null; }
     this.processor = null;
     this.abort = null;
     this.video = null;
-    this._onScroll = null; this._onSeeking = null; this._onPlay = null;
+    this._onScroll = null; this._onFullscreen = null; this._onSeeking = null; this._onPlay = null;
     this.log("interpolation stopped");
     return { ok: true, stopped: true };
   }
