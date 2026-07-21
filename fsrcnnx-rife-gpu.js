@@ -1,26 +1,20 @@
 // fsrcnnx-rife-gpu.js — GPU-resident interpolation (GpuInterp).
 //
-// Eliminates the expensive per-frame GRAB readback (the mapAsync stall that
-// dominates at full res, ~28ms). Pixels stay on the GPU for capture, packing,
-// inference, and the static-passthrough composite; only the FINAL composited tween
-// is read back once (small, cheap) as ImageData so the existing timestamp-accurate
-// scheduler can present it unchanged. This keeps the proven presentation/audio-sync
-// path while removing the grab-readback stall + the CPU tensor packing.
+// Pixels stay on the GPU for capture, packing, inference, static-passthrough
+// compositing, queued scheduling, and WebGPU-canvas presentation. There is no
+// per-frame readback on this path.
 //
 // Flow per frame (grab loop calls captureCurrent then interpolate, then advance):
 //   captureCurrent(video): importExternalTexture(current) → blit into curTex
 //     (persistent). prevTex holds last frame (external textures are transient, so
 //     the previous frame MUST be a persistent texture — hence the ping-pong).
 //   interpolate(): pack(prevTex,curTex)→NCHW GPU buffer → ORT GPU-tensor infer →
-//     composite+passthrough → rgba8 result → read back once → ImageData.
+//     composite+passthrough → pooled rgba8 result texture.
 //   advance(): ping-pong prev/cur for next tick.
 //
 // DEVICE SHARING: buffers must be on ORT's device (Tensor.fromGpuBuffer). We use
 // ort.env.webgpu.device. If unavailable / GPU tensors unsupported / any step fails,
-// methods return null and the caller uses the CPU interpolate() path. Purely additive.
-//
-// UNVERIFIED here (no GPU/browser). Points most likely to need real-hardware
-// adjustment are tagged [V1]..[V4].
+// methods return null and the caller uses the CPU interpolate() path.
 
 const BLIT_WGSL = `
 @group(0) @binding(0) var samp: sampler;
@@ -153,7 +147,63 @@ export class GpuInterp {
     this._w = 0; this._h = 0; this._padW = 0; this._padH = 0; this._ch = 0;
     this._frames = 0;
     this._pool = []; // recycled result textures for the presentation queue
+    this._allPooledTextures = new Set(); // includes checked-out/in-flight textures
+    this._activeOps = 0;
+    this._idleResolvers = [];
+    this._retirements = new Set();
+    this._destroyRequested = false;
+    this._destroyPromise = null;
+    this._ownsDevice = false;
     this.canvasCtx = null;
+  }
+
+  _trackRetirement(promise) {
+    const tracked = Promise.resolve(promise).catch(() => {});
+    this._retirements.add(tracked);
+    tracked.finally(() => this._retirements.delete(tracked));
+    return tracked;
+  }
+
+  _afterSubmittedWork(callback, device = this.device) {
+    let fence;
+    try { fence = device?.queue?.onSubmittedWorkDone?.() || Promise.resolve(); }
+    catch { fence = Promise.resolve(); }
+    return this._trackRetirement(Promise.resolve(fence).catch(() => {}).then(callback));
+  }
+
+  _retireTensors(inputTensor, outputTensor, device = this.device, keepOutput = !!this.skipOutputDispose) {
+    if (!inputTensor && (!outputTensor || keepOutput)) return;
+    this._afterSubmittedWork(() => {
+      try { inputTensor?.dispose?.(); } catch {}
+      try { if (!keepOutput) outputTensor?.dispose?.(); } catch {}
+    }, device);
+  }
+
+  _retireResources(resources, device = this.device) {
+    const live = resources.filter(Boolean);
+    if (!live.length) return;
+    // A resize can replace buffers/textures while an operation is awaiting
+    // session.run(). That operation has captured the old generation but may not
+    // have submitted its composite command yet. Wait for every such user to
+    // unwind, then fence the captured device before destroying that generation.
+    const retirement = (async () => {
+      await this._whenIdle();
+      try { await device?.queue?.onSubmittedWorkDone?.(); } catch {}
+      for (const resource of live) { try { resource.destroy?.(); } catch {} }
+    })();
+    return this._trackRetirement(retirement);
+  }
+
+  _endOperation() {
+    this._activeOps = Math.max(0, this._activeOps - 1);
+    if (this._activeOps === 0 && this._idleResolvers.length) {
+      for (const resolve of this._idleResolvers.splice(0)) resolve();
+    }
+  }
+
+  _whenIdle() {
+    if (this._activeOps === 0) return Promise.resolve();
+    return new Promise((resolve) => this._idleResolvers.push(resolve));
   }
 
   // init(device, ort): shared-device RIFE mode (device = ORT's device, ort provided).
@@ -168,6 +218,7 @@ export class GpuInterp {
         const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
         if (!adapter) { this.warn("gpu: no adapter"); return false; }
         device = await adapter.requestDevice();
+        this._ownsDevice = true;
         ort = null;
       } else if (!ort || !ort.Tensor || !ort.Tensor.fromGpuBuffer) {
         // device given but no usable ORT tensors: allow blend, disable RIFE infer
@@ -206,19 +257,25 @@ export class GpuInterp {
       });
       this.ready = true;
       return true;
-    } catch (e) { this.warn("gpu init failed:", e.message); this.ready = false; return false; }
+    } catch (e) {
+      this.warn("gpu init failed:", e.message);
+      this.ready = false;
+      try { await this.destroy(); } catch {}
+      return false;
+    }
   }
 
   _size(w, h, padTo, ch, scale = 1) {
+    const device = this.device;
     this._padTo = padTo;
     // FRAME textures: always full source resolution (capture, static-mask
     // comparison, blends, ladder — full-res truth regardless of infer scale).
     if (!(this._w === w && this._h === h && this._ch === ch && this.prevTex)) {
       this._w = w; this._h = h; this._ch = ch;
       const usage = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST;
-      for (const t of [this.prevTex, this.curTex]) { try { t && t.destroy(); } catch {} }
-      this.prevTex = this.device.createTexture({ label: `rife-prev-${w}x${h}`, size: [w, h], format: "rgba8unorm", usage });
-      this.curTex = this.device.createTexture({ label: `rife-cur-${w}x${h}`, size: [w, h], format: "rgba8unorm", usage });
+      this._retireResources([this.prevTex, this.curTex], device);
+      this.prevTex = device.createTexture({ label: `rife-prev-${w}x${h}`, size: [w, h], format: "rgba8unorm", usage });
+      this.curTex = device.createTexture({ label: `rife-cur-${w}x${h}`, size: [w, h], format: "rgba8unorm", usage });
       this._frames = 0; // stale prev after a resize; need 2 fresh captures again
     }
     // INFERENCE dims: scaled. REAL resolution scaling (v0.48.5): the pack pass
@@ -229,8 +286,8 @@ export class GpuInterp {
     const padW = Math.ceil(iw / padTo) * padTo, padH = Math.ceil(ih / padTo) * padTo;
     if (this._padW !== padW || this._padH !== padH || this._chBuf !== ch || !this.inBuf) {
       this._padW = padW; this._padH = padH; this._chBuf = ch;
-      for (const b of [this.inBuf]) { try { b && b.destroy(); } catch {} }
-      this.inBuf = this.device.createBuffer({ label: `rife-inBuf-${padW}x${padH}`, size: ch * padH * padW * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+      this._retireResources([this.inBuf], device);
+      this.inBuf = device.createBuffer({ label: `rife-inBuf-${padW}x${padH}`, size: ch * padH * padW * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
     }
     this._iw = iw; this._ih = ih;
     return { padW, padH };
@@ -253,28 +310,46 @@ export class GpuInterp {
     } catch (e) { this.warn("gpu canvas configure failed:", e.message); return false; }
   }
 
-  _acquireTex() {
-    // recycle a pooled rgba8 texture sized to the current frame; the queue holds it
-    // until presented, then releaseTex() returns it here.
+  _acquireTex(w = this._w, h = this._h, device = this.device) {
+    // Recycle a pooled texture sized to this operation's captured frame. An
+    // inference can finish after capture has resized the instance, so consulting
+    // mutable this._w/_h after session.run() would produce the wrong result size.
     const t = this._pool.pop();
-    if (t && t._w === this._w && t._h === this._h) { t._refs = 1; return t; }
-    if (t) { try { t.destroy(); } catch {} } // stale size
-    const tex = this.device.createTexture({
-      label: `rife-pool-${this._w}x${this._h}`,
-      size: [this._w, this._h], format: "rgba8unorm",
+    if (t && t._w === w && t._h === h && (!t._gpuInterpDevice || t._gpuInterpDevice === device)) {
+      t._refs = 1;
+      return t;
+    }
+    if (t) {
+      this._allPooledTextures.delete(t);
+      this._retireResources([t], t._gpuInterpDevice || device);
+    }
+    const tex = device.createTexture({
+      label: `rife-pool-${w}x${h}`,
+      size: [w, h], format: "rgba8unorm",
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC,
     });
-    tex._w = this._w; tex._h = this._h; tex._refs = 1;
+    tex._w = w; tex._h = h; tex._refs = 1;
+    tex._gpuInterpOwner = this;
+    tex._gpuInterpDevice = device;
+    this._allPooledTextures.add(tex);
     return tex;
   }
   // Refcounted release: an in-flight (pipelined) inference retains its pair while
   // presentation may release the same pooled textures; only recycle at zero refs.
-  retainTex(tex) { if (tex) tex._refs = (tex._refs || 1) + 1; }
+  retainTex(tex) {
+    if (!tex || tex._gpuInterpOwner !== this || this._destroyRequested) return;
+    tex._refs = (Number.isFinite(tex._refs) && tex._refs > 0 ? tex._refs : 1) + 1;
+  }
   releaseTex(tex) {
-    if (!tex) return;
-    tex._refs = (tex._refs || 1) - 1;
+    if (!tex || tex._gpuInterpOwner !== this || !Number.isFinite(tex._refs) || tex._refs <= 0) return;
+    tex._refs--;
     if (tex._refs > 0) return;
-    if (this._pool.length < 64) this._pool.push(tex); else { try { tex.destroy(); } catch {} }
+    if (this._destroyRequested) return;
+    if (this._pool.length < 64) this._pool.push(tex);
+    else {
+      this._allPooledTextures.delete(tex);
+      this._retireResources([tex], tex._gpuInterpDevice || this.device);
+    }
   }
 
   // Capture current video → a POOLED texture (returned, for the queue) and mirror
@@ -285,10 +360,11 @@ export class GpuInterp {
 
   captureToPooled(video, padTo, ch) {
     if (!this.ready) return null;
+    let pooled = null;
     try {
       const w = video.videoWidth, h = video.videoHeight;
       this._size(w, h, padTo || 8, ch || 7, this._scale || 1);
-      const pooled = this._acquireTex();
+      pooled = this._acquireTex();
       const ext = this.device.importExternalTexture({ source: video });
       const bind = this.device.createBindGroup({
         layout: this.blitPipe.getBindGroupLayout(0),
@@ -302,7 +378,11 @@ export class GpuInterp {
       this.device.queue.submit([enc.finish()]);
       this._frames = (this._frames || 0) + 1;
       return pooled;
-    } catch (e) { this.warn("gpu captureToPooled failed:", e.message); return null; }
+    } catch (e) {
+      if (pooled) this.releaseTex(pooled);
+      this.warn("gpu captureToPooled failed:", e.message);
+      return null;
+    }
   }
 
   // Chain capture: same as captureToPooled but the source is a SAME-DEVICE texture
@@ -310,10 +390,11 @@ export class GpuInterp {
   // any canvas format → rgba8unorm) and mirrors into curTex for tweening.
   captureTexToPooled(srcTex, padTo, ch) {
     if (!this.ready || !srcTex) return null;
+    let pooled = null;
     try {
       const w = srcTex.width, h = srcTex.height;
       this._size(w, h, padTo || 8, ch || 7, this._scale || 1);
-      const pooled = this._acquireTex();
+      pooled = this._acquireTex();
       const bind = this.device.createBindGroup({
         layout: this.blit2dPipe.getBindGroupLayout(0),
         entries: [{ binding: 0, resource: this.sampler }, { binding: 1, resource: srcTex.createView() }],
@@ -325,7 +406,11 @@ export class GpuInterp {
       this.device.queue.submit([enc.finish()]);
       this._frames = (this._frames || 0) + 1;
       return pooled;
-    } catch (e) { this.warn("gpu captureTexToPooled failed:", e.message); return null; }
+    } catch (e) {
+      if (pooled) this.releaseTex(pooled);
+      this.warn("gpu captureTexToPooled failed:", e.message);
+      return null;
+    }
   }
 
   // Run pack→infer→composite writing into a POOLED result texture (returned). No
@@ -335,21 +420,56 @@ export class GpuInterp {
   // using them here packed/composited a mis-sized region (zoomed-corner tweens
   // alternating with full-size real frames — Aaron's shrink/expand jitter).
   async interpolateToPooledTex(session, MODEL_IO, _wIgnored, _hIgnored, t, useStatic, pairPrev = null, pairCur = null, scale = 1) {
-    if (!this.ready) return null;
-    // Apply the requested inference scale (re-sizes the inference alloc only if
-    // it changed; frame textures are untouched, so prev stays valid).
-    this._scale = scale;
-    if (this._w) this._size(this._w, this._h, this._padTo || 8, this._ch, scale);
-    // Explicit pair (pipelined mode): the caller passes the pooled textures of the
-    // two real frames, so a concurrent capture advancing prev/cur mid-inference
-    // can't corrupt this tween. Legacy mode falls back to the shared ping-pong.
-    const prevT = pairPrev || this.prevTex, curT = pairCur || this.curTex;
-    if (!prevT || !curT) return null;
-    if (!pairPrev && !this.hasPrev()) return null;
-    const w = this._w, h = this._h;
-    const T = { pack: 0, run: 0, comp: 0, read: 0 };
+    if (!this.ready || this._destroyRequested) return null;
+    this._activeOps++;
+    let inputTensor = null, outT = null, resultTex = null, tensorsRetired = false, op = null;
     try {
-      const padW = this._padW, padH = this._padH, ch = this._ch;
+      // Apply the requested inference scale (re-sizes the inference alloc only if
+      // it changed; frame textures are untouched, so prev stays valid).
+      this._scale = scale;
+      if (this._w) this._size(this._w, this._h, this._padTo || 8, this._ch, scale);
+      // Capture every object and dimension used by this operation before the first
+      // await. Capture may resize the instance while session.run() is pending; its
+      // replacement generation must not leak into this operation's composite pass.
+      // Explicit-pair mode likewise remains bound to the caller's frame pair.
+      op = {
+        device: this.device,
+        ort: this.ort,
+        packPipe: this.packPipe,
+        compPipe: this.compPipe,
+        packParams: this.packParams,
+        compParams: this.compParams,
+        sampler: this.sampler,
+        inBuf: this.inBuf,
+        prevTex: pairPrev || this.prevTex,
+        curTex: pairCur || this.curTex,
+        w: this._w,
+        h: this._h,
+        iw: this._iw,
+        ih: this._ih,
+        padW: this._padW,
+        padH: this._padH,
+        ch: this._ch,
+        inputName: MODEL_IO.inputName,
+        outputName: MODEL_IO.outputName,
+        keepOutput: !!this.skipOutputDispose,
+      };
+      const prevT = op.prevTex, curT = op.curTex;
+      if (!prevT || !curT) return null;
+      // Explicit scheduler pairs are pooled textures annotated with the capture
+      // dimensions. A source resize can otherwise combine an old retained frame
+      // with the new allocation generation and make the pack/composite passes
+      // read incompatible extents. Reject incomplete or mismatched pairs at this
+      // final boundary even if a caller misses its normal resize flush.
+      if (pairPrev || pairCur) {
+        const pairMatches = pairPrev && pairCur
+          && pairPrev._w === pairCur._w && pairPrev._h === pairCur._h
+          && pairPrev._w === op.w && pairPrev._h === op.h;
+        if (!pairMatches) return null;
+      }
+      if (!pairPrev && !this.hasPrev()) return null;
+      const { w, h, iw, ih, padW, padH, ch } = op;
+      const T = { pack: 0, run: 0, comp: 0, read: 0 };
       const _tp = performance.now();
       // pack prev/cur → inBuf
       {
@@ -357,74 +477,100 @@ export class GpuInterp {
         dv.setUint32(0, padW, true); dv.setUint32(4, padH, true);
         // content dims = SCALED infer dims: the shader samples the full-res
         // frame textures at these dims — the sampler performs the downscale.
-        dv.setUint32(8, this._iw, true); dv.setUint32(12, this._ih, true);
+        dv.setUint32(8, iw, true); dv.setUint32(12, ih, true);
         dv.setUint32(16, ch, true); dv.setFloat32(20, t, true);
-        this.device.queue.writeBuffer(this.packParams, 0, p);
-        const bind = this.device.createBindGroup({
-          layout: this.packPipe.getBindGroupLayout(0),
+        op.device.queue.writeBuffer(op.packParams, 0, p);
+        const bind = op.device.createBindGroup({
+          layout: op.packPipe.getBindGroupLayout(0),
           entries: [
-            { binding: 0, resource: this.sampler },
+            { binding: 0, resource: op.sampler },
             { binding: 1, resource: prevT.createView() },
             { binding: 2, resource: curT.createView() },
-            { binding: 3, resource: { buffer: this.inBuf } },
-            { binding: 4, resource: { buffer: this.packParams } },
+            { binding: 3, resource: { buffer: op.inBuf } },
+            { binding: 4, resource: { buffer: op.packParams } },
           ],
         });
-        const enc = this.device.createCommandEncoder();
+        const enc = op.device.createCommandEncoder();
         const pass = enc.beginComputePass();
-        pass.setPipeline(this.packPipe); pass.setBindGroup(0, bind);
+        pass.setPipeline(op.packPipe); pass.setBindGroup(0, bind);
         pass.dispatchWorkgroups(Math.ceil(padW / 8), Math.ceil(padH / 8), 1);
-        pass.end(); this.device.queue.submit([enc.finish()]);
+        pass.end(); op.device.queue.submit([enc.finish()]);
       }
       T.pack = performance.now() - _tp; const _tr = performance.now();
-      const inputTensor = this.ort.Tensor.fromGpuBuffer(this.inBuf, { dataType: "float32", dims: [1, ch, padH, padW] });
-      const feeds = {}; feeds[MODEL_IO.inputName] = inputTensor;
-      let outGpu = null, outT = null;
-      try { const r = await session.run(feeds); outT = r[MODEL_IO.outputName]; outGpu = outT.gpuBuffer; }
-      catch (e) { this.warn("gpu infer failed:", e.message); try { inputTensor.dispose && inputTensor.dispose(); } catch {} return null; }
-      if (!outGpu) { try { inputTensor.dispose && inputTensor.dispose(); outT && outT.dispose && outT.dispose(); } catch {} return null; }
+      inputTensor = op.ort.Tensor.fromGpuBuffer(op.inBuf, { dataType: "float32", dims: [1, ch, padH, padW] });
+      const feeds = {}; feeds[op.inputName] = inputTensor;
+      let outGpu = null;
+      try {
+        const r = await session.run(feeds);
+        outT = r[op.outputName];
+        outGpu = outT?.gpuBuffer;
+      } catch (e) {
+        this.warn("gpu infer failed:", e.message);
+        return null;
+      }
+      if (!outGpu || this._destroyRequested) return null;
       // GRAPH CAPTURE: run() is submit-only (returns in ~0.2ms without awaiting the
       // GPU). That await was BOTH our inference measurement AND the chain's
       // backpressure — without it the chain submitted 7 unthrottled replays/gap,
       // flooded the queue, and starved video compositing (in fps collapsed to 9.6).
       // An explicit completion fence restores both. Note: includes co-tenant queue
       // work (upscaler/present) — exactly the "loaded latency" the level gates want.
-      if (this.skipOutputDispose) { try { await this.device.queue.onSubmittedWorkDone(); } catch {} }
+      if (op.keepOutput) { try { await op.device.queue.onSubmittedWorkDone(); } catch {} }
       T.run = performance.now() - _tr; const _tc = performance.now();
       // composite+passthrough → POOLED result texture (no readback)
-      const resultTex = this._acquireTex();
+      resultTex = this._acquireTex(w, h, op.device);
       {
         const p = new ArrayBuffer(36); const dv = new DataView(p);
         dv.setUint32(0, padW, true); dv.setUint32(4, padH, true);
         dv.setUint32(8, w, true); dv.setUint32(12, h, true);
-        dv.setUint32(16, this._iw, true); dv.setUint32(20, this._ih, true);
+        dv.setUint32(16, iw, true); dv.setUint32(20, ih, true);
         dv.setFloat32(24, 0.012, true); dv.setFloat32(28, 0.05, true);
         dv.setUint32(32, useStatic ? 1 : 0, true);
-        this.device.queue.writeBuffer(this.compParams, 0, p);
-        const bind = this.device.createBindGroup({
-          layout: this.compPipe.getBindGroupLayout(0),
+        op.device.queue.writeBuffer(op.compParams, 0, p);
+        const bind = op.device.createBindGroup({
+          layout: op.compPipe.getBindGroupLayout(0),
           entries: [
-            { binding: 0, resource: this.sampler },
+            { binding: 0, resource: op.sampler },
             { binding: 1, resource: prevT.createView() },
             { binding: 2, resource: curT.createView() },
             { binding: 3, resource: { buffer: outGpu } },
             { binding: 4, resource: resultTex.createView() },
-            { binding: 5, resource: { buffer: this.compParams } },
+            { binding: 5, resource: { buffer: op.compParams } },
           ],
         });
-        const enc = this.device.createCommandEncoder();
+        const enc = op.device.createCommandEncoder();
         const pass = enc.beginComputePass();
-        pass.setPipeline(this.compPipe); pass.setBindGroup(0, bind);
+        pass.setPipeline(op.compPipe); pass.setBindGroup(0, bind);
         pass.dispatchWorkgroups(Math.ceil(w / 8), Math.ceil(h / 8), 1);
-        pass.end(); this.device.queue.submit([enc.finish()]);
+        pass.end(); op.device.queue.submit([enc.finish()]);
       }
-      // Under graph capture the replayed graph OWNS/reuses its output buffer across
-      // runs — disposing it would free a buffer the next replay depends on. The
-      // input wrapper is ours (fromGpuBuffer never owns the user buffer): always safe.
-      try { inputTensor.dispose && inputTensor.dispose(); if (!this.skipOutputDispose) { outT && outT.dispose && outT.dispose(); } } catch {}
+      // The composite command reads outGpu asynchronously. Retire tensor wrappers
+      // only after all work submitted through that command has completed; immediate
+      // disposal can invalidate or recycle the ORT output while WebGPU still reads it.
+      // Graph-capture sessions own/reuse their output tensor, so only our input
+      // wrapper is retired in that mode.
+      this._retireTensors(inputTensor, outT, op.device, op.keepOutput);
+      inputTensor = null; outT = null; tensorsRetired = true;
       T.comp = performance.now() - _tc; this.lastTiming = T;
-      return resultTex;
-    } catch (e) { this.warn("gpu interpolateToPooledTex failed:", e.message); return null; }
+      if (this._destroyRequested) return null;
+      const returned = resultTex;
+      resultTex = null;
+      return returned;
+    } catch (e) {
+      this.warn("gpu interpolateToPooledTex failed:", e.message);
+      return null;
+    } finally {
+      if (!tensorsRetired) {
+        // `op` is initialized before any inference await; failures before then do
+        // not produce tensors. Preserve the captured device/output ownership when
+        // unwinding a post-run failure or destroy request.
+        const device = op?.device || this.device;
+        const keepOutput = op ? op.keepOutput : !!this.skipOutputDispose;
+        this._retireTensors(inputTensor, outT, device, keepOutput);
+      }
+      if (resultTex) this.releaseTex(resultTex);
+      this._endOperation();
+    }
   }
 
   // Cheap non-AI blend tween: lerp(prev, cur, t) → pooled texture. No pack/infer, so
@@ -434,9 +580,10 @@ export class GpuInterp {
     // ping-pong guard only applies in legacy prev/cur mode.
     if (!this.ready || (!texA && !this.hasPrev())) return null;
     const _t0 = performance.now();
+    let resultTex = null;
     try {
       const w = this._w, h = this._h;
-      const resultTex = this._acquireTex();
+      resultTex = this._acquireTex();
       const p = new ArrayBuffer(12); const dv = new DataView(p);
       dv.setUint32(0, w, true); dv.setUint32(4, h, true); dv.setFloat32(8, t, true);
       this.device.queue.writeBuffer(this.blendParams, 0, p);
@@ -457,7 +604,11 @@ export class GpuInterp {
       pass.end(); this.device.queue.submit([enc.finish()]);
       this.lastTiming = { pack: 0, run: 0, comp: performance.now() - _t0, read: 0 };
       return resultTex;
-    } catch (e) { this.warn("gpu blendToPooledTex failed:", e.message); return null; }
+    } catch (e) {
+      if (resultTex) this.releaseTex(resultTex);
+      this.warn("gpu blendToPooledTex failed:", e.message);
+      return null;
+    }
   }
 
   // Render a pooled result texture to the WebGPU canvas.
@@ -482,10 +633,32 @@ export class GpuInterp {
   }
 
   destroy() {
-    this.ready = false; // set FIRST so an in-flight interpolate() bails pre-free
-    for (const t of [this.prevTex, this.curTex]) { try { t && t.destroy(); } catch {} }
-    for (const t of this._pool) { try { t && t.destroy(); } catch {} }
-    this._pool = [];
-    for (const b of [this.inBuf, this.packParams, this.compParams, this.blendParams]) { try { b && b.destroy(); } catch {} }
+    if (this._destroyPromise) return this._destroyPromise;
+    this.ready = false;
+    this._destroyRequested = true;
+    const ownedDevice = this._ownsDevice ? this.device : null;
+    this._ownsDevice = false;
+    this._destroyPromise = (async () => {
+      // Let an awaited ORT run unwind, then fence every command it and the
+      // presentation path submitted before destroying referenced resources.
+      await this._whenIdle();
+      try { await this.device?.queue?.onSubmittedWorkDone?.(); } catch {}
+      if (this._retirements.size) {
+        try { await Promise.allSettled([...this._retirements]); } catch {}
+      }
+      try { this.canvasCtx?.unconfigure?.(); } catch {}
+      for (const texture of this._allPooledTextures) { try { texture.destroy(); } catch {} }
+      this._allPooledTextures.clear();
+      this._pool = [];
+      for (const texture of [this.prevTex, this.curTex]) { try { texture?.destroy?.(); } catch {} }
+      for (const buffer of [this.inBuf, this.packParams, this.compParams, this.blendParams]) { try { buffer?.destroy?.(); } catch {} }
+      this.prevTex = null; this.curTex = null; this.inBuf = null;
+      this.packParams = null; this.compParams = null; this.blendParams = null;
+      this.canvasCtx = null; this.device = null; this.ort = null;
+      // Standalone blend mode requests its own GPUDevice. Shared ORT/chain
+      // devices remain owned by their provider and must not be destroyed here.
+      try { ownedDevice?.destroy?.(); } catch {}
+    })();
+    return this._destroyPromise;
   }
 }
