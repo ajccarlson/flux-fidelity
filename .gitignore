@@ -1,0 +1,55 @@
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+.netrc
+.npmrc
+.pypirc
+*.key
+*.pem
+*.p12
+*.pfx
+credentials*
+secrets*
+
+# Internal planning and development notes
+[Rr][Oo][Aa][Dd][Mm][Aa][Pp]*
+[Nn][Oo][Tt][Ee][Ss]*
+docs/internal/
+notes/
+scratch/
+.agents/
+.codex/
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+*.docx
+
+# Editor and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Dependencies, caches, and generated output
+node_modules/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+coverage/
+dist/
+build/
+tmp/
+temp/
+*.log
+validation/results/
+benchmarks/results/
+
+# Source-model checkpoints are local inputs; distributable ONNX models remain tracked
+*.ckpt
+*.pt
+*.pth
+*.safetensors
