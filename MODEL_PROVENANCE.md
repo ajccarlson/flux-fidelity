@@ -12,11 +12,11 @@ The machine-readable gate ledger is [`release-clearance.json`](release-clearance
 - The removed high-quality x2 FSRCNNX source and generated assets still exist in private Git history without an established author, upstream revision, or license.
 - The removed x3 and x4 FSRCNNX generated assets still exist in private Git history without retained source shaders or upstream revisions.
 - The removed random-weight SPAN smoke model still exists in private Git history without a recorded random seed or exact generation environment.
-- The exact source/revision and license for the deband port have not been established.
+- The removed deband port still exists in private Git history without an exact source/revision or established license.
 - The complete LGPL-3.0 and GPL-3.0 companion texts and source notices are now bundled, but public distribution of the LGPL-derived files still needs a reviewed compliance plan.
 - ONNX Runtime's pinned upstream third-party notice set is bundled, but the notices and obligations applicable to the distributed Web runtime files still need review.
 
-The current extension package still contains the unresolved deband port and material covered by the LGPL and ONNX Runtime review gates. The unidentified RIFE model, random-weight SPAN smoke model, and unverified FSRCNNX assets are absent from both the current tree and package, but their private-history tombstones still block repository publication. Therefore, a successful `npm run check` or `npm run package:internal` does **not** make either distribution surface publicly releasable; `npm run package` enforces the blocking public-release check.
+The current extension package still contains material covered by the LGPL and ONNX Runtime review gates. The unidentified RIFE model, random-weight SPAN smoke model, unverified FSRCNNX assets, and unresolved deband port are absent from both the current tree and package, but their private-history tombstones still block repository publication. Therefore, a successful `npm run check` or `npm run package:internal` does **not** make either distribution surface publicly releasable; `npm run package` enforces the blocking public-release check.
 
 ## ONNX models
 
@@ -69,7 +69,7 @@ These are runtime source modules rather than generated model files, but their de
 | --- | --- | --- | --- |
 | `fsrcnnx-ssimds.js` | `0f55f8f2b49bea3cb8ee2e4c801a663f21d4dfabb88efaf2de23b709c6ade3c6` | [igv/SSimDownscaler.glsl](https://gist.github.com/igv/36508af3ffc84410fe39761d6969be10/38992bce7f9ff844f800820df0908692b65bb74a), gist revision `38992bce7f9ff844f800820df0908692b65bb74a`, raw source SHA-256 `f46f4710a162d17058b9d82ed8610588b0c04d7be07cef6bf2a8c4077828f804`, LGPL-3.0-or-later. The local WebGPU port adds finite ratio validation and zero-weight numerical guards. | Source/revision and license header retained; LGPL public-package obligations remain gated. |
 | `fsrcnnx-sharpen.js` | `9312f5445791792634679bac74f01d3292e8e776c6fc7e3be348435f2913ef8a` | [igv/adaptive-sharpen.glsl](https://gist.github.com/igv/8a77e4eb8276753b54bb94c1c50c317e/572f59099cd0e3eb5e321a6da0a3d90a7382e2dc), gist revision `572f59099cd0e3eb5e321a6da0a3d90a7382e2dc`, raw source SHA-256 `827fb3d662ac9a91b4075e9117fe6e1dbc1c06d85959ba719cdb954dfb7fb8e4`, Copyright 2015-2021 bacondither under its two-clause redistribution notice. The local WebGPU port adds finite strength normalization and flat-field numerical guards. | Source/revision and verbatim source notice retained. |
-| `fsrcnnx-deband.js` | `56155c7bd5a15b5524ec1b44baeb4b5cb368e57f9adaf5ff8635bd1a2dba3f84` | Comments say it was modeled on mpv's `f_deband` / haasn algorithm. The local builder now normalizes non-finite strength inputs, but no exact source file or revision is recorded. | **Blocked** pending a source-and-license record or a documented original/clean-room implementation basis. |
+| Historical `fsrcnnx-deband.js` | `56155c7bd5a15b5524ec1b44baeb4b5cb368e57f9adaf5ff8635bd1a2dba3f84` | Comments said it was modeled on mpv's `f_deband` / haasn algorithm, but no exact source file or revision was recorded. The module, runtime path, settings, and user-facing controls have been removed from the current tree and extension package. | **Repository publication remains blocked** until the private Git history is purged. |
 
 ## Reproduction checks
 

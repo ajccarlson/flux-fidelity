@@ -356,7 +356,6 @@ async function loadRendererResourceHelpers(deps) {
   const production = [
     section(original, "function ensureLumaTexture", "// Lazily build the texture-ingest twins"),
     section(original, "function ensureTexPipelines", "function renderUpscale"),
-    section(original, "function ensureDebandInter", "function ensureDebandPipelines"),
     section(original, "function ensureHiRGB", "function ensureChainTapTexture"),
     section(original, "function ensureChainTapTexture", "const PASSTHROUGH_WGSL"),
   ].join("\n");
@@ -369,13 +368,12 @@ async function loadRendererResourceHelpers(deps) {
     let format = "rgba8unorm";
     let lumaTexture = null, lumaW = 0, lumaH = 0;
     let hiRGB = null, hiRGBW = 0, hiRGBH = 0;
-    let debandInterTex = null, debandInterW = 0, debandInterH = 0;
     let chainTapTex = null;
     let extractPipelineTex = null, recombinePipelineTex = null, recombine16PipelineTex = null;
     ${production}
-    export { ensureLumaTexture, ensureHiRGB, ensureDebandInter, ensureChainTapTexture, ensureTexPipelines };
+    export { ensureLumaTexture, ensureHiRGB, ensureChainTapTexture, ensureTexPipelines };
     export function state() { return { lumaTexture, lumaW, lumaH, hiRGB, hiRGBW, hiRGBH,
-      debandInterTex, debandInterW, debandInterH, chainTapTex,
+      chainTapTex,
       extractPipelineTex, recombinePipelineTex, recombine16PipelineTex }; }
   `;
   globalThis.__mainLifecycleTestDeps = deps;
@@ -831,7 +829,6 @@ test("renderer texture helpers preserve their old generation when replacement al
   const specs = [
     { fn: helpers.ensureLumaTexture, key: "lumaTexture", dims: ["lumaW", "lumaH"] },
     { fn: helpers.ensureHiRGB, key: "hiRGB", dims: ["hiRGBW", "hiRGBH"] },
-    { fn: helpers.ensureDebandInter, key: "debandInterTex", dims: ["debandInterW", "debandInterH"] },
   ];
   for (const spec of specs) {
     assert.equal(spec.fn(16, 12), true);

@@ -248,8 +248,8 @@ test("core validation constructs the covered color/filter pipeline variants", ()
     },
   };
   const pipelines = buildCorePipelines(device, "bgra8unorm");
-  assert.equal(pipelines.length, 14);
+  assert.equal(pipelines.length, 12);
   assert.equal(descriptors.filter(([kind]) => kind === "compute").length, 2);
-  assert.equal(descriptors.filter(([kind]) => kind === "render").length, 12);
+  assert.equal(descriptors.filter(([kind]) => kind === "render").length, 10);
   assert.ok(descriptors.some(([, descriptor]) => descriptor.fragment?.targets[0].format === "rgba16float"));
 });

@@ -90,13 +90,11 @@ async function loadCoordinator(deps) {
     let sampler = {}, extractPipeline = {}, recombinePipeline = {}, passthroughPipeline = {};
     let extractPipelineTex = {}, recombinePipelineTex = {}, recombine16PipelineTex = {};
     let recombine16Pipeline = {}, blitPipeline = {}, sharpenPipeline = {}, sharpenStrengthBuilt = 1;
-    let debandCanvasPipeline = {}, debandFloatPipeline = {}, debandStrengthBuilt = 1;
     let chainTapTex = deps.resources.shift(), chainTapFrame = 3;
     let lumaTexture = deps.resources.shift(), lumaW = 2, lumaH = 2;
     let hiRGB = deps.resources.shift(), hiRGBW = 4, hiRGBH = 4;
     let dispRGB = deps.resources.shift(), dispRGBW = 4, dispRGBH = 4;
-    let debandInterTex = deps.resources.shift(), debandInterW = 4, debandInterH = 4;
-    let debandTimeBuf = deps.resources.shift(), ssimds = { destroy: deps.onSsimDestroy };
+    let ssimds = { destroy: deps.onSsimDestroy };
     let models = [{ destroy: deps.onModelDestroy }], modelsDevice = device, activeModel = models[0];
     let artStages = {}, chainedFsrcnnx = {}, chainedArt = {};
     let fsrcnnxLoadPending = true, artLoadPending = true;
@@ -149,7 +147,7 @@ async function loadCoordinator(deps) {
       return { device, mode, images: optImages, interpolate: optInterpolate,
         recovering: !!deviceRecoveryPromise || deviceRecoveryTimer != null,
         display: canvas.style.display, gpu: snapshotGpu(),
-        chainTapTex, lumaTexture, hiRGB, dispRGB, debandInterTex, context, models };
+        chainTapTex, lumaTexture, hiRGB, dispRGB, context, models };
     }
   `;
   globalThis.__mainDeviceLossDeps = deps;
@@ -288,7 +286,7 @@ function setup({ mode = "passthrough", images = false, interpolate = false, reco
     recoveryGate,
     logs: [],
     warnings: [],
-    resources: Array.from({ length: 6 }, () => resource(destroyed)),
+    resources: Array.from({ length: 4 }, () => resource(destroyed)),
     context: { unconfigure() { deps.unconfigured++; } },
     canvas: { style: { display: "block", opacity: "1" } },
     destroyed,
@@ -388,7 +386,7 @@ test("current device loss retires stale state and single-flights recovery", asyn
   );
   assert.equal(coordinator.state().gpu.lastFailure.code, "device-lost");
   assert.equal(coordinator.state().display, "none");
-  assert.equal(deps.destroyed.count, 6);
+  assert.equal(deps.destroyed.count, 4);
   assert.equal(deps.modelDestroys, 1);
   assert.equal(deps.unconfigured, 1);
   assert.equal(deps.imageInvalidations, 1);
@@ -396,9 +394,8 @@ test("current device loss retires stale state and single-flights recovery", asyn
   assert.equal(deps.neuralInvalidations >= 1, true);
   assert.deepEqual(
     [coordinator.state().chainTapTex, coordinator.state().lumaTexture,
-      coordinator.state().hiRGB, coordinator.state().dispRGB,
-      coordinator.state().debandInterTex],
-    [null, null, null, null, null],
+      coordinator.state().hiRGB, coordinator.state().dispRGB],
+    [null, null, null, null],
   );
 
   deps.recoveryGate.resolve();

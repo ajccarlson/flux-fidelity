@@ -50,7 +50,6 @@
         "fsrcnnx-artcnn-runtime.js",
         "model/*.artcnn.wgsl",
         "model/*.artcnn.json",
-        "fsrcnnx-deband.js",
         "fsrcnnx-images.js",
         "fsrcnnx-interpolate.js",
         "fsrcnnx-rife.js",
