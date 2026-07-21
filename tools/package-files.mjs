@@ -1,6 +1,6 @@
 import { GENERATED_MODEL_ASSET_PATHS } from "../fsrcnnx-model-catalog.js";
 
-export const EXPECTED_PACKAGE_FILE_COUNT = 58;
+export const EXPECTED_PACKAGE_FILE_COUNT = 59;
 
 // These assets are selected indirectly from runtime model catalogs, so static
 // import/getURL scanning cannot prove their exact package membership. Keep this
@@ -34,6 +34,7 @@ export const PACKAGE_FILES = Object.freeze([
   "fsrcnnx-rife-gpu.js",
   "fsrcnnx-rife.js",
   "fsrcnnx-runtime.js",
+  "fsrcnnx-settings-store.js",
   "fsrcnnx-sharpen.js",
   "fsrcnnx-ssimds-runtime.js",
   "fsrcnnx-ssimds.js",

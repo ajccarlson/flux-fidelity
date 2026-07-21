@@ -113,12 +113,18 @@ async function loadSelectionCoordinator(deps) {
 async function loadPresentationBoundary() {
   const source = await readFile(mainUrl, "utf8");
   const targetDimensions = section(source, "export function chainTargetDims()", "let lumaTexture");
-  const presentation = section(source, "function showPresentedCanvas()", "function positionCanvas");
+  const presentation = section(source, "function showPresentedCanvas(", "function positionCanvas");
   const harness = `
     let canvas = null, video = null, primaryController = null, renderTargetOwner = null;
     let presentedCanvasVideo = null, presentedSourceW = 0, presentedSourceH = 0;
     let primaryPresentationGeneration = 0;
+    let presentedVideoSource = null, presentedRuntimeMode = "off", presentedRuntimeEngine = null;
+    let pageSuspended = false, device = {}, engine = "fsrcnnx";
+    const lostDevices = new WeakSet();
     let reconcileRequests = 0;
+    const captureVideoSource = (candidate) => candidate ? ({ video: candidate, currentSrc: candidate.currentSrc || "" }) : null;
+    const sameVideoSource = (left, right) => !!left && !!right && left.video === right.video && left.currentSrc === right.currentSrc;
+    const notifyState = () => {};
     const videoPageVisible = (candidate) => candidate?.pageVisible !== false;
     const videoMonitor = { request() { reconcileRequests++; } };
     ${targetDimensions}
@@ -128,11 +134,13 @@ async function loadPresentationBoundary() {
       primaryController = { active, video: nextVideo };
       renderTargetOwner = null;
     }
-    export function presentPrimary() { showPresentedCanvas(); }
+    export function presentPrimary(mode = "upscale", activeEngine = "fsrcnnx") {
+      showPresentedCanvas(mode, activeEngine);
+    }
     export function presentSecondary(nextVideo, nextCanvas) {
       const saved = { video, canvas, renderTargetOwner };
       video = nextVideo; canvas = nextCanvas; renderTargetOwner = {};
-      showPresentedCanvas();
+      showPresentedCanvas("passthrough");
       ({ video, canvas, renderTargetOwner } = saved);
     }
     export function generation() { return primaryPresentationGeneration; }
@@ -143,7 +151,7 @@ async function loadPresentationBoundary() {
 
 async function loadPositionBoundary() {
   const source = await readFile(mainUrl, "utf8");
-  const production = section(source, "function inShadowDom(node)", "function showPresentedCanvas()");
+  const production = section(source, "function inShadowDom(node)", "function showPresentedCanvas(");
   const harness = `
     class ShadowRoot {
       constructor(host) { this.host = host; this.fullscreenElement = null; }
@@ -170,25 +178,42 @@ async function loadEngineSelection(deps) {
   const production = section(source, "export function setEngine", "export function setArtVariant");
   const harness = `
     const deps = globalThis.__videoOwnershipDeps;
-    let engine = "fsrcnnx", engineSelectionGeneration = 0, device = null;
+    let requestedEngine = "fsrcnnx", engine = "fsrcnnx", engineSelectionGeneration = 0, device = null;
     let mode = deps.mode, pageSuspended = !!deps.pageSuspended;
     const video = {};
     let primaryController = deps.active ? { active: true, video } : null;
+    let optInterpolate = !!deps.optInterpolate;
     let interpPausedByNeural = false, neuralEng = null, chainDepth = 1;
     let upscalePolicy = "display", artDiagLogged = false, artVariant = "ArtCNN_C4F32";
     const resetScaleSelection = () => deps.events.push("reset");
     const clearMultiTargets = () => deps.events.push("clear-multi");
     const ensureNeural = (selection) => deps.ensureNeural(selection);
-    const resumeInterpolationAfterNeural = () => deps.events.push("resume-interp");
+    const pauseInterpolationForNeural = () => {
+      if (!optInterpolate) return;
+      interpPausedByNeural = true;
+      deps.events.push("pause-interp");
+    };
+    const resumeInterpolationAfterNeural = () => {
+      if (!interpPausedByNeural) return;
+      interpPausedByNeural = false;
+      deps.events.push("resume-interp");
+    };
+    const reconcileDeviceRecoveryDemand = () => {
+      deps.events.push("reconcile-recovery");
+      return true;
+    };
+    const clearNeuralFallback = () => {};
+    const activateNeuralFallback = () => { engine = "fsrcnnx"; };
     const policyToDepth = () => 1;
     const ensureArtStages = async () => {};
     const ensureHiStages = async () => {};
+    const cancelPreferenceRestore = () => { deps.preferenceFences = (deps.preferenceFences || 0) + 1; };
     const saveSitePrefs = () => deps.events.push("save");
     const warn = (...args) => deps.events.push(["warn", ...args]);
     ${settingsContract}
     ${production}
     export function setSuspended(value) { pageSuspended = value; }
-    export function state() { return { engine, engineSelectionGeneration }; }
+    export function state() { return { engine, engineSelectionGeneration, interpPausedByNeural }; }
   `;
   globalThis.__videoOwnershipDeps = deps;
   return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
@@ -203,12 +228,24 @@ async function loadNeuralModelSelection(deps) {
       { key: "span" }, { key: "span-a" }, { key: "span-b" },
     ];
     const neuralCatalogReady = Promise.resolve(_neuralList);
-    let neuralModelKey = "", engine = "neural", engineSelectionGeneration = 2;
+    let neuralModelKey = "", requestedEngine = "neural", engine = deps.engine || "neural", engineSelectionGeneration = 2;
     let mode = deps.mode, pageSuspended = !!deps.pageSuspended;
+    let optInterpolate = !!deps.optInterpolate;
     const video = {};
     let primaryController = deps.active ? { active: true, video } : null;
     const resetScaleSelection = () => {};
+    const clearNeuralFallback = () => {};
+    const pauseInterpolationForNeural = () => {
+      if (optInterpolate) deps.events.push("pause-interp");
+    };
+    const reconcileDeviceRecoveryDemand = () => {
+      deps.events.push("reconcile-recovery");
+      return true;
+    };
+    const activateNeuralFallback = () => { engine = "fsrcnnx"; };
+    const boundedRuntimeDetail = (error) => error?.message || String(error);
     const ensureNeural = (selection, options) => deps.ensureNeural(selection, options);
+    const cancelPreferenceRestore = () => { deps.preferenceFences = (deps.preferenceFences || 0) + 1; };
     const saveSitePrefs = () => deps.events.push("save");
     const warn = (...args) => deps.events.push(["warn", ...args]);
     ${production}
@@ -232,7 +269,7 @@ async function loadPreferenceRestore(deps) {
     const neuralCatalogReady = Promise.resolve(_neuralList);
     const ART_FILES = ["ArtCNN_C4F32"];
     let preferenceRestoreGeneration = 0, engineSelectionGeneration = 0;
-    let engine = "fsrcnnx", neuralModelKey = "", artVariant = "ArtCNN_C4F32";
+    let requestedEngine = "fsrcnnx", engine = "fsrcnnx", neuralModelKey = "", artVariant = "ArtCNN_C4F32";
     let upscalePolicy = "display", ssimdsEnabled = true, sharpenEnabled = false, sharpenStrength = 1;
     let optHoverReveal = false, optAllVideos = false, debandEnabled = false, debandStrength = 1;
     let chainDepth = 1, pendingEngine = "rife_v4.26_fp16", pendingResMode = "auto";
@@ -242,6 +279,10 @@ async function loadPreferenceRestore(deps) {
     const loadSitePrefs = async () => deps.prefs;
     const policyToDepth = () => 1;
     const resetScaleSelection = () => {};
+    const clearNeuralFallback = () => {};
+    const siteSettingsStore = { health: () => ({ state: "ready", error: null }) };
+    const validateSitePreferencePatch = () => new Set();
+    const recordPreferenceValidation = () => {};
     const ensureNeural = async () => { deps.neuralCalls++; };
     const setMode = async (value) => { deps.events.push(["mode", value, deps.pageSuspended]); return { ok: true }; };
     const setImages = async (value) => { deps.events.push(["images", value]); return { ok: true }; };
@@ -260,7 +301,7 @@ async function loadNeuralPresentation(deps) {
   const production = section(source, "function renderNeuralFrame()", "function ensureDebandInter");
   const harness = `
     const deps = globalThis.__videoOwnershipDeps;
-    let device = {}, mode = "upscale", engine = "neural", adopting = false;
+    let device = {}, mode = "upscale", requestedEngine = "neural", engine = "neural", adopting = false;
     let neuralBusy = false, neuralFail = 0, videoSelectionGeneration = 3;
     let engineSelectionGeneration = 0;
     const video = { videoWidth: 640, videoHeight: 360, currentSrc: "a", src: "a" };
@@ -280,6 +321,7 @@ async function loadNeuralPresentation(deps) {
     const adoptChainDevice = async () => true;
     const warn = (...args) => deps.events.push(["warn", ...args]);
     const resumeInterpolationAfterNeural = () => {};
+    const activateNeuralFallback = () => { engine = "fsrcnnx"; };
     const presentHiRGBTexture = (...args) => { deps.events.push(["present", ...args]); return true; };
     ${sourceIdentity}
     ${production}
@@ -299,8 +341,17 @@ async function loadRuntimeNotifications(deps) {
     const chrome = { runtime: { sendMessage(message) { deps.messages.push(message); return deps.pending(); } } };
     const siteHost = () => "example.test";
     let protectedSource = false, mode = "upscale";
-    const video = {};
+    const video = { videoWidth: 640, videoHeight: 360, currentSrc: "video" };
     const primaryController = { active: true, video };
+    const device = {};
+    const lostDevices = new WeakSet();
+    const canvas = { style: { display: "block" } };
+    let pageSuspended = false;
+    let presentedRuntimeMode = "upscale", presentedRuntimeEngine = "fsrcnnx";
+    let presentedCanvasVideo = video, presentedSourceW = 640, presentedSourceH = 360;
+    let presentedVideoSource = { video, currentSrc: "video" };
+    const captureVideoSource = (candidate) => ({ video: candidate, currentSrc: candidate.currentSrc || "" });
+    const sameVideoSource = (left, right) => left?.video === right?.video && left?.currentSrc === right?.currentSrc;
     ${production}
     export { notifyProtected, notifyState };
   `;
@@ -832,8 +883,10 @@ test("neural configuration stays lazy while rendering is off or document-suspend
     assert.deepEqual(selection.setEngine("neural"), {
       ok: true,
       engine: "neural",
+      activeEngine: "neural",
       policy: "display",
       chainDepth: 1,
+      pending: false,
     });
     await Promise.resolve();
     assert.equal(calls, 0, `neural initialized eagerly for ${JSON.stringify(scenario)}`);
@@ -842,6 +895,50 @@ test("neural configuration stays lazy while rendering is off or document-suspend
     assert.deepEqual(await model.setNeuralModel("span"), { ok: true, model: "span" });
     assert.equal(calls, 0, "selecting a model records intent without starting an inactive engine");
   }
+});
+
+test("selecting neural while upscaling is inactive pauses standalone interpolation", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  let calls = 0;
+  const deps = {
+    mode: "off",
+    active: false,
+    optInterpolate: true,
+    events: [],
+    ensureNeural: async () => { calls++; },
+  };
+  const selection = await loadEngineSelection(deps);
+
+  assert.equal(selection.setEngine("neural").pending, false);
+  assert.equal(calls, 0, "inactive neural selection remains lazy");
+  assert.equal(selection.state().interpPausedByNeural, true);
+  assert.ok(deps.events.includes("pause-interp"));
+
+  selection.setEngine("fsrcnnx");
+  assert.equal(selection.state().interpPausedByNeural, false);
+  assert.ok(deps.events.includes("resume-interp"),
+    "leaving neural resumes the preserved interpolation request");
+});
+
+test("changing the neural model from fallback pauses inactive standalone interpolation", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  let calls = 0;
+  const deps = {
+    mode: "off",
+    active: false,
+    engine: "fsrcnnx",
+    optInterpolate: true,
+    events: [],
+    ensureNeural: async () => { calls++; },
+  };
+  const model = await loadNeuralModelSelection(deps);
+
+  assert.deepEqual(await model.setNeuralModel("span"), { ok: true, model: "span" });
+  assert.equal(calls, 0, "inactive model selection remains lazy");
+  assert.ok(deps.events.includes("pause-interp"));
+  assert.ok(deps.events.includes("reconcile-recovery"));
 });
 
 test("overlapping neural model switches use distinct generations and preserve the newest intent", async (t) => {
@@ -1078,18 +1175,18 @@ test("main canvas mounting respects direct and container fullscreen inside shado
     "a retargeted fullscreen shadow host mounts into the rendered shadow root");
 });
 
-test("site preferences use per-host writes and restore lifecycle false values authoritatively", async () => {
+test("site preferences use field-level writes and restore lifecycle false values without echoing", async () => {
   const source = await readFile(mainUrl, "utf8");
-  const save = section(source, "async function saveSitePrefs()", "function notifyProtected()");
-  assert.match(save, /const host = siteHost\(\)/);
-  assert.match(save, /chrome\.storage\.local\.set\(\{ \[key\]: value \}\)/);
-  assert.doesNotMatch(save, /chrome\.storage\.local\.get/,
-    "per-host writes must not use a cross-tab read-modify-write map");
+  const save = section(source, "function currentSitePreferenceValues()", "export async function flushPreferenceWrites()");
+  assert.match(save, /siteSettingsStore\.write\(patch\)/);
+  assert.match(save, /for \(const field of fields\)/);
+  assert.doesNotMatch(save, /chrome\.storage\.local\.(?:get|set)/,
+    "main delegates granular writes without a cross-tab read-modify-write record");
 
   const restore = section(source, "export async function restoreSitePrefs()", "function cancelPreferenceRestore()");
-  assert.match(restore, /await setMode\(savedMode, restoreToken\)/);
-  assert.match(restore, /await setImages\(wantImages\)/);
-  assert.match(restore, /await setInterpolate\(wantInterp, restoreToken\)/);
+  assert.match(restore, /setMode\(savedMode, restoreToken, \{ persist: false \}\)/);
+  assert.match(restore, /setImages\(wantImages, \{ persist: false \}\)/);
+  assert.match(restore, /setInterpolate\(wantInterp, restoreToken, \{ persist: false \}\)/);
   assert.doesNotMatch(restore, /scheduleAutoEnable\(/,
     "restored intent should remain monitored beyond the old polling window");
 });

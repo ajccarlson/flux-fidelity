@@ -39,6 +39,7 @@
         "fsrcnnx-model-bundle.js",
         "fsrcnnx-model-catalog.js",
         "fsrcnnx-runtime.js",
+        "fsrcnnx-settings-store.js",
         "fsrcnnx-color.js",
         "model/*.wgsl",
         "model/*.json",

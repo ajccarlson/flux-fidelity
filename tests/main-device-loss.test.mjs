@@ -15,6 +15,12 @@ function resource(counter) {
   return { destroy() { counter.count++; } };
 }
 
+async function flush(turns = 4) {
+  for (let turn = 0; turn < turns; turn++) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
 async function loadCoordinator(deps) {
   const source = await readFile(mainUrl, "utf8");
   const start = source.indexOf("function watchDeviceLoss(ownerDevice)");
@@ -24,6 +30,13 @@ async function loadCoordinator(deps) {
   const production = source.slice(start, end);
   const harness = `
     const deps = globalThis.__mainDeviceLossDeps;
+    const GPU_RECOVERY_MAX_ATTEMPTS = 3;
+    const setTimeout = (...args) => deps.setTimeout
+      ? deps.setTimeout(...args)
+      : globalThis.setTimeout(...args);
+    const clearTimeout = (...args) => deps.clearTimeout
+      ? deps.clearTimeout(...args)
+      : globalThis.clearTimeout(...args);
     const log = (...args) => deps.logs.push(args);
     const warn = (...args) => deps.warnings.push(args);
     const watchedDeviceLosses = new WeakSet();
@@ -32,10 +45,48 @@ async function loadCoordinator(deps) {
     let adoptionGeneration = 0;
     let videoSelectionGeneration = 0;
     let deviceRecoveryGeneration = 0, deviceRecoveryPromise = null, deviceRecoveryTimer = null;
-    let mode = deps.mode || "passthrough", optImages = false, engine = "fsrcnnx";
+    let mode = deps.mode || "passthrough", optImages = deps.images === true;
+    let optInterpolate = deps.interpolate === true, engine = "fsrcnnx";
     let engineSelectionGeneration = 0, chainDepth = 1, artVariant = "ArtCNN_C4F32";
     let adopting = false, pageSuspended = false, interpolator = null;
     let context = deps.context, format = "rgba8unorm", canvas = deps.canvas;
+    let gpuAdapterPhase = "ready", gpuDevicePhase = "ready", gpuRecoveryPhase = "idle";
+    let gpuRecoveryAttempt = 0, gpuLastFailure = null, gpuRecoveredAt = null;
+    function boundedRuntimeDetail(error, fallback = "Unknown runtime failure") {
+      const detail = error?.message || (typeof error === "string" ? error : fallback);
+      return String(detail || fallback).replace(/\\s+/g, " ").trim().slice(0, 240);
+    }
+    function snapshotGpu() {
+      return {
+        adapter: gpuAdapterPhase,
+        device: gpuDevicePhase,
+        recovery: gpuRecoveryPhase,
+        attempt: gpuRecoveryAttempt,
+        lastFailure: gpuLastFailure ? { ...gpuLastFailure } : null,
+        recoveredAt: gpuRecoveredAt,
+      };
+    }
+    function notifyState() { deps.notifications.push(snapshotGpu()); }
+    function setGpuFailure(stage, code, error,
+      { adapter = gpuAdapterPhase, device: devicePhase = "failed" } = {}) {
+      gpuAdapterPhase = adapter;
+      gpuDevicePhase = devicePhase;
+      gpuLastFailure = { stage, code, detail: boundedRuntimeDetail(error), at: Date.now() };
+      deps.gpuFailures.push({ ...gpuLastFailure, adapter, device: devicePhase });
+      notifyState();
+    }
+    function setGpuReady({ recovered = false } = {}) {
+      gpuAdapterPhase = "ready";
+      gpuDevicePhase = "ready";
+      if (recovered || gpuRecoveryPhase === "idle") {
+        gpuRecoveryPhase = "idle";
+        gpuRecoveryAttempt = 0;
+      }
+      if (recovered) gpuRecoveredAt = Date.now();
+      deps.gpuReadyCalls.push({ recovered });
+      notifyState();
+    }
+    function resetPresentedRuntime() { deps.presentationResets++; return true; }
     let sampler = {}, extractPipeline = {}, recombinePipeline = {}, passthroughPipeline = {};
     let extractPipelineTex = {}, recombinePipelineTex = {}, recombine16PipelineTex = {};
     let recombine16Pipeline = {}, blitPipeline = {}, sharpenPipeline = {}, sharpenStrengthBuilt = 1;
@@ -56,6 +107,13 @@ async function loadCoordinator(deps) {
     function clearMultiTargets() { deps.multiClears++; }
     async function initWebGPU() {
       deps.recoveries++;
+      if (deps.recoveryResults) {
+        const result = deps.recoveryResults.shift();
+        if (result instanceof Error) throw result;
+        if (result !== true) return false;
+        device = deps.replacement;
+        return true;
+      }
       await deps.recoveryGate.promise;
       device = deps.replacement;
       return true;
@@ -71,6 +129,7 @@ async function loadCoordinator(deps) {
     function cancelMainLoop() {}
     function findVideo() { return { id: "selected-video" }; }
     async function queueVideoSelection() {
+      deps.selections++;
       canvas.style.display = "block";
       attach(); scheduleMainLoop(); return true;
     }
@@ -78,9 +137,18 @@ async function loadCoordinator(deps) {
     ${production}
     export function watch() { watchDeviceLoss(device); }
     export function setCurrent(next) { device = next; }
-    export function turnOff() { mode = "off"; cancelDeviceRecovery(); }
+    export function setDemand(next = {}) {
+      if (Object.prototype.hasOwnProperty.call(next, "mode")) mode = next.mode;
+      if (Object.prototype.hasOwnProperty.call(next, "images")) optImages = next.images;
+      if (Object.prototype.hasOwnProperty.call(next, "interpolate")) optInterpolate = next.interpolate;
+      if (Object.prototype.hasOwnProperty.call(next, "engine")) engine = next.engine;
+      reconcileDeviceRecoveryDemand();
+    }
+    export function turnOff() { mode = "off"; reconcileDeviceRecoveryDemand(); }
     export function state() {
-      return { device, mode, recovering: !!deviceRecoveryPromise, display: canvas.style.display,
+      return { device, mode, images: optImages, interpolate: optInterpolate,
+        recovering: !!deviceRecoveryPromise || deviceRecoveryTimer != null,
+        display: canvas.style.display, gpu: snapshotGpu(),
         chainTapTex, lumaTexture, hiRGB, dispRGB, debandInterTex, context, models };
     }
   `;
@@ -99,6 +167,43 @@ async function loadInitializer(deps) {
     const deps = globalThis.__mainDeviceLossDeps;
     let device = null;
     const lostDevices = new WeakSet();
+    let gpuAdapterPhase = "unrequested", gpuDevicePhase = "uninitialized";
+    let gpuRecoveryPhase = "idle", gpuRecoveryAttempt = 0;
+    let gpuLastFailure = null, gpuRecoveredAt = null;
+    function boundedRuntimeDetail(error, fallback = "Unknown runtime failure") {
+      const detail = error?.message || (typeof error === "string" ? error : fallback);
+      return String(detail || fallback).replace(/\\s+/g, " ").trim().slice(0, 240);
+    }
+    function snapshotGpu() {
+      return {
+        adapter: gpuAdapterPhase,
+        device: gpuDevicePhase,
+        recovery: gpuRecoveryPhase,
+        attempt: gpuRecoveryAttempt,
+        lastFailure: gpuLastFailure ? { ...gpuLastFailure } : null,
+        recoveredAt: gpuRecoveredAt,
+      };
+    }
+    function notifyState() { deps.notifications.push(snapshotGpu()); }
+    function setGpuFailure(stage, code, error,
+      { adapter = gpuAdapterPhase, device: devicePhase = "failed" } = {}) {
+      gpuAdapterPhase = adapter;
+      gpuDevicePhase = devicePhase;
+      gpuLastFailure = { stage, code, detail: boundedRuntimeDetail(error), at: Date.now() };
+      deps.gpuFailures.push({ ...gpuLastFailure, adapter, device: devicePhase });
+      notifyState();
+    }
+    function setGpuReady({ recovered = false } = {}) {
+      gpuAdapterPhase = "ready";
+      gpuDevicePhase = "ready";
+      if (recovered || gpuRecoveryPhase === "idle") {
+        gpuRecoveryPhase = "idle";
+        gpuRecoveryAttempt = 0;
+      }
+      if (recovered) gpuRecoveredAt = Date.now();
+      deps.gpuReadyCalls.push({ recovered });
+      notifyState();
+    }
     async function initWebGPUInternal() {
       deps.calls++;
       await deps.gate.promise;
@@ -112,13 +217,62 @@ async function loadInitializer(deps) {
     }
     ${production}
     export { initWebGPU };
-    export function state() { return { device, pending: !!webGpuInitPromise }; }
+    export function state() { return { device, pending: !!webGpuInitPromise, gpu: snapshotGpu() }; }
   `;
   globalThis.__mainDeviceLossDeps = deps;
   return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
 }
 
-function setup({ mode = "passthrough" } = {}) {
+async function loadGpuReadiness(deps) {
+  const source = await readFile(mainUrl, "utf8");
+  const start = source.indexOf("function setGpuReady(");
+  const end = source.indexOf("function resetPresentedRuntime()", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const production = source.slice(start, end);
+  const harness = `
+    const deps = globalThis.__mainDeviceLossDeps;
+    let gpuAdapterPhase = deps.adapter;
+    let gpuDevicePhase = deps.device;
+    let gpuRecoveryPhase = deps.recovery;
+    let gpuRecoveryAttempt = deps.attempt;
+    let gpuRecoveredAt = deps.recoveredAt || null;
+    let deviceRecoveryGeneration = deps.generation || 0;
+    let deviceRecoveryTimer = deps.timer || null;
+    const clearTimeout = (timer) => {
+      deps.clearedTimers.push(timer);
+    };
+    function notifyState() {
+      deps.notifications.push({
+        adapter: gpuAdapterPhase,
+        device: gpuDevicePhase,
+        recovery: gpuRecoveryPhase,
+        attempt: gpuRecoveryAttempt,
+        recoveredAt: gpuRecoveredAt,
+        generation: deviceRecoveryGeneration,
+        timer: deviceRecoveryTimer,
+      });
+    }
+    ${production}
+    export function publish(options) { setGpuReady(options); }
+    export function state() {
+      return {
+        adapter: gpuAdapterPhase,
+        device: gpuDevicePhase,
+        recovery: gpuRecoveryPhase,
+        attempt: gpuRecoveryAttempt,
+        recoveredAt: gpuRecoveredAt,
+        generation: deviceRecoveryGeneration,
+        timer: deviceRecoveryTimer,
+      };
+    }
+  `;
+  globalThis.__mainDeviceLossDeps = deps;
+  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+}
+
+function setup({ mode = "passthrough", images = false, interpolate = false, recoveryResults = null,
+  controlledTimers = false } = {}) {
   const loss = deferred();
   const recoveryGate = deferred();
   const destroyed = { count: 0 };
@@ -126,6 +280,8 @@ function setup({ mode = "passthrough" } = {}) {
   const replacement = { lost: new Promise(() => {}) };
   const deps = {
     mode,
+    images,
+    interpolate,
     device,
     replacement,
     loss,
@@ -137,6 +293,7 @@ function setup({ mode = "passthrough" } = {}) {
     canvas: { style: { display: "block", opacity: "1" } },
     destroyed,
     recoveries: 0,
+    selections: 0,
     attaches: 0,
     schedules: 0,
     unconfigured: 0,
@@ -145,10 +302,26 @@ function setup({ mode = "passthrough" } = {}) {
     modelDestroys: 0,
     ssimDestroys: 0,
     neuralInvalidations: 0,
+    notifications: [],
+    gpuFailures: [],
+    gpuReadyCalls: [],
+    presentationResets: 0,
+    recoveryResults: recoveryResults ? [...recoveryResults] : null,
+    timers: [],
     onModelDestroy() { deps.modelDestroys++; },
     onSsimDestroy() { deps.ssimDestroys++; },
     async invalidateNeural() { deps.neuralInvalidations++; },
   };
+  if (controlledTimers) {
+    deps.setTimeout = (callback) => {
+      deps.timers.push(callback);
+      return callback;
+    };
+    deps.clearTimeout = (callback) => {
+      const index = deps.timers.indexOf(callback);
+      if (index !== -1) deps.timers.splice(index, 1);
+    };
+  }
   return deps;
 }
 
@@ -160,6 +333,9 @@ test("concurrent WebGPU initialization reports an immediately-lost device as fai
     calls: 0,
     gate,
     device: { lost: Promise.resolve({ message: "already lost" }) },
+    notifications: [],
+    gpuFailures: [],
+    gpuReadyCalls: [],
   };
   const initializer = await loadInitializer(deps);
   const first = initializer.initWebGPU();
@@ -172,6 +348,21 @@ test("concurrent WebGPU initialization reports an immediately-lost device as fai
   assert.equal(await second, false);
   assert.equal(initializer.state().device, null);
   assert.equal(initializer.state().pending, false);
+  assert.deepEqual(
+    {
+      adapter: initializer.state().gpu.adapter,
+      device: initializer.state().gpu.device,
+      recovery: initializer.state().gpu.recovery,
+      attempt: initializer.state().gpu.attempt,
+    },
+    { adapter: "requesting", device: "failed", recovery: "idle", attempt: 0 },
+  );
+  assert.equal(initializer.state().gpu.lastFailure.stage, "device");
+  assert.equal(initializer.state().gpu.lastFailure.code, "device-init-failed");
+  assert.equal(deps.gpuFailures.length, 1);
+  assert.equal(deps.gpuReadyCalls.length, 0);
+  assert.equal(deps.notifications.length >= 2, true,
+    "requesting and terminal failure must each be externally observable");
 });
 
 test("current device loss retires stale state and single-flights recovery", async (t) => {
@@ -182,9 +373,20 @@ test("current device loss retires stale state and single-flights recovery", asyn
   coordinator.watch();
   coordinator.watch();
   deps.loss.resolve({ reason: "unknown", message: "adapter reset" });
-  await new Promise((resolve) => setImmediate(resolve));
+  await flush();
 
   assert.equal(deps.recoveries, 1);
+  assert.equal(coordinator.state().mode, "passthrough");
+  assert.deepEqual(
+    {
+      adapter: coordinator.state().gpu.adapter,
+      device: coordinator.state().gpu.device,
+      recovery: coordinator.state().gpu.recovery,
+      attempt: coordinator.state().gpu.attempt,
+    },
+    { adapter: "ready", device: "lost", recovery: "running", attempt: 1 },
+  );
+  assert.equal(coordinator.state().gpu.lastFailure.code, "device-lost");
   assert.equal(coordinator.state().display, "none");
   assert.equal(deps.destroyed.count, 6);
   assert.equal(deps.modelDestroys, 1);
@@ -200,11 +402,139 @@ test("current device loss retires stale state and single-flights recovery", asyn
   );
 
   deps.recoveryGate.resolve();
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await flush();
   assert.equal(coordinator.state().device, deps.replacement);
+  assert.equal(coordinator.state().mode, "passthrough");
   assert.equal(coordinator.state().display, "block");
   assert.equal(deps.attaches, 1);
   assert.equal(deps.schedules, 1);
+  assert.deepEqual(
+    {
+      adapter: coordinator.state().gpu.adapter,
+      device: coordinator.state().gpu.device,
+      recovery: coordinator.state().gpu.recovery,
+      attempt: coordinator.state().gpu.attempt,
+    },
+    { adapter: "ready", device: "ready", recovery: "idle", attempt: 0 },
+  );
+  assert.equal(coordinator.state().gpu.recoveredAt != null, true);
+  assert.deepEqual(deps.gpuReadyCalls, [{ recovered: true }]);
+});
+
+test("interpolation-only device loss remains recovery-eligible and reconciles video selection", async (t) => {
+  const previous = globalThis.__mainDeviceLossDeps;
+  t.after(() => { globalThis.__mainDeviceLossDeps = previous; });
+  const deps = setup({ mode: "off", interpolate: true });
+  const coordinator = await loadCoordinator(deps);
+  coordinator.watch();
+  deps.loss.resolve({ message: "interpolation device lost" });
+  await flush();
+
+  assert.equal(coordinator.state().mode, "off");
+  assert.equal(coordinator.state().interpolate, true);
+  assert.equal(deps.recoveries, 1,
+    "an enabled interpolation pipeline still requires a replacement GPU device");
+  assert.equal(coordinator.state().gpu.recovery, "running");
+
+  deps.recoveryGate.resolve();
+  await flush();
+  assert.equal(coordinator.state().device, deps.replacement);
+  assert.equal(deps.selections, 1,
+    "post-recovery reconciliation must reselect the interpolation source while video mode is off");
+  assert.equal(coordinator.state().gpu.recovery, "idle");
+  assert.equal(coordinator.state().gpu.attempt, 0);
+});
+
+test("turning video off preserves recovery owned by image upscaling", async (t) => {
+  const previous = globalThis.__mainDeviceLossDeps;
+  t.after(() => { globalThis.__mainDeviceLossDeps = previous; });
+  const deps = setup({ mode: "passthrough", images: true });
+  const coordinator = await loadCoordinator(deps);
+  coordinator.watch();
+  deps.loss.resolve({ message: "shared device lost" });
+  await flush();
+  assert.equal(coordinator.state().gpu.recovery, "running");
+
+  coordinator.setDemand({ mode: "off" });
+  assert.equal(coordinator.state().images, true);
+  assert.equal(coordinator.state().recovering, true,
+    "the independent image consumer keeps the recovery attempt alive");
+  assert.equal(coordinator.state().gpu.recovery, "running");
+
+  deps.recoveryGate.resolve();
+  await flush();
+  assert.equal(coordinator.state().device, deps.replacement);
+  assert.equal(coordinator.state().gpu.recovery, "idle");
+  assert.deepEqual(deps.gpuReadyCalls, [{ recovered: true }]);
+});
+
+test("removing the last independent GPU consumer retires recovery immediately", async (t) => {
+  const previous = globalThis.__mainDeviceLossDeps;
+  t.after(() => { globalThis.__mainDeviceLossDeps = previous; });
+
+  for (const scenario of [
+    { options: { mode: "off", images: true }, change: { images: false }, label: "images" },
+    {
+      options: { mode: "off", interpolate: true },
+      change: { engine: "neural" },
+      label: "standalone interpolation",
+    },
+  ]) {
+    const deps = setup(scenario.options);
+    const coordinator = await loadCoordinator(deps);
+    coordinator.watch();
+    deps.loss.resolve({ message: `${scenario.label} device lost` });
+    await flush();
+    assert.equal(coordinator.state().gpu.recovery, "running", scenario.label);
+
+    coordinator.setDemand(scenario.change);
+    assert.equal(coordinator.state().recovering, false, scenario.label);
+    assert.equal(coordinator.state().gpu.recovery, "idle", scenario.label);
+    assert.equal(coordinator.state().gpu.attempt, 0, scenario.label);
+
+    deps.recoveryGate.resolve();
+    await flush();
+    assert.equal(coordinator.state().gpu.recovery, "idle", scenario.label);
+    assert.equal(deps.selections, 0, scenario.label);
+    assert.deepEqual(deps.gpuReadyCalls, [], scenario.label);
+  }
+});
+
+test("healthy GPU publication clears stale scheduled and exhausted recovery telemetry", async (t) => {
+  const previous = globalThis.__mainDeviceLossDeps;
+  t.after(() => { globalThis.__mainDeviceLossDeps = previous; });
+
+  for (const recovery of ["scheduled", "exhausted"]) {
+    const deps = {
+      adapter: "ready",
+      device: recovery === "exhausted" ? "failed" : "lost",
+      recovery,
+      attempt: recovery === "exhausted" ? 3 : 2,
+      notifications: [],
+      generation: 7,
+      timer: { recovery },
+      clearedTimers: [],
+    };
+    const readiness = await loadGpuReadiness(deps);
+    readiness.publish();
+
+    assert.deepEqual(
+      {
+        adapter: readiness.state().adapter,
+        device: readiness.state().device,
+        recovery: readiness.state().recovery,
+        attempt: readiness.state().attempt,
+      },
+      { adapter: "ready", device: "ready", recovery: "idle", attempt: 0 },
+      `a confirmed healthy device must retire stale ${recovery} recovery state`,
+    );
+    assert.equal(readiness.state().recoveredAt != null, true,
+      "retiring deferred loss recovery records the successful healthy publication");
+    assert.equal(readiness.state().generation, 8);
+    assert.equal(readiness.state().timer, null);
+    assert.equal(deps.clearedTimers.length, 1);
+    assert.equal(deps.notifications.length, 1);
+  }
 });
 
 test("loss from a replaced device cannot invalidate the current generation", async (t) => {
@@ -215,11 +545,13 @@ test("loss from a replaced device cannot invalidate the current generation", asy
   coordinator.watch();
   coordinator.setCurrent(deps.replacement);
   deps.loss.resolve({ message: "retired" });
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await flush();
 
   assert.equal(coordinator.state().device, deps.replacement);
   assert.equal(deps.recoveries, 0);
   assert.equal(deps.destroyed.count, 0);
+  assert.equal(coordinator.state().gpu.lastFailure, null);
+  assert.equal(coordinator.state().gpu.recovery, "idle");
 });
 
 test("user off during recovery prevents device-loss resurrection", async (t) => {
@@ -229,14 +561,67 @@ test("user off during recovery prevents device-loss resurrection", async (t) => 
   const coordinator = await loadCoordinator(deps);
   coordinator.watch();
   deps.loss.resolve({ message: "reset" });
-  await new Promise((resolve) => setImmediate(resolve));
+  await flush();
   assert.equal(deps.recoveries, 1);
+  assert.equal(coordinator.state().gpu.recovery, "running");
 
   coordinator.turnOff();
   deps.recoveryGate.resolve();
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await flush();
   assert.equal(coordinator.state().mode, "off");
   assert.equal(coordinator.state().display, "none");
+  assert.equal(coordinator.state().gpu.recovery, "idle");
+  assert.equal(coordinator.state().gpu.attempt, 0);
   assert.equal(deps.attaches, 0);
   assert.equal(deps.schedules, 0);
+});
+
+test("exhausted recovery reports terminal failure without clearing requested features", async (t) => {
+  const previous = globalThis.__mainDeviceLossDeps;
+  t.after(() => { globalThis.__mainDeviceLossDeps = previous; });
+  const deps = setup({
+    mode: "upscale",
+    images: true,
+    recoveryResults: [false, false, false],
+    controlledTimers: true,
+  });
+  const coordinator = await loadCoordinator(deps);
+  coordinator.watch();
+  deps.loss.resolve({ reason: "destroyed", message: "adapter reset" });
+  await flush();
+
+  assert.equal(deps.recoveries, 1);
+  assert.equal(deps.timers.length, 1);
+  assert.equal(coordinator.state().gpu.recovery, "scheduled");
+  assert.equal(coordinator.state().gpu.attempt, 1);
+  assert.equal(coordinator.state().gpu.lastFailure.code, "device-recovery-failed");
+
+  deps.timers.shift()();
+  await flush();
+  assert.equal(deps.recoveries, 2);
+  assert.equal(deps.timers.length, 1);
+  assert.equal(coordinator.state().gpu.recovery, "scheduled");
+  assert.equal(coordinator.state().gpu.attempt, 2);
+
+  deps.timers.shift()();
+  await flush();
+  const state = coordinator.state();
+  assert.equal(deps.recoveries, 3);
+  assert.equal(deps.timers.length, 0);
+  assert.equal(state.device, null);
+  assert.equal(state.mode, "upscale", "terminal recovery failure must preserve requested video mode");
+  assert.equal(state.images, true, "terminal recovery failure must preserve requested image processing");
+  assert.equal(state.display, "none");
+  assert.equal(state.gpu.recovery, "exhausted");
+  assert.equal(state.gpu.attempt, 3);
+  assert.equal(state.gpu.device, "failed");
+  assert.equal(state.gpu.lastFailure.stage, "recovery");
+  assert.equal(state.gpu.lastFailure.code, "device-recovery-exhausted");
+  assert.equal(deps.gpuFailures.map(({ code }) => code).filter(
+    (code) => code === "device-recovery-failed",
+  ).length, 2);
+  assert.equal(deps.gpuFailures.at(-1).code, "device-recovery-exhausted");
+  assert.equal(deps.multiClears, 2, "loss cleanup and terminal exhaustion both clear stale targets");
+  assert.equal(deps.presentationResets, 2,
+    "loss cleanup and terminal exhaustion both invalidate presented runtime state");
 });
