@@ -15,14 +15,22 @@
     },
     {
       "id": "unproven-rife-fp16-conversion",
-      "status": "blocked",
+      "status": "cleared",
       "artifacts": [
         {
           "path": "model/rife_v4.26_fp16.onnx",
-          "sha256": "65494496be256b2809b6760f87a941c0d80bbc5cb09de0f3f6795488ae1fcd9d"
+          "sha256": "d5672f39b493609220c95c709542d6b99204145a67d9ca496d4500cd8895301f"
         }
       ],
-      "resolution": "Recreate the model from the verified FP32 parent with pinned tooling and retain structural and numeric comparison evidence."
+      "evidence": [
+        "tools/model-reproduction/reproduce-rife-fp16.py",
+        "tools/model-reproduction/requirements-rife-fp16.txt",
+        "tools/model-reproduction/check-rife-fp16.sh",
+        "tools/model-reproduction/README.md",
+        ".github/workflows/ci.yml",
+        "MODEL_PROVENANCE.md"
+      ],
+      "resolution": "Retain the hash-locked reproduction environment, full ONNX and numerical validation, and byte-for-byte CI check."
     },
     {
       "id": "unknown-high-x2-shader-origin",
@@ -30,18 +38,26 @@
       "artifacts": [
         {
           "path": "shaders/FSRCNNX_x2_56-16-4-1.glsl",
-          "sha256": "34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6"
+          "sha256": "34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6",
+          "disposition": "removed"
         },
         {
           "path": "model/FSRCNNX_x2_56-16-4-1.wgsl",
-          "sha256": "267ba203867483a467c535fd03c36c62ff9428116111d4d258dc5c295ef8e0d7"
+          "sha256": "267ba203867483a467c535fd03c36c62ff9428116111d4d258dc5c295ef8e0d7",
+          "disposition": "removed"
         },
         {
           "path": "model/FSRCNNX_x2_56-16-4-1.passes.json",
-          "sha256": "57395ac668b4cbebea69938a9089c9bea0029ce785f7cc6dad239c4be31d43e7"
+          "sha256": "57395ac668b4cbebea69938a9089c9bea0029ce785f7cc6dad239c4be31d43e7",
+          "disposition": "removed"
         }
       ],
-      "resolution": "Establish the source shader's author, immutable upstream revision, and redistribution license, or remove the source and generated artifacts."
+      "evidence": [
+        "fsrcnnx-model-catalog.js",
+        "tools/package-files.mjs",
+        "MODEL_PROVENANCE.md"
+      ],
+      "resolution": "The assets are absent from the current tree and package; purge them from private Git history before making the repository public."
     },
     {
       "id": "missing-x3-x4-shader-sources",
@@ -49,22 +65,31 @@
       "artifacts": [
         {
           "path": "model/FSRCNNX_x3_16-0-4-1.wgsl",
-          "sha256": "7df8eaae1c6f50bfd2b494d403cce8e1638c7408e0b92362b174cb72fdf816fb"
+          "sha256": "7df8eaae1c6f50bfd2b494d403cce8e1638c7408e0b92362b174cb72fdf816fb",
+          "disposition": "removed"
         },
         {
           "path": "model/FSRCNNX_x3_16-0-4-1.passes.json",
-          "sha256": "b96ed9241b9e5303d17eb05c13c923f2173465046317d44b4d95cf627fecb80b"
+          "sha256": "b96ed9241b9e5303d17eb05c13c923f2173465046317d44b4d95cf627fecb80b",
+          "disposition": "removed"
         },
         {
           "path": "model/FSRCNNX_x4_16-0-4-1.wgsl",
-          "sha256": "3be5b66c0d87f222f2b192ceb4c4e66b6b5f6759e00872ab3b70a542c3ee38e3"
+          "sha256": "3be5b66c0d87f222f2b192ceb4c4e66b6b5f6759e00872ab3b70a542c3ee38e3",
+          "disposition": "removed"
         },
         {
           "path": "model/FSRCNNX_x4_16-0-4-1.passes.json",
-          "sha256": "25a5cdacc30aaef84b738bc64981afdaf6a17aabff5e68456a0afa4961f804ea"
+          "sha256": "25a5cdacc30aaef84b738bc64981afdaf6a17aabff5e68456a0afa4961f804ea",
+          "disposition": "removed"
         }
       ],
-      "resolution": "Supply checksum-pinned source shaders, immutable upstream revisions, and license records, or remove the generated artifacts."
+      "evidence": [
+        "fsrcnnx-model-catalog.js",
+        "tools/package-files.mjs",
+        "MODEL_PROVENANCE.md"
+      ],
+      "resolution": "The assets are absent from the current tree and package; purge them from private Git history before making the repository public."
     },
     {
       "id": "unreproducible-span-smoke-model",

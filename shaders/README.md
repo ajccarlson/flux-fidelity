@@ -15,15 +15,8 @@ This directory contains source material used to generate runtime JSON/WGSL model
 
 The FSRCNN release tag resolves to commit `1aa11ab0e1fc12741fdb84cef31da5619a478670`, but its shader asset was attached later. The pinned asset checksum, not the tag commit, identifies the exact source bytes.
 
-## Locally reproducible but unverified source
+## Removed historical assets
 
-`FSRCNNX_x2_56-16-4-1.glsl` has SHA-256 `34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6` and reproduces the checked-in high-quality x2 JSON/WGSL files. Its original upstream URL, author, revision, and license are not established. Reproducibility from local bytes does not resolve that provenance gap.
+The unverified high-quality x2 source and generated pair, and the source-less x3 and x4 generated pairs, have been removed from the current tree and extension package. Their historical hashes are retained as tombstones in [MODEL_PROVENANCE.md](../MODEL_PROVENANCE.md) and [`release-clearance.json`](../release-clearance.json).
 
-## Missing source
-
-No source shader or authoritative upstream revision is retained for:
-
-- `model/FSRCNNX_x3_16-0-4-1.wgsl` and `.passes.json`
-- `model/FSRCNNX_x4_16-0-4-1.wgsl` and `.passes.json`
-
-Do not publicly redistribute the high x2, x3, or x4 artifacts until their source and license records are completed, or remove them from the public package. See [MODEL_PROVENANCE.md](../MODEL_PROVENANCE.md) for output hashes and all release gates.
+Those bytes still exist in private Git history. Do not make that repository history public until it has been purged or authoritative source and license evidence has been established. `npm run check:generated` deliberately covers only the standard x2 and three ArtCNN rows above.

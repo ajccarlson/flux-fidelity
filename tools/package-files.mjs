@@ -1,6 +1,6 @@
 import { GENERATED_MODEL_ASSET_PATHS } from "../fsrcnnx-model-catalog.js";
 
-export const EXPECTED_PACKAGE_FILE_COUNT = 63;
+export const EXPECTED_PACKAGE_FILE_COUNT = 57;
 
 // These assets are selected indirectly from runtime model catalogs, so static
 // import/getURL scanning cannot prove their exact package membership. Keep this
@@ -59,12 +59,6 @@ export const PACKAGE_FILES = Object.freeze([
   "model/ArtCNN_C4F32_DS.artcnn.wgsl",
   "model/FSRCNNX_x2_16-0-4-1.passes.json",
   "model/FSRCNNX_x2_16-0-4-1.wgsl",
-  "model/FSRCNNX_x2_56-16-4-1.passes.json",
-  "model/FSRCNNX_x2_56-16-4-1.wgsl",
-  "model/FSRCNNX_x3_16-0-4-1.passes.json",
-  "model/FSRCNNX_x3_16-0-4-1.wgsl",
-  "model/FSRCNNX_x4_16-0-4-1.passes.json",
-  "model/FSRCNNX_x4_16-0-4-1.wgsl",
   "model/neural/manifest.json",
   "model/neural/span2x_smoke.fp16.onnx",
   "model/rife.onnx",

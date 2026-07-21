@@ -4,7 +4,6 @@ import test from "node:test";
 
 import {
   ARTCNN_MODEL_NAMES,
-  FSRCNNX_HIGH_MODEL_NAME,
   FSRCNNX_STANDARD_MODEL_NAMES,
   GENERATED_MODEL_ASSET_PATHS,
   GENERATED_MODEL_CATALOG,
@@ -24,18 +23,15 @@ import {
 } from "../fsrcnnx-validation.js";
 
 test("the shared generated-model catalog is complete, immutable, and backed by files", () => {
-  assert.equal(GENERATED_MODEL_CATALOG.length, 7);
-  assert.equal(new Set(GENERATED_MODEL_CATALOG.map(({ name }) => name)).size, 7);
+  assert.equal(GENERATED_MODEL_CATALOG.length, 4);
+  assert.equal(new Set(GENERATED_MODEL_CATALOG.map(({ name }) => name)).size, 4);
   assert.equal(Object.isFrozen(GENERATED_MODEL_CATALOG), true);
   assert.ok(GENERATED_MODEL_CATALOG.every(Object.isFrozen));
   assert.deepEqual(FSRCNNX_STANDARD_MODEL_NAMES, [
     "FSRCNNX_x2_16-0-4-1",
-    "FSRCNNX_x3_16-0-4-1",
-    "FSRCNNX_x4_16-0-4-1",
   ]);
-  assert.equal(FSRCNNX_HIGH_MODEL_NAME, "FSRCNNX_x2_56-16-4-1");
   assert.deepEqual(ARTCNN_MODEL_NAMES, ["ArtCNN_C4F32", "ArtCNN_C4F32_DN", "ArtCNN_C4F32_DS"]);
-  assert.equal(GENERATED_MODEL_ASSET_PATHS.length, 14);
+  assert.equal(GENERATED_MODEL_ASSET_PATHS.length, 8);
   assert.deepEqual(GENERATED_MODEL_ASSET_PATHS, [...GENERATED_MODEL_ASSET_PATHS].sort());
   for (const path of GENERATED_MODEL_ASSET_PATHS) {
     assert.equal(existsSync(new URL(`../${path}`, import.meta.url)), true, path);
@@ -44,7 +40,7 @@ test("the shared generated-model catalog is complete, immutable, and backed by f
 
 test("validation accounting is fixed before execution and treats skips as incompatible", () => {
   const plan = createValidationPlan(GENERATED_MODEL_CATALOG);
-  assert.equal(plan.length, 27);
+  assert.equal(plan.length, 18);
   assert.equal(new Set(plan.map(({ id }) => id)).size, plan.length);
   assert.equal(Object.isFrozen(ONNX_VALIDATION_CHECKS), true);
   assert.ok(ONNX_VALIDATION_CHECKS.every(Object.isFrozen));
@@ -55,7 +51,7 @@ test("validation accounting is fixed before execution and treats skips as incomp
   ]);
   const results = new Map();
   assert.deepEqual(summarizeValidation(plan, results), {
-    pass: 0, fail: 0, skip: 0, pending: 27, total: 27, complete: false, ok: false,
+    pass: 0, fail: 0, skip: 0, pending: 18, total: 18, complete: false, ok: false,
   });
   for (const check of plan) results.set(check.id, { status: "pass" });
   assert.equal(summarizeValidation(plan, results).ok, true);

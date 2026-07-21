@@ -98,8 +98,8 @@ async function loadCoordinator(deps) {
     let debandInterTex = deps.resources.shift(), debandInterW = 4, debandInterH = 4;
     let debandTimeBuf = deps.resources.shift(), ssimds = { destroy: deps.onSsimDestroy };
     let models = [{ destroy: deps.onModelDestroy }], modelsDevice = device, activeModel = models[0];
-    let hiStages = [], artStages = {}, chainedHi = {}, chainedArt = {};
-    let hiLoadPending = true, artLoadPending = true;
+    let artStages = {}, chainedFsrcnnx = {}, chainedArt = {};
+    let fsrcnnxLoadPending = true, artLoadPending = true;
     let _scaleHeld = {}, _scalePending = {}, _scalePendingSince = 1, _texSource = {};
     function resetScaleSelection() { _scaleHeld = undefined; _scalePending = null; _scalePendingSince = 0; }
     let neuralEng = { invalidateDevice: (...args) => deps.invalidateNeural(...args) };
@@ -119,8 +119,8 @@ async function loadCoordinator(deps) {
       return true;
     }
     async function loadModels() {}
+    async function ensureFsrcnnxStages() {}
     async function ensureArtStages() {}
-    async function ensureHiStages() {}
     async function ensureNeural() {}
     function neuralSelectionCurrent() { return true; }
     async function ensureImageUpscaler() { return null; }
