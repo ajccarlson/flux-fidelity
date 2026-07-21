@@ -112,6 +112,77 @@ function completeApi(overrides = {}) {
   };
 }
 
+const booleanCommand = (type, method) => ({
+  type,
+  method,
+  field: "on",
+  valid: [true, false],
+  invalid: [0, 1, "true", null, undefined],
+});
+
+const COMMAND_CASES = [
+  {
+    type: "FSRCNNX_SETMODE", method: "setMode", field: "mode",
+    valid: ["off", "passthrough", "upscale"], invalid: ["", "UPscale", null, 0],
+  },
+  {
+    type: "FSRCNNX_SETENGINE", method: "setEngine", field: "engine",
+    valid: ["fsrcnnx", "fsrcnnx-hi", "artcnn", "neural"],
+    invalid: ["", "FSRCNNX", "unknown", null],
+  },
+  {
+    type: "FSRCNNX_SETNEURALMODEL", method: "setNeuralModel", field: "model",
+    valid: ["span2x_smoke", "span4x_future", "vendor.model-v2"],
+    invalid: ["", "../span2x_smoke", "key/with/slash", "contains space", null],
+  },
+  {
+    type: "FSRCNNX_SETARTVARIANT", method: "setArtVariant", field: "variant",
+    valid: ["ArtCNN_C4F32", "ArtCNN_C4F32_DS", "ArtCNN_C4F32_DN"],
+    invalid: ["", "ArtCNN_C4F32_UNKNOWN", null],
+  },
+  booleanCommand("FSRCNNX_SETINTERPOLATE", "setInterpolate"),
+  {
+    type: "FSRCNNX_SETINTERPRES", method: "setInterpolateRes", field: "mode",
+    valid: ["auto", "full", "half", "quarter"], invalid: ["", "eighth", null, 1],
+  },
+  {
+    type: "FSRCNNX_SETINTERPAVOFFSET", method: "setInterpolateAvOffset", field: "ms",
+    valid: [-100, 0, 300], invalid: [-100.01, 300.01, "0", NaN, Infinity, null],
+  },
+  {
+    type: "FSRCNNX_SETINTERPMODEL", method: "setInterpolateModel", field: "key",
+    valid: ["rife_v4.26_fp16", "rife_v4.26", "rife_orig", "blend"],
+    invalid: ["", "rife_v4.25", "../rife_orig", null],
+  },
+  {
+    type: "FSRCNNX_SETINTERPTARGETFPS", method: "setInterpolateTargetFps", field: "value",
+    valid: ["auto", 24, 60, 480], invalid: [23.99, 480.01, "60", "AUTO", NaN, Infinity, null],
+  },
+  booleanCommand("FSRCNNX_SETLADDER", "setInterpolateLadder"),
+  booleanCommand("FSRCNNX_SETAUTOFALLBACK", "setInterpolateAutoFallback"),
+  booleanCommand("FSRCNNX_SETINVERT", "setInterpolateInvert"),
+  booleanCommand("FSRCNNX_SETINTERPDIAG", "setInterpolateDiag"),
+  booleanCommand("FSRCNNX_SETIMAGES", "setImages"),
+  booleanCommand("FSRCNNX_SETDEBAND", "setDeband"),
+  {
+    type: "FSRCNNX_SETDEBANDSTR", method: "setDebandStrength", field: "strength",
+    valid: [0.3, 1, 3], invalid: [0.29, 3.01, "1", NaN, Infinity, null],
+  },
+  booleanCommand("FSRCNNX_SETHOVERREVEAL", "setHoverReveal"),
+  booleanCommand("FSRCNNX_SETALLVIDEOS", "setAllVideos"),
+  booleanCommand("FSRCNNX_SETSHARPEN", "setSharpen"),
+  {
+    type: "FSRCNNX_SETSHARPENSTR", method: "setSharpenStrength", field: "strength",
+    valid: [0.1, 1, 2], invalid: [0.09, 2.01, "1", NaN, Infinity, null],
+  },
+  booleanCommand("FSRCNNX_SETSSIMDS", "setSSimDS"),
+  {
+    type: "FSRCNNX_SETPOLICY", method: "setPolicy", field: "policy",
+    valid: ["display", "auto", "force2", "force3", "force4", "force8"],
+    invalid: ["", "force1", "FORCE2", null],
+  },
+];
+
 test("status remains loading through restore and explicit restore is single-flight", async () => {
   const imported = deferred();
   const restored = deferred();
@@ -184,6 +255,165 @@ test("the allowlisted dispatcher responds exactly once to success, throws, and r
   });
   assert.equal(unknown.claimed, false);
   assert.deepEqual(unknown.responses, []);
+});
+
+test("the command contract matrix covers the complete production allowlist", async () => {
+  const source = await readFile(contentUrl, "utf8");
+  const start = source.indexOf("const COMMANDS = Object.freeze({");
+  const end = source.indexOf("\n});\n\nfunction normalizeCommandResponse", start);
+  assert.ok(start >= 0 && end > start, "production command table markers must remain discoverable");
+  const commandSource = source.slice(start, end);
+  const production = [...commandSource.matchAll(/^  (FSRCNNX_[A-Z0-9_]+):/gm)]
+    .map((match) => match[1])
+    .sort();
+  const tested = ["FSRCNNX_RESTORE", ...COMMAND_CASES.map(({ type }) => type)].sort();
+  assert.deepEqual(production, tested);
+});
+
+test("status accepts no payload fields", async () => {
+  const bridge = await loadBridge(async () => completeApi());
+  await flush();
+
+  const valid = bridge.message({ type: "FSRCNNX_STATUS" });
+  const invalid = bridge.message({ type: "FSRCNNX_STATUS", force: true });
+  await flush();
+
+  assert.equal(valid.responses[0].loading, false);
+  assert.deepEqual(plain(invalid.responses), [{
+    ok: false,
+    error: "invalid-input",
+    reason: "Unexpected field: force",
+    field: "force",
+  }]);
+});
+
+test("every allowlisted command accepts its complete supported value set", async () => {
+  const calls = new Map(COMMAND_CASES.map(({ method }) => [method, []]));
+  const overrides = Object.fromEntries(COMMAND_CASES.map(({ method }) => [
+    method,
+    (value) => {
+      calls.get(method).push(value);
+      return { ok: true, value };
+    },
+  ]));
+  const bridge = await loadBridge(async () => completeApi(overrides));
+  await flush();
+
+  for (const command of COMMAND_CASES) {
+    for (const value of command.valid) {
+      const request = bridge.message({ type: command.type, [command.field]: value });
+      assert.equal(request.claimed, true, command.type);
+      await flush();
+      assert.deepEqual(plain(request.responses), [{ ok: true, value }],
+        `${command.type} should accept ${String(value)}`);
+    }
+    assert.deepEqual(calls.get(command.method), command.valid, command.type);
+  }
+});
+
+test("every allowlisted command rejects missing, malformed, and extra payload fields before main", async () => {
+  let calls = 0;
+  const overrides = Object.fromEntries(COMMAND_CASES.map(({ method }) => [
+    method,
+    () => { calls++; return { ok: true }; },
+  ]));
+  const bridge = await loadBridge(async () => completeApi(overrides));
+  await flush();
+  const attempts = [];
+
+  for (const command of COMMAND_CASES) {
+    attempts.push({
+      command,
+      expectedField: command.field,
+      request: bridge.message({ type: command.type }),
+    });
+    for (const value of command.invalid) {
+      attempts.push({
+        command,
+        expectedField: command.field,
+        request: bridge.message({ type: command.type, [command.field]: value }),
+      });
+    }
+    attempts.push({
+      command,
+      expectedField: "unexpected",
+      request: bridge.message({
+        type: command.type,
+        [command.field]: command.valid[0],
+        unexpected: true,
+      }),
+    });
+  }
+
+  await flush(12);
+  assert.equal(calls, 0, "invalid payloads must never reach a main-world setter");
+  for (const { command, expectedField, request } of attempts) {
+    assert.equal(request.claimed, true, command.type);
+    assert.equal(request.responses.length, 1, command.type);
+    const response = plain(request.responses[0]);
+    assert.equal(response.ok, false, command.type);
+    assert.equal(response.error, "invalid-input", command.type);
+    assert.equal(response.field, expectedField, command.type);
+    assert.equal(typeof response.reason, "string", command.type);
+    assert.ok(response.reason.length > 0, command.type);
+    assert.deepEqual(Object.keys(response).sort(), ["error", "field", "ok", "reason"]);
+  }
+});
+
+test("restore accepts no payload and malformed commands fail without waiting for startup", async () => {
+  const imported = deferred();
+  const bridge = await loadBridge(() => imported.promise);
+
+  const malformed = bridge.message({ type: "FSRCNNX_SETMODE", mode: "invalid" });
+  const restoreWithPayload = bridge.message({ type: "FSRCNNX_RESTORE", force: true });
+  await flush();
+  assert.deepEqual(plain(malformed.responses), [{
+    ok: false,
+    error: "invalid-input",
+    reason: "mode must be one of: off, passthrough, upscale",
+    field: "mode",
+  }]);
+  assert.deepEqual(plain(restoreWithPayload.responses), [{
+    ok: false,
+    error: "invalid-input",
+    reason: "Unexpected field: force",
+    field: "force",
+  }]);
+
+  imported.resolve(completeApi());
+  await flush();
+  const restore = bridge.message({ type: "FSRCNNX_RESTORE" });
+  await flush();
+  assert.deepEqual(plain(restore.responses), [{ ok: true, restored: true }]);
+});
+
+test("malformed main-world command results become stable invalid-response envelopes", async () => {
+  const malformed = [undefined, null, 7, "ok", [], {}, { ok: "yes" }];
+  let index = 0;
+  const bridge = await loadBridge(async () => completeApi({
+    setMode: () => malformed[index++],
+    setEngine: () => ({ ok: false, error: "engine-disabled", reason: "not available" }),
+    setImages: () => ({ ok: true, images: true }),
+  }));
+  await flush();
+
+  for (let i = 0; i < malformed.length; i++) {
+    const request = bridge.message({ type: "FSRCNNX_SETMODE", mode: "upscale" });
+    await flush();
+    assert.deepEqual(plain(request.responses), [{
+      ok: false,
+      error: "invalid-response",
+      reason: "Command response must be an object with a boolean ok field",
+    }]);
+  }
+
+  const failure = bridge.message({ type: "FSRCNNX_SETENGINE", engine: "neural" });
+  const success = bridge.message({ type: "FSRCNNX_SETIMAGES", on: true });
+  await flush();
+  assert.deepEqual(plain(failure.responses), [{
+    ok: false, error: "engine-disabled", reason: "not available",
+  }]);
+  assert.deepEqual(plain(success.responses), [{ ok: true, images: true }]);
 });
 
 test("import and restore failures become truthful status and command responses", async () => {

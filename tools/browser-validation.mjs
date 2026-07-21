@@ -797,6 +797,99 @@ async function runValidation(httpBase, extensionId, expectedName, signal) {
   }
 }
 
+async function runPopupSmoke(httpBase, extensionId, expectedName, signal) {
+  const popupUrl = `chrome-extension://${extensionId}/popup.html`;
+  const targetUrl = new URL(`/json/new?${encodeURIComponent("about:blank")}`, httpBase);
+  const target = await requestJson(targetUrl, { method: "PUT", signal });
+  if (!target.webSocketDebuggerUrl) throw new Error("popup smoke target has no DevTools WebSocket URL");
+  const events = [];
+  let client = null;
+  try {
+    client = await CdpClient.connect(target.webSocketDebuggerUrl, { signal });
+    client.onEvent((message) => collectRuntimeEvent(events, message));
+    await client.send("Runtime.enable");
+    await client.send("Page.enable");
+    await client.send("Page.bringToFront");
+    const navigation = await client.send("Page.navigate", { url: popupUrl });
+    if (navigation.errorText) throw new Error(`popup navigation failed: ${navigation.errorText}`);
+
+    const deadline = Date.now() + CDP_TIMEOUT_MS;
+    let state = null;
+    while (Date.now() < deadline) {
+      if (signal?.aborted) throw abortReason(signal);
+      try {
+        state = await evaluate(client, `(() => {
+          const controls = [...document.querySelectorAll("button, input, select")];
+          return {
+            href: location.href,
+            readyState: document.readyState,
+            runtimeId: globalThis.chrome?.runtime?.id || null,
+            manifestName: globalThis.chrome?.runtime?.getManifest?.().name || null,
+            scriptType: document.querySelector('script[src="popup.js"]')?.type || null,
+            webgpuText: document.getElementById("s-webgpu")?.textContent || "",
+            operationText: document.getElementById("operation-status")?.textContent || "",
+            controlCount: controls.length,
+            disabledCount: controls.filter((control) => control.disabled).length,
+            modeStates: [...document.querySelectorAll(".modes button")].map((button) => ({
+              mode: button.dataset.mode,
+              pressed: button.getAttribute("aria-pressed"),
+            })),
+            missingIds: [
+              "s-webgpu", "s-video", "s-model", "s-frames", "runtime-status",
+              "drm-banner", "operation-status", "engine", "policy", "interpolate",
+            ].filter((id) => !document.getElementById(id)),
+          };
+        })()`);
+      } catch (error) {
+        if (/execution context|context.*destroyed|cannot find context/i.test(error.message)) {
+          await delay(100, signal);
+          continue;
+        }
+        throw error;
+      }
+      if (state?.href === popupUrl && state.readyState === "complete" && state.operationText) break;
+      await delay(100, signal);
+    }
+
+    const problems = [];
+    if (state?.href !== popupUrl) problems.push(`popup failed to load (${state?.href || "unknown URL"})`);
+    if (state?.runtimeId !== extensionId || state?.manifestName !== expectedName) {
+      problems.push("popup extension identity is incorrect");
+    }
+    if (state?.scriptType !== "module") problems.push("popup module script did not load");
+    if (state?.webgpuText !== "unavailable") problems.push("popup unsupported-page state was not rendered");
+    if (!/open an http, https, or permitted local file page/i.test(state?.operationText || "")) {
+      problems.push("popup unsupported-page guidance is missing");
+    }
+    if (!Number.isInteger(state?.controlCount) || state.controlCount < 20 ||
+        state.disabledCount !== state.controlCount) {
+      problems.push("popup did not disable all controls on an unsupported active page");
+    }
+    if (state?.modeStates?.length !== 3 ||
+        state.modeStates.filter(({ pressed }) => pressed === "true").length !== 1 ||
+        state.modeStates.find(({ pressed }) => pressed === "true")?.mode !== "off") {
+      problems.push("popup mode accessibility state is invalid");
+    }
+    if (!Array.isArray(state?.missingIds) || state.missingIds.length) {
+      problems.push(`popup is missing required elements: ${(state?.missingIds || []).join(", ")}`);
+    }
+    const runtimeFailures = events.filter((event) => event.kind === "exception" ||
+      (event.kind === "console" && ["error", "warning", "assert"].includes(event.type)));
+    if (runtimeFailures.length) problems.push(`${runtimeFailures.length} popup runtime failure event(s) observed`);
+    if (problems.length) {
+      const error = new Error(`popup browser smoke failed: ${problems.join("; ")}`);
+      error.browserEvents = events;
+      throw error;
+    }
+    return state;
+  } catch (error) {
+    if (!error.browserEvents) error.browserEvents = events;
+    throw error;
+  } finally {
+    client?.close();
+  }
+}
+
 function diagnostics(events) {
   if (!Array.isArray(events) || !events.length) return "";
   return events.slice(-20).map((event) => `  ${event.kind}/${event.type}: ${event.text}`).join("\n");
@@ -820,6 +913,7 @@ async function main(signal) {
     const browserWebSocket = await launched.endpoint;
     const httpBase = httpBaseFromWebSocket(browserWebSocket);
     const discovery = await discoverExtension(httpBase, manifest.name, extensionRoot, manifest.key, signal);
+    await runPopupSmoke(httpBase, discovery.extensionId, manifest.name, signal);
     const { state } = await runValidation(httpBase, discovery.extensionId, manifest.name, signal);
     const webGpu = state.results.find((result) => result.id === "webgpu");
     console.log(
@@ -827,6 +921,7 @@ async function main(signal) {
       `(${basename(browser)}, ID from ${discovery.source}).`,
     );
     if (webGpu?.detail) console.log(`WebGPU: ${webGpu.detail}`);
+    console.log("Popup browser smoke passed: module, unavailable state, controls, and accessibility.");
   } catch (error) {
     primaryError = error;
     if (launched?.output()) error.browserOutput = launched.output();
