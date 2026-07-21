@@ -108,7 +108,7 @@ async function loadRestoreHarness(prefs) {
     let requestedEngine = "fsrcnnx", engine = "fsrcnnx", neuralModelKey = "", artVariant = "ArtCNN_C4F32";
     let upscalePolicy = "display", ssimdsEnabled = true, sharpenEnabled = false, sharpenStrength = 1;
     let optHoverReveal = false, optAllVideos = false, debandEnabled = false, debandStrength = 1;
-    let chainDepth = 1, pendingEngine = "rife_v4.26_fp16", pendingResMode = "auto";
+    let chainDepth = 1, pendingEngine = "rife_v4.26", pendingResMode = "auto";
     let pendingTargetFps = "auto", pendingAvOffsetMs = 0;
     let interpStaticPassthroughPref = true, interpAutoFallbackPref = true;
     let interpLadderPref = false, interpInvertPref = true;
@@ -370,7 +370,7 @@ test("preference restore normalizes valid legacy values and rejects corrupt stor
     engine: "fsrcnnx", neuralModelKey: "", artVariant: "ArtCNN_C4F32",
     policy: "display", chainDepth: 1,
     ssimdsEnabled: true, sharpenEnabled: false, sharpenStrength: 1, debandStrength: 1,
-    pendingEngine: "rife_v4.26_fp16", pendingResMode: "auto",
+    pendingEngine: "rife_v4.26", pendingResMode: "auto",
     pendingTargetFps: "auto", pendingAvOffsetMs: 0,
     interpStaticPassthroughPref: true, interpAutoFallbackPref: true,
     interpLadderPref: false, interpInvertPref: true,
