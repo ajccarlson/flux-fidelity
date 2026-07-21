@@ -56,6 +56,8 @@ async function loadSelectionCoordinator(deps) {
     let interpolator = deps.interpolator || null;
     let optAllVideos = false;
     let protectedSource = false, protectedReason = null;
+    const uncheckedColorSupport = (detail) => ({ supported: false, code: "color-not-checked", detail });
+    let selectedColorSupport = uncheckedColorSupport("not checked");
     let chainInverted = false, _texSource = null, activeModel = null;
     let frameTimes = [];
     let canvas = { style: {} };
@@ -76,7 +78,7 @@ async function loadSelectionCoordinator(deps) {
     const clearMultiTargets = () => deps.events.push(["clear-multi"]);
     const chainTap = (on) => deps.events.push(["chain-tap", on]);
     const resetScaleSelection = () => deps.events.push(["reset-scale"]);
-    const probeVideo = (candidate) => deps.probe(candidate);
+    const probeVideo = (candidate, options) => deps.probe(candidate, options);
     const notifyProtected = () => deps.events.push(["notify-protected", protectedReason]);
     const notifyState = () => deps.events.push(["notify-state", mode, !!primaryController]);
     const initWebGPU = () => deps.initWebGPU();
@@ -99,6 +101,12 @@ async function loadSelectionCoordinator(deps) {
     export function invalidateSelection() { videoSelectionGeneration++; }
     export function terminalFailure(failure) { return handleInterpolationTerminalFailure(failure); }
     export function retryInterpolation() { return requestInterpolationRetry("test configuration change"); }
+    export function restartInterpolation() {
+      return restartInterpolationForVideoSelection(videoSelectionGeneration);
+    }
+    export function monitorReconcile(candidate = video) {
+      return scheduleVideoSelection(candidate, candidate, false);
+    }
     export function quarantined(candidate = video) { return interpolationQuarantineMatches(candidate); }
     export function state() {
       return { mode, video, primaryController, protectedSource, protectedReason,
@@ -377,6 +385,7 @@ async function loadSecondarySourceBoundary(deps) {
     let pageSuspended = false, optAllVideos = true, mode = "upscale", adopting = false;
     let multiTargets = new Map();
     const videoMonitor = { request: () => deps.events.push("request") };
+    const invalidateVideoColorSupport = (video) => deps.events.push(["invalidate-color", video]);
     ${production}
     export function register(target) { multiTargets.set(target.video, target); }
     export { handleSecondarySourceBoundary };
@@ -614,6 +623,78 @@ test("missing and protected videos suspend without forgetting the requested mode
   assert.equal(coordinator.state().primaryController.video, protectedVideo);
 });
 
+test("an unsupported decoded color space preserves renderer intent and recovers on reprobe", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  const deps = setup({ optInterpolate: false });
+  const coordinator = await loadSelectionCoordinator(deps);
+  const candidate = { id: "hdr" };
+  const probeOptions = [];
+  deps.probe = (_video, options) => {
+    probeOptions.push(options);
+    return "color-hdr-unsupported";
+  };
+
+  assert.equal(await coordinator.reconcile(candidate), true);
+  assert.equal(coordinator.state().mode, "upscale");
+  assert.equal(coordinator.state().protectedSource, true);
+  assert.equal(coordinator.state().protectedReason, "color-hdr-unsupported");
+  assert.equal(coordinator.state().primaryController, null);
+  assert.ok(deps.events.some(([type, reason]) =>
+    type === "notify-protected" && reason === "color-hdr-unsupported"));
+  assert.equal(probeOptions[0]?.forceColor, true, "a new source cannot reuse stale color metadata");
+
+  deps.probe = () => "ok";
+  assert.equal(await coordinator.reconcile(candidate), true);
+  assert.equal(coordinator.state().protectedSource, false);
+  assert.equal(coordinator.state().primaryController.video, candidate);
+});
+
+test("standalone interpolation rechecks color support before starting", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  const candidate = { id: "standalone-hdr" };
+  const deps = setup({ initialVideo: candidate, optInterpolate: true });
+  deps.mode = "off";
+  deps.probe = () => "color-metadata-unavailable";
+  const coordinator = await loadSelectionCoordinator(deps);
+  deps.events.length = 0;
+
+  assert.equal(await coordinator.restartInterpolation(), false);
+  assert.equal(coordinator.state().mode, "off");
+  assert.equal(coordinator.state().optInterpolate, true, "the user's interpolation preference is durable");
+  assert.equal(coordinator.state().protectedReason, "color-metadata-unavailable");
+  assert.equal(deps.events.some(([type]) => type === "interp-start"), false);
+  assert.ok(deps.events.some(([type, reason]) =>
+    type === "notify-protected" && reason === "color-metadata-unavailable"));
+});
+
+test("monitor reconciliation stops standalone interpolation after a color transition", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  const candidate = { id: "adaptive-stream" };
+  const deps = setup({ initialVideo: candidate, optInterpolate: true });
+  deps.mode = "off";
+  const coordinator = await loadSelectionCoordinator(deps);
+  deps.events.length = 0;
+  deps.probe = () => "color-wide-gamut-unsupported";
+
+  assert.equal(await coordinator.monitorReconcile(), true);
+  assert.equal(coordinator.state().mode, "off");
+  assert.equal(coordinator.state().optInterpolate, true);
+  assert.equal(coordinator.state().protectedReason, "color-wide-gamut-unsupported");
+  assert.equal(coordinator.state().primaryController, null);
+  assert.equal(deps.interpolator.running, false);
+  assert.equal(deps.events.some(([type]) => type === "interp-start"), false);
+
+  deps.probe = () => "ok";
+  assert.equal(await coordinator.monitorReconcile(), true);
+  assert.equal(coordinator.state().protectedSource, false);
+  assert.equal(coordinator.state().primaryController.video, candidate);
+  assert.equal(deps.interpolator.running, true);
+  assert.equal(deps.interpolator.video, candidate);
+});
+
 test("a reused video element creates a fresh ownership generation when its media source changes", async (t) => {
   const previous = globalThis.__videoOwnershipDeps;
   t.after(() => { globalThis.__videoOwnershipDeps = previous; });
@@ -841,7 +922,7 @@ test("a secondary source boundary retires the exact target before deferred recon
   assert.equal(boundary.handleSecondarySourceBoundary(target, owner), true);
   assert.equal(target.failedReason, "source-changed");
   assert.equal(target.canvas.style.display, "none");
-  assert.deepEqual(deps.events, ["destroy", "request"]);
+  assert.deepEqual(deps.events, [["invalidate-color", video], "destroy", "request"]);
   assert.equal(boundary.handleSecondarySourceBoundary(target, owner), false,
     "a retired target cannot process a second stale source callback");
 });

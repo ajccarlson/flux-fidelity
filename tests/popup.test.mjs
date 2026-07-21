@@ -5,6 +5,7 @@ import {
   PopupTransport,
   StatusCoordinator,
   createPopupController,
+  describeCommandFailure,
   isSupportedPageUrl,
   reconcileSelectOptions,
 } from "../popup.js";
@@ -867,6 +868,61 @@ test("stable refreshes do not rewrite live-region text", () => {
   controller.render({ ...status });
   assert.equal(runtimeWrites, firstRuntimeWrites);
   assert.equal(alertWrites, firstAlertWrites);
+});
+
+test("color-boundary failures remain precise in commands, runtime status, and the source banner", () => {
+  const cases = [
+    ["color-hdr-unsupported", /HDR video/],
+    ["color-wide-gamut-unsupported", /Wide-gamut video/],
+    ["color-space-unsupported", /validated BT\.709 SDR boundary/],
+    ["color-metadata-unavailable", /decoded color metadata/i],
+  ];
+
+  for (const [reason, expected] of cases) {
+    const { controller, document } = controllerHarness();
+    controller.render(readyStatus({
+      mode: "upscale",
+      activeMode: "off",
+      protected: true,
+      protectedReason: reason,
+      renderer: {
+        requestedMode: "upscale",
+        activeMode: "off",
+        phase: "blocked",
+        blockedReason: reason,
+      },
+    }));
+
+    assert.match(describeCommandFailure({ ok: false, reason }), expected);
+    assert.match(document.getElementById("runtime-status").textContent, expected);
+    assert.match(document.getElementById("drm-banner").textContent, expected);
+  }
+});
+
+test("a color-blocked standalone interpolator reports its source reason", () => {
+  const { controller, document } = controllerHarness();
+  controller.render(readyStatus({
+    mode: "off",
+    activeMode: "off",
+    interpolate: true,
+    protected: true,
+    protectedReason: "color-hdr-unsupported",
+    renderer: {
+      requestedMode: "off",
+      activeMode: "off",
+      phase: "off",
+      blockedReason: "color-hdr-unsupported",
+    },
+    interpolationRuntime: {
+      requested: true,
+      phase: "blocked",
+      blockedReason: "color-hdr-unsupported",
+      lastFailure: null,
+    },
+  }));
+
+  assert.match(document.getElementById("runtime-status").textContent, /HDR video/);
+  assert.match(document.getElementById("drm-banner").textContent, /HDR video/);
 });
 
 test("status refreshes do not overwrite a range while the user is adjusting it", () => {

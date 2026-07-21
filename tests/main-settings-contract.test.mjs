@@ -239,6 +239,12 @@ async function loadStatusHarness(storeHealth = {
     let sharpenEnabled = false, sharpenStrength = 1, requestedEngine = "neural", engine = "neural";
     let artVariant = "ArtCNN_C4F32", chainDepth = 1, neuralModelKey = "span-lazy";
     let neuralEng = null, protectedSource = false, protectedReason = null;
+    const selectedColorSupport = {
+      supported: false,
+      code: "color-not-checked",
+      detail: "No decoded video is selected.",
+      colorSpace: { primaries: null, transfer: null, matrix: null, fullRange: null },
+    };
     let optHoverReveal = false, optAllVideos = false;
     let optImages = false, imageUpscaledCount = 0, optInterpolate = false, interpPausedByNeural = false;
     let interpolationTerminalQuarantine = null, interpolator = null;
@@ -690,6 +696,8 @@ test("status exposes configured interpolation and neural values without live run
   });
   assert.equal(status.renderer.requestedEngine, "neural");
   assert.equal(status.renderer.effectiveEngine, "neural");
+  assert.strictEqual(status.renderer.colorSupport, status.colorSupport);
+  assert.equal(status.colorSupport.code, "color-not-checked");
   assert.deepEqual({
     neuralModel: status.neuralModel,
     interpModel: status.interpModel,

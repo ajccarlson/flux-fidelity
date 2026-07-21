@@ -5,10 +5,11 @@
 //   luma --(FSRCNNX chain)--> upscaled luma (r16float)
 //   upscaled luma + original RGB --(recombine)--> output RGB
 //
-// Recombine converts the bilinearly-upsampled source RGB to YCbCr, swaps in the
-// network's luma, and converts back. BT.709, limited->full handled implicitly by
-// using the same matrix both directions (mpv uses the video's actual primaries;
-// BT.709 is the right default for web/HD content).
+// Chromium converts each decoded frame's source primaries, transfer, YUV matrix,
+// and full/limited range into the explicitly requested sRGB target at the WebGPU
+// external-texture boundary. These shaders therefore operate only on sRGB/BT.709
+// target-space RGB. The local reversible matrix extracts/replaces target-space
+// luma; it does not perform source YUV range or primary conversion.
 
 // Extract luma from an imported external video texture into rgba16float (Y in .x).
 export const LUMA_EXTRACT_WGSL = /* wgsl */ `

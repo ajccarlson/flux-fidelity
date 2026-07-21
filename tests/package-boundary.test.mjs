@@ -41,9 +41,9 @@ function manifestGlob(pattern) {
   return new RegExp(`^${escaped}$`);
 }
 
-test("the package boundary is an exact, sorted 59-file allowlist", () => {
+test("the package boundary is an exact, sorted 71-file allowlist", () => {
   assert.equal(PACKAGE_FILES.length, EXPECTED_PACKAGE_FILE_COUNT);
-  assert.equal(EXPECTED_PACKAGE_FILE_COUNT, 59);
+  assert.equal(EXPECTED_PACKAGE_FILE_COUNT, 71);
   assert.equal(new Set(PACKAGE_FILES).size, PACKAGE_FILES.length);
   assert.deepEqual(PACKAGE_FILES, [...PACKAGE_FILES].sort());
   assert.equal(PACKAGE_FILES.includes("fsrcnnx-development-only.js"), false);
@@ -62,6 +62,7 @@ test("the package retains every legal notice and the machine-readable release ga
     "release-clearance.json",
     "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl",
     "shaders/upstream/SSimDownscaler.glsl",
+    "shaders/upstream/adaptive-sharpen.glsl",
     "transpile.js",
     "vendor/ort/LICENSE",
     "vendor/ort/ThirdPartyNotices.txt",
@@ -86,7 +87,7 @@ test("package creation never discovers an extra runtime-looking local file", () 
 
     const result = buildPackage({ rootDir: fixture, distDir: join(fixture, "output") });
 
-    assert.equal(result.fileCount, 59);
+    assert.equal(result.fileCount, 71);
     assert.deepEqual(walk(result.stage), PACKAGE_FILES);
     assert.equal(existsSync(join(result.stage, "fsrcnnx-development-only.js")), false);
   } finally {

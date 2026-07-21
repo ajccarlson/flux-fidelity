@@ -11,6 +11,8 @@
 // Pipeline: grab current frame → RIFE(prev, cur, 0.5) tween → enqueue tween+real
 // → buffered strict-cadence scheduler draws to our canvas → audio delayed to match.
 
+import { SRGB_COLOR_SPACE } from "./fsrcnnx-color-support.js";
+
 // Chromium installs native loadedmetadata/ended listeners for the lifetime of an
 // element every time captureStream() is called. Cache the first successful stream
 // per element so toggles, model restarts, and source replacements cannot accumulate
@@ -589,7 +591,10 @@ export class Interpolator {
                   }
                 } else {
                   // bitmap present: lazily grab a 2D context if WebGPU didn't claim it
-                  if (!this._octx && !this._gpuPresent) { try { this._octx = this.overlay.getContext("2d"); } catch {} }
+                  if (!this._octx && !this._gpuPresent) {
+                    try { this._octx = this.overlay.getContext("2d", { colorSpace: SRGB_COLOR_SPACE }); }
+                    catch {}
+                  }
                   if (this._octx) {
                     if (this.overlay.width !== item.bmp.width || this.overlay.height !== item.bmp.height) {
                       this.overlay.width = item.bmp.width; this.overlay.height = item.bmp.height;
@@ -907,7 +912,10 @@ export class Interpolator {
       try {
         canvas.width = 1;
         canvas.height = 1;
-        const context = canvas.getContext("2d", { willReadFrequently: true });
+        const context = canvas.getContext("2d", {
+          colorSpace: SRGB_COLOR_SPACE,
+          willReadFrequently: true,
+        });
         if (!context) return false;
         context.drawImage(video, 0, 0, 1, 1);
         context.getImageData(0, 0, 1, 1);
@@ -2257,7 +2265,10 @@ export class Interpolator {
     }
     // scratch canvas to turn clean RGBA readback into bitmaps for the pipeline
     this._grab = new OffscreenCanvas(video.videoWidth || 2, video.videoHeight || 2);
-    this._grabCtx = this._grab.getContext("2d", { willReadFrequently: false });
+    this._grabCtx = this._grab.getContext("2d", {
+      colorSpace: SRGB_COLOR_SPACE,
+      willReadFrequently: false,
+    });
     const grabCanvas = this._grab;
     const grabCtx = this._grabCtx;
     let cpuTickBusy = false;
@@ -2309,7 +2320,9 @@ export class Interpolator {
         if (this._chainActive && this.chain.tap) { this.chain.tap(true); log("interp: CHAIN active — interpolating UPSCALED frames (blend engine)"); }
         if (gpuOk && this.overlay && !this._octx && m.gpuConfigureCanvas) {
           try { this._gpuPresent = m.gpuConfigureCanvas(this.overlay); } catch { this._gpuPresent = false; }
-          if (!this._gpuPresent) this._octx = this.overlay.getContext("2d");
+          if (!this._gpuPresent) {
+            this._octx = this.overlay.getContext("2d", { colorSpace: SRGB_COLOR_SPACE });
+          }
           log(`interp: standalone BLEND ${this._gpuPresent ? "ACTIVE (no readback)" : "present unavailable"}`);
         }
         if (gpuOk && !this._gpuPresent) {
@@ -2395,7 +2408,9 @@ export class Interpolator {
           }
           if (gpuOk && this.overlay && !this._octx && m.gpuConfigureCanvas) {
             try { this._gpuPresent = m.gpuConfigureCanvas(this.overlay); } catch (e) { this._gpuPresent = false; }
-            if (!this._gpuPresent) this._octx = this.overlay.getContext("2d");
+            if (!this._gpuPresent) {
+              this._octx = this.overlay.getContext("2d", { colorSpace: SRGB_COLOR_SPACE });
+            }
             log(`interp: GPU present ${this._gpuPresent ? "ACTIVE (no readback)" : "unavailable — readback path"}`);
           }
           if (gpuOk && !this._gpuPresent) {
@@ -2430,7 +2445,7 @@ export class Interpolator {
     this._pipelineInitPromise = pipelinePromise;
     // reusable canvas for the blend fallback tween
     const blendCanvas = new OffscreenCanvas(2, 2);
-    const bctx = blendCanvas.getContext("2d");
+    const bctx = blendCanvas.getContext("2d", { colorSpace: SRGB_COLOR_SPACE });
     const makeBlend = (a, b, w, h) => {
       if (blendCanvas.width !== w || blendCanvas.height !== h) { blendCanvas.width = w; blendCanvas.height = h; }
       bctx.globalAlpha = 1.0; bctx.drawImage(a, 0, 0, w, h);
@@ -2493,7 +2508,8 @@ export class Interpolator {
             this._adaptScale(stats.lastInferMs, prior.ts, cur.ts);
             if (out) {
               if (!this._tw || this._tw.width !== w || this._tw.height !== h) {
-                this._tw = new OffscreenCanvas(w, h); this._twctx = this._tw.getContext("2d");
+                this._tw = new OffscreenCanvas(w, h);
+                this._twctx = this._tw.getContext("2d", { colorSpace: SRGB_COLOR_SPACE });
               }
               this._twctx.drawImage(out, 0, 0, out._cropW, out._cropH, 0, 0, w, h);
               tweenCanvas = this._tw;
