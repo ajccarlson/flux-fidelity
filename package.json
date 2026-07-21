@@ -7,9 +7,6 @@
     "node": ">=20.11"
   },
   "description": "Real-time WebGPU video upscaling and frame interpolation for Chromium",
-  "engines": {
-    "node": ">=20"
-  },
   "scripts": {
     "check": "npm run check:syntax && npm run check:package && npm run check:models && npm run check:generated && npm test",
     "check:syntax": "node tools/check-syntax.mjs",
