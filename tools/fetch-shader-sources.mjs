@@ -16,6 +16,11 @@ const sources = [
     sha256: "f46f4710a162d17058b9d82ed8610588b0c04d7be07cef6bf2a8c4077828f804",
   },
   {
+    name: "adaptive-sharpen.glsl",
+    url: "https://gist.githubusercontent.com/igv/8a77e4eb8276753b54bb94c1c50c317e/raw/572f59099cd0e3eb5e321a6da0a3d90a7382e2dc/adaptive-sharpen.glsl",
+    sha256: "827fb3d662ac9a91b4075e9117fe6e1dbc1c06d85959ba719cdb954dfb7fb8e4",
+  },
+  {
     name: "ArtCNN_C4F32.glsl",
     url: "https://raw.githubusercontent.com/Artoriuz/ArtCNN/a20445ca420ed9f0c2a807e2d0c186a991115da0/GLSL/ArtCNN_C4F32.glsl",
     sha256: "f773bce6cf5fe7e5e5d599a695edd40df5cd7a20c3d08c4d164d07591d5bead3",

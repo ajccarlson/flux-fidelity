@@ -68,7 +68,7 @@ These are runtime source modules rather than generated model files, but their de
 | Local file | SHA-256 | Recorded source | Status |
 | --- | --- | --- | --- |
 | `fsrcnnx-ssimds.js` | `0f55f8f2b49bea3cb8ee2e4c801a663f21d4dfabb88efaf2de23b709c6ade3c6` | Packaged [`SSimDownscaler.glsl`](shaders/upstream/SSimDownscaler.glsl), SHA-256 `f46f4710a162d17058b9d82ed8610588b0c04d7be07cef6bf2a8c4077828f804`, from [gist revision `38992bce`](https://gist.github.com/igv/36508af3ffc84410fe39761d6969be10/38992bce7f9ff844f800820df0908692b65bb74a), LGPL-3.0-or-later. The local WebGPU port adds finite-ratio validation, a work budget, and zero-weight numerical guards. | Exact source/revision and license header retained with manual substitution instructions; LGPL public-package obligations remain gated. |
-| `fsrcnnx-sharpen.js` | `9312f5445791792634679bac74f01d3292e8e776c6fc7e3be348435f2913ef8a` | [igv/adaptive-sharpen.glsl](https://gist.github.com/igv/8a77e4eb8276753b54bb94c1c50c317e/572f59099cd0e3eb5e321a6da0a3d90a7382e2dc), gist revision `572f59099cd0e3eb5e321a6da0a3d90a7382e2dc`, raw source SHA-256 `827fb3d662ac9a91b4075e9117fe6e1dbc1c06d85959ba719cdb954dfb7fb8e4`, Copyright 2015-2021 bacondither under its two-clause redistribution notice. The local WebGPU port adds finite strength normalization and flat-field numerical guards. | Source/revision and verbatim source notice retained. |
+| `fsrcnnx-sharpen.js` | `9312f5445791792634679bac74f01d3292e8e776c6fc7e3be348435f2913ef8a` | Packaged [`adaptive-sharpen.glsl`](shaders/upstream/adaptive-sharpen.glsl), gist revision [`572f5909`](https://gist.github.com/igv/8a77e4eb8276753b54bb94c1c50c317e/572f59099cd0e3eb5e321a6da0a3d90a7382e2dc), source SHA-256 `827fb3d662ac9a91b4075e9117fe6e1dbc1c06d85959ba719cdb954dfb7fb8e4`, Copyright 2015-2021 bacondither under its two-clause redistribution notice. The local WebGPU port adds finite strength normalization and flat-field numerical guards. | Exact source/revision and verbatim source notice retained. |
 | Historical `fsrcnnx-deband.js` | `56155c7bd5a15b5524ec1b44baeb4b5cb368e57f9adaf5ff8635bd1a2dba3f84` | Comments said it was modeled on mpv's `f_deband` / haasn algorithm, but no exact source file or revision was recorded. The module, runtime path, settings, and user-facing controls have been removed from the current tree and extension package. | **Repository publication remains blocked** until the private Git history is purged. |
 
 ## Reproduction checks
@@ -77,8 +77,9 @@ These are runtime source modules rather than generated model files, but their de
 npm run fetch:shader-sources
 npm run check:generated
 npm run check:rife-reproduction
+npm run reference:check
 npm run check
 npm run release:check
 ```
 
-The fetch step accepts upstream bytes only when their pinned hashes match. The generated check covers standard x2 and the three ArtCNN variants. The RIFE reproduction check uses the hash-locked CPython 3.11.15 environment documented under `tools/model-reproduction/`; CI runs it separately from the JavaScript checks because it installs platform-specific wheels. Removed high x2, x3, and x4 assets are deliberately outside the current generation and package boundaries.
+The fetch step accepts upstream bytes only when their pinned hashes match. The generated check covers standard x2 and the three ArtCNN variants. The reference check verifies the committed numerical-oracle inventory and hashes; `npm run reference:generate` separately recreates the fixtures with the external mpv/libplacebo/FFmpeg toolchain documented under `validation/`. The RIFE reproduction check uses the hash-locked CPython 3.11.15 environment documented under `tools/model-reproduction/`; CI runs it separately from the JavaScript checks because it installs platform-specific wheels. Removed high x2, x3, and x4 assets are deliberately outside the current generation and package boundaries.

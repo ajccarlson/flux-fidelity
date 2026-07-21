@@ -191,6 +191,10 @@ export function describeCommandFailure(result) {
     drm: "This video is DRM-protected, so its frames cannot be processed.",
     tainted: "This cross-origin video does not permit the extension to read its pixels.",
     protected: "This protected video cannot be processed.",
+    "color-hdr-unsupported": "HDR video remains on the browser's native renderer because enhancement supports SDR only.",
+    "color-wide-gamut-unsupported": "Wide-gamut video remains on the browser's native renderer because its color cannot be preserved.",
+    "color-space-unsupported": "This video's color space is outside the validated BT.709 SDR boundary.",
+    "color-metadata-unavailable": "The video's decoded color metadata could not be verified safely.",
     "renderer unavailable": "The WebGPU renderer is unavailable on this page.",
     "lifecycle-pending": "The page changed while the renderer was starting. The request remains pending.",
     superseded: "A newer page or setting change replaced this request.",
@@ -329,6 +333,17 @@ function setVisible(element, visible, display = "block") {
 function setText(element, value) {
   const next = String(value ?? "");
   if (element.textContent !== next) element.textContent = next;
+}
+
+function sourceBlockMessage(reason) {
+  return ({
+    drm: "This DRM-protected video does not permit the extension to read its frames.",
+    tainted: "This cross-origin video does not permit the extension to read its pixels.",
+    "color-hdr-unsupported": "HDR video is unsupported; the browser's native renderer remains active.",
+    "color-wide-gamut-unsupported": "Wide-gamut video is unsupported because enhancement cannot preserve its color.",
+    "color-space-unsupported": "This video's color space is outside the validated BT.709 SDR boundary.",
+    "color-metadata-unavailable": "Decoded color metadata is unavailable or incomplete, so the native renderer remains active.",
+  })[reason] || "The requested renderer is blocked by this video source.";
 }
 
 function rendererFallback(status) {
@@ -624,7 +639,7 @@ export function createPopupController({
     const requestedMode = renderer?.requestedMode || status.mode || "off";
     const activeMode = renderer?.activeMode || status.activeMode || "off";
     if (renderer?.phase === "blocked") {
-      return "The requested renderer is blocked by this video source.";
+      return sourceBlockMessage(renderer.blockedReason || status.protectedReason);
     }
     if (renderer?.phase === "waiting-video") {
       return "The requested mode will activate when a playable video appears.";
@@ -657,6 +672,9 @@ export function createPopupController({
     const interpolation = objectRecord(status.interpolationRuntime)
       ? status.interpolationRuntime
       : null;
+    if (interpolation?.phase === "blocked") {
+      return sourceBlockMessage(interpolation.blockedReason || status.protectedReason);
+    }
     const interpFailure = interpolation?.lastFailure || status.interpFailure;
     if (interpFailure) {
       const detail = failureDetail(interpFailure);
@@ -715,11 +733,7 @@ export function createPopupController({
     $("s-frames").textContent = String(status.frameCount ?? 0);
     setText($("runtime-status"), runtimeMessage(status));
 
-    const protectedMessage = status.protected
-      ? (status.protectedReason === "tainted"
-          ? "This cross-origin video does not permit the extension to read its pixels."
-          : "This DRM-protected video does not permit the extension to read its frames.")
-      : "";
+    const protectedMessage = status.protected ? sourceBlockMessage(status.protectedReason) : "";
     setText($("drm-banner"), protectedMessage);
     setVisible($("drm-banner"), !!protectedMessage);
 

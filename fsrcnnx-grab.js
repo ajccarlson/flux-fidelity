@@ -1,5 +1,7 @@
 // fsrcnnx-grab.js — clean WebGPU frame grabber for interpolation.
-//
+
+import { SRGB_COLOR_SPACE } from "./fsrcnnx-color-support.js";
+
 // Why this exists: grabbing video pixels through a 2D canvas (either
 // captureStream→VideoFrame→createImageBitmap OR drawImage(videoElement)) does a
 // YUV→RGB / chroma reconstruction that produces "wave" ringing on bright,
@@ -230,7 +232,7 @@ export class WebGPUGrabber {
       allocation = this._alloc(w, h);
       const device = this.device;
       let ext;
-      try { ext = device.importExternalTexture({ source: video }); }
+      try { ext = device.importExternalTexture({ source: video, colorSpace: SRGB_COLOR_SPACE }); }
       catch (e) { this.warn("grab importExternalTexture failed:", e.message); return null; }
 
       const bind = device.createBindGroup({

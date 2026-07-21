@@ -26,6 +26,7 @@ const pinnedArtifacts = {
   "vendor/ort/ort-wasm-simd-threaded.asyncify.wasm": "7e83cd6cee77e478bc96a7e91b198144fb5e4126287daf1f9b54bb195ebcd55a",
   "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl": "d5a24a271e5d9a3f7f7a053b150c460a44c25b3cf7f770857d57cc3a2e1c9965",
   "shaders/upstream/SSimDownscaler.glsl": "f46f4710a162d17058b9d82ed8610588b0c04d7be07cef6bf2a8c4077828f804",
+  "shaders/upstream/adaptive-sharpen.glsl": "827fb3d662ac9a91b4075e9117fe6e1dbc1c06d85959ba719cdb954dfb7fb8e4",
   "shaders/upstream/ArtCNN_C4F32.glsl": "f773bce6cf5fe7e5e5d599a695edd40df5cd7a20c3d08c4d164d07591d5bead3",
   "shaders/upstream/ArtCNN_C4F32_DN.glsl": "6b51a6f7d75826c9492c3f78b5e60acffa24a71928e2d47c4a329423922a143c",
   "shaders/upstream/ArtCNN_C4F32_DS.glsl": "a04c9cba6fbb8e6db9239d61848390208aedf8e348ef116e12174c803d22077e",

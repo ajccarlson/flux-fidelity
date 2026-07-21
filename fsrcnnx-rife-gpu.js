@@ -1,5 +1,7 @@
 // fsrcnnx-rife-gpu.js — GPU-resident interpolation (GpuInterp).
-//
+
+import { SRGB_COLOR_SPACE } from "./fsrcnnx-color-support.js";
+
 // Pixels stay on the GPU for capture, packing, inference, static-passthrough
 // compositing, queued scheduling, and WebGPU-canvas presentation. There is no
 // per-frame readback on this path.
@@ -594,7 +596,12 @@ export class GpuInterp {
   configureCanvas(canvas) {
     try {
       this.canvasCtx = canvas.getContext("webgpu");
-      this.canvasCtx.configure({ device: this.device, format: this._canvasFormat, alphaMode: "opaque" });
+      this.canvasCtx.configure({
+        device: this.device,
+        format: this._canvasFormat,
+        colorSpace: SRGB_COLOR_SPACE,
+        alphaMode: "opaque",
+      });
       this._presentCanvas = canvas;
       return true;
     } catch (e) { this.warn("gpu canvas configure failed:", e.message); return false; }
@@ -688,7 +695,7 @@ export class GpuInterp {
       const w = video.videoWidth, h = video.videoHeight;
       this._ensureFrameSize(w, h, padTo || 8, ch || 7);
       pooled = this._acquireTex();
-      const ext = this.device.importExternalTexture({ source: video });
+      const ext = this.device.importExternalTexture({ source: video, colorSpace: SRGB_COLOR_SPACE });
       const bind = this.device.createBindGroup({
         layout: this.blitPipe.getBindGroupLayout(0),
         entries: [{ binding: 0, resource: this.sampler }, { binding: 1, resource: ext }],

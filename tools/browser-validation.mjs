@@ -11,13 +11,17 @@ import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { GENERATED_MODEL_CATALOG } from "../fsrcnnx-model-catalog.js";
-import { createValidationPlan } from "../fsrcnnx-validation.js";
+import { createValidationPlan, REFERENCE_VALIDATION_CHECKS } from "../fsrcnnx-validation.js";
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const EXPECTED_VALIDATION_IDS = Object.freeze(
   createValidationPlan(GENERATED_MODEL_CATALOG).map(({ id }) => id),
 );
 const EXPECTED_CHECK_COUNT = EXPECTED_VALIDATION_IDS.length;
+const NUMERICAL_VALIDATION_IDS = Object.freeze([
+  ...REFERENCE_VALIDATION_CHECKS.map(({ id }) => id),
+  ...GENERATED_MODEL_CATALOG.map(({ name }) => `${name}:inference`),
+]);
 const STARTUP_TIMEOUT_MS = 30_000;
 const DISCOVERY_TIMEOUT_MS = 3_000;
 const VALIDATION_TIMEOUT_MS = 240_000;
@@ -790,7 +794,12 @@ async function runValidation(httpBase, extensionId, expectedName, signal) {
     }
     if (!state?.done) throw new Error(`browser validation timed out after ${VALIDATION_TIMEOUT_MS} ms`);
     await delay(50, signal);
-    assertValidationResult(state, events);
+    try {
+      assertValidationResult(state, events);
+    } catch (error) {
+      error.validationState = state;
+      throw error;
+    }
     return { state, events };
   } catch (error) {
     if (!error.browserEvents) error.browserEvents = events;
@@ -898,6 +907,16 @@ function diagnostics(events) {
   return events.slice(-20).map((event) => `  ${event.kind}/${event.type}: ${event.text}`).join("\n");
 }
 
+function numericalDiagnostics(state) {
+  if (!Array.isArray(state?.results)) return "";
+  const byId = new Map(state.results.map((result) => [result.id, result]));
+  return NUMERICAL_VALIDATION_IDS
+    .map((id) => byId.get(id))
+    .filter(Boolean)
+    .map((result) => `  ${result.id}: ${result.status} — ${result.detail}`)
+    .join("\n");
+}
+
 async function main(signal) {
   const profile = await mkdtemp(join(tmpdir(), "fsrcnnx-browser-validation-"));
   let launched = null;
@@ -924,6 +943,8 @@ async function main(signal) {
       `(${basename(browser)}, ID from ${discovery.source}).`,
     );
     if (webGpu?.detail) console.log(`WebGPU: ${webGpu.detail}`);
+    const numericalOutput = numericalDiagnostics(state);
+    if (numericalOutput) console.log(`Numerical references:\n${numericalOutput}`);
     console.log("Popup browser smoke passed: module, unavailable state, controls, and accessibility.");
   } catch (error) {
     primaryError = error;
@@ -962,6 +983,8 @@ try {
   await main(abortController.signal);
 } catch (error) {
   console.error(error.message || String(error));
+  const numericalOutput = numericalDiagnostics(error.validationState);
+  if (numericalOutput) console.error(`Numerical references:\n${numericalOutput}`);
   const eventOutput = diagnostics(error.browserEvents);
   if (eventOutput) console.error(`Validation page diagnostics:\n${eventOutput}`);
   if (error.browserOutput) console.error(`Browser output:\n${error.browserOutput.trim()}`);
