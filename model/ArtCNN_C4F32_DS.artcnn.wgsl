@@ -11,15 +11,51 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let odim = textureDimensions(outTex);
   let sp = vec2i(i32(gid.x), i32(gid.y));
   if (sp.x * 4 >= i32(odim.x) || sp.y * 2 >= i32(odim.y)) { return; }
-  let inp_0_0_0 = textureLoad(t_LUMA, clamp(sp + vec2i(-1, -1), vec2i(0), sdim - vec2i(1)), 0).x;
-  let inp_0_1_0 = textureLoad(t_LUMA, clamp(sp + vec2i(0, -1), vec2i(0), sdim - vec2i(1)), 0).x;
-  let inp_0_2_0 = textureLoad(t_LUMA, clamp(sp + vec2i(1, -1), vec2i(0), sdim - vec2i(1)), 0).x;
-  let inp_0_0_1 = textureLoad(t_LUMA, clamp(sp + vec2i(-1, 0), vec2i(0), sdim - vec2i(1)), 0).x;
-  let inp_0_1_1 = textureLoad(t_LUMA, clamp(sp + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0).x;
-  let inp_0_2_1 = textureLoad(t_LUMA, clamp(sp + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0).x;
-  let inp_0_0_2 = textureLoad(t_LUMA, clamp(sp + vec2i(-1, 1), vec2i(0), sdim - vec2i(1)), 0).x;
-  let inp_0_1_2 = textureLoad(t_LUMA, clamp(sp + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0).x;
-  let inp_0_2_2 = textureLoad(t_LUMA, clamp(sp + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0).x;
+  let tap_0_0 = sp + vec2i(-1, -1);
+  let tap_1_0 = sp + vec2i(0, -1);
+  let tap_2_0 = sp + vec2i(1, -1);
+  let tap_0_1 = sp + vec2i(-1, 0);
+  let tap_1_1 = sp + vec2i(0, 0);
+  let tap_2_1 = sp + vec2i(1, 0);
+  let tap_0_2 = sp + vec2i(-1, 1);
+  let tap_1_2 = sp + vec2i(0, 1);
+  let tap_2_2 = sp + vec2i(1, 1);
+  var inp_0_0_0 : f32 = 0.0;
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < sdim)) {
+    inp_0_0_0 = textureLoad(t_LUMA, tap_0_0, 0).x;
+  }
+  var inp_0_1_0 : f32 = 0.0;
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < sdim)) {
+    inp_0_1_0 = textureLoad(t_LUMA, tap_1_0, 0).x;
+  }
+  var inp_0_2_0 : f32 = 0.0;
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < sdim)) {
+    inp_0_2_0 = textureLoad(t_LUMA, tap_2_0, 0).x;
+  }
+  var inp_0_0_1 : f32 = 0.0;
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < sdim)) {
+    inp_0_0_1 = textureLoad(t_LUMA, tap_0_1, 0).x;
+  }
+  var inp_0_1_1 : f32 = 0.0;
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < sdim)) {
+    inp_0_1_1 = textureLoad(t_LUMA, tap_1_1, 0).x;
+  }
+  var inp_0_2_1 : f32 = 0.0;
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < sdim)) {
+    inp_0_2_1 = textureLoad(t_LUMA, tap_2_1, 0).x;
+  }
+  var inp_0_0_2 : f32 = 0.0;
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < sdim)) {
+    inp_0_0_2 = textureLoad(t_LUMA, tap_0_2, 0).x;
+  }
+  var inp_0_1_2 : f32 = 0.0;
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < sdim)) {
+    inp_0_1_2 = textureLoad(t_LUMA, tap_1_2, 0).x;
+  }
+  var inp_0_2_2 : f32 = 0.0;
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < sdim)) {
+    inp_0_2_2 = textureLoad(t_LUMA, tap_2_2, 0).x;
+  }
   var result0 = vec4f(0.0021185656, -0.0025917033, 0.00018152398, -0.080636200);
   var result1 = vec4f(0.0012814859, -0.00016921744, -0.0018398693, -0.000081586724);
   var result2 = vec4f(0.0017504770, 0.0087506520, -0.00045053518, 0.0026217822);
@@ -121,78 +157,376 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let odim = textureDimensions(outTex);
   let sp = vec2i(i32(gid.x), i32(gid.y));
   if (sp.x * 4 >= i32(odim.x) || sp.y * 2 >= i32(odim.y)) { return; }
-  let inp_0_0_0 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_1_0 = textureLoad(t_conv2d, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_2_0 = textureLoad(t_conv2d, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_0_1 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_1_1 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_2_1 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_0_2 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_1_2 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_2_2 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_0_0 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_1_0 = textureLoad(t_conv2d, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_2_0 = textureLoad(t_conv2d, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_0_1 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_1_1 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_2_1 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_0_2 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_1_2 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_2_2 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_0_0 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_1_0 = textureLoad(t_conv2d, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_2_0 = textureLoad(t_conv2d, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_0_1 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_1_1 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_2_1 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_0_2 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_1_2 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_2_2 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_0_0 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_1_0 = textureLoad(t_conv2d, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_2_0 = textureLoad(t_conv2d, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_0_1 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_1_1 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_2_1 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_0_2 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_1_2 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_2_2 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_0_0 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_1_0 = textureLoad(t_conv2d, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_2_0 = textureLoad(t_conv2d, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_0_1 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_1_1 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_2_1 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_0_2 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_1_2 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_2_2 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_0_0 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_1_0 = textureLoad(t_conv2d, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_2_0 = textureLoad(t_conv2d, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_0_1 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_1_1 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_2_1 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_0_2 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_1_2 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_2_2 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_0_0 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_1_0 = textureLoad(t_conv2d, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_2_0 = textureLoad(t_conv2d, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_0_1 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_1_1 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_2_1 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_0_2 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_1_2 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_2_2 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_0_0 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_1_0 = textureLoad(t_conv2d, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_2_0 = textureLoad(t_conv2d, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_0_1 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_1_1 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_2_1 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_0_2 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_1_2 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_2_2 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
+  let tap_0_0 = sp + vec2i(-1, -1);
+  let tap_1_0 = sp + vec2i(0, -1);
+  let tap_2_0 = sp + vec2i(1, -1);
+  let tap_0_1 = sp + vec2i(-1, 0);
+  let tap_1_1 = sp + vec2i(0, 0);
+  let tap_2_1 = sp + vec2i(1, 0);
+  let tap_0_2 = sp + vec2i(-1, 1);
+  let tap_1_2 = sp + vec2i(0, 1);
+  let tap_2_2 = sp + vec2i(1, 1);
+  let logicalDim = sdim / vec2i(4, 2);
+  var inp_0_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_0_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_0_0 = textureLoad(t_conv2d, packed_0_0_0, 0);
+  }
+  var inp_0_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_0_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_1_0 = textureLoad(t_conv2d, packed_0_1_0, 0);
+  }
+  var inp_0_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_0_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_2_0 = textureLoad(t_conv2d, packed_0_2_0, 0);
+  }
+  var inp_0_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_0_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_0_1 = textureLoad(t_conv2d, packed_0_0_1, 0);
+  }
+  var inp_0_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_0_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_1_1 = textureLoad(t_conv2d, packed_0_1_1, 0);
+  }
+  var inp_0_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_0_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_2_1 = textureLoad(t_conv2d, packed_0_2_1, 0);
+  }
+  var inp_0_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_0_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_0_2 = textureLoad(t_conv2d, packed_0_0_2, 0);
+  }
+  var inp_0_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_0_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_1_2 = textureLoad(t_conv2d, packed_0_1_2, 0);
+  }
+  var inp_0_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_0_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_2_2 = textureLoad(t_conv2d, packed_0_2_2, 0);
+  }
+  var inp_1_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_1_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_0_0 = textureLoad(t_conv2d, packed_1_0_0, 0);
+  }
+  var inp_1_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_1_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_1_0 = textureLoad(t_conv2d, packed_1_1_0, 0);
+  }
+  var inp_1_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_1_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_2_0 = textureLoad(t_conv2d, packed_1_2_0, 0);
+  }
+  var inp_1_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_1_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_0_1 = textureLoad(t_conv2d, packed_1_0_1, 0);
+  }
+  var inp_1_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_1_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_1_1 = textureLoad(t_conv2d, packed_1_1_1, 0);
+  }
+  var inp_1_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_1_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_2_1 = textureLoad(t_conv2d, packed_1_2_1, 0);
+  }
+  var inp_1_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_1_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_0_2 = textureLoad(t_conv2d, packed_1_0_2, 0);
+  }
+  var inp_1_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_1_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_1_2 = textureLoad(t_conv2d, packed_1_1_2, 0);
+  }
+  var inp_1_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_1_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_2_2 = textureLoad(t_conv2d, packed_1_2_2, 0);
+  }
+  var inp_2_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_2_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_0_0 = textureLoad(t_conv2d, packed_2_0_0, 0);
+  }
+  var inp_2_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_2_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_1_0 = textureLoad(t_conv2d, packed_2_1_0, 0);
+  }
+  var inp_2_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_2_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_2_0 = textureLoad(t_conv2d, packed_2_2_0, 0);
+  }
+  var inp_2_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_2_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_0_1 = textureLoad(t_conv2d, packed_2_0_1, 0);
+  }
+  var inp_2_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_2_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_1_1 = textureLoad(t_conv2d, packed_2_1_1, 0);
+  }
+  var inp_2_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_2_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_2_1 = textureLoad(t_conv2d, packed_2_2_1, 0);
+  }
+  var inp_2_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_2_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_0_2 = textureLoad(t_conv2d, packed_2_0_2, 0);
+  }
+  var inp_2_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_2_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_1_2 = textureLoad(t_conv2d, packed_2_1_2, 0);
+  }
+  var inp_2_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_2_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_2_2 = textureLoad(t_conv2d, packed_2_2_2, 0);
+  }
+  var inp_3_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_3_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_0_0 = textureLoad(t_conv2d, packed_3_0_0, 0);
+  }
+  var inp_3_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_3_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_1_0 = textureLoad(t_conv2d, packed_3_1_0, 0);
+  }
+  var inp_3_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_3_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_2_0 = textureLoad(t_conv2d, packed_3_2_0, 0);
+  }
+  var inp_3_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_3_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_0_1 = textureLoad(t_conv2d, packed_3_0_1, 0);
+  }
+  var inp_3_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_3_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_1_1 = textureLoad(t_conv2d, packed_3_1_1, 0);
+  }
+  var inp_3_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_3_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_2_1 = textureLoad(t_conv2d, packed_3_2_1, 0);
+  }
+  var inp_3_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_3_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_0_2 = textureLoad(t_conv2d, packed_3_0_2, 0);
+  }
+  var inp_3_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_3_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_1_2 = textureLoad(t_conv2d, packed_3_1_2, 0);
+  }
+  var inp_3_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_3_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_2_2 = textureLoad(t_conv2d, packed_3_2_2, 0);
+  }
+  var inp_4_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_4_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_0_0 = textureLoad(t_conv2d, packed_4_0_0, 0);
+  }
+  var inp_4_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_4_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_1_0 = textureLoad(t_conv2d, packed_4_1_0, 0);
+  }
+  var inp_4_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_4_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_2_0 = textureLoad(t_conv2d, packed_4_2_0, 0);
+  }
+  var inp_4_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_4_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_0_1 = textureLoad(t_conv2d, packed_4_0_1, 0);
+  }
+  var inp_4_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_4_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_1_1 = textureLoad(t_conv2d, packed_4_1_1, 0);
+  }
+  var inp_4_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_4_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_2_1 = textureLoad(t_conv2d, packed_4_2_1, 0);
+  }
+  var inp_4_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_4_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_0_2 = textureLoad(t_conv2d, packed_4_0_2, 0);
+  }
+  var inp_4_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_4_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_1_2 = textureLoad(t_conv2d, packed_4_1_2, 0);
+  }
+  var inp_4_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_4_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_2_2 = textureLoad(t_conv2d, packed_4_2_2, 0);
+  }
+  var inp_5_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_5_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_0_0 = textureLoad(t_conv2d, packed_5_0_0, 0);
+  }
+  var inp_5_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_5_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_1_0 = textureLoad(t_conv2d, packed_5_1_0, 0);
+  }
+  var inp_5_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_5_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_2_0 = textureLoad(t_conv2d, packed_5_2_0, 0);
+  }
+  var inp_5_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_5_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_0_1 = textureLoad(t_conv2d, packed_5_0_1, 0);
+  }
+  var inp_5_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_5_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_1_1 = textureLoad(t_conv2d, packed_5_1_1, 0);
+  }
+  var inp_5_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_5_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_2_1 = textureLoad(t_conv2d, packed_5_2_1, 0);
+  }
+  var inp_5_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_5_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_0_2 = textureLoad(t_conv2d, packed_5_0_2, 0);
+  }
+  var inp_5_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_5_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_1_2 = textureLoad(t_conv2d, packed_5_1_2, 0);
+  }
+  var inp_5_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_5_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_2_2 = textureLoad(t_conv2d, packed_5_2_2, 0);
+  }
+  var inp_6_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_6_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_0_0 = textureLoad(t_conv2d, packed_6_0_0, 0);
+  }
+  var inp_6_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_6_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_1_0 = textureLoad(t_conv2d, packed_6_1_0, 0);
+  }
+  var inp_6_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_6_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_2_0 = textureLoad(t_conv2d, packed_6_2_0, 0);
+  }
+  var inp_6_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_6_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_0_1 = textureLoad(t_conv2d, packed_6_0_1, 0);
+  }
+  var inp_6_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_6_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_1_1 = textureLoad(t_conv2d, packed_6_1_1, 0);
+  }
+  var inp_6_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_6_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_2_1 = textureLoad(t_conv2d, packed_6_2_1, 0);
+  }
+  var inp_6_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_6_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_0_2 = textureLoad(t_conv2d, packed_6_0_2, 0);
+  }
+  var inp_6_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_6_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_1_2 = textureLoad(t_conv2d, packed_6_1_2, 0);
+  }
+  var inp_6_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_6_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_2_2 = textureLoad(t_conv2d, packed_6_2_2, 0);
+  }
+  var inp_7_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_7_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_0_0 = textureLoad(t_conv2d, packed_7_0_0, 0);
+  }
+  var inp_7_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_7_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_1_0 = textureLoad(t_conv2d, packed_7_1_0, 0);
+  }
+  var inp_7_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_7_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_2_0 = textureLoad(t_conv2d, packed_7_2_0, 0);
+  }
+  var inp_7_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_7_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_0_1 = textureLoad(t_conv2d, packed_7_0_1, 0);
+  }
+  var inp_7_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_7_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_1_1 = textureLoad(t_conv2d, packed_7_1_1, 0);
+  }
+  var inp_7_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_7_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_2_1 = textureLoad(t_conv2d, packed_7_2_1, 0);
+  }
+  var inp_7_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_7_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_0_2 = textureLoad(t_conv2d, packed_7_0_2, 0);
+  }
+  var inp_7_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_7_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_1_2 = textureLoad(t_conv2d, packed_7_1_2, 0);
+  }
+  var inp_7_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_7_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_2_2 = textureLoad(t_conv2d, packed_7_2_2, 0);
+  }
   var result0 = vec4f(-0.043305285, 0.012536436, 0.074563690, 0.044893295);
   var result1 = vec4f(0.0052876333, -0.32813627, -0.017437978, -0.0082367040);
   var result2 = vec4f(0.00041580512, 0.042396540, 0.034699727, 0.036853500);
@@ -798,78 +1132,376 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let odim = textureDimensions(outTex);
   let sp = vec2i(i32(gid.x), i32(gid.y));
   if (sp.x * 4 >= i32(odim.x) || sp.y * 2 >= i32(odim.y)) { return; }
-  let inp_0_0_0 = textureLoad(t_conv2d_1, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_1_0 = textureLoad(t_conv2d_1, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_2_0 = textureLoad(t_conv2d_1, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_0_1 = textureLoad(t_conv2d_1, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_1_1 = textureLoad(t_conv2d_1, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_2_1 = textureLoad(t_conv2d_1, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_0_2 = textureLoad(t_conv2d_1, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_1_2 = textureLoad(t_conv2d_1, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_2_2 = textureLoad(t_conv2d_1, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_0_0 = textureLoad(t_conv2d_1, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_1_0 = textureLoad(t_conv2d_1, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_2_0 = textureLoad(t_conv2d_1, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_0_1 = textureLoad(t_conv2d_1, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_1_1 = textureLoad(t_conv2d_1, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_2_1 = textureLoad(t_conv2d_1, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_0_2 = textureLoad(t_conv2d_1, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_1_2 = textureLoad(t_conv2d_1, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_2_2 = textureLoad(t_conv2d_1, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_0_0 = textureLoad(t_conv2d_1, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_1_0 = textureLoad(t_conv2d_1, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_2_0 = textureLoad(t_conv2d_1, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_0_1 = textureLoad(t_conv2d_1, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_1_1 = textureLoad(t_conv2d_1, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_2_1 = textureLoad(t_conv2d_1, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_0_2 = textureLoad(t_conv2d_1, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_1_2 = textureLoad(t_conv2d_1, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_2_2 = textureLoad(t_conv2d_1, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_0_0 = textureLoad(t_conv2d_1, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_1_0 = textureLoad(t_conv2d_1, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_2_0 = textureLoad(t_conv2d_1, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_0_1 = textureLoad(t_conv2d_1, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_1_1 = textureLoad(t_conv2d_1, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_2_1 = textureLoad(t_conv2d_1, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_0_2 = textureLoad(t_conv2d_1, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_1_2 = textureLoad(t_conv2d_1, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_2_2 = textureLoad(t_conv2d_1, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_0_0 = textureLoad(t_conv2d_1, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_1_0 = textureLoad(t_conv2d_1, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_2_0 = textureLoad(t_conv2d_1, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_0_1 = textureLoad(t_conv2d_1, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_1_1 = textureLoad(t_conv2d_1, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_2_1 = textureLoad(t_conv2d_1, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_0_2 = textureLoad(t_conv2d_1, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_1_2 = textureLoad(t_conv2d_1, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_2_2 = textureLoad(t_conv2d_1, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_0_0 = textureLoad(t_conv2d_1, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_1_0 = textureLoad(t_conv2d_1, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_2_0 = textureLoad(t_conv2d_1, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_0_1 = textureLoad(t_conv2d_1, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_1_1 = textureLoad(t_conv2d_1, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_2_1 = textureLoad(t_conv2d_1, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_0_2 = textureLoad(t_conv2d_1, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_1_2 = textureLoad(t_conv2d_1, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_2_2 = textureLoad(t_conv2d_1, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_0_0 = textureLoad(t_conv2d_1, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_1_0 = textureLoad(t_conv2d_1, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_2_0 = textureLoad(t_conv2d_1, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_0_1 = textureLoad(t_conv2d_1, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_1_1 = textureLoad(t_conv2d_1, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_2_1 = textureLoad(t_conv2d_1, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_0_2 = textureLoad(t_conv2d_1, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_1_2 = textureLoad(t_conv2d_1, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_2_2 = textureLoad(t_conv2d_1, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_0_0 = textureLoad(t_conv2d_1, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_1_0 = textureLoad(t_conv2d_1, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_2_0 = textureLoad(t_conv2d_1, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_0_1 = textureLoad(t_conv2d_1, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_1_1 = textureLoad(t_conv2d_1, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_2_1 = textureLoad(t_conv2d_1, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_0_2 = textureLoad(t_conv2d_1, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_1_2 = textureLoad(t_conv2d_1, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_2_2 = textureLoad(t_conv2d_1, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
+  let tap_0_0 = sp + vec2i(-1, -1);
+  let tap_1_0 = sp + vec2i(0, -1);
+  let tap_2_0 = sp + vec2i(1, -1);
+  let tap_0_1 = sp + vec2i(-1, 0);
+  let tap_1_1 = sp + vec2i(0, 0);
+  let tap_2_1 = sp + vec2i(1, 0);
+  let tap_0_2 = sp + vec2i(-1, 1);
+  let tap_1_2 = sp + vec2i(0, 1);
+  let tap_2_2 = sp + vec2i(1, 1);
+  let logicalDim = sdim / vec2i(4, 2);
+  var inp_0_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_0_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_0_0 = textureLoad(t_conv2d_1, packed_0_0_0, 0);
+  }
+  var inp_0_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_0_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_1_0 = textureLoad(t_conv2d_1, packed_0_1_0, 0);
+  }
+  var inp_0_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_0_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_2_0 = textureLoad(t_conv2d_1, packed_0_2_0, 0);
+  }
+  var inp_0_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_0_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_0_1 = textureLoad(t_conv2d_1, packed_0_0_1, 0);
+  }
+  var inp_0_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_0_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_1_1 = textureLoad(t_conv2d_1, packed_0_1_1, 0);
+  }
+  var inp_0_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_0_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_2_1 = textureLoad(t_conv2d_1, packed_0_2_1, 0);
+  }
+  var inp_0_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_0_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_0_2 = textureLoad(t_conv2d_1, packed_0_0_2, 0);
+  }
+  var inp_0_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_0_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_1_2 = textureLoad(t_conv2d_1, packed_0_1_2, 0);
+  }
+  var inp_0_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_0_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_2_2 = textureLoad(t_conv2d_1, packed_0_2_2, 0);
+  }
+  var inp_1_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_1_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_0_0 = textureLoad(t_conv2d_1, packed_1_0_0, 0);
+  }
+  var inp_1_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_1_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_1_0 = textureLoad(t_conv2d_1, packed_1_1_0, 0);
+  }
+  var inp_1_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_1_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_2_0 = textureLoad(t_conv2d_1, packed_1_2_0, 0);
+  }
+  var inp_1_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_1_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_0_1 = textureLoad(t_conv2d_1, packed_1_0_1, 0);
+  }
+  var inp_1_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_1_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_1_1 = textureLoad(t_conv2d_1, packed_1_1_1, 0);
+  }
+  var inp_1_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_1_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_2_1 = textureLoad(t_conv2d_1, packed_1_2_1, 0);
+  }
+  var inp_1_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_1_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_0_2 = textureLoad(t_conv2d_1, packed_1_0_2, 0);
+  }
+  var inp_1_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_1_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_1_2 = textureLoad(t_conv2d_1, packed_1_1_2, 0);
+  }
+  var inp_1_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_1_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_2_2 = textureLoad(t_conv2d_1, packed_1_2_2, 0);
+  }
+  var inp_2_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_2_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_0_0 = textureLoad(t_conv2d_1, packed_2_0_0, 0);
+  }
+  var inp_2_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_2_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_1_0 = textureLoad(t_conv2d_1, packed_2_1_0, 0);
+  }
+  var inp_2_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_2_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_2_0 = textureLoad(t_conv2d_1, packed_2_2_0, 0);
+  }
+  var inp_2_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_2_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_0_1 = textureLoad(t_conv2d_1, packed_2_0_1, 0);
+  }
+  var inp_2_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_2_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_1_1 = textureLoad(t_conv2d_1, packed_2_1_1, 0);
+  }
+  var inp_2_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_2_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_2_1 = textureLoad(t_conv2d_1, packed_2_2_1, 0);
+  }
+  var inp_2_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_2_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_0_2 = textureLoad(t_conv2d_1, packed_2_0_2, 0);
+  }
+  var inp_2_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_2_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_1_2 = textureLoad(t_conv2d_1, packed_2_1_2, 0);
+  }
+  var inp_2_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_2_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_2_2 = textureLoad(t_conv2d_1, packed_2_2_2, 0);
+  }
+  var inp_3_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_3_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_0_0 = textureLoad(t_conv2d_1, packed_3_0_0, 0);
+  }
+  var inp_3_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_3_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_1_0 = textureLoad(t_conv2d_1, packed_3_1_0, 0);
+  }
+  var inp_3_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_3_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_2_0 = textureLoad(t_conv2d_1, packed_3_2_0, 0);
+  }
+  var inp_3_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_3_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_0_1 = textureLoad(t_conv2d_1, packed_3_0_1, 0);
+  }
+  var inp_3_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_3_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_1_1 = textureLoad(t_conv2d_1, packed_3_1_1, 0);
+  }
+  var inp_3_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_3_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_2_1 = textureLoad(t_conv2d_1, packed_3_2_1, 0);
+  }
+  var inp_3_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_3_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_0_2 = textureLoad(t_conv2d_1, packed_3_0_2, 0);
+  }
+  var inp_3_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_3_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_1_2 = textureLoad(t_conv2d_1, packed_3_1_2, 0);
+  }
+  var inp_3_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_3_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_2_2 = textureLoad(t_conv2d_1, packed_3_2_2, 0);
+  }
+  var inp_4_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_4_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_0_0 = textureLoad(t_conv2d_1, packed_4_0_0, 0);
+  }
+  var inp_4_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_4_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_1_0 = textureLoad(t_conv2d_1, packed_4_1_0, 0);
+  }
+  var inp_4_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_4_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_2_0 = textureLoad(t_conv2d_1, packed_4_2_0, 0);
+  }
+  var inp_4_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_4_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_0_1 = textureLoad(t_conv2d_1, packed_4_0_1, 0);
+  }
+  var inp_4_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_4_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_1_1 = textureLoad(t_conv2d_1, packed_4_1_1, 0);
+  }
+  var inp_4_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_4_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_2_1 = textureLoad(t_conv2d_1, packed_4_2_1, 0);
+  }
+  var inp_4_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_4_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_0_2 = textureLoad(t_conv2d_1, packed_4_0_2, 0);
+  }
+  var inp_4_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_4_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_1_2 = textureLoad(t_conv2d_1, packed_4_1_2, 0);
+  }
+  var inp_4_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_4_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_2_2 = textureLoad(t_conv2d_1, packed_4_2_2, 0);
+  }
+  var inp_5_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_5_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_0_0 = textureLoad(t_conv2d_1, packed_5_0_0, 0);
+  }
+  var inp_5_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_5_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_1_0 = textureLoad(t_conv2d_1, packed_5_1_0, 0);
+  }
+  var inp_5_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_5_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_2_0 = textureLoad(t_conv2d_1, packed_5_2_0, 0);
+  }
+  var inp_5_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_5_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_0_1 = textureLoad(t_conv2d_1, packed_5_0_1, 0);
+  }
+  var inp_5_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_5_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_1_1 = textureLoad(t_conv2d_1, packed_5_1_1, 0);
+  }
+  var inp_5_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_5_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_2_1 = textureLoad(t_conv2d_1, packed_5_2_1, 0);
+  }
+  var inp_5_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_5_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_0_2 = textureLoad(t_conv2d_1, packed_5_0_2, 0);
+  }
+  var inp_5_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_5_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_1_2 = textureLoad(t_conv2d_1, packed_5_1_2, 0);
+  }
+  var inp_5_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_5_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_2_2 = textureLoad(t_conv2d_1, packed_5_2_2, 0);
+  }
+  var inp_6_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_6_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_0_0 = textureLoad(t_conv2d_1, packed_6_0_0, 0);
+  }
+  var inp_6_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_6_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_1_0 = textureLoad(t_conv2d_1, packed_6_1_0, 0);
+  }
+  var inp_6_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_6_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_2_0 = textureLoad(t_conv2d_1, packed_6_2_0, 0);
+  }
+  var inp_6_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_6_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_0_1 = textureLoad(t_conv2d_1, packed_6_0_1, 0);
+  }
+  var inp_6_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_6_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_1_1 = textureLoad(t_conv2d_1, packed_6_1_1, 0);
+  }
+  var inp_6_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_6_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_2_1 = textureLoad(t_conv2d_1, packed_6_2_1, 0);
+  }
+  var inp_6_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_6_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_0_2 = textureLoad(t_conv2d_1, packed_6_0_2, 0);
+  }
+  var inp_6_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_6_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_1_2 = textureLoad(t_conv2d_1, packed_6_1_2, 0);
+  }
+  var inp_6_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_6_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_2_2 = textureLoad(t_conv2d_1, packed_6_2_2, 0);
+  }
+  var inp_7_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_7_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_0_0 = textureLoad(t_conv2d_1, packed_7_0_0, 0);
+  }
+  var inp_7_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_7_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_1_0 = textureLoad(t_conv2d_1, packed_7_1_0, 0);
+  }
+  var inp_7_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_7_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_2_0 = textureLoad(t_conv2d_1, packed_7_2_0, 0);
+  }
+  var inp_7_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_7_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_0_1 = textureLoad(t_conv2d_1, packed_7_0_1, 0);
+  }
+  var inp_7_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_7_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_1_1 = textureLoad(t_conv2d_1, packed_7_1_1, 0);
+  }
+  var inp_7_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_7_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_2_1 = textureLoad(t_conv2d_1, packed_7_2_1, 0);
+  }
+  var inp_7_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_7_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_0_2 = textureLoad(t_conv2d_1, packed_7_0_2, 0);
+  }
+  var inp_7_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_7_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_1_2 = textureLoad(t_conv2d_1, packed_7_1_2, 0);
+  }
+  var inp_7_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_7_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_2_2 = textureLoad(t_conv2d_1, packed_7_2_2, 0);
+  }
   var result0 = vec4f(-0.024691252, -0.051795900, 0.0032561970, 0.091274520);
   var result1 = vec4f(-0.0012667073, -0.025321258, 0.0057530743, 0.0042081363);
   var result2 = vec4f(0.028477890, 0.029374460, -0.019372057, 0.0034608673);
@@ -1475,78 +2107,376 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let odim = textureDimensions(outTex);
   let sp = vec2i(i32(gid.x), i32(gid.y));
   if (sp.x * 4 >= i32(odim.x) || sp.y * 2 >= i32(odim.y)) { return; }
-  let inp_0_0_0 = textureLoad(t_conv2d_2, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_1_0 = textureLoad(t_conv2d_2, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_2_0 = textureLoad(t_conv2d_2, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_0_1 = textureLoad(t_conv2d_2, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_1_1 = textureLoad(t_conv2d_2, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_2_1 = textureLoad(t_conv2d_2, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_0_2 = textureLoad(t_conv2d_2, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_1_2 = textureLoad(t_conv2d_2, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_2_2 = textureLoad(t_conv2d_2, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_0_0 = textureLoad(t_conv2d_2, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_1_0 = textureLoad(t_conv2d_2, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_2_0 = textureLoad(t_conv2d_2, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_0_1 = textureLoad(t_conv2d_2, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_1_1 = textureLoad(t_conv2d_2, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_2_1 = textureLoad(t_conv2d_2, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_0_2 = textureLoad(t_conv2d_2, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_1_2 = textureLoad(t_conv2d_2, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_2_2 = textureLoad(t_conv2d_2, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_0_0 = textureLoad(t_conv2d_2, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_1_0 = textureLoad(t_conv2d_2, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_2_0 = textureLoad(t_conv2d_2, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_0_1 = textureLoad(t_conv2d_2, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_1_1 = textureLoad(t_conv2d_2, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_2_1 = textureLoad(t_conv2d_2, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_0_2 = textureLoad(t_conv2d_2, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_1_2 = textureLoad(t_conv2d_2, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_2_2 = textureLoad(t_conv2d_2, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_0_0 = textureLoad(t_conv2d_2, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_1_0 = textureLoad(t_conv2d_2, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_2_0 = textureLoad(t_conv2d_2, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_0_1 = textureLoad(t_conv2d_2, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_1_1 = textureLoad(t_conv2d_2, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_2_1 = textureLoad(t_conv2d_2, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_0_2 = textureLoad(t_conv2d_2, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_1_2 = textureLoad(t_conv2d_2, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_2_2 = textureLoad(t_conv2d_2, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_0_0 = textureLoad(t_conv2d_2, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_1_0 = textureLoad(t_conv2d_2, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_2_0 = textureLoad(t_conv2d_2, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_0_1 = textureLoad(t_conv2d_2, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_1_1 = textureLoad(t_conv2d_2, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_2_1 = textureLoad(t_conv2d_2, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_0_2 = textureLoad(t_conv2d_2, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_1_2 = textureLoad(t_conv2d_2, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_2_2 = textureLoad(t_conv2d_2, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_0_0 = textureLoad(t_conv2d_2, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_1_0 = textureLoad(t_conv2d_2, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_2_0 = textureLoad(t_conv2d_2, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_0_1 = textureLoad(t_conv2d_2, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_1_1 = textureLoad(t_conv2d_2, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_2_1 = textureLoad(t_conv2d_2, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_0_2 = textureLoad(t_conv2d_2, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_1_2 = textureLoad(t_conv2d_2, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_2_2 = textureLoad(t_conv2d_2, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_0_0 = textureLoad(t_conv2d_2, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_1_0 = textureLoad(t_conv2d_2, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_2_0 = textureLoad(t_conv2d_2, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_0_1 = textureLoad(t_conv2d_2, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_1_1 = textureLoad(t_conv2d_2, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_2_1 = textureLoad(t_conv2d_2, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_0_2 = textureLoad(t_conv2d_2, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_1_2 = textureLoad(t_conv2d_2, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_2_2 = textureLoad(t_conv2d_2, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_0_0 = textureLoad(t_conv2d_2, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_1_0 = textureLoad(t_conv2d_2, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_2_0 = textureLoad(t_conv2d_2, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_0_1 = textureLoad(t_conv2d_2, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_1_1 = textureLoad(t_conv2d_2, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_2_1 = textureLoad(t_conv2d_2, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_0_2 = textureLoad(t_conv2d_2, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_1_2 = textureLoad(t_conv2d_2, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_2_2 = textureLoad(t_conv2d_2, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
+  let tap_0_0 = sp + vec2i(-1, -1);
+  let tap_1_0 = sp + vec2i(0, -1);
+  let tap_2_0 = sp + vec2i(1, -1);
+  let tap_0_1 = sp + vec2i(-1, 0);
+  let tap_1_1 = sp + vec2i(0, 0);
+  let tap_2_1 = sp + vec2i(1, 0);
+  let tap_0_2 = sp + vec2i(-1, 1);
+  let tap_1_2 = sp + vec2i(0, 1);
+  let tap_2_2 = sp + vec2i(1, 1);
+  let logicalDim = sdim / vec2i(4, 2);
+  var inp_0_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_0_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_0_0 = textureLoad(t_conv2d_2, packed_0_0_0, 0);
+  }
+  var inp_0_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_0_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_1_0 = textureLoad(t_conv2d_2, packed_0_1_0, 0);
+  }
+  var inp_0_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_0_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_2_0 = textureLoad(t_conv2d_2, packed_0_2_0, 0);
+  }
+  var inp_0_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_0_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_0_1 = textureLoad(t_conv2d_2, packed_0_0_1, 0);
+  }
+  var inp_0_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_0_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_1_1 = textureLoad(t_conv2d_2, packed_0_1_1, 0);
+  }
+  var inp_0_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_0_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_2_1 = textureLoad(t_conv2d_2, packed_0_2_1, 0);
+  }
+  var inp_0_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_0_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_0_2 = textureLoad(t_conv2d_2, packed_0_0_2, 0);
+  }
+  var inp_0_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_0_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_1_2 = textureLoad(t_conv2d_2, packed_0_1_2, 0);
+  }
+  var inp_0_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_0_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_2_2 = textureLoad(t_conv2d_2, packed_0_2_2, 0);
+  }
+  var inp_1_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_1_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_0_0 = textureLoad(t_conv2d_2, packed_1_0_0, 0);
+  }
+  var inp_1_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_1_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_1_0 = textureLoad(t_conv2d_2, packed_1_1_0, 0);
+  }
+  var inp_1_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_1_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_2_0 = textureLoad(t_conv2d_2, packed_1_2_0, 0);
+  }
+  var inp_1_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_1_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_0_1 = textureLoad(t_conv2d_2, packed_1_0_1, 0);
+  }
+  var inp_1_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_1_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_1_1 = textureLoad(t_conv2d_2, packed_1_1_1, 0);
+  }
+  var inp_1_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_1_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_2_1 = textureLoad(t_conv2d_2, packed_1_2_1, 0);
+  }
+  var inp_1_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_1_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_0_2 = textureLoad(t_conv2d_2, packed_1_0_2, 0);
+  }
+  var inp_1_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_1_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_1_2 = textureLoad(t_conv2d_2, packed_1_1_2, 0);
+  }
+  var inp_1_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_1_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_2_2 = textureLoad(t_conv2d_2, packed_1_2_2, 0);
+  }
+  var inp_2_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_2_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_0_0 = textureLoad(t_conv2d_2, packed_2_0_0, 0);
+  }
+  var inp_2_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_2_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_1_0 = textureLoad(t_conv2d_2, packed_2_1_0, 0);
+  }
+  var inp_2_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_2_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_2_0 = textureLoad(t_conv2d_2, packed_2_2_0, 0);
+  }
+  var inp_2_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_2_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_0_1 = textureLoad(t_conv2d_2, packed_2_0_1, 0);
+  }
+  var inp_2_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_2_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_1_1 = textureLoad(t_conv2d_2, packed_2_1_1, 0);
+  }
+  var inp_2_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_2_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_2_1 = textureLoad(t_conv2d_2, packed_2_2_1, 0);
+  }
+  var inp_2_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_2_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_0_2 = textureLoad(t_conv2d_2, packed_2_0_2, 0);
+  }
+  var inp_2_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_2_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_1_2 = textureLoad(t_conv2d_2, packed_2_1_2, 0);
+  }
+  var inp_2_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_2_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_2_2 = textureLoad(t_conv2d_2, packed_2_2_2, 0);
+  }
+  var inp_3_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_3_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_0_0 = textureLoad(t_conv2d_2, packed_3_0_0, 0);
+  }
+  var inp_3_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_3_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_1_0 = textureLoad(t_conv2d_2, packed_3_1_0, 0);
+  }
+  var inp_3_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_3_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_2_0 = textureLoad(t_conv2d_2, packed_3_2_0, 0);
+  }
+  var inp_3_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_3_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_0_1 = textureLoad(t_conv2d_2, packed_3_0_1, 0);
+  }
+  var inp_3_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_3_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_1_1 = textureLoad(t_conv2d_2, packed_3_1_1, 0);
+  }
+  var inp_3_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_3_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_2_1 = textureLoad(t_conv2d_2, packed_3_2_1, 0);
+  }
+  var inp_3_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_3_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_0_2 = textureLoad(t_conv2d_2, packed_3_0_2, 0);
+  }
+  var inp_3_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_3_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_1_2 = textureLoad(t_conv2d_2, packed_3_1_2, 0);
+  }
+  var inp_3_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_3_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_2_2 = textureLoad(t_conv2d_2, packed_3_2_2, 0);
+  }
+  var inp_4_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_4_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_0_0 = textureLoad(t_conv2d_2, packed_4_0_0, 0);
+  }
+  var inp_4_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_4_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_1_0 = textureLoad(t_conv2d_2, packed_4_1_0, 0);
+  }
+  var inp_4_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_4_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_2_0 = textureLoad(t_conv2d_2, packed_4_2_0, 0);
+  }
+  var inp_4_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_4_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_0_1 = textureLoad(t_conv2d_2, packed_4_0_1, 0);
+  }
+  var inp_4_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_4_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_1_1 = textureLoad(t_conv2d_2, packed_4_1_1, 0);
+  }
+  var inp_4_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_4_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_2_1 = textureLoad(t_conv2d_2, packed_4_2_1, 0);
+  }
+  var inp_4_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_4_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_0_2 = textureLoad(t_conv2d_2, packed_4_0_2, 0);
+  }
+  var inp_4_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_4_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_1_2 = textureLoad(t_conv2d_2, packed_4_1_2, 0);
+  }
+  var inp_4_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_4_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_2_2 = textureLoad(t_conv2d_2, packed_4_2_2, 0);
+  }
+  var inp_5_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_5_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_0_0 = textureLoad(t_conv2d_2, packed_5_0_0, 0);
+  }
+  var inp_5_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_5_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_1_0 = textureLoad(t_conv2d_2, packed_5_1_0, 0);
+  }
+  var inp_5_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_5_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_2_0 = textureLoad(t_conv2d_2, packed_5_2_0, 0);
+  }
+  var inp_5_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_5_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_0_1 = textureLoad(t_conv2d_2, packed_5_0_1, 0);
+  }
+  var inp_5_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_5_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_1_1 = textureLoad(t_conv2d_2, packed_5_1_1, 0);
+  }
+  var inp_5_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_5_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_2_1 = textureLoad(t_conv2d_2, packed_5_2_1, 0);
+  }
+  var inp_5_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_5_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_0_2 = textureLoad(t_conv2d_2, packed_5_0_2, 0);
+  }
+  var inp_5_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_5_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_1_2 = textureLoad(t_conv2d_2, packed_5_1_2, 0);
+  }
+  var inp_5_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_5_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_2_2 = textureLoad(t_conv2d_2, packed_5_2_2, 0);
+  }
+  var inp_6_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_6_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_0_0 = textureLoad(t_conv2d_2, packed_6_0_0, 0);
+  }
+  var inp_6_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_6_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_1_0 = textureLoad(t_conv2d_2, packed_6_1_0, 0);
+  }
+  var inp_6_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_6_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_2_0 = textureLoad(t_conv2d_2, packed_6_2_0, 0);
+  }
+  var inp_6_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_6_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_0_1 = textureLoad(t_conv2d_2, packed_6_0_1, 0);
+  }
+  var inp_6_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_6_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_1_1 = textureLoad(t_conv2d_2, packed_6_1_1, 0);
+  }
+  var inp_6_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_6_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_2_1 = textureLoad(t_conv2d_2, packed_6_2_1, 0);
+  }
+  var inp_6_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_6_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_0_2 = textureLoad(t_conv2d_2, packed_6_0_2, 0);
+  }
+  var inp_6_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_6_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_1_2 = textureLoad(t_conv2d_2, packed_6_1_2, 0);
+  }
+  var inp_6_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_6_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_2_2 = textureLoad(t_conv2d_2, packed_6_2_2, 0);
+  }
+  var inp_7_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_7_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_0_0 = textureLoad(t_conv2d_2, packed_7_0_0, 0);
+  }
+  var inp_7_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_7_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_1_0 = textureLoad(t_conv2d_2, packed_7_1_0, 0);
+  }
+  var inp_7_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_7_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_2_0 = textureLoad(t_conv2d_2, packed_7_2_0, 0);
+  }
+  var inp_7_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_7_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_0_1 = textureLoad(t_conv2d_2, packed_7_0_1, 0);
+  }
+  var inp_7_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_7_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_1_1 = textureLoad(t_conv2d_2, packed_7_1_1, 0);
+  }
+  var inp_7_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_7_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_2_1 = textureLoad(t_conv2d_2, packed_7_2_1, 0);
+  }
+  var inp_7_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_7_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_0_2 = textureLoad(t_conv2d_2, packed_7_0_2, 0);
+  }
+  var inp_7_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_7_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_1_2 = textureLoad(t_conv2d_2, packed_7_1_2, 0);
+  }
+  var inp_7_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_7_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_2_2 = textureLoad(t_conv2d_2, packed_7_2_2, 0);
+  }
   var result0 = vec4f(0.052466770, 0.0062069290, 0.0071343486, 0.051788470);
   var result1 = vec4f(0.010764698, -0.021914968, 0.054771196, -0.0070467917);
   var result2 = vec4f(-0.039880563, -0.012997147, 0.029243689, -0.015945237);
@@ -2152,78 +3082,376 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let odim = textureDimensions(outTex);
   let sp = vec2i(i32(gid.x), i32(gid.y));
   if (sp.x * 4 >= i32(odim.x) || sp.y * 2 >= i32(odim.y)) { return; }
-  let inp_0_0_0 = textureLoad(t_conv2d_3, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_1_0 = textureLoad(t_conv2d_3, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_2_0 = textureLoad(t_conv2d_3, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_0_1 = textureLoad(t_conv2d_3, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_1_1 = textureLoad(t_conv2d_3, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_2_1 = textureLoad(t_conv2d_3, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_0_2 = textureLoad(t_conv2d_3, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_1_2 = textureLoad(t_conv2d_3, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_2_2 = textureLoad(t_conv2d_3, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_0_0 = textureLoad(t_conv2d_3, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_1_0 = textureLoad(t_conv2d_3, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_2_0 = textureLoad(t_conv2d_3, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_0_1 = textureLoad(t_conv2d_3, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_1_1 = textureLoad(t_conv2d_3, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_2_1 = textureLoad(t_conv2d_3, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_0_2 = textureLoad(t_conv2d_3, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_1_2 = textureLoad(t_conv2d_3, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_2_2 = textureLoad(t_conv2d_3, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_0_0 = textureLoad(t_conv2d_3, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_1_0 = textureLoad(t_conv2d_3, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_2_0 = textureLoad(t_conv2d_3, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_0_1 = textureLoad(t_conv2d_3, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_1_1 = textureLoad(t_conv2d_3, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_2_1 = textureLoad(t_conv2d_3, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_0_2 = textureLoad(t_conv2d_3, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_1_2 = textureLoad(t_conv2d_3, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_2_2 = textureLoad(t_conv2d_3, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_0_0 = textureLoad(t_conv2d_3, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_1_0 = textureLoad(t_conv2d_3, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_2_0 = textureLoad(t_conv2d_3, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_0_1 = textureLoad(t_conv2d_3, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_1_1 = textureLoad(t_conv2d_3, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_2_1 = textureLoad(t_conv2d_3, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_0_2 = textureLoad(t_conv2d_3, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_1_2 = textureLoad(t_conv2d_3, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_2_2 = textureLoad(t_conv2d_3, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_0_0 = textureLoad(t_conv2d_3, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_1_0 = textureLoad(t_conv2d_3, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_2_0 = textureLoad(t_conv2d_3, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_0_1 = textureLoad(t_conv2d_3, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_1_1 = textureLoad(t_conv2d_3, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_2_1 = textureLoad(t_conv2d_3, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_0_2 = textureLoad(t_conv2d_3, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_1_2 = textureLoad(t_conv2d_3, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_2_2 = textureLoad(t_conv2d_3, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_0_0 = textureLoad(t_conv2d_3, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_1_0 = textureLoad(t_conv2d_3, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_2_0 = textureLoad(t_conv2d_3, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_0_1 = textureLoad(t_conv2d_3, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_1_1 = textureLoad(t_conv2d_3, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_2_1 = textureLoad(t_conv2d_3, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_0_2 = textureLoad(t_conv2d_3, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_1_2 = textureLoad(t_conv2d_3, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_2_2 = textureLoad(t_conv2d_3, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_0_0 = textureLoad(t_conv2d_3, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_1_0 = textureLoad(t_conv2d_3, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_2_0 = textureLoad(t_conv2d_3, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_0_1 = textureLoad(t_conv2d_3, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_1_1 = textureLoad(t_conv2d_3, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_2_1 = textureLoad(t_conv2d_3, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_0_2 = textureLoad(t_conv2d_3, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_1_2 = textureLoad(t_conv2d_3, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_2_2 = textureLoad(t_conv2d_3, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_0_0 = textureLoad(t_conv2d_3, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_1_0 = textureLoad(t_conv2d_3, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_2_0 = textureLoad(t_conv2d_3, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_0_1 = textureLoad(t_conv2d_3, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_1_1 = textureLoad(t_conv2d_3, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_2_1 = textureLoad(t_conv2d_3, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_0_2 = textureLoad(t_conv2d_3, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_1_2 = textureLoad(t_conv2d_3, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_2_2 = textureLoad(t_conv2d_3, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
+  let tap_0_0 = sp + vec2i(-1, -1);
+  let tap_1_0 = sp + vec2i(0, -1);
+  let tap_2_0 = sp + vec2i(1, -1);
+  let tap_0_1 = sp + vec2i(-1, 0);
+  let tap_1_1 = sp + vec2i(0, 0);
+  let tap_2_1 = sp + vec2i(1, 0);
+  let tap_0_2 = sp + vec2i(-1, 1);
+  let tap_1_2 = sp + vec2i(0, 1);
+  let tap_2_2 = sp + vec2i(1, 1);
+  let logicalDim = sdim / vec2i(4, 2);
+  var inp_0_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_0_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_0_0 = textureLoad(t_conv2d_3, packed_0_0_0, 0);
+  }
+  var inp_0_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_0_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_1_0 = textureLoad(t_conv2d_3, packed_0_1_0, 0);
+  }
+  var inp_0_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_0_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_2_0 = textureLoad(t_conv2d_3, packed_0_2_0, 0);
+  }
+  var inp_0_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_0_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_0_1 = textureLoad(t_conv2d_3, packed_0_0_1, 0);
+  }
+  var inp_0_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_0_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_1_1 = textureLoad(t_conv2d_3, packed_0_1_1, 0);
+  }
+  var inp_0_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_0_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_2_1 = textureLoad(t_conv2d_3, packed_0_2_1, 0);
+  }
+  var inp_0_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_0_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_0_2 = textureLoad(t_conv2d_3, packed_0_0_2, 0);
+  }
+  var inp_0_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_0_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_1_2 = textureLoad(t_conv2d_3, packed_0_1_2, 0);
+  }
+  var inp_0_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_0_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_2_2 = textureLoad(t_conv2d_3, packed_0_2_2, 0);
+  }
+  var inp_1_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_1_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_0_0 = textureLoad(t_conv2d_3, packed_1_0_0, 0);
+  }
+  var inp_1_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_1_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_1_0 = textureLoad(t_conv2d_3, packed_1_1_0, 0);
+  }
+  var inp_1_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_1_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_2_0 = textureLoad(t_conv2d_3, packed_1_2_0, 0);
+  }
+  var inp_1_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_1_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_0_1 = textureLoad(t_conv2d_3, packed_1_0_1, 0);
+  }
+  var inp_1_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_1_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_1_1 = textureLoad(t_conv2d_3, packed_1_1_1, 0);
+  }
+  var inp_1_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_1_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_2_1 = textureLoad(t_conv2d_3, packed_1_2_1, 0);
+  }
+  var inp_1_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_1_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_0_2 = textureLoad(t_conv2d_3, packed_1_0_2, 0);
+  }
+  var inp_1_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_1_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_1_2 = textureLoad(t_conv2d_3, packed_1_1_2, 0);
+  }
+  var inp_1_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_1_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_2_2 = textureLoad(t_conv2d_3, packed_1_2_2, 0);
+  }
+  var inp_2_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_2_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_0_0 = textureLoad(t_conv2d_3, packed_2_0_0, 0);
+  }
+  var inp_2_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_2_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_1_0 = textureLoad(t_conv2d_3, packed_2_1_0, 0);
+  }
+  var inp_2_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_2_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_2_0 = textureLoad(t_conv2d_3, packed_2_2_0, 0);
+  }
+  var inp_2_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_2_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_0_1 = textureLoad(t_conv2d_3, packed_2_0_1, 0);
+  }
+  var inp_2_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_2_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_1_1 = textureLoad(t_conv2d_3, packed_2_1_1, 0);
+  }
+  var inp_2_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_2_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_2_1 = textureLoad(t_conv2d_3, packed_2_2_1, 0);
+  }
+  var inp_2_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_2_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_0_2 = textureLoad(t_conv2d_3, packed_2_0_2, 0);
+  }
+  var inp_2_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_2_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_1_2 = textureLoad(t_conv2d_3, packed_2_1_2, 0);
+  }
+  var inp_2_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_2_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_2_2 = textureLoad(t_conv2d_3, packed_2_2_2, 0);
+  }
+  var inp_3_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_3_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_0_0 = textureLoad(t_conv2d_3, packed_3_0_0, 0);
+  }
+  var inp_3_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_3_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_1_0 = textureLoad(t_conv2d_3, packed_3_1_0, 0);
+  }
+  var inp_3_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_3_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_2_0 = textureLoad(t_conv2d_3, packed_3_2_0, 0);
+  }
+  var inp_3_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_3_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_0_1 = textureLoad(t_conv2d_3, packed_3_0_1, 0);
+  }
+  var inp_3_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_3_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_1_1 = textureLoad(t_conv2d_3, packed_3_1_1, 0);
+  }
+  var inp_3_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_3_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_2_1 = textureLoad(t_conv2d_3, packed_3_2_1, 0);
+  }
+  var inp_3_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_3_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_0_2 = textureLoad(t_conv2d_3, packed_3_0_2, 0);
+  }
+  var inp_3_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_3_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_1_2 = textureLoad(t_conv2d_3, packed_3_1_2, 0);
+  }
+  var inp_3_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_3_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_2_2 = textureLoad(t_conv2d_3, packed_3_2_2, 0);
+  }
+  var inp_4_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_4_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_0_0 = textureLoad(t_conv2d_3, packed_4_0_0, 0);
+  }
+  var inp_4_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_4_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_1_0 = textureLoad(t_conv2d_3, packed_4_1_0, 0);
+  }
+  var inp_4_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_4_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_2_0 = textureLoad(t_conv2d_3, packed_4_2_0, 0);
+  }
+  var inp_4_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_4_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_0_1 = textureLoad(t_conv2d_3, packed_4_0_1, 0);
+  }
+  var inp_4_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_4_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_1_1 = textureLoad(t_conv2d_3, packed_4_1_1, 0);
+  }
+  var inp_4_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_4_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_2_1 = textureLoad(t_conv2d_3, packed_4_2_1, 0);
+  }
+  var inp_4_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_4_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_0_2 = textureLoad(t_conv2d_3, packed_4_0_2, 0);
+  }
+  var inp_4_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_4_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_1_2 = textureLoad(t_conv2d_3, packed_4_1_2, 0);
+  }
+  var inp_4_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_4_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_2_2 = textureLoad(t_conv2d_3, packed_4_2_2, 0);
+  }
+  var inp_5_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_5_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_0_0 = textureLoad(t_conv2d_3, packed_5_0_0, 0);
+  }
+  var inp_5_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_5_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_1_0 = textureLoad(t_conv2d_3, packed_5_1_0, 0);
+  }
+  var inp_5_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_5_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_2_0 = textureLoad(t_conv2d_3, packed_5_2_0, 0);
+  }
+  var inp_5_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_5_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_0_1 = textureLoad(t_conv2d_3, packed_5_0_1, 0);
+  }
+  var inp_5_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_5_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_1_1 = textureLoad(t_conv2d_3, packed_5_1_1, 0);
+  }
+  var inp_5_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_5_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_2_1 = textureLoad(t_conv2d_3, packed_5_2_1, 0);
+  }
+  var inp_5_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_5_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_0_2 = textureLoad(t_conv2d_3, packed_5_0_2, 0);
+  }
+  var inp_5_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_5_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_1_2 = textureLoad(t_conv2d_3, packed_5_1_2, 0);
+  }
+  var inp_5_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_5_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_2_2 = textureLoad(t_conv2d_3, packed_5_2_2, 0);
+  }
+  var inp_6_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_6_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_0_0 = textureLoad(t_conv2d_3, packed_6_0_0, 0);
+  }
+  var inp_6_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_6_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_1_0 = textureLoad(t_conv2d_3, packed_6_1_0, 0);
+  }
+  var inp_6_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_6_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_2_0 = textureLoad(t_conv2d_3, packed_6_2_0, 0);
+  }
+  var inp_6_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_6_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_0_1 = textureLoad(t_conv2d_3, packed_6_0_1, 0);
+  }
+  var inp_6_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_6_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_1_1 = textureLoad(t_conv2d_3, packed_6_1_1, 0);
+  }
+  var inp_6_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_6_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_2_1 = textureLoad(t_conv2d_3, packed_6_2_1, 0);
+  }
+  var inp_6_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_6_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_0_2 = textureLoad(t_conv2d_3, packed_6_0_2, 0);
+  }
+  var inp_6_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_6_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_1_2 = textureLoad(t_conv2d_3, packed_6_1_2, 0);
+  }
+  var inp_6_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_6_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_2_2 = textureLoad(t_conv2d_3, packed_6_2_2, 0);
+  }
+  var inp_7_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_7_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_0_0 = textureLoad(t_conv2d_3, packed_7_0_0, 0);
+  }
+  var inp_7_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_7_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_1_0 = textureLoad(t_conv2d_3, packed_7_1_0, 0);
+  }
+  var inp_7_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_7_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_2_0 = textureLoad(t_conv2d_3, packed_7_2_0, 0);
+  }
+  var inp_7_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_7_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_0_1 = textureLoad(t_conv2d_3, packed_7_0_1, 0);
+  }
+  var inp_7_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_7_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_1_1 = textureLoad(t_conv2d_3, packed_7_1_1, 0);
+  }
+  var inp_7_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_7_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_2_1 = textureLoad(t_conv2d_3, packed_7_2_1, 0);
+  }
+  var inp_7_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_7_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_0_2 = textureLoad(t_conv2d_3, packed_7_0_2, 0);
+  }
+  var inp_7_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_7_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_1_2 = textureLoad(t_conv2d_3, packed_7_1_2, 0);
+  }
+  var inp_7_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_7_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_2_2 = textureLoad(t_conv2d_3, packed_7_2_2, 0);
+  }
   var result0 = vec4f(-0.016821882, -0.0076052053, -0.019633437, -0.0051945453);
   var result1 = vec4f(0.0040373285, -0.0019942508, 0.0031968440, -0.0016201151);
   var result2 = vec4f(0.0030556703, 0.013516944, -0.0086872080, -0.011121662);
@@ -2829,78 +4057,376 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let odim = textureDimensions(outTex);
   let sp = vec2i(i32(gid.x), i32(gid.y));
   if (sp.x * 4 >= i32(odim.x) || sp.y * 2 >= i32(odim.y)) { return; }
-  let inp_0_0_0 = textureLoad(t_conv2d_4, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_1_0 = textureLoad(t_conv2d_4, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_2_0 = textureLoad(t_conv2d_4, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_0_1 = textureLoad(t_conv2d_4, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_1_1 = textureLoad(t_conv2d_4, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_2_1 = textureLoad(t_conv2d_4, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_0_2 = textureLoad(t_conv2d_4, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_1_2 = textureLoad(t_conv2d_4, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_2_2 = textureLoad(t_conv2d_4, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_0_0 = textureLoad(t_conv2d_4, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_1_0 = textureLoad(t_conv2d_4, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_2_0 = textureLoad(t_conv2d_4, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_0_1 = textureLoad(t_conv2d_4, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_1_1 = textureLoad(t_conv2d_4, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_2_1 = textureLoad(t_conv2d_4, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_0_2 = textureLoad(t_conv2d_4, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_1_2 = textureLoad(t_conv2d_4, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_2_2 = textureLoad(t_conv2d_4, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_0_0 = textureLoad(t_conv2d_4, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_1_0 = textureLoad(t_conv2d_4, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_2_0 = textureLoad(t_conv2d_4, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_0_1 = textureLoad(t_conv2d_4, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_1_1 = textureLoad(t_conv2d_4, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_2_1 = textureLoad(t_conv2d_4, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_0_2 = textureLoad(t_conv2d_4, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_1_2 = textureLoad(t_conv2d_4, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_2_2 = textureLoad(t_conv2d_4, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_0_0 = textureLoad(t_conv2d_4, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_1_0 = textureLoad(t_conv2d_4, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_2_0 = textureLoad(t_conv2d_4, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_0_1 = textureLoad(t_conv2d_4, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_1_1 = textureLoad(t_conv2d_4, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_2_1 = textureLoad(t_conv2d_4, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_0_2 = textureLoad(t_conv2d_4, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_1_2 = textureLoad(t_conv2d_4, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_2_2 = textureLoad(t_conv2d_4, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_0_0 = textureLoad(t_conv2d_4, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_1_0 = textureLoad(t_conv2d_4, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_2_0 = textureLoad(t_conv2d_4, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_0_1 = textureLoad(t_conv2d_4, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_1_1 = textureLoad(t_conv2d_4, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_2_1 = textureLoad(t_conv2d_4, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_0_2 = textureLoad(t_conv2d_4, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_1_2 = textureLoad(t_conv2d_4, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_2_2 = textureLoad(t_conv2d_4, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_0_0 = textureLoad(t_conv2d_4, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_1_0 = textureLoad(t_conv2d_4, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_2_0 = textureLoad(t_conv2d_4, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_0_1 = textureLoad(t_conv2d_4, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_1_1 = textureLoad(t_conv2d_4, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_2_1 = textureLoad(t_conv2d_4, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_0_2 = textureLoad(t_conv2d_4, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_1_2 = textureLoad(t_conv2d_4, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_2_2 = textureLoad(t_conv2d_4, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_0_0 = textureLoad(t_conv2d_4, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_1_0 = textureLoad(t_conv2d_4, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_2_0 = textureLoad(t_conv2d_4, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_0_1 = textureLoad(t_conv2d_4, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_1_1 = textureLoad(t_conv2d_4, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_2_1 = textureLoad(t_conv2d_4, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_0_2 = textureLoad(t_conv2d_4, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_1_2 = textureLoad(t_conv2d_4, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_2_2 = textureLoad(t_conv2d_4, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_0_0 = textureLoad(t_conv2d_4, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_1_0 = textureLoad(t_conv2d_4, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_2_0 = textureLoad(t_conv2d_4, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_0_1 = textureLoad(t_conv2d_4, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_1_1 = textureLoad(t_conv2d_4, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_2_1 = textureLoad(t_conv2d_4, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_0_2 = textureLoad(t_conv2d_4, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_1_2 = textureLoad(t_conv2d_4, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_2_2 = textureLoad(t_conv2d_4, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
+  let tap_0_0 = sp + vec2i(-1, -1);
+  let tap_1_0 = sp + vec2i(0, -1);
+  let tap_2_0 = sp + vec2i(1, -1);
+  let tap_0_1 = sp + vec2i(-1, 0);
+  let tap_1_1 = sp + vec2i(0, 0);
+  let tap_2_1 = sp + vec2i(1, 0);
+  let tap_0_2 = sp + vec2i(-1, 1);
+  let tap_1_2 = sp + vec2i(0, 1);
+  let tap_2_2 = sp + vec2i(1, 1);
+  let logicalDim = sdim / vec2i(4, 2);
+  var inp_0_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_0_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_0_0 = textureLoad(t_conv2d_4, packed_0_0_0, 0);
+  }
+  var inp_0_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_0_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_1_0 = textureLoad(t_conv2d_4, packed_0_1_0, 0);
+  }
+  var inp_0_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_0_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_2_0 = textureLoad(t_conv2d_4, packed_0_2_0, 0);
+  }
+  var inp_0_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_0_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_0_1 = textureLoad(t_conv2d_4, packed_0_0_1, 0);
+  }
+  var inp_0_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_0_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_1_1 = textureLoad(t_conv2d_4, packed_0_1_1, 0);
+  }
+  var inp_0_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_0_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_2_1 = textureLoad(t_conv2d_4, packed_0_2_1, 0);
+  }
+  var inp_0_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_0_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_0_2 = textureLoad(t_conv2d_4, packed_0_0_2, 0);
+  }
+  var inp_0_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_0_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_1_2 = textureLoad(t_conv2d_4, packed_0_1_2, 0);
+  }
+  var inp_0_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_0_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_2_2 = textureLoad(t_conv2d_4, packed_0_2_2, 0);
+  }
+  var inp_1_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_1_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_0_0 = textureLoad(t_conv2d_4, packed_1_0_0, 0);
+  }
+  var inp_1_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_1_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_1_0 = textureLoad(t_conv2d_4, packed_1_1_0, 0);
+  }
+  var inp_1_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_1_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_2_0 = textureLoad(t_conv2d_4, packed_1_2_0, 0);
+  }
+  var inp_1_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_1_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_0_1 = textureLoad(t_conv2d_4, packed_1_0_1, 0);
+  }
+  var inp_1_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_1_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_1_1 = textureLoad(t_conv2d_4, packed_1_1_1, 0);
+  }
+  var inp_1_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_1_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_2_1 = textureLoad(t_conv2d_4, packed_1_2_1, 0);
+  }
+  var inp_1_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_1_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_0_2 = textureLoad(t_conv2d_4, packed_1_0_2, 0);
+  }
+  var inp_1_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_1_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_1_2 = textureLoad(t_conv2d_4, packed_1_1_2, 0);
+  }
+  var inp_1_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_1_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_2_2 = textureLoad(t_conv2d_4, packed_1_2_2, 0);
+  }
+  var inp_2_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_2_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_0_0 = textureLoad(t_conv2d_4, packed_2_0_0, 0);
+  }
+  var inp_2_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_2_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_1_0 = textureLoad(t_conv2d_4, packed_2_1_0, 0);
+  }
+  var inp_2_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_2_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_2_0 = textureLoad(t_conv2d_4, packed_2_2_0, 0);
+  }
+  var inp_2_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_2_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_0_1 = textureLoad(t_conv2d_4, packed_2_0_1, 0);
+  }
+  var inp_2_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_2_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_1_1 = textureLoad(t_conv2d_4, packed_2_1_1, 0);
+  }
+  var inp_2_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_2_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_2_1 = textureLoad(t_conv2d_4, packed_2_2_1, 0);
+  }
+  var inp_2_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_2_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_0_2 = textureLoad(t_conv2d_4, packed_2_0_2, 0);
+  }
+  var inp_2_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_2_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_1_2 = textureLoad(t_conv2d_4, packed_2_1_2, 0);
+  }
+  var inp_2_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_2_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_2_2 = textureLoad(t_conv2d_4, packed_2_2_2, 0);
+  }
+  var inp_3_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_3_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_0_0 = textureLoad(t_conv2d_4, packed_3_0_0, 0);
+  }
+  var inp_3_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_3_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_1_0 = textureLoad(t_conv2d_4, packed_3_1_0, 0);
+  }
+  var inp_3_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_3_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_2_0 = textureLoad(t_conv2d_4, packed_3_2_0, 0);
+  }
+  var inp_3_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_3_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_0_1 = textureLoad(t_conv2d_4, packed_3_0_1, 0);
+  }
+  var inp_3_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_3_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_1_1 = textureLoad(t_conv2d_4, packed_3_1_1, 0);
+  }
+  var inp_3_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_3_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_2_1 = textureLoad(t_conv2d_4, packed_3_2_1, 0);
+  }
+  var inp_3_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_3_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_0_2 = textureLoad(t_conv2d_4, packed_3_0_2, 0);
+  }
+  var inp_3_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_3_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_1_2 = textureLoad(t_conv2d_4, packed_3_1_2, 0);
+  }
+  var inp_3_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_3_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_2_2 = textureLoad(t_conv2d_4, packed_3_2_2, 0);
+  }
+  var inp_4_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_4_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_0_0 = textureLoad(t_conv2d_4, packed_4_0_0, 0);
+  }
+  var inp_4_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_4_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_1_0 = textureLoad(t_conv2d_4, packed_4_1_0, 0);
+  }
+  var inp_4_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_4_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_2_0 = textureLoad(t_conv2d_4, packed_4_2_0, 0);
+  }
+  var inp_4_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_4_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_0_1 = textureLoad(t_conv2d_4, packed_4_0_1, 0);
+  }
+  var inp_4_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_4_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_1_1 = textureLoad(t_conv2d_4, packed_4_1_1, 0);
+  }
+  var inp_4_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_4_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_2_1 = textureLoad(t_conv2d_4, packed_4_2_1, 0);
+  }
+  var inp_4_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_4_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_0_2 = textureLoad(t_conv2d_4, packed_4_0_2, 0);
+  }
+  var inp_4_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_4_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_1_2 = textureLoad(t_conv2d_4, packed_4_1_2, 0);
+  }
+  var inp_4_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_4_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_2_2 = textureLoad(t_conv2d_4, packed_4_2_2, 0);
+  }
+  var inp_5_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_5_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_0_0 = textureLoad(t_conv2d_4, packed_5_0_0, 0);
+  }
+  var inp_5_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_5_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_1_0 = textureLoad(t_conv2d_4, packed_5_1_0, 0);
+  }
+  var inp_5_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_5_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_2_0 = textureLoad(t_conv2d_4, packed_5_2_0, 0);
+  }
+  var inp_5_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_5_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_0_1 = textureLoad(t_conv2d_4, packed_5_0_1, 0);
+  }
+  var inp_5_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_5_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_1_1 = textureLoad(t_conv2d_4, packed_5_1_1, 0);
+  }
+  var inp_5_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_5_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_2_1 = textureLoad(t_conv2d_4, packed_5_2_1, 0);
+  }
+  var inp_5_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_5_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_0_2 = textureLoad(t_conv2d_4, packed_5_0_2, 0);
+  }
+  var inp_5_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_5_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_1_2 = textureLoad(t_conv2d_4, packed_5_1_2, 0);
+  }
+  var inp_5_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_5_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_2_2 = textureLoad(t_conv2d_4, packed_5_2_2, 0);
+  }
+  var inp_6_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_6_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_0_0 = textureLoad(t_conv2d_4, packed_6_0_0, 0);
+  }
+  var inp_6_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_6_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_1_0 = textureLoad(t_conv2d_4, packed_6_1_0, 0);
+  }
+  var inp_6_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_6_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_2_0 = textureLoad(t_conv2d_4, packed_6_2_0, 0);
+  }
+  var inp_6_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_6_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_0_1 = textureLoad(t_conv2d_4, packed_6_0_1, 0);
+  }
+  var inp_6_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_6_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_1_1 = textureLoad(t_conv2d_4, packed_6_1_1, 0);
+  }
+  var inp_6_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_6_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_2_1 = textureLoad(t_conv2d_4, packed_6_2_1, 0);
+  }
+  var inp_6_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_6_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_0_2 = textureLoad(t_conv2d_4, packed_6_0_2, 0);
+  }
+  var inp_6_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_6_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_1_2 = textureLoad(t_conv2d_4, packed_6_1_2, 0);
+  }
+  var inp_6_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_6_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_2_2 = textureLoad(t_conv2d_4, packed_6_2_2, 0);
+  }
+  var inp_7_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_7_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_0_0 = textureLoad(t_conv2d_4, packed_7_0_0, 0);
+  }
+  var inp_7_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_7_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_1_0 = textureLoad(t_conv2d_4, packed_7_1_0, 0);
+  }
+  var inp_7_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_7_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_2_0 = textureLoad(t_conv2d_4, packed_7_2_0, 0);
+  }
+  var inp_7_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_7_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_0_1 = textureLoad(t_conv2d_4, packed_7_0_1, 0);
+  }
+  var inp_7_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_7_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_1_1 = textureLoad(t_conv2d_4, packed_7_1_1, 0);
+  }
+  var inp_7_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_7_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_2_1 = textureLoad(t_conv2d_4, packed_7_2_1, 0);
+  }
+  var inp_7_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_7_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_0_2 = textureLoad(t_conv2d_4, packed_7_0_2, 0);
+  }
+  var inp_7_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_7_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_1_2 = textureLoad(t_conv2d_4, packed_7_1_2, 0);
+  }
+  var inp_7_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_7_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_2_2 = textureLoad(t_conv2d_4, packed_7_2_2, 0);
+  }
   var result0 = vec4f(-0.0014149415, 0.00061456615, 0.00066804440, -0.028959079);
   var result1 = vec4f(0.00089100667, -0.00097180690, -0.00059538890, -0.0025439607);
   var result2 = vec4f(-0.00064286165, -0.0090322570, -0.0020944087, -0.00080217970);
@@ -3507,78 +5033,376 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let odim = textureDimensions(outTex);
   let sp = vec2i(i32(gid.x), i32(gid.y));
   if (sp.x >= i32(odim.x) || sp.y >= i32(odim.y)) { return; }
-  let inp_0_0_0 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_1_0 = textureLoad(t_conv2d, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_2_0 = textureLoad(t_conv2d, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_0_1 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_1_1 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_2_1 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_0_2 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_1_2 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_0_2_2 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(0, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_0_0 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_1_0 = textureLoad(t_conv2d, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_2_0 = textureLoad(t_conv2d, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_0_1 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_1_1 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_2_1 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_0_2 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_1_2 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_1_2_2 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(1, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_0_0 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_1_0 = textureLoad(t_conv2d, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_2_0 = textureLoad(t_conv2d, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_0_1 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_1_1 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_2_1 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_0_2 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_1_2 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_2_2_2 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(2, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_0_0 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_1_0 = textureLoad(t_conv2d, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_2_0 = textureLoad(t_conv2d, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_0_1 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_1_1 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_2_1 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_0_2 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_1_2 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_3_2_2 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(3, 0), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_0_0 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_1_0 = textureLoad(t_conv2d, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_2_0 = textureLoad(t_conv2d, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_0_1 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_1_1 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_2_1 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_0_2 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_1_2 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_4_2_2 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(0, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_0_0 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_1_0 = textureLoad(t_conv2d, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_2_0 = textureLoad(t_conv2d, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_0_1 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_1_1 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_2_1 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_0_2 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_1_2 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_5_2_2 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(1, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_0_0 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_1_0 = textureLoad(t_conv2d, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_2_0 = textureLoad(t_conv2d, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_0_1 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_1_1 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_2_1 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_0_2 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_1_2 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_6_2_2 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(2, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_0_0 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(-1, -1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_1_0 = textureLoad(t_conv2d, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(0, -1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_2_0 = textureLoad(t_conv2d, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(1, -1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_0_1 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(-1, 0)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_1_1 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(0, 0)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_2_1 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(1, 0)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_0_2 = textureLoad(t_conv2d, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(-1, 1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_1_2 = textureLoad(t_conv2d, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(0, 1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
-  let inp_7_2_2 = textureLoad(t_conv2d, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0) + textureLoad(t_conv2d_5, clamp((sp + vec2i(1, 1)) * vec2i(4,2) + vec2i(3, 1), vec2i(0), sdim - vec2i(1)), 0);
+  let tap_0_0 = sp + vec2i(-1, -1);
+  let tap_1_0 = sp + vec2i(0, -1);
+  let tap_2_0 = sp + vec2i(1, -1);
+  let tap_0_1 = sp + vec2i(-1, 0);
+  let tap_1_1 = sp + vec2i(0, 0);
+  let tap_2_1 = sp + vec2i(1, 0);
+  let tap_0_2 = sp + vec2i(-1, 1);
+  let tap_1_2 = sp + vec2i(0, 1);
+  let tap_2_2 = sp + vec2i(1, 1);
+  let logicalDim = sdim / vec2i(4, 2);
+  var inp_0_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_0_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_0_0 = textureLoad(t_conv2d, packed_0_0_0, 0) + textureLoad(t_conv2d_5, packed_0_0_0, 0);
+  }
+  var inp_0_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_0_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_1_0 = textureLoad(t_conv2d, packed_0_1_0, 0) + textureLoad(t_conv2d_5, packed_0_1_0, 0);
+  }
+  var inp_0_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_0_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_2_0 = textureLoad(t_conv2d, packed_0_2_0, 0) + textureLoad(t_conv2d_5, packed_0_2_0, 0);
+  }
+  var inp_0_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_0_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_0_1 = textureLoad(t_conv2d, packed_0_0_1, 0) + textureLoad(t_conv2d_5, packed_0_0_1, 0);
+  }
+  var inp_0_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_0_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_1_1 = textureLoad(t_conv2d, packed_0_1_1, 0) + textureLoad(t_conv2d_5, packed_0_1_1, 0);
+  }
+  var inp_0_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_0_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_2_1 = textureLoad(t_conv2d, packed_0_2_1, 0) + textureLoad(t_conv2d_5, packed_0_2_1, 0);
+  }
+  var inp_0_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_0_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_0_2 = textureLoad(t_conv2d, packed_0_0_2, 0) + textureLoad(t_conv2d_5, packed_0_0_2, 0);
+  }
+  var inp_0_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_0_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_1_2 = textureLoad(t_conv2d, packed_0_1_2, 0) + textureLoad(t_conv2d_5, packed_0_1_2, 0);
+  }
+  var inp_0_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_0_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(0, 0);
+    inp_0_2_2 = textureLoad(t_conv2d, packed_0_2_2, 0) + textureLoad(t_conv2d_5, packed_0_2_2, 0);
+  }
+  var inp_1_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_1_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_0_0 = textureLoad(t_conv2d, packed_1_0_0, 0) + textureLoad(t_conv2d_5, packed_1_0_0, 0);
+  }
+  var inp_1_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_1_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_1_0 = textureLoad(t_conv2d, packed_1_1_0, 0) + textureLoad(t_conv2d_5, packed_1_1_0, 0);
+  }
+  var inp_1_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_1_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_2_0 = textureLoad(t_conv2d, packed_1_2_0, 0) + textureLoad(t_conv2d_5, packed_1_2_0, 0);
+  }
+  var inp_1_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_1_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_0_1 = textureLoad(t_conv2d, packed_1_0_1, 0) + textureLoad(t_conv2d_5, packed_1_0_1, 0);
+  }
+  var inp_1_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_1_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_1_1 = textureLoad(t_conv2d, packed_1_1_1, 0) + textureLoad(t_conv2d_5, packed_1_1_1, 0);
+  }
+  var inp_1_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_1_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_2_1 = textureLoad(t_conv2d, packed_1_2_1, 0) + textureLoad(t_conv2d_5, packed_1_2_1, 0);
+  }
+  var inp_1_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_1_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_0_2 = textureLoad(t_conv2d, packed_1_0_2, 0) + textureLoad(t_conv2d_5, packed_1_0_2, 0);
+  }
+  var inp_1_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_1_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_1_2 = textureLoad(t_conv2d, packed_1_1_2, 0) + textureLoad(t_conv2d_5, packed_1_1_2, 0);
+  }
+  var inp_1_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_1_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(1, 0);
+    inp_1_2_2 = textureLoad(t_conv2d, packed_1_2_2, 0) + textureLoad(t_conv2d_5, packed_1_2_2, 0);
+  }
+  var inp_2_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_2_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_0_0 = textureLoad(t_conv2d, packed_2_0_0, 0) + textureLoad(t_conv2d_5, packed_2_0_0, 0);
+  }
+  var inp_2_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_2_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_1_0 = textureLoad(t_conv2d, packed_2_1_0, 0) + textureLoad(t_conv2d_5, packed_2_1_0, 0);
+  }
+  var inp_2_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_2_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_2_0 = textureLoad(t_conv2d, packed_2_2_0, 0) + textureLoad(t_conv2d_5, packed_2_2_0, 0);
+  }
+  var inp_2_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_2_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_0_1 = textureLoad(t_conv2d, packed_2_0_1, 0) + textureLoad(t_conv2d_5, packed_2_0_1, 0);
+  }
+  var inp_2_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_2_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_1_1 = textureLoad(t_conv2d, packed_2_1_1, 0) + textureLoad(t_conv2d_5, packed_2_1_1, 0);
+  }
+  var inp_2_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_2_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_2_1 = textureLoad(t_conv2d, packed_2_2_1, 0) + textureLoad(t_conv2d_5, packed_2_2_1, 0);
+  }
+  var inp_2_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_2_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_0_2 = textureLoad(t_conv2d, packed_2_0_2, 0) + textureLoad(t_conv2d_5, packed_2_0_2, 0);
+  }
+  var inp_2_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_2_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_1_2 = textureLoad(t_conv2d, packed_2_1_2, 0) + textureLoad(t_conv2d_5, packed_2_1_2, 0);
+  }
+  var inp_2_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_2_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(2, 0);
+    inp_2_2_2 = textureLoad(t_conv2d, packed_2_2_2, 0) + textureLoad(t_conv2d_5, packed_2_2_2, 0);
+  }
+  var inp_3_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_3_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_0_0 = textureLoad(t_conv2d, packed_3_0_0, 0) + textureLoad(t_conv2d_5, packed_3_0_0, 0);
+  }
+  var inp_3_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_3_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_1_0 = textureLoad(t_conv2d, packed_3_1_0, 0) + textureLoad(t_conv2d_5, packed_3_1_0, 0);
+  }
+  var inp_3_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_3_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_2_0 = textureLoad(t_conv2d, packed_3_2_0, 0) + textureLoad(t_conv2d_5, packed_3_2_0, 0);
+  }
+  var inp_3_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_3_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_0_1 = textureLoad(t_conv2d, packed_3_0_1, 0) + textureLoad(t_conv2d_5, packed_3_0_1, 0);
+  }
+  var inp_3_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_3_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_1_1 = textureLoad(t_conv2d, packed_3_1_1, 0) + textureLoad(t_conv2d_5, packed_3_1_1, 0);
+  }
+  var inp_3_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_3_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_2_1 = textureLoad(t_conv2d, packed_3_2_1, 0) + textureLoad(t_conv2d_5, packed_3_2_1, 0);
+  }
+  var inp_3_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_3_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_0_2 = textureLoad(t_conv2d, packed_3_0_2, 0) + textureLoad(t_conv2d_5, packed_3_0_2, 0);
+  }
+  var inp_3_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_3_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_1_2 = textureLoad(t_conv2d, packed_3_1_2, 0) + textureLoad(t_conv2d_5, packed_3_1_2, 0);
+  }
+  var inp_3_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_3_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(3, 0);
+    inp_3_2_2 = textureLoad(t_conv2d, packed_3_2_2, 0) + textureLoad(t_conv2d_5, packed_3_2_2, 0);
+  }
+  var inp_4_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_4_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_0_0 = textureLoad(t_conv2d, packed_4_0_0, 0) + textureLoad(t_conv2d_5, packed_4_0_0, 0);
+  }
+  var inp_4_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_4_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_1_0 = textureLoad(t_conv2d, packed_4_1_0, 0) + textureLoad(t_conv2d_5, packed_4_1_0, 0);
+  }
+  var inp_4_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_4_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_2_0 = textureLoad(t_conv2d, packed_4_2_0, 0) + textureLoad(t_conv2d_5, packed_4_2_0, 0);
+  }
+  var inp_4_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_4_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_0_1 = textureLoad(t_conv2d, packed_4_0_1, 0) + textureLoad(t_conv2d_5, packed_4_0_1, 0);
+  }
+  var inp_4_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_4_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_1_1 = textureLoad(t_conv2d, packed_4_1_1, 0) + textureLoad(t_conv2d_5, packed_4_1_1, 0);
+  }
+  var inp_4_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_4_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_2_1 = textureLoad(t_conv2d, packed_4_2_1, 0) + textureLoad(t_conv2d_5, packed_4_2_1, 0);
+  }
+  var inp_4_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_4_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_0_2 = textureLoad(t_conv2d, packed_4_0_2, 0) + textureLoad(t_conv2d_5, packed_4_0_2, 0);
+  }
+  var inp_4_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_4_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_1_2 = textureLoad(t_conv2d, packed_4_1_2, 0) + textureLoad(t_conv2d_5, packed_4_1_2, 0);
+  }
+  var inp_4_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_4_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(0, 1);
+    inp_4_2_2 = textureLoad(t_conv2d, packed_4_2_2, 0) + textureLoad(t_conv2d_5, packed_4_2_2, 0);
+  }
+  var inp_5_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_5_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_0_0 = textureLoad(t_conv2d, packed_5_0_0, 0) + textureLoad(t_conv2d_5, packed_5_0_0, 0);
+  }
+  var inp_5_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_5_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_1_0 = textureLoad(t_conv2d, packed_5_1_0, 0) + textureLoad(t_conv2d_5, packed_5_1_0, 0);
+  }
+  var inp_5_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_5_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_2_0 = textureLoad(t_conv2d, packed_5_2_0, 0) + textureLoad(t_conv2d_5, packed_5_2_0, 0);
+  }
+  var inp_5_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_5_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_0_1 = textureLoad(t_conv2d, packed_5_0_1, 0) + textureLoad(t_conv2d_5, packed_5_0_1, 0);
+  }
+  var inp_5_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_5_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_1_1 = textureLoad(t_conv2d, packed_5_1_1, 0) + textureLoad(t_conv2d_5, packed_5_1_1, 0);
+  }
+  var inp_5_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_5_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_2_1 = textureLoad(t_conv2d, packed_5_2_1, 0) + textureLoad(t_conv2d_5, packed_5_2_1, 0);
+  }
+  var inp_5_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_5_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_0_2 = textureLoad(t_conv2d, packed_5_0_2, 0) + textureLoad(t_conv2d_5, packed_5_0_2, 0);
+  }
+  var inp_5_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_5_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_1_2 = textureLoad(t_conv2d, packed_5_1_2, 0) + textureLoad(t_conv2d_5, packed_5_1_2, 0);
+  }
+  var inp_5_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_5_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(1, 1);
+    inp_5_2_2 = textureLoad(t_conv2d, packed_5_2_2, 0) + textureLoad(t_conv2d_5, packed_5_2_2, 0);
+  }
+  var inp_6_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_6_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_0_0 = textureLoad(t_conv2d, packed_6_0_0, 0) + textureLoad(t_conv2d_5, packed_6_0_0, 0);
+  }
+  var inp_6_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_6_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_1_0 = textureLoad(t_conv2d, packed_6_1_0, 0) + textureLoad(t_conv2d_5, packed_6_1_0, 0);
+  }
+  var inp_6_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_6_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_2_0 = textureLoad(t_conv2d, packed_6_2_0, 0) + textureLoad(t_conv2d_5, packed_6_2_0, 0);
+  }
+  var inp_6_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_6_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_0_1 = textureLoad(t_conv2d, packed_6_0_1, 0) + textureLoad(t_conv2d_5, packed_6_0_1, 0);
+  }
+  var inp_6_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_6_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_1_1 = textureLoad(t_conv2d, packed_6_1_1, 0) + textureLoad(t_conv2d_5, packed_6_1_1, 0);
+  }
+  var inp_6_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_6_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_2_1 = textureLoad(t_conv2d, packed_6_2_1, 0) + textureLoad(t_conv2d_5, packed_6_2_1, 0);
+  }
+  var inp_6_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_6_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_0_2 = textureLoad(t_conv2d, packed_6_0_2, 0) + textureLoad(t_conv2d_5, packed_6_0_2, 0);
+  }
+  var inp_6_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_6_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_1_2 = textureLoad(t_conv2d, packed_6_1_2, 0) + textureLoad(t_conv2d_5, packed_6_1_2, 0);
+  }
+  var inp_6_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_6_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(2, 1);
+    inp_6_2_2 = textureLoad(t_conv2d, packed_6_2_2, 0) + textureLoad(t_conv2d_5, packed_6_2_2, 0);
+  }
+  var inp_7_0_0 : vec4f = vec4f(0.0);
+  if (all(tap_0_0 >= vec2i(0)) && all(tap_0_0 < logicalDim)) {
+    let packed_7_0_0 = tap_0_0 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_0_0 = textureLoad(t_conv2d, packed_7_0_0, 0) + textureLoad(t_conv2d_5, packed_7_0_0, 0);
+  }
+  var inp_7_1_0 : vec4f = vec4f(0.0);
+  if (all(tap_1_0 >= vec2i(0)) && all(tap_1_0 < logicalDim)) {
+    let packed_7_1_0 = tap_1_0 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_1_0 = textureLoad(t_conv2d, packed_7_1_0, 0) + textureLoad(t_conv2d_5, packed_7_1_0, 0);
+  }
+  var inp_7_2_0 : vec4f = vec4f(0.0);
+  if (all(tap_2_0 >= vec2i(0)) && all(tap_2_0 < logicalDim)) {
+    let packed_7_2_0 = tap_2_0 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_2_0 = textureLoad(t_conv2d, packed_7_2_0, 0) + textureLoad(t_conv2d_5, packed_7_2_0, 0);
+  }
+  var inp_7_0_1 : vec4f = vec4f(0.0);
+  if (all(tap_0_1 >= vec2i(0)) && all(tap_0_1 < logicalDim)) {
+    let packed_7_0_1 = tap_0_1 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_0_1 = textureLoad(t_conv2d, packed_7_0_1, 0) + textureLoad(t_conv2d_5, packed_7_0_1, 0);
+  }
+  var inp_7_1_1 : vec4f = vec4f(0.0);
+  if (all(tap_1_1 >= vec2i(0)) && all(tap_1_1 < logicalDim)) {
+    let packed_7_1_1 = tap_1_1 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_1_1 = textureLoad(t_conv2d, packed_7_1_1, 0) + textureLoad(t_conv2d_5, packed_7_1_1, 0);
+  }
+  var inp_7_2_1 : vec4f = vec4f(0.0);
+  if (all(tap_2_1 >= vec2i(0)) && all(tap_2_1 < logicalDim)) {
+    let packed_7_2_1 = tap_2_1 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_2_1 = textureLoad(t_conv2d, packed_7_2_1, 0) + textureLoad(t_conv2d_5, packed_7_2_1, 0);
+  }
+  var inp_7_0_2 : vec4f = vec4f(0.0);
+  if (all(tap_0_2 >= vec2i(0)) && all(tap_0_2 < logicalDim)) {
+    let packed_7_0_2 = tap_0_2 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_0_2 = textureLoad(t_conv2d, packed_7_0_2, 0) + textureLoad(t_conv2d_5, packed_7_0_2, 0);
+  }
+  var inp_7_1_2 : vec4f = vec4f(0.0);
+  if (all(tap_1_2 >= vec2i(0)) && all(tap_1_2 < logicalDim)) {
+    let packed_7_1_2 = tap_1_2 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_1_2 = textureLoad(t_conv2d, packed_7_1_2, 0) + textureLoad(t_conv2d_5, packed_7_1_2, 0);
+  }
+  var inp_7_2_2 : vec4f = vec4f(0.0);
+  if (all(tap_2_2 >= vec2i(0)) && all(tap_2_2 < logicalDim)) {
+    let packed_7_2_2 = tap_2_2 * vec2i(4, 2) + vec2i(3, 1);
+    inp_7_2_2 = textureLoad(t_conv2d, packed_7_2_2, 0) + textureLoad(t_conv2d_5, packed_7_2_2, 0);
+  }
   var result0 = vec4f(0.089471470, 0.085281750, 0.091438970, 0.088739716);
   result0 += mat4x4f(-0.030004593, -0.0015731476, -0.029154608, -0.0039004358, -0.062711100, -0.035505254, -0.034215953, -0.022748977, 0.070052100, -0.015362208, 0.027590410, -0.020647367, -0.11991242, -0.012278255, -0.035904054, 0.0045827840) * inp_0_0_0;
   result0 += mat4x4f(-0.0058119968, 0.0065449765, 0.040359534, 0.041060638, 0.039847360, -0.00080121204, -0.017283070, -0.021660095, 0.0044556456, 0.010959069, 0.0078166430, 0.052117800, -0.031048326, -0.088039400, -0.0038433073, -0.031199658) * inp_0_1_0;
