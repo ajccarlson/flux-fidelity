@@ -1,6 +1,6 @@
 import { GENERATED_MODEL_ASSET_PATHS } from "../fsrcnnx-model-catalog.js";
 
-export const EXPECTED_PACKAGE_FILE_COUNT = 59;
+export const EXPECTED_PACKAGE_FILE_COUNT = 63;
 
 // These assets are selected indirectly from runtime model catalogs, so static
 // import/getURL scanning cannot prove their exact package membership. Keep this
@@ -16,6 +16,8 @@ export const REQUIRED_RUNTIME_MODEL_FILES = Object.freeze([
 // This list is the package boundary. Additions and removals must be deliberate:
 // package creation and package reference validation both consume this exact set.
 export const PACKAGE_FILES = Object.freeze([
+  "GPL-3.0.txt",
+  "LGPL-3.0.txt",
   "LICENSE",
   "MODEL_PROVENANCE.md",
   "THIRD_PARTY_NOTICES.md",
@@ -70,8 +72,10 @@ export const PACKAGE_FILES = Object.freeze([
   "model/rife_v4.26_fp16.onnx",
   "popup.html",
   "popup.js",
+  "release-clearance.json",
   "validate.html",
   "validate.js",
+  "vendor/ort/ThirdPartyNotices.txt",
   "vendor/ort/ort-wasm-simd-threaded.asyncify.mjs",
   "vendor/ort/ort-wasm-simd-threaded.asyncify.wasm",
   "vendor/ort/ort.webgpu.min.mjs",
