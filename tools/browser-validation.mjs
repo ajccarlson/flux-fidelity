@@ -704,7 +704,10 @@ function assertValidationResult(state, events) {
       for (const result of state.results) {
         if (!result || typeof result.id !== "string" || !result.id) problems.push("result has no stable ID");
         else ids.add(result.id);
-        if (result?.status !== "pass") problems.push(`${result?.id || "unknown check"} is ${result?.status || "missing"}`);
+        if (result?.status !== "pass") {
+          const detail = typeof result?.detail === "string" && result.detail ? `: ${result.detail}` : "";
+          problems.push(`${result?.id || "unknown check"} is ${result?.status || "missing"}${detail}`);
+        }
       }
       if (ids.size !== EXPECTED_CHECK_COUNT) problems.push("result IDs are not unique and fixed");
       const missing = EXPECTED_VALIDATION_IDS.filter((id) => !ids.has(id));

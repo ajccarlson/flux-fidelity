@@ -1,11 +1,14 @@
 import { ArtCnnModel } from "./fsrcnnx-artcnn-runtime.js";
 import { GENERATED_MODEL_CATALOG } from "./fsrcnnx-model-catalog.js";
 import { validateModelBundle } from "./fsrcnnx-model-bundle.js";
+import { validateNeuralManifest } from "./fsrcnnx-neural.js";
+import { createOrtSession, ensureOrt, getOrtSessionDevice } from "./fsrcnnx-rife.js";
 import { FsrcnnxModel } from "./fsrcnnx-runtime.js";
 import {
   acquireValidationDevice,
   buildCorePipelines,
   createValidationPlan,
+  inspectOrtFloatTensor,
   runModelInference,
   summarizeValidation,
   VALIDATION_TIMEOUT_MS,
@@ -177,6 +180,244 @@ async function validateModel(runId, resultMap, spec, device) {
   }
 }
 
+function spanInput(width, height) {
+  const plane = width * height;
+  const data = new Float32Array(plane * 3);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const index = y * width + x;
+      data[index] = 0.05 + 0.9 * (x / Math.max(1, width - 1));
+      data[plane + index] = 0.05 + 0.9 * (y / Math.max(1, height - 1));
+      data[2 * plane + index] = 0.05 + 0.9 * ((x + y) / Math.max(1, width + height - 2));
+    }
+  }
+  return data;
+}
+
+function rifeInput(width, height) {
+  const plane = width * height;
+  const data = new Float32Array(plane * 7);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const index = y * width + x;
+      const fx = x / Math.max(1, width - 1);
+      const fy = y / Math.max(1, height - 1);
+      data[index] = 0.1 + 0.7 * fx;
+      data[plane + index] = 0.1 + 0.7 * fy;
+      data[2 * plane + index] = 0.2 + 0.5 * ((fx + fy) / 2);
+      data[3 * plane + index] = 0.1 + 0.7 * (1 - fy);
+      data[4 * plane + index] = 0.1 + 0.7 * (1 - fx);
+      data[5 * plane + index] = 0.2 + 0.5 * ((2 - fx - fy) / 2);
+    }
+  }
+  data.fill(0.5, 6 * plane);
+  return data;
+}
+
+async function loadNeuralSmokeSpec() {
+  const response = await withTimeout(
+    fetch(chrome.runtime.getURL("model/neural/manifest.json")),
+    VALIDATION_TIMEOUT_MS,
+    "neural manifest fetch",
+  );
+  if (!response.ok) throw new Error(`neural manifest fetch returned HTTP ${response.status}`);
+  const entry = validateNeuralManifest(await response.json()).find(({ key }) => key === "span2x_smoke");
+  if (!entry) throw new Error("neural manifest has no span2x_smoke entry");
+  if (entry.file !== "span2x_smoke.fp16.onnx" || entry.scale !== 2) {
+    throw new Error(`span2x_smoke manifest contract changed (${entry.file}, ${entry.scale}x)`);
+  }
+  return entry;
+}
+
+async function createValidationOrtSession(modelUrl, label, { provider, gpuOutput, enableFp16 }) {
+  let session = null;
+  try {
+    const options = {
+      executionProviders: provider === "webgpu" ? [{ name: "webgpu" }] : [provider],
+      graphOptimizationLevel: "all",
+      enableGraphCapture: false,
+    };
+    // Dynamic-shape WebGPU graphs intentionally leave shape bookkeeping on the
+    // CPU. ORT reports that expected placement notice through console.error;
+    // retain actual error/fatal logging while the assertions below validate the run.
+    if (provider === "webgpu") options.logSeverityLevel = 3;
+    if (gpuOutput) options.preferredOutputLocation = "gpu-buffer";
+    session = await createOrtSession(modelUrl, options, { enableFp16 });
+    if (!session) throw new Error(`${label} session creation returned no session`);
+    if (!Array.isArray(session.inputNames) || session.inputNames.length !== 1) {
+      throw new Error(`${label} exposes ${session.inputNames?.length ?? 0} inputs; expected exactly one`);
+    }
+    if (!Array.isArray(session.outputNames) || session.outputNames.length !== 1) {
+      throw new Error(`${label} exposes ${session.outputNames?.length ?? 0} outputs; expected exactly one`);
+    }
+    if (provider === "webgpu" && !getOrtSessionDevice(session)) {
+      throw new Error(`${label} did not expose its ORT WebGPU device`);
+    }
+    return session;
+  } catch (error) {
+    try { await session?.release?.(); } catch {}
+    throw error;
+  }
+}
+
+async function runValidationOrtSession(ort, session, {
+  label,
+  data,
+  inputDims,
+  outputDims,
+  gpuInput,
+  gpuOutput,
+}) {
+  const ownerDevice = getOrtSessionDevice(session);
+  let inputBuffer = null;
+  let inputTensor = null;
+  let outputs = null;
+  try {
+    if (gpuInput) {
+      if (typeof ort.Tensor?.fromGpuBuffer !== "function") {
+        throw new Error(`${label} ORT bundle has no Tensor.fromGpuBuffer()`);
+      }
+      inputBuffer = ownerDevice.createBuffer({
+        label: "validation-ort-input",
+        size: data.byteLength,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      });
+      ownerDevice.queue.writeBuffer(inputBuffer, 0, data);
+      inputTensor = ort.Tensor.fromGpuBuffer(inputBuffer, { dataType: "float32", dims: inputDims });
+    } else {
+      inputTensor = new ort.Tensor("float32", data, inputDims);
+    }
+
+    outputs = await session.run({ [session.inputNames[0]]: inputTensor });
+    const output = outputs?.[session.outputNames[0]];
+    if (!output) throw new Error(`${label} did not return '${session.outputNames[0]}'`);
+    if (gpuOutput && (!output.gpuBuffer || output.location !== "gpu-buffer")) {
+      throw new Error(`${label} output is not at the requested gpu-buffer location`);
+    }
+    return await inspectOrtFloatTensor(output, outputDims, `${label} output`);
+  } finally {
+    // A failed output assertion can occur while GPU-backed tensors still own
+    // submitted work. Fence before disposing wrappers or their user-owned input.
+    try { await ownerDevice?.queue?.onSubmittedWorkDone?.(); } catch {}
+    for (const output of new Set(Object.values(outputs || {}))) {
+      try { output?.dispose?.(); } catch {}
+    }
+    try { inputTensor?.dispose?.(); } catch {}
+    if (inputBuffer) {
+      try { inputBuffer.destroy(); } catch {}
+    }
+  }
+}
+
+async function executeValidationOrtCheck(ort, check) {
+  let session = null;
+  let stats = null;
+  let failure = null;
+  let stage = "session creation";
+  try {
+    session = await createValidationOrtSession(check.modelUrl, check.label, check);
+    stage = "inference";
+    stats = await runValidationOrtSession(ort, session, check);
+  } catch (error) {
+    failure = new Error(`${stage}: ${errorMessage(error)}`, { cause: error });
+  }
+
+  if (session) {
+    try {
+      await session.release();
+    } catch (error) {
+      const releaseDetail = `session release: ${errorMessage(error)}`;
+      failure = failure
+        ? new Error(`${failure.message}; ${releaseDetail}`, { cause: failure })
+        : new Error(releaseDetail, { cause: error });
+    }
+  }
+  if (failure) throw failure;
+  return stats;
+}
+
+async function validateOnnxModels(runId, resultMap) {
+  const checks = [
+    {
+      id: "onnx:span2x-smoke",
+      label: "SPAN 2x smoke",
+      inputDims: [1, 3, 8, 8],
+      outputDims: [1, 3, 16, 16],
+      data: spanInput(8, 8),
+      // This proves the exact FP16 fixture and bundled WASM runtime only. The
+      // neural engine's WebGPU integration requires shader-f16, absent in the
+      // SwiftShader adapter used by the deterministic browser harness.
+      provider: "wasm",
+      enableFp16: false,
+      gpuInput: false,
+      gpuOutput: false,
+      modelUrl: null,
+    },
+    {
+      id: "onnx:rife-v4.26-fp16",
+      label: "RIFE 4.26 FP16",
+      inputDims: [1, 7, 64, 64],
+      outputDims: [1, 3, 64, 64],
+      data: rifeInput(64, 64),
+      provider: "wasm",
+      enableFp16: false,
+      gpuInput: false,
+      gpuOutput: false,
+      modelUrl: chrome.runtime.getURL("model/rife_v4.26_fp16.onnx"),
+    },
+    {
+      id: "onnx:rife-v4.26",
+      label: "default RIFE 4.26",
+      inputDims: [1, 7, 64, 64],
+      outputDims: [1, 3, 64, 64],
+      data: rifeInput(64, 64),
+      provider: "webgpu",
+      enableFp16: false,
+      gpuInput: true,
+      gpuOutput: true,
+      modelUrl: chrome.runtime.getURL("model/rife_v4.26.onnx"),
+    },
+  ];
+  const outcomes = new Map();
+  let ort;
+  try {
+    ort = await ensureOrt();
+  } catch (error) {
+    for (const check of checks) outcomes.set(check.id, { status: "fail", detail: `ORT bundle load: ${errorMessage(error)}` });
+  }
+
+  if (ort) {
+    try {
+      const span = await loadNeuralSmokeSpec();
+      checks[0].modelUrl = chrome.runtime.getURL(`model/neural/${span.file}`);
+    } catch (error) {
+      outcomes.set(checks[0].id, { status: "fail", detail: `manifest: ${errorMessage(error)}` });
+    }
+
+    for (const check of checks) {
+      if (outcomes.has(check.id)) continue;
+      try {
+        const stats = await withTimeout(
+          executeValidationOrtCheck(ort, check),
+          VALIDATION_TIMEOUT_MS,
+          `${check.label} ORT validation`,
+        );
+        outcomes.set(check.id, {
+          status: "pass",
+          detail: `${check.inputDims.join("×")} → ${stats.dims.join("×")}; ${stats.elements} finite values ` +
+            `in [${stats.min.toPrecision(4)}, ${stats.max.toPrecision(4)}] via ORT ${check.provider}`,
+        });
+      } catch (error) {
+        outcomes.set(check.id, { status: "fail", detail: errorMessage(error) });
+      }
+    }
+  }
+  for (const check of checks) {
+    const outcome = outcomes.get(check.id) || { status: "fail", detail: "validation produced no outcome" };
+    setResult(runId, resultMap, check.id, outcome.status, outcome.detail);
+  }
+}
+
 async function run() {
   const runId = ++runGeneration;
   const resultMap = new Map();
@@ -222,6 +463,8 @@ async function run() {
     for (const spec of GENERATED_MODEL_CATALOG) {
       await validateModel(runId, resultMap, spec, device);
     }
+
+    await validateOnnxModels(runId, resultMap);
 
     if (device) {
       try {
