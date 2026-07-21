@@ -1,18 +1,11 @@
 // fsrcnnx-rife.js — RIFE frame interpolation via ONNX Runtime Web (WebGPU EP).
-// Loads the bundled ORT runtime + a RIFE .onnx model and exposes
+// Loads the bundled ORT runtime and one of the bundled RIFE models, and exposes
 // interpolate(frameA, frameB, t) -> ImageBitmap-able result for the tween.
 //
-// IMPORTANT: the RIFE .onnx model file must be present at model/rife.onnx. It is
-// NOT bundled (model files aren't available in the build environment). If absent,
-// the caller falls back to the blend placeholder. Different RIFE exports have
-// different tensor signatures, so the I/O is described by an adapter (MODEL_IO)
-// that can be adjusted to match the specific model without touching the pipeline.
-//
-// Default adapter targets a common RIFE v4.x export:
-//   input: single tensor, two frames concatenated on channels -> [1, 6, H, W],
-//          RGB, normalized 0..1, NCHW. (Some exports also take a timestep tensor;
-//          set MODEL_IO.timestep to its input name if so.)
-//   output: [1, 3, H, W] RGB 0..1 = the interpolated middle frame.
+// The adapters below cover the bundled six-channel midpoint model and seven-channel
+// timestep-aware v4.26 models. A missing or unsupported model falls back to blend.
+// Input is a single NCHW tensor containing two RGB frames and, when supported, a
+// timestep plane. Output is NCHW RGB in the 0..1 range.
 // Padding: RIFE needs H,W divisible by a factor (usually 32). We pad to the next
 // multiple and crop the result back.
 
@@ -20,6 +13,31 @@ let ort = null;             // the ORT module
 let session = null;         // InferenceSession
 let modelLoadTried = false;
 let modelAvailable = false;
+let modelGeneration = 0;
+let initPromise = null;
+let initPromiseGeneration = -1;
+let pendingGpuTeardown = Promise.resolve();
+let sessionModelKey = null;
+let deferredDeviceGuards = [];
+let deferredGuardReleaseTail = Promise.resolve();
+let activeCpuRuns = 0;
+let cpuIdleResolvers = [];
+let cpuInterpolateTail = Promise.resolve();
+let ortLoadPromise = null;
+let ortSessionCreateTail = Promise.resolve();
+const ortSessionDevices = new WeakMap();
+
+function whenCpuRunsIdle() {
+  if (activeCpuRuns === 0) return Promise.resolve();
+  return new Promise((resolve) => cpuIdleResolvers.push(resolve));
+}
+
+function endCpuRun() {
+  activeCpuRuns = Math.max(0, activeCpuRuns - 1);
+  if (activeCpuRuns === 0 && cpuIdleResolvers.length) {
+    for (const resolve of cpuIdleResolvers.splice(0)) resolve();
+  }
+}
 
 // Adapter describing the model's I/O. Supports both older 6-channel exports (two
 // RGB frames concatenated) and newer timestep-aware exports (7 channels: two RGB
@@ -55,16 +73,26 @@ export function listModels() {
   return Object.entries(MODELS).map(([k, v]) => ({ key: k, label: v.label, current: k === currentModelKey }));
 }
 export function setModel(key) {
-  if (MODELS[key]) {
-    currentModelKey = key;
-    modelLoadTried = false; modelAvailable = false; session = null;
-    pinnedDims = null; captureActive = false; captureBroken = false; _skipOutDispose = false;
-    if (gpuInterp) gpuInterp.skipOutputDispose = false;
-    MODEL_IO.inputName = null; MODEL_IO.outputName = null;
-    _bufW = 0; _bufH = 0; // force buffer realloc (channel count may change)
-    return true;
-  }
-  return false;
+  if (!MODELS[key]) return false;
+  if (key === currentModelKey) return true;
+
+  currentModelKey = key;
+  modelGeneration++;
+  modelLoadTried = false; modelAvailable = false;
+  pinnedDims = null; captureActive = false; captureBroken = false; _skipOutDispose = false;
+  MODEL_IO.inputName = null; MODEL_IO.outputName = null;
+  _bufW = 0; _bufH = 0; // force buffer realloc (channel count may change)
+  _tsFilled = null; usingWasmEp = false; fp16Active = false; lastError = null;
+
+  // Stop exposing the old model's GPU pipeline immediately, but deliberately keep
+  // its ORT session referenced. The next init creates and commits a replacement
+  // session first, then releases the old session after this teardown and all CPU
+  // users finish. This preserves ORT's device reference across model switches.
+  const gpuDone = destroyGpuInterp();
+  pendingGpuTeardown = pendingGpuTeardown.catch(() => {}).then(async () => {
+    try { await gpuDone; } catch {}
+  });
+  return true;
 }
 
 // EXPERIMENT #2 — JSPI: the asyncify build instruments EVERY function for stack
@@ -81,7 +109,7 @@ const ENABLE_JSPI_EXPERIMENT = false;
 let ortIsJspi = false;
 export function usingJspi() { return ortIsJspi; }
 
-async function loadORT(forceAsyncify = false) {
+async function loadORTImpl(forceAsyncify = false) {
   if (ort) return ort;
   const jspiSupported = typeof WebAssembly !== "undefined" && "Suspending" in WebAssembly;
   const tryOrder = (!forceAsyncify && ENABLE_JSPI_EXPERIMENT && jspiSupported)
@@ -95,6 +123,9 @@ async function loadORT(forceAsyncify = false) {
       ort = { InferenceSession: mod.InferenceSession, Tensor: mod.Tensor, env: mod.env };
       ort.env.wasm.wasmPaths = chrome.runtime.getURL("vendor/ort/");
       ort.env.wasm.numThreads = 1;
+      // Session creation temporarily overrides this through createOrtSession().
+      // Keep the shared process-wide baseline deterministic between creations.
+      try { ort.env.webgpu.enableFp16 = false; } catch {}
       ortIsJspi = file.includes("jspi");
       console.log(`[RIFE] ORT loaded: ${file}${ortIsJspi ? " (JSPI suspend)" : " (asyncify suspend)"}`);
       return ort;
@@ -103,19 +134,76 @@ async function loadORT(forceAsyncify = false) {
   throw lastErr || new Error("no ORT bundle loaded");
 }
 
+async function loadORT(forceAsyncify = false) {
+  if (ort) return ort;
+  if (ortLoadPromise) return ortLoadPromise;
+  const promise = loadORTImpl(forceAsyncify).finally(() => {
+    if (ortLoadPromise === promise) ortLoadPromise = null;
+  });
+  ortLoadPromise = promise;
+  return promise;
+}
+
 // v0.49.0: the neural upscaler engine shares this ORT instance — one env, one
 // WebGPU device across the RIFE and neural sessions (device lifetime follows
 // total session refcount; see fsrcnnx-neural.js init-before-release ordering).
 export async function ensureOrt() { return loadORT(true); }
 
+// ORT's WebGPU FP16 switch is process-global, not session-local. Every RIFE and
+// neural session creation goes through this queue so one engine cannot change the
+// flag while the other is compiling. The previous baseline is restored even when
+// creation rejects, which also makes fallback attempts deterministic.
+export function createOrtSession(url, options, { enableFp16 = false } = {}) {
+  const operation = ortSessionCreateTail.catch(() => {}).then(async () => {
+    const runtime = await loadORT(true);
+    const webgpuEnv = runtime?.env?.webgpu;
+    const previous = webgpuEnv ? webgpuEnv.enableFp16 : undefined;
+    try {
+      if (webgpuEnv) webgpuEnv.enableFp16 = !!enableFp16;
+      const created = await runtime.InferenceSession.create(url, options);
+      const createdDevice = runtime?.env?.webgpu?.device;
+      const providers = options?.executionProviders || [];
+      const usesWebgpu = providers.some((provider) => provider === "webgpu" || provider?.name === "webgpu");
+      if (created && createdDevice && usesWebgpu) ortSessionDevices.set(created, createdDevice);
+      return created;
+    } finally {
+      try { if (webgpuEnv) webgpuEnv.enableFp16 = previous === undefined ? false : previous; } catch {}
+    }
+  });
+  ortSessionCreateTail = operation.then(() => undefined, () => undefined);
+  return operation;
+}
+
+export function getOrtSessionDevice(createdSession) {
+  return createdSession ? (ortSessionDevices.get(createdSession) || null) : null;
+}
+
+function releaseSessionGuards(guards) {
+  if (!guards.length) return deferredGuardReleaseTail;
+  deferredGuardReleaseTail = deferredGuardReleaseTail.catch(() => {}).then(async () => {
+    for (const guard of guards) {
+      try { await guard.session?.release?.(); } catch {}
+    }
+  });
+  return deferredGuardReleaseTail;
+}
+
+// A replacement session can be backed by a different GPUDevice. In that case,
+// keep the old session as a device-lifetime guard until the upscaler confirms it
+// has rebuilt on the committed device. Without this handshake, releasing the old
+// session can invalidate an adopted renderer between initRife() and chain.adopt().
+export function confirmOrtDeviceAdopted(adoptedDevice) {
+  const committedDevice = getOrtSessionDevice(session);
+  if (!adoptedDevice || adoptedDevice !== committedDevice) return Promise.resolve(false);
+  const guards = deferredDeviceGuards;
+  deferredDeviceGuards = [];
+  return releaseSessionGuards(guards).then(() => true);
+}
+
 export let lastError = null; // surfaced to UI so failures aren't silent
 
-// GRAPH CAPTURE state: the initial session is created with dynamic dims (startup +
-// CPU path unchanged). The first GPU tween learns the real padded dims and REPINS
-// the session (freeDimensionOverrides) with enableGraphCapture — the WebGPU EP then
-// records the ~180-op dispatch sequence once and replays it per run, cutting per-op
-// JS dispatch overhead. Resolution change repins; any failure falls back to a plain
-// dynamic session permanently (captureBroken) so the pipeline can't be left broken.
+// Graph capture remains disabled after its v0.45 evaluation. These flags keep the
+// dormant experiment isolated without describing it as an active runtime feature.
 let pinnedDims = null;      // {w,h} of the pinned session, null = dynamic
 let captureActive = false;
 let captureBroken = false;  // capture attempt failed once — don't retry this run
@@ -123,26 +211,63 @@ let _skipOutDispose = false; // set when a graph-capture session owns its output
 let usingWasmEp = false;    // wasm fallback EP: capture not applicable
 export function graphCaptureActive() { return captureActive; }
 export async function initRife(pinW = 0, pinH = 0) {
-  // Pin-at-creation: dims are known BEFORE the session exists (chain: upscaler
-  // target dims; interp-only: video dims), so the FIRST session is created pinned
-  // with graph capture, and every consumer then binds to ITS device. Mid-flight
-  // session recreation is forbidden — it stood up a second WebGPU device and
-  // cross-device'd every buffer (the v0.45.0 black-screen/freeze).
-  const pinOk = pinW && pinH
-    ? (pinnedDims && pinnedDims.w === pinW && pinnedDims.h === pinH)
-    : !pinnedDims;
+  const generation = modelGeneration;
+  if (initPromise) {
+    if (initPromiseGeneration === generation) return initPromise;
+    try { await initPromise; } catch {}
+    return initRife(pinW, pinH);
+  }
+  initPromiseGeneration = generation;
+  const promise = initRifeGeneration(pinW, pinH, generation, currentModelKey)
+    .finally(() => {
+      if (initPromise === promise) {
+        initPromise = null;
+        initPromiseGeneration = -1;
+      }
+    });
+  initPromise = promise;
+  return promise;
+}
+
+async function initRifeGeneration(pinW, pinH, generation, modelKey) {
+  const model = MODELS[modelKey];
+  const modelUrl = chrome.runtime.getURL(model.file);
+  const isCurrent = () => generation === modelGeneration && modelKey === currentModelKey;
+  const assertCurrent = () => {
+    if (!isCurrent()) {
+      const error = new Error("model selection changed during initialization");
+      error.staleModelInit = true;
+      throw error;
+    }
+  };
+
+  // Dynamic sessions can be reused across restarts. Dimensions matter only for the
+  // dormant graph-capture experiment, where a captured graph is shape-specific.
+  const pinOk = sessionModelKey === modelKey
+    && (!captureActive || (pinW && pinH && pinnedDims?.w === pinW && pinnedDims?.h === pinH));
   if (modelLoadTried && session && pinOk) return modelAvailable;
-  // (re)creating here is safe: init time, nothing from THIS run is bound yet, and
-  // chain adoption always re-binds the upscaler to ORT's current device.
-  try { session && session.release && session.release(); } catch {}
-  session = null; pinnedDims = null; captureActive = false; _skipOutDispose = false;
+
+  // Keep the committed session intact while constructing a replacement locally.
+  // New inference is gated, while already-running GPU/CPU work retains immutable
+  // snapshots and is drained at the eventual handoff.
+  modelAvailable = false;
   modelLoadTried = true;
+  let candidateSession = null;
+  let nextPinnedDims = null;
+  let nextCaptureActive = false;
+  let nextCaptureBroken = captureBroken;
+  let nextSkipOutputDispose = false;
+  let nextUsingWasmEp = false;
+  let nextFp16Active = false;
+  let nextLastError = null;
   let stage = "start";
   try {
     stage = "load-ort";
     await loadORT();
+    assertCurrent();
     stage = "fetch-model";
-    const res = await fetch(MODEL_IO.url(), { method: "HEAD" });
+    const res = await fetch(modelUrl, { method: "HEAD" });
+    assertCurrent();
     if (!res.ok) { lastError = `model HTTP ${res.status}`; modelAvailable = false; return false; }
     stage = "create-session-webgpu";
     // Experiment: ask the WebGPU EP to run in fp16 where it can. Support for this
@@ -154,8 +279,6 @@ export async function initRife(pinW = 0, pinH = 0) {
     // it's the one thing distinguishing this pipeline from full-precision showcases
     // that don't show the waves). Opt back in via MODEL_IO.tryFp16 = true.
     const wantFp16 = MODEL_IO.tryFp16 === true;
-    // explicitly clear the env flag so it can't persist from a prior session
-    try { ort.env.webgpu.enableFp16 = wantFp16; } catch {}
     const buildOpts = (fp16) => {
       const o = { executionProviders: [], graphOptimizationLevel: "all" };
       o.executionProviders = [{ name: "webgpu" }];
@@ -167,21 +290,22 @@ export async function initRife(pinW = 0, pinH = 0) {
       if (fp16) {
         o.optimizedModelFilePath = undefined;
         o.enableGraphCapture = false;
-        try { ort.env.webgpu.enableFp16 = true; } catch {}
       }
       return o;
     };
     try {
       if (wantFp16) {
         try {
-          session = await ort.InferenceSession.create(MODEL_IO.url(), buildOpts(true));
-          fp16Active = !!(ort.env.webgpu && ort.env.webgpu.enableFp16);
-          console.log(`[RIFE] session created (fp16 requested=${fp16Active})`);
+          candidateSession = await createOrtSession(modelUrl, buildOpts(true), { enableFp16: true });
+          assertCurrent();
+          nextFp16Active = true;
+          console.log("[RIFE] session created (fp16 execution requested)");
         } catch (f16err) {
+          if (f16err.staleModelInit || !isCurrent()) throw f16err;
           console.warn("[RIFE] fp16 attempt failed, falling back to fp32:", f16err.message);
-          try { ort.env.webgpu.enableFp16 = false; } catch {}
-          fp16Active = false;
-          session = await ort.InferenceSession.create(MODEL_IO.url(), buildOpts(false));
+          nextFp16Active = false;
+          candidateSession = await createOrtSession(modelUrl, buildOpts(false), { enableFp16: false });
+          assertCurrent();
         }
       } else {
         // EXPERIMENT #1 VERDICT (v0.45.0-0.45.2): graph capture is NOT VIABLE on
@@ -192,26 +316,32 @@ export async function initRife(pinW = 0, pinH = 0) {
         // destroyed-buffer replays → embossed edges + black flashing). Code kept
         // for a future ORT that fixes the buffer-lifetime semantics.
         const ENABLE_GRAPH_CAPTURE_EXPERIMENT = false;
-        const wantCapture = ENABLE_GRAPH_CAPTURE_EXPERIMENT && pinW && pinH && !captureBroken && MODELS[currentModelKey].dims;
+        const wantCapture = ENABLE_GRAPH_CAPTURE_EXPERIMENT && pinW && pinH && !captureBroken && model.dims;
         if (wantCapture) {
           try {
             const o = buildOpts(false);
-            o.freeDimensionOverrides = MODELS[currentModelKey].dims(pinW, pinH);
+            o.freeDimensionOverrides = model.dims(pinW, pinH);
             o.enableGraphCapture = true;
-            session = await ort.InferenceSession.create(MODEL_IO.url(), o);
-            pinnedDims = { w: pinW, h: pinH };
-            captureActive = true; _skipOutDispose = true;
+            candidateSession = await createOrtSession(modelUrl, o, { enableFp16: false });
+            assertCurrent();
+            nextPinnedDims = { w: pinW, h: pinH };
+            nextCaptureActive = true;
+            nextSkipOutputDispose = true;
             console.log(`[RIFE] session created PINNED ${pinW}x${pinH} + graph capture`);
           } catch (gcErr) {
+            if (gcErr.staleModelInit || !isCurrent()) throw gcErr;
             console.warn("[RIFE] graph-capture creation failed — plain session:", gcErr.message);
-            captureBroken = true;
-            session = await ort.InferenceSession.create(MODEL_IO.url(), buildOpts(false));
+            nextCaptureBroken = true;
+            candidateSession = await createOrtSession(modelUrl, buildOpts(false), { enableFp16: false });
+            assertCurrent();
           }
         } else {
-          session = await ort.InferenceSession.create(MODEL_IO.url(), buildOpts(false));
+          candidateSession = await createOrtSession(modelUrl, buildOpts(false), { enableFp16: false });
+          assertCurrent();
         }
       }
     } catch (epErr) {
+      if (epErr.staleModelInit || !isCurrent()) throw epErr;
       // JSPI runtime failure (bundle loaded but sessions won't create/run under
       // it) → reload the proven asyncify build and retry ONCE before any other
       // fallback. Load-time reload is safe: nothing is bound to a device yet.
@@ -219,35 +349,103 @@ export async function initRife(pinW = 0, pinH = 0) {
         console.warn("[RIFE] session failed under JSPI — reloading asyncify build:", epErr.message);
         ort = null; ortIsJspi = false;
         await loadORT(true);
-        try { ort.env.webgpu.enableFp16 = false; } catch {}
+        assertCurrent();
         try {
-          session = await ort.InferenceSession.create(MODEL_IO.url(), buildOpts(false));
-          if (!MODEL_IO.inputName) MODEL_IO.inputName = session.inputNames[0];
-          if (!MODEL_IO.outputName) MODEL_IO.outputName = session.outputNames[0];
-          modelAvailable = true;
-          console.log(`[RIFE] ready on asyncify fallback (in=${MODEL_IO.inputName} out=${MODEL_IO.outputName})`);
-          return true;
-        } catch (e2) { console.warn("[RIFE] asyncify retry also failed:", e2.message); }
+          candidateSession = await createOrtSession(modelUrl, buildOpts(false), { enableFp16: false });
+          assertCurrent();
+          console.log("[RIFE] session created on asyncify fallback");
+        } catch (e2) {
+          if (e2.staleModelInit || !isCurrent()) throw e2;
+          console.warn("[RIFE] asyncify retry also failed:", e2.message);
+        }
       }
       // WebGPU EP failed entirely — retry on wasm so we at least learn if it's an
       // EP issue vs a model/runtime issue. (wasm will be slow but proves the path.)
-      console.warn("[RIFE] WebGPU EP failed, trying wasm:", epErr.message);
-      stage = "create-session-wasm";
-      try { ort.env.webgpu.enableFp16 = false; } catch {}
-      fp16Active = false;
-      session = await ort.InferenceSession.create(MODEL_IO.url(), {
-        executionProviders: ["wasm"],
-        graphOptimizationLevel: "all",
-      });
-      lastError = "webgpu-unavailable-using-wasm";
-      usingWasmEp = true;
+      if (!candidateSession) {
+        console.warn("[RIFE] WebGPU EP failed, trying wasm:", epErr.message);
+        stage = "create-session-wasm";
+        nextFp16Active = false;
+        candidateSession = await createOrtSession(modelUrl, {
+          executionProviders: ["wasm"],
+          graphOptimizationLevel: "all",
+        }, { enableFp16: false });
+        assertCurrent();
+        nextLastError = "webgpu-unavailable-using-wasm";
+        nextUsingWasmEp = true;
+      }
     }
-    if (!MODEL_IO.inputName) MODEL_IO.inputName = session.inputNames[0];
-    if (!MODEL_IO.outputName) MODEL_IO.outputName = session.outputNames[0];
+
+    if (!candidateSession) throw new Error("session creation returned no session");
+    const nextInputName = candidateSession.inputNames[0];
+    const nextOutputName = candidateSession.outputNames[0];
+    assertCurrent();
+
+    // Candidate creation establishes the replacement device/session reference.
+    // Drain the old GPU and CPU users while the old committed session is still
+    // retained, then atomically publish the candidate before releasing the old one.
+    const oldSession = session;
+    const oldInputTensor = _inTensor;
+    const gpuDone = destroyGpuInterp();
+    pendingGpuTeardown = pendingGpuTeardown.catch(() => {}).then(async () => {
+      try { await gpuDone; } catch {}
+    });
+    await pendingGpuTeardown;
+    await whenCpuRunsIdle();
+    assertCurrent();
+
+    session = candidateSession;
+    candidateSession = null;
+    sessionModelKey = modelKey;
+    MODEL_IO.inputName = nextInputName;
+    MODEL_IO.outputName = nextOutputName;
+    pinnedDims = nextPinnedDims;
+    captureActive = nextCaptureActive;
+    captureBroken = nextCaptureBroken;
+    _skipOutDispose = nextSkipOutputDispose;
+    usingWasmEp = nextUsingWasmEp;
+    fp16Active = nextFp16Active;
+    lastError = nextLastError;
     modelAvailable = true;
+    modelLoadTried = true;
+
+    try { oldInputTensor?.dispose?.(); } catch {}
+    if (_inTensor === oldInputTensor) {
+      _inTensor = null; _inBuf = null; _outImg = null;
+      _ca = null; _cb = null; _cout = null; _ctxA = null; _ctxB = null; _octx = null;
+    }
+    _bufW = 0; _bufH = 0; _tsFilled = null; _tsPlaneW = 0; _tsPlaneH = 0;
+
+    // The committed replacement now owns the runtime/device reference. Only now
+    // may releasing a same-device old session decrement ORT's shared refcount. A
+    // different-device session remains a guard until chain adoption is confirmed.
+    const committedDevice = getOrtSessionDevice(session);
+    const oldDevice = getOrtSessionDevice(oldSession);
+    const nowGuardedByCommittedSession = deferredDeviceGuards.filter(
+      (guard) => guard.device && guard.device === committedDevice,
+    );
+    if (nowGuardedByCommittedSession.length) {
+      deferredDeviceGuards = deferredDeviceGuards.filter(
+        (guard) => !nowGuardedByCommittedSession.includes(guard),
+      );
+      await releaseSessionGuards(nowGuardedByCommittedSession);
+    }
+    if (oldSession && oldSession !== session) {
+      if (oldDevice && oldDevice !== committedDevice) {
+        deferredDeviceGuards.push({ session: oldSession, device: oldDevice });
+      } else {
+        try { await oldSession.release?.(); } catch {}
+      }
+    }
+    if (!isCurrent()) return false;
     console.log(`[RIFE] ready (in=${MODEL_IO.inputName} out=${MODEL_IO.outputName})`);
     return true;
   } catch (e) {
+    const failedCandidate = candidateSession;
+    candidateSession = null;
+    try { await failedCandidate?.release?.(); } catch {}
+    if (e.staleModelInit || !isCurrent()) {
+      return false;
+    }
     lastError = `${stage}: ${e.message}`;
     console.error(`[RIFE] init FAILED at ${stage}:`, e.message, e);
     modelAvailable = false;
@@ -259,32 +457,75 @@ export function getLastError() { return lastError; }
 // --- GPU-resident interpolation path (optional; falls back to CPU interpolate) ---
 let gpuInterp = null;
 let gpuTried = false;
+let gpuInitPromise = null, gpuInitSession = null, gpuInitModelGeneration = -1;
+let gpuLifecycleGeneration = 0;
 // Expose ORT's device so the GPU path can build buffers on the same device (required
 // for Tensor.fromGpuBuffer). Available after session creation in ORT WebGPU builds.
 export function getOrtDevice() {
-  try { return ort && ort.env && ort.env.webgpu ? ort.env.webgpu.device : null; } catch { return null; }
+  if (usingWasmEp) return null;
+  try { return getOrtSessionDevice(session) || (ort?.env?.webgpu?.device ?? null); } catch { return null; }
 }
 export function getOrt() { return ort; }
 
 // Try to initialize the GPU-resident path. Returns true if active. Safe to call
 // after initRife(). Fails → CPU interpolate() stays in use.
 export async function initGpuInterp({ log, warn } = {}) {
-  if (gpuTried) return !!gpuInterp;
+  if (gpuInterp) return true;
+  const targetSession = session;
+  const targetModelGeneration = modelGeneration;
+  if (gpuInitPromise) {
+    if (gpuInitSession === targetSession && gpuInitModelGeneration === targetModelGeneration) {
+      return gpuInitPromise;
+    }
+    try { await gpuInitPromise; } catch {}
+    return initGpuInterp({ log, warn });
+  }
+  if (gpuTried || !isReady() || !targetSession) return false;
   gpuTried = true;
-  try {
-    if (!isReady()) return false;
-    const device = getOrtDevice();
-    if (!device) { (warn||console.warn)("[RIFE] no ORT device for GPU path"); return false; }
-    const mod = await import(chrome.runtime.getURL("fsrcnnx-rife-gpu.js"));
-    const g = new mod.GpuInterp({ log, warn });
-    if (await g.init(device, ort)) {
-      gpuInterp = g;
+  const targetOrt = ort;
+  const targetDevice = getOrtSessionDevice(targetSession);
+  const lifecycleGeneration = gpuLifecycleGeneration;
+  const promise = (async () => {
+    let candidate = null;
+    try {
+      if (!targetDevice) { (warn||console.warn)("[RIFE] no ORT device for GPU path"); return false; }
+      const mod = await import(chrome.runtime.getURL("fsrcnnx-rife-gpu.js"));
+      if (session !== targetSession || modelGeneration !== targetModelGeneration ||
+          lifecycleGeneration !== gpuLifecycleGeneration || !isReady()) return false;
+      candidate = new mod.GpuInterp({ log, warn });
+      if (!(await candidate.init(targetDevice, targetOrt))) return false;
+      if (session !== targetSession || modelGeneration !== targetModelGeneration ||
+          lifecycleGeneration !== gpuLifecycleGeneration || !isReady()) {
+        await candidate.destroy?.();
+        candidate = null;
+        return false;
+      }
+      if (gpuInterp) {
+        await candidate.destroy?.();
+        candidate = null;
+        return true;
+      }
+      gpuInterp = candidate;
+      candidate = null;
       gpuInterp.skipOutputDispose = _skipOutDispose; // capture session owns its output buffer
       (log||console.log)("[RIFE] GPU-resident path active");
       return true;
+    } catch (e) {
+      try { await candidate?.destroy?.(); } catch {}
+      (warn||console.warn)("[RIFE] GPU path init failed:", e.message);
+      return false;
     }
-    return false;
-  } catch (e) { (warn||console.warn)("[RIFE] GPU path init failed:", e.message); return false; }
+  })().finally(() => {
+    if (gpuInitPromise === promise) {
+      gpuInitPromise = null;
+      gpuInitSession = null;
+      gpuInitModelGeneration = -1;
+    }
+  });
+  gpuInitSession = targetSession;
+  gpuInitModelGeneration = targetModelGeneration;
+  gpuInitPromise = promise;
+  return promise;
 }
 // Standalone blend GPU path: NO RIFE model load. If `device` is provided (e.g. the
 // upscaler's, for the upscale→interpolate chain) the pipeline builds on it so
@@ -302,7 +543,14 @@ export function gpuCaptureTex(tex) { return gpuInterp ? gpuInterp.captureTexToPo
 export function gpuActive() { return !!gpuInterp; }
 export function gpuRifeCapable() { return !!(gpuInterp && gpuInterp._rifeCapable); }
 
-export function destroyGpuInterp() { try { gpuInterp && gpuInterp.destroy(); } catch {} gpuInterp = null; gpuTried = false; }
+export function destroyGpuInterp() {
+  gpuLifecycleGeneration++;
+  const old = gpuInterp;
+  gpuInterp = null;
+  gpuTried = false;
+  try { return old?.destroy?.() || Promise.resolve(); }
+  catch { return Promise.resolve(); }
+}
 
 // Full GPU-presentation API (no readback): configure a WebGPU canvas, capture to a
 // pooled texture, interpolate to a pooled texture, present a texture, recycle.
@@ -313,20 +561,34 @@ export function gpuAdvance() { if (gpuInterp) gpuInterp.advance(); }
 export async function gpuTween(w, h, t, useStatic) {
   if (!gpuInterp) return null;
   const t0 = performance.now();
-  const tex = await gpuInterp.interpolateToPooledTex(session, MODEL_IO, w, h, t, useStatic);
-  const s = gpuInterp.getSplit ? gpuInterp.getSplit() : null;
+  // setModel() clears the global names immediately, while an old GPU run may still
+  // be awaiting session.run(). Give that run an immutable adapter snapshot.
+  const runSession = session;
+  const runInterp = gpuInterp;
+  const runIO = { inputName: MODEL_IO.inputName, outputName: MODEL_IO.outputName };
+  const tex = await runInterp.interpolateToPooledTex(runSession, runIO, w, h, t, useStatic);
+  const s = runInterp.getSplit ? runInterp.getSplit() : null;
   if (s) { timing.pre = s.pack; timing.infer = s.run; timing.post = s.comp; }
   return tex;
 }
 export function gpuPresent(tex) { return gpuInterp ? gpuInterp.presentTexture(tex) : false; }
-export function gpuRelease(tex) { if (gpuInterp) gpuInterp.releaseTex(tex); }
-export function gpuRetain(tex) { if (gpuInterp) gpuInterp.retainTex(tex); }
+export function gpuRelease(tex) {
+  const owner = tex?._gpuInterpOwner || gpuInterp;
+  if (owner) owner.releaseTex(tex);
+}
+export function gpuRetain(tex) {
+  const owner = tex?._gpuInterpOwner || gpuInterp;
+  if (owner) owner.retainTex(tex);
+}
 // Pipelined RIFE tween on an EXPLICIT pooled pair — safe to run while the grab loop
 // keeps capturing (the shared prev/cur ping-pong may advance mid-inference).
 export async function gpuTweenPair(prevTex, curTex, t, useStatic, scale = 1) {
   if (!gpuInterp || !isReady()) return null;
-  const tex = await gpuInterp.interpolateToPooledTex(session, MODEL_IO, 0, 0, t, useStatic, prevTex, curTex, scale);
-  const s = gpuInterp.getSplit ? gpuInterp.getSplit() : null;
+  const runSession = session;
+  const runInterp = gpuInterp;
+  const runIO = { inputName: MODEL_IO.inputName, outputName: MODEL_IO.outputName };
+  const tex = await runInterp.interpolateToPooledTex(runSession, runIO, 0, 0, t, useStatic, prevTex, curTex, scale);
+  const s = runInterp.getSplit ? runInterp.getSplit() : null;
   if (s) { timing.pre = s.pack; timing.infer = s.run; timing.post = s.comp + s.read; }
   return tex;
 }
@@ -349,10 +611,9 @@ export function isReady() { return modelAvailable && !!session; }
 // 6ch "original" export has t baked to 0.5 — midpoint only.
 export function timestepAware() { return !!MODEL_IO.timestepPlane(); }
 
-// per-tween timing breakdown (ms): pre = draw+pack (input transfer), infer =
-// session.run (GPU compute), post = output read+putImageData (output transfer).
-// Lets us measure how much the CPU round-trip costs vs inference before deciding
-// whether the GPU-tensor path is worth its risk.
+// Per-tween timing breakdown (ms). On the GPU path: pre = pack submission,
+// infer = session.run/backpressure, post = composite submission. The CPU fallback
+// includes its upload/download and canvas conversion work in pre/post respectively.
 const timing = { pre: 0, infer: 0, post: 0 };
 export function getTiming() { return { ...timing }; }
 let fp16Active = false;
@@ -360,10 +621,10 @@ export function isFp16() { return fp16Active || !!(MODELS[currentModelKey] && MO
 
 // Fill a preallocated planar slice (3 channels, NCHW) from a canvas context's
 // pixels, normalized. Writes into `dst` at channel-plane offset `base`.
-function fillPlanar(srcCanvasCtx, padW, padH, dst, base) {
+function fillPlanar(srcCanvasCtx, padW, padH, dst, base, normalize = MODEL_IO.normalize) {
   const { data } = srcCanvasCtx.getImageData(0, 0, padW, padH); // RGBA
   const plane = padW * padH;
-  const n = MODEL_IO.normalize;
+  const n = normalize;
   for (let i = 0, p = 0; i < data.length; i += 4, p++) {
     dst[base + p] = data[i] * n;
     dst[base + plane + p] = data[i + 1] * n;
@@ -380,12 +641,44 @@ let _ca = null, _cb = null, _cout = null, _ctxA = null, _ctxB = null, _octx = nu
 let _inBuf = null, _inTensor = null, _outImg = null, _bufW = 0, _bufH = 0;
 let _tsFilled = null, _tsPlaneW = 0, _tsPlaneH = 0; // timestep-plane fill cache
 export async function interpolate(frameA, frameB, w, h, t = 0.5, scale = 1.0) {
-  if (!isReady()) return null;
+  // These canvases and typed arrays are module-global reuse buffers. A stopped
+  // Interpolator can be restarted before its previous session.run() settles, so
+  // serialize at this exported boundary rather than relying on one lifecycle's
+  // local cpuTickBusy flag. Normalize both predecessor and operation failures so
+  // one rejected call can never poison the queue for later lifecycles.
+  const generation = modelGeneration;
+  const operation = cpuInterpolateTail.catch(() => {}).then(
+    () => interpolateSerial(frameA, frameB, w, h, t, scale, generation),
+  );
+  cpuInterpolateTail = operation.then(() => undefined, () => undefined);
+  return operation;
+}
+
+async function interpolateSerial(frameA, frameB, w, h, t, scale, generation) {
+  if (generation !== modelGeneration) return null;
+  const runSession = session;
+  if (!modelAvailable || !runSession) return null;
+  // Model selection may change while session.run() is awaited. Capture the full
+  // adapter contract for this run so its continuation never observes the next
+  // model's cleared names, channel count, normalization, or disposal policy.
+  const runIO = {
+    inputName: MODEL_IO.inputName,
+    outputName: MODEL_IO.outputName,
+    channels: MODEL_IO.channels(),
+    timestepPlane: MODEL_IO.timestepPlane(),
+    padTo: MODEL_IO.padTo,
+    normalize: MODEL_IO.normalize,
+    denormalize: MODEL_IO.denormalize,
+    staticPassthrough: MODEL_IO.staticPassthrough !== false,
+    skipOutputDispose: _skipOutDispose,
+  };
+  activeCpuRuns++;
+  let outTensor = null;
   try {
-    const iw = Math.max(MODEL_IO.padTo, Math.round(w * scale));
-    const ih = Math.max(MODEL_IO.padTo, Math.round(h * scale));
-    const padW = Math.ceil(iw / MODEL_IO.padTo) * MODEL_IO.padTo;
-    const padH = Math.ceil(ih / MODEL_IO.padTo) * MODEL_IO.padTo;
+    const iw = Math.max(runIO.padTo, Math.round(w * scale));
+    const ih = Math.max(runIO.padTo, Math.round(h * scale));
+    const padW = Math.ceil(iw / runIO.padTo) * runIO.padTo;
+    const padH = Math.ceil(ih / runIO.padTo) * runIO.padTo;
     // (re)allocate reusable buffers only when the padded size changes
     if (_bufW !== padW || _bufH !== padH) {
       _ca = new OffscreenCanvas(padW, padH); _cb = new OffscreenCanvas(padW, padH);
@@ -394,7 +687,7 @@ export async function interpolate(frameA, frameB, w, h, t = 0.5, scale = 1.0) {
       _ctxB = _cb.getContext("2d", { willReadFrequently: true });
       _octx = _cout.getContext("2d");
       const plane = padW * padH;
-      const ch = MODEL_IO.channels(); // 6 (frames only) or 7 (+ timestep plane)
+      const ch = runIO.channels; // 6 (frames only) or 7 (+ timestep plane)
       _inBuf = new Float32Array(ch * plane);
       _inTensor = new ort.Tensor("float32", _inBuf, [1, ch, padH, padW]);
       _outImg = new ImageData(padW, padH);
@@ -407,9 +700,9 @@ export async function interpolate(frameA, frameB, w, h, t = 0.5, scale = 1.0) {
     const plane = padW * padH;
     const feeds = {};
     // fill both frames' planes directly into the reused input buffer
-    fillPlanar(_ctxA, padW, padH, _inBuf, 0);
-    fillPlanar(_ctxB, padW, padH, _inBuf, 3 * plane);
-    if (MODEL_IO.timestepPlane()) {
+    fillPlanar(_ctxA, padW, padH, _inBuf, 0, runIO.normalize);
+    fillPlanar(_ctxB, padW, padH, _inBuf, 3 * plane, runIO.normalize);
+    if (runIO.timestepPlane) {
       // 7th channel: a plane filled with the timestep t (verified: channel 6
       // drives interpolation position). Fill only when t changed to save work —
       // but t is constant (0.5) here, so fill once per (re)alloc via _tsFilled.
@@ -419,24 +712,24 @@ export async function interpolate(frameA, frameB, w, h, t = 0.5, scale = 1.0) {
         _tsFilled = t; _tsPlaneW = padW; _tsPlaneH = padH;
       }
     }
-    feeds[MODEL_IO.inputName] = _inTensor;
+    feeds[runIO.inputName] = _inTensor;
     timing.pre = performance.now() - tPre0;
 
     const tInf0 = performance.now();
-    const result = await session.run(feeds);
+    const result = await runSession.run(feeds);
     timing.infer = performance.now() - tInf0;
-    const outTensor = result[MODEL_IO.outputName];
+    outTensor = result[runIO.outputName];
     const tPost0 = performance.now();
     // output is on the GPU (preferredOutputLocation:'gpu-buffer'); download it for
     // the CPU passthrough+present path. Accessing .data on a GPU tensor THROWS, so
     // read via getData() (async download) guarded by location.
     let od;
     if (outTensor.location && outTensor.location !== "cpu") {
-      od = await outTensor.getData(true);
+      od = await outTensor.getData();
     } else {
       od = outTensor.data;
     }
-    const dn = MODEL_IO.denormalize;
+    const dn = runIO.denormalize;
     const img = _outImg;
     // STATIC-REGION PASSTHROUGH: the jitter on static detail comes from RIFE
     // reconstructing (downscale→infer→upscale) still content slightly differently
@@ -446,7 +739,7 @@ export async function interpolate(frameA, frameB, w, h, t = 0.5, scale = 1.0) {
     // reconstruction, so static regions are pixel-stable. Where they differ
     // (motion), use RIFE. Smooth ramp between the two by difference magnitude.
     // A,B live in _inBuf (normalized): A at [0..plane) per channel, B at [3plane..).
-    const useStatic = MODEL_IO.staticPassthrough !== false;
+    const useStatic = runIO.staticPassthrough;
     const aR = 0, aG = plane, aB = 2 * plane;
     const bR = 3 * plane, bG = 4 * plane, bB = 5 * plane;
     const T_LO = 0.012, T_HI = 0.05; // diff below LO = fully static; above HI = full RIFE
@@ -483,5 +776,10 @@ export async function interpolate(frameA, frameB, w, h, t = 0.5, scale = 1.0) {
   } catch (e) {
     console.warn("[RIFE] inference failed:", e.message);
     return null;
+  } finally {
+    // Dynamic sessions return a fresh output tensor. The downloaded data has been
+    // fully consumed above, so release its GPU/CPU backing deterministically.
+    try { if (outTensor && !runIO.skipOutputDispose) outTensor.dispose?.(); } catch {}
+    endCpuRun();
   }
 }

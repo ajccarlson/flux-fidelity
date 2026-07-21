@@ -24,9 +24,8 @@
  *   skip: 2 binds summed into inp[] before matmul (conv2d_5 + conv2d)
  *   d2s : depth-to-space, fixed template (unpack 4x2 features -> 2x luma)
  */
-"use strict";
-const fs = require("fs");
-const path = require("path");
+import fs from "node:fs";
+import path from "node:path";
 
 const args = process.argv.slice(2);
 const outIdx = args.indexOf("--out");

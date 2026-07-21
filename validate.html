@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FSRCNNX-EXT validation</title>
+  <style>
+    :root { color-scheme: dark; font: 15px/1.5 system-ui, sans-serif; background: #10131a; color: #e8edf5; }
+    body { max-width: 960px; margin: 0 auto; padding: 32px 20px 64px; }
+    h1 { margin-bottom: .25rem; }
+    .muted { color: #aab4c3; }
+    button { border: 0; border-radius: 7px; padding: 10px 16px; color: #071018; background: #55d8de; font-weight: 700; cursor: pointer; }
+    button:disabled { cursor: wait; opacity: .6; }
+    table { width: 100%; margin-top: 24px; border-collapse: collapse; background: #171c26; }
+    th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #2b3342; vertical-align: top; }
+    th { color: #bfc9d7; }
+    .pass { color: #76df9b; }
+    .fail { color: #ff8f8f; }
+    code { overflow-wrap: anywhere; }
+    #summary { min-height: 1.5em; margin-top: 16px; font-weight: 650; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>FSRCNNX-EXT validation</h1>
+    <p class="muted">Checks package model topology, color-transform invariants, WebGPU availability, and compilation of every generated compute pass. No page or video data leaves the browser.</p>
+    <button id="run" type="button">Run validation</button>
+    <div id="summary" role="status" aria-live="polite"></div>
+    <table>
+      <thead><tr><th>Check</th><th>Result</th><th>Details</th></tr></thead>
+      <tbody id="results"></tbody>
+    </table>
+  </main>
+  <script type="module" src="validate.js"></script>
+</body>
+</html>

@@ -21,9 +21,8 @@
  * Usage: node transpile.js <input.glsl> [<input2.glsl> ...] --out ./model
  */
 
-"use strict";
-const fs = require("fs");
-const path = require("path");
+import fs from "node:fs";
+import path from "node:path";
 
 // ---- arg parsing ----------------------------------------------------------
 const args = process.argv.slice(2);

@@ -1,0 +1,20 @@
+{
+  "name": "fsrcnnx-ext",
+  "version": "0.49.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "description": "Real-time WebGPU video upscaling and frame interpolation for Chromium",
+  "scripts": {
+    "check": "npm run check:syntax && npm run check:package && npm run check:models && npm run check:generated && npm test",
+    "check:syntax": "node tools/check-syntax.mjs",
+    "check:package": "node tools/check-package.mjs",
+    "check:models": "node tools/check-models.mjs",
+    "check:generated": "node tools/check-generated.mjs",
+    "fetch:shader-sources": "node tools/fetch-shader-sources.mjs",
+    "package": "npm run check && node tools/build-package.mjs",
+    "test": "node --test tests/*.test.mjs"
+  }
+}

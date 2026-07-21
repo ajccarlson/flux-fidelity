@@ -14,10 +14,53 @@ const TAG = "[FSRCNNX]";
 const log = (...a) => console.log(TAG, ...a);
 const warn = (...a) => console.warn(TAG, ...a);
 
+// Keep a single processed surface within an 8K-class pixel budget even on
+// adapters that advertise a larger texture limit.  The pipeline holds several
+// rgba16float intermediates (plus model feature maps), so accepting any size the
+// adapter can represent is not, by itself, a safe allocation policy.
+const MAX_PROCESSING_PIXELS = 7680 * 4320;
+const sizeWarningAt = new Map();
+function textureSizeAllowed(w, h, label = "texture") {
+  const width = Number(w), height = Number(h);
+  const limit = Math.max(1, Number(device?.limits?.maxTextureDimension2D) || 8192);
+  const valid = Number.isSafeInteger(width) && Number.isSafeInteger(height) &&
+    width > 0 && height > 0 && width <= limit && height <= limit &&
+    width * height <= Math.min(MAX_PROCESSING_PIXELS, limit * limit);
+  if (!valid) {
+    const now = performance.now();
+    const key = `${label}:${width}x${height}`;
+    if (now - (sizeWarningAt.get(key) || -Infinity) > 5000) {
+      sizeWarningAt.set(key, now);
+      warn(`${label} ${width}x${height} exceeds the safe processing limit ` +
+        `(max dimension ${limit}, max pixels ${Math.min(MAX_PROCESSING_PIXELS, limit * limit)})`);
+    }
+  }
+  return valid;
+}
+
+function storageBufferSizeAllowed(bytes, label) {
+  const size = Number(bytes);
+  const maxBuffer = Number(device?.limits?.maxBufferSize) || 256 * 1024 * 1024;
+  const maxBinding = Number(device?.limits?.maxStorageBufferBindingSize) || maxBuffer;
+  const limit = Math.min(maxBuffer, maxBinding);
+  const valid = Number.isSafeInteger(size) && size > 0 && size <= limit;
+  if (!valid) {
+    const key = `${label}:${size}`;
+    const now = performance.now();
+    if (now - (sizeWarningAt.get(key) || -Infinity) > 5000) {
+      sizeWarningAt.set(key, now);
+      warn(`${label} requires ${size} bytes; adapter storage-buffer limit is ${limit}`);
+    }
+  }
+  return valid;
+}
+
 const MODEL_FILES = ["FSRCNNX_x2_16-0-4-1", "FSRCNNX_x3_16-0-4-1", "FSRCNNX_x4_16-0-4-1"];
 
 let mode = "off";
-let device = null, context = null, format = null, canvas = null, video = null, sampler = null;
+let modeSelectionGeneration = 0;
+let device = null, deviceOwnedByMain = false;
+let context = null, format = null, canvas = null, video = null, sampler = null;
 let extractPipeline = null, recombinePipeline = null, passthroughPipeline = null;
 // INVERTED CHAIN (#4): tex-ingest twins of the ext-consuming pipelines, plus state.
 let extractPipelineTex = null, recombinePipelineTex = null, recombine16PipelineTex = null;
@@ -58,13 +101,17 @@ let _scaleHeldSrcW = 0, _scaleHeldSrcH = 0, _scaleLockLogged = false;
 let sharpenEnabled = false, sharpenStrength = 1.0;
 let sharpenPipeline = null, sharpenStrengthBuilt = null;
 let debandEnabled = false, debandStrength = 1.0;
-let debandPipeline = null, debandStrengthBuilt = null, debandTimeBuf = null;
+let debandCanvasPipeline = null, debandFloatPipeline = null;
+let debandStrengthBuilt = null, debandTimeBuf = null;
 let debandInterTex = null, debandInterW = 0, debandInterH = 0; // intermediate when chaining deband->sharpen
 let dispRGB = null, dispRGBW = 0, dispRGBH = 0; // offscreen display-res for sharpen input
 let models = [], activeModel = null;
+let modelsDevice = null, modelLoadPromise = null, modelLoadDevice = null;
 const ART_FILES = ["ArtCNN_C4F32", "ArtCNN_C4F32_DS", "ArtCNN_C4F32_DN"];
 let engine = "fsrcnnx"; // "fsrcnnx" | "fsrcnnx-hi" | "artcnn" | "neural"
+let engineSelectionGeneration = 0;
 let neuralEng = null, neuralModelKey = "", neuralBusy = false, neuralFail = 0; // v0.49.0 ONNX engine
+let interpPausedByNeural = false;
 let _neuralList = []; // manifest summary for the popup, loaded eagerly
 (async () => { try {
   const r = await fetch(chrome.runtime.getURL("model/neural/manifest.json"));
@@ -73,7 +120,7 @@ let _neuralList = []; // manifest summary for the popup, loaded eagerly
 let artVariant = "ArtCNN_C4F32";
 let chainDepth = 1; // 1 = single 2x, 2 = chained 4x, 3 = chained 8x (2x-only engines)
 let artLoadPending = false, artDiagLogged = false;
-let rvfc = null, frameCount = 0, lastLog = 0;
+let rvfc = null, rvfcKind = null, frameCount = 0, lastLog = 0;
 let upscalePolicy = "display"; // default: upscale whenever source < display (good for 4K)
 let protectedSource = false; // last setMode/recheck found DRM
 let protectedReason = null;  // "drm" | "tainted" | null
@@ -130,15 +177,27 @@ const srcCache = { fsrcnnx: {}, artcnn: {} }; // name -> {manifest, wgsl}
 // High-quality FSRCNNX (56-16-4-1, 2x-only). Two instances enable chaining to 4x.
 const HI_MODEL = "FSRCNNX_x2_56-16-4-1";
 let hiLoadPending = false, chainedHi = null;
+let hiSourcePromise = null, hiStageBuildPromise = null;
 async function loadHiModelSource() {
   if (srcCache.fsrcnnx[HI_MODEL]) return srcCache.fsrcnnx[HI_MODEL];
-  const base = chrome.runtime.getURL(`model/${HI_MODEL}`);
-  const [manifest, wgsl] = await Promise.all([
-    fetch(`${base}.passes.json`).then((r) => r.json()),
-    fetch(`${base}.wgsl`).then((r) => r.text()),
-  ]);
-  srcCache.fsrcnnx[HI_MODEL] = { manifest, wgsl };
-  return srcCache.fsrcnnx[HI_MODEL];
+  if (hiSourcePromise) return hiSourcePromise;
+  const promise = (async () => {
+    const base = chrome.runtime.getURL(`model/${HI_MODEL}`);
+    const [manifestResponse, wgslResponse] = await Promise.all([
+      fetch(`${base}.passes.json`),
+      fetch(`${base}.wgsl`),
+    ]);
+    if (!manifestResponse.ok || !wgslResponse.ok) {
+      throw new Error(`${HI_MODEL} fetch failed (${manifestResponse.status}/${wgslResponse.status})`);
+    }
+    const source = { manifest: await manifestResponse.json(), wgsl: await wgslResponse.text() };
+    srcCache.fsrcnnx[HI_MODEL] = source;
+    return source;
+  })().finally(() => {
+    if (hiSourcePromise === promise) hiSourcePromise = null;
+  });
+  hiSourcePromise = promise;
+  return promise;
 }
 
 // Map an upscale policy to a chain depth for 2x-only engines (ArtCNN / FSRCNNX
@@ -154,41 +213,171 @@ function policyToDepth(p) {
 // own instance for its own per-size texture cache.
 let hiStages = []; // FsrcnnxModel[]
 async function ensureHiStages(depth) {
-  while (hiStages.length < depth) {
-    const s = await loadHiModelSource();
-    hiStages.push(new FsrcnnxModel(device, s.manifest, s.wgsl));
+  const requestedDepth = Math.max(1, depth | 0);
+  if (hiStages.length >= requestedDepth) return hiStages.slice(0, requestedDepth);
+  if (hiStageBuildPromise) {
+    try { await hiStageBuildPromise; } catch {}
+    return ensureHiStages(requestedDepth);
   }
-  return hiStages.slice(0, depth);
+  const targetDevice = device;
+  const baseStages = hiStages;
+  if (!targetDevice) throw new Error("cannot build FSRCNNX-high stages without a device");
+  const promise = (async () => {
+    const source = await loadHiModelSource();
+    if (device !== targetDevice || hiStages !== baseStages) {
+      throw new Error("FSRCNNX-high stage build superseded by device change");
+    }
+    const created = [];
+    try {
+      while (baseStages.length + created.length < requestedDepth) {
+        created.push(new FsrcnnxModel(targetDevice, source.manifest, source.wgsl));
+      }
+    } catch (error) {
+      for (const stage of created) { try { stage.destroy?.(); } catch {} }
+      throw error;
+    }
+    if (device !== targetDevice || hiStages !== baseStages) {
+      for (const stage of created) { try { stage.destroy?.(); } catch {} }
+      throw new Error("FSRCNNX-high stage build superseded by device change");
+    }
+    hiStages = [...baseStages, ...created];
+    return hiStages.slice(0, requestedDepth);
+  })().finally(() => {
+    if (hiStageBuildPromise === promise) hiStageBuildPromise = null;
+  });
+  hiStageBuildPromise = promise;
+  return promise;
 }
 
 // Build (and cache) `depth` ArtCNN stage instances for the current variant.
 let artStages = {}; // variant -> ArtCnnModel[]
-async function ensureArtStages(name, depth) {
-  if (!artStages[name]) artStages[name] = [];
-  while (artStages[name].length < depth) {
+const artSourcePromises = new Map();
+let artStageBuildPromise = null;
+
+async function loadArtModelSource(name) {
+  if (srcCache.artcnn[name]) return srcCache.artcnn[name];
+  if (artSourcePromises.has(name)) return artSourcePromises.get(name);
+  const promise = (async () => {
     const base = chrome.runtime.getURL(`model/${name}.artcnn`);
-    const [manifest, wgsl] = await Promise.all([
-      fetch(`${base}.json`).then((r) => r.json()),
-      fetch(`${base}.wgsl`).then((r) => r.text()),
+    const [manifestResponse, wgslResponse] = await Promise.all([
+      fetch(`${base}.json`),
+      fetch(`${base}.wgsl`),
     ]);
-    srcCache.artcnn[name] = srcCache.artcnn[name] || { manifest, wgsl };
-    artStages[name].push(new ArtCnnModel(device, manifest, wgsl));
+    if (!manifestResponse.ok || !wgslResponse.ok) {
+      throw new Error(`${name} fetch failed (${manifestResponse.status}/${wgslResponse.status})`);
+    }
+    const source = { manifest: await manifestResponse.json(), wgsl: await wgslResponse.text() };
+    srcCache.artcnn[name] = source;
+    return source;
+  })().finally(() => {
+    if (artSourcePromises.get(name) === promise) artSourcePromises.delete(name);
+  });
+  artSourcePromises.set(name, promise);
+  return promise;
+}
+
+async function ensureArtStages(name, depth) {
+  const requestedDepth = Math.max(1, depth | 0);
+  if ((artStages[name]?.length || 0) >= requestedDepth) return artStages[name].slice(0, requestedDepth);
+  if (artStageBuildPromise) {
+    try { await artStageBuildPromise; } catch {}
+    return ensureArtStages(name, requestedDepth);
   }
-  return artStages[name].slice(0, depth);
+  const targetDevice = device;
+  const stageMap = artStages;
+  const baseStages = stageMap[name] || [];
+  if (!targetDevice) throw new Error("cannot build ArtCNN stages without a device");
+  const promise = (async () => {
+    const source = await loadArtModelSource(name);
+    if (device !== targetDevice || artStages !== stageMap || (stageMap[name] || baseStages) !== baseStages) {
+      throw new Error("ArtCNN stage build superseded by device change");
+    }
+    const created = [];
+    try {
+      while (baseStages.length + created.length < requestedDepth) {
+        created.push(new ArtCnnModel(targetDevice, source.manifest, source.wgsl));
+      }
+    } catch (error) {
+      for (const stage of created) { try { stage.destroy?.(); } catch {} }
+      throw error;
+    }
+    if (device !== targetDevice || artStages !== stageMap || (stageMap[name] || baseStages) !== baseStages) {
+      for (const stage of created) { try { stage.destroy?.(); } catch {} }
+      throw new Error("ArtCNN stage build superseded by device change");
+    }
+    stageMap[name] = [...baseStages, ...created];
+    return stageMap[name].slice(0, requestedDepth);
+  })().finally(() => {
+    if (artStageBuildPromise === promise) artStageBuildPromise = null;
+  });
+  artStageBuildPromise = promise;
+  return promise;
 }
 
 async function loadModels() {
-  if (models.length) return;
-  for (const name of MODEL_FILES) {
-    const base = chrome.runtime.getURL(`model/${name}`);
-    const [manifest, wgsl] = await Promise.all([
-      fetch(`${base}.passes.json`).then((r) => r.json()),
-      fetch(`${base}.wgsl`).then((r) => r.text()),
-    ]);
-    srcCache.fsrcnnx[name] = { manifest, wgsl };
-    models.push(new FsrcnnxModel(device, manifest, wgsl));
+  const targetDevice = device;
+  if (!targetDevice) throw new Error("cannot load models without a WebGPU device");
+  if (models.length && modelsDevice === targetDevice) return models;
+  if (modelLoadPromise) {
+    if (modelLoadDevice === targetDevice) {
+      return modelLoadPromise.then(() => (
+        models.length && modelsDevice === targetDevice ? models : loadModels()
+      ));
+    }
+    try { await modelLoadPromise; } catch {}
+    return loadModels();
   }
-  log(`loaded ${models.length} models`);
+
+  const promise = (async () => {
+    // Fetch and validate the complete source set before constructing or exposing
+    // any model. Concurrent enables share this transaction, so callers can never
+    // observe a partially populated array or reorder models by completion time.
+    const sources = await Promise.all(MODEL_FILES.map(async (name) => {
+      const base = chrome.runtime.getURL(`model/${name}`);
+      const [manifestResponse, wgslResponse] = await Promise.all([
+        fetch(`${base}.passes.json`),
+        fetch(`${base}.wgsl`),
+      ]);
+      if (!manifestResponse.ok || !wgslResponse.ok) {
+        throw new Error(`model ${name} fetch failed (${manifestResponse.status}/${wgslResponse.status})`);
+      }
+      return { name, manifest: await manifestResponse.json(), wgsl: await wgslResponse.text() };
+    }));
+    if (device !== targetDevice) throw new Error("model load superseded by device change");
+
+    const created = [];
+    try {
+      for (const source of sources) {
+        created.push(new FsrcnnxModel(targetDevice, source.manifest, source.wgsl));
+      }
+    } catch (error) {
+      for (const model of created) { try { model.destroy?.(); } catch {} }
+      throw error;
+    }
+    if (device !== targetDevice) {
+      for (const model of created) { try { model.destroy?.(); } catch {} }
+      throw new Error("model load superseded by device change");
+    }
+
+    for (const source of sources) {
+      srcCache.fsrcnnx[source.name] = { manifest: source.manifest, wgsl: source.wgsl };
+    }
+    const oldModels = models;
+    models = created;
+    modelsDevice = targetDevice;
+    activeModel = null;
+    for (const model of oldModels) { try { model.destroy?.(); } catch {} }
+    log(`loaded ${models.length} models`);
+    return models;
+  })().finally(() => {
+    if (modelLoadPromise === promise) {
+      modelLoadPromise = null;
+      modelLoadDevice = null;
+    }
+  });
+  modelLoadDevice = targetDevice;
+  modelLoadPromise = promise;
+  return promise;
 }
 
 // Chains N ArtCnnModel stages, each a 2x doubler, for a 2^N luma upscale.
@@ -278,7 +467,11 @@ function inShadowDom(node) {
 }
 
 function positionCanvas(outW, outH) {
-  if (!canvas || !video) return;
+  if (!canvas || !video) return false;
+  if (outW && outH && !textureSizeAllowed(outW, outH, "canvas output")) {
+    canvas.style.display = "none"; // expose the original video instead of a stale frame
+    return false;
+  }
   const v = video.getBoundingClientRect();
   // For videos inside a shadow root (e.g. Reddit's <shreddit-player>), don't try
   // to inject the canvas into the component's shadow tree — it may re-render and
@@ -293,7 +486,7 @@ function positionCanvas(outW, outH) {
     canvas.style.height = `${v.height}px`;
   } else {
     const parent = video.parentElement;
-    if (!parent) return;
+    if (!parent) return false;
     if (getComputedStyle(parent).position === "static") parent.style.position = "relative";
     if (canvas.parentElement !== parent) parent.appendChild(canvas);
     canvas.style.position = "absolute";
@@ -306,28 +499,62 @@ function positionCanvas(outW, outH) {
   if (outW && outH && (canvas.width !== outW || canvas.height !== outH)) {
     canvas.width = outW; canvas.height = outH;
   }
+  if (mode !== "off") canvas.style.display = "block";
+  return true;
 }
 
-async function initWebGPU() {
+let webGpuInitPromise = null;
+function initWebGPU() {
+  if (device) return true;
+  if (webGpuInitPromise) return webGpuInitPromise;
+  const promise = initWebGPUInternal().finally(() => {
+    if (webGpuInitPromise === promise) webGpuInitPromise = null;
+  });
+  webGpuInitPromise = promise;
+  return promise;
+}
+
+async function initWebGPUInternal() {
   if (device) return true;
   if (!("gpu" in navigator)) { warn("no WebGPU"); return false; }
   const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
   if (!adapter) { warn("no adapter"); return false; }
   const feats = [];
   if (adapter.features.has("float32-filterable")) feats.push("float32-filterable");
-  device = await adapter.requestDevice({ requiredFeatures: feats });
+  const requestedDevice = await adapter.requestDevice({ requiredFeatures: feats });
+  // Another provider may have supplied a shared device while the adapter request
+  // was pending. Keep that newer device and release the redundant one we own.
+  if (device) {
+    try { requestedDevice.destroy?.(); } catch {}
+    return true;
+  }
+  device = requestedDevice;
+  deviceOwnedByMain = true;
   // Identity-guarded lost handler: after chain adoption we DESTROY this device on
   // purpose; its lost event must not null the (different) current device.
   {
     const d = device;
     d.lost.then((i) => {
-      if (device === d) { warn("device lost:", i.message); device = null; }
+      if (device === d) {
+        warn("device lost:", i.message);
+        device = null;
+        deviceOwnedByMain = false;
+      }
       else log("old device released (expected after chain adoption)");
     });
   }
 
-  ensureCanvas();
-  buildCore();
+  try {
+    ensureCanvas();
+    buildCore();
+  } catch (error) {
+    if (device === requestedDevice) {
+      device = null;
+      deviceOwnedByMain = false;
+    }
+    try { requestedDevice.destroy?.(); } catch {}
+    throw error;
+  }
   log("WebGPU ready", adapter.info ? `(${adapter.info.vendor} ${adapter.info.architecture})` : "");
   return true;
 }
@@ -377,14 +604,64 @@ function buildCore() {
 // Tears down EVERY device-bound cache (a single missed object from the old device
 // throws "resource from different device" at render), swaps devices, rebuilds core,
 // and reloads models. Renders are paused via `adopting` during the swap.
-let adopting = false;
-export async function adoptChainDevice(extDevice) {
-  if (!extDevice) return false;
-  if (device === extDevice) return true; // already unified
+let adopting = false, adoptionPromise = null, adoptionTarget = null;
+export function adoptChainDevice(extDevice, isRequestCurrent = null) {
+  if (!extDevice) return Promise.resolve(false);
+  if (adoptionPromise) {
+    if (adoptionTarget === extDevice) {
+      // A same-device caller may be newer than the request which started this
+      // adoption. Do not inherit that older caller's cancellation result: once
+      // the shared attempt settles, re-check the newer predicate and retry the
+      // target once when it was not adopted.
+      const pending = adoptionPromise;
+      return pending.catch(() => false).then((adopted) => {
+        if (adopted) return true;
+        if (typeof isRequestCurrent === "function" && !isRequestCurrent()) return false;
+        return adoptChainDevice(extDevice, isRequestCurrent);
+      });
+    }
+    const pending = adoptionPromise;
+    return pending.catch(() => false).then(() => {
+      if (typeof isRequestCurrent === "function" && !isRequestCurrent()) return false;
+      return adoptChainDevice(extDevice, isRequestCurrent);
+    });
+  }
+  if (device === extDevice) return Promise.resolve(true); // already unified
+  adoptionTarget = extDevice;
+  const promise = adoptChainDeviceInternal(extDevice, isRequestCurrent).finally(() => {
+    if (adoptionPromise === promise) {
+      adoptionPromise = null;
+      adoptionTarget = null;
+    }
+  });
+  adoptionPromise = promise;
+  return promise;
+}
+
+async function adoptChainDeviceInternal(extDevice, isRequestCurrent) {
+  const requestCurrent = typeof isRequestCurrent === "function" ? isRequestCurrent : () => true;
+  if (!requestCurrent()) return false;
+  const old = device;
+  const oldOwnedByMain = deviceOwnedByMain;
+  const restartImages = !!optImages;
   adopting = true;
   try {
-    const old = device;
+    // Any work already submitted by the renderer or image helper must finish
+    // before their device-bound caches are retired. A stopped image job cannot
+    // submit new work after its current synchronous section has yielded.
+    try { await old?.queue?.onSubmittedWorkDone?.(); } catch {}
+    if (!requestCurrent()) return false;
+    // The image helper owns model/pipeline objects tied to the current device.
+    // Drop the whole helper before destroying that device; ensureImageUpscaler()
+    // will construct a clean instance below if the option is still enabled.
+    invalidateImageUpscaler();
     // ---- teardown: null every device-bound cache so ensure*/loadModels recreate ----
+    const oldModels = new Set([
+      ...models,
+      ...hiStages,
+      ...Object.values(artStages).flat(),
+    ]);
+    for (const model of oldModels) { try { model?.destroy?.(); } catch {} }
     try { chainTapTex && chainTapTex.destroy(); } catch {} chainTapTex = null;
     try { lumaTexture && lumaTexture.destroy(); } catch {} lumaTexture = null; lumaW = 0; lumaH = 0;
     try { debandInterTex && debandInterTex.destroy(); } catch {} debandInterTex = null; debandInterW = 0; debandInterH = 0;
@@ -393,16 +670,29 @@ export async function adoptChainDevice(extDevice) {
     extractPipelineTex = recombinePipelineTex = recombine16PipelineTex = null;
     passthroughPipeline = null;
     sharpenPipeline = null; sharpenStrengthBuilt = null;
-    debandPipeline = null; debandStrengthBuilt = null; debandTimeBuf = null;
-    ssimds = null; sampler = null;
-    models = []; activeModel = null; hiStages = []; artStages = {};
+    debandCanvasPipeline = debandFloatPipeline = null;
+    debandStrengthBuilt = null;
+    try { debandTimeBuf?.destroy?.(); } catch {} debandTimeBuf = null;
+    try { ssimds?.destroy?.(); } catch {} ssimds = null;
+    sampler = null;
+    models = []; modelsDevice = null; activeModel = null; hiStages = []; artStages = {};
     _scaleHeld = undefined; _scalePending = null; // held model refs are now stale
     clearMultiTargets();
     // ---- swap + rebuild ----
     device = extDevice;
+    // External devices are owned by ORT (or another chain provider). They must
+    // remain alive for persistent sessions that can be resumed after a mode or
+    // model switch; only a device requested by initWebGPU() is ours to destroy.
+    deviceOwnedByMain = false;
     {
       const d = device;
-      d.lost.then((i) => { if (device === d) { warn("device lost:", i.message); device = null; } });
+      d.lost.then((i) => {
+        if (device === d) {
+          warn("device lost:", i.message);
+          device = null;
+          deviceOwnedByMain = false;
+        }
+      });
       // PRESENT-PATH CIRCUIT BREAKER: WebGPU validation errors are ASYNC events —
       // no try/catch sees them, so a poisoned inverted pipeline can storm (the
       // 237-error 1080p reattach). Count uncaptured errors on the adopted device;
@@ -420,34 +710,68 @@ export async function adoptChainDevice(extDevice) {
             if (now - (_invRestartLast || 0) < 60000 && _invRestarts >= 2) {
               warn("inverted chain: repeated GPU error bursts — DISABLING inverted (re-enable via the toggle)");
               interpInvertPref = false; saveSitePrefs();
-              if (interpolator && interpolator.running) { try { interpolator.stop(); setTimeout(() => interpolator.start(), 50); } catch {} }
+              scheduleInterpolatorGpuRestart();
               return;
             }
             if (now - (_invRestartLast || 0) > 60000) _invRestarts = 0;
             _invRestarts++; _invRestartLast = now;
             warn(`inverted chain: GPU error burst — clean restart (${_invRestarts}/2 this minute)`);
-            if (interpolator && interpolator.running) { try { interpolator.stop(); setTimeout(() => interpolator.start(), 50); } catch {} }
+            scheduleInterpolatorGpuRestart();
           }
         });
       }
     }
     buildCore();
     if (mode === "upscale") await loadModels();
+    if (!requestCurrent()) throw new Error("device adoption superseded");
     if (engine === "artcnn") { try { await ensureArtStages(artVariant, chainDepth); } catch (e) { warn("art stages rebuild failed:", e.message); } }
     if (engine === "fsrcnnx-hi") { try { await ensureHiStages(chainDepth); } catch (e) { warn("hi stages rebuild failed:", e.message); } }
-    // free the old device we created (nothing references it now)
-    try { old && old.destroy && old.destroy(); } catch {}
-    // HEAL: if the deviceless window between interp stop and this re-adoption
-    // tripped the protected latch or knocked mode off, this successful adoption
-    // proves the pipeline valid again — reverse it all.
-    if (protectedSource) { protectedSource = false; protectedReason = null; }
-    if (mode === "off") mode = "upscale";
-    if (canvas) { canvas.style.display = ""; canvas.style.opacity = "1"; }
-    if (!ro) attach(); // detach() nulls ro; re-attach observers exactly once
+    if (restartImages && optImages) {
+      try { (await ensureImageUpscaler())?.start(); }
+      catch (e) { warn("image upscaler rebuild failed:", e.message); }
+    }
+    if (!requestCurrent()) throw new Error("device adoption superseded");
+    // Free only a device this module requested itself. A previously adopted ORT
+    // device may still be referenced by a persistent session and is not ours.
+    if (oldOwnedByMain) { try { old?.destroy?.(); } catch {} }
+    // A user can turn the extension off while asynchronous adoption is rebuilding
+    // pipelines. Respect that newer state instead of resurrecting rendering.
+    if (mode !== "off") {
+      if (canvas) { canvas.style.display = ""; canvas.style.opacity = "1"; }
+      if (!ro) attach(); // detach() nulls ro; re-attach observers exactly once
+    }
     log("upscaler ADOPTED shared device (RIFE chain unified)");
     return true;
   } catch (e) {
     warn("adoptChainDevice failed:", e.message);
+    // The old device has not been destroyed until the success path. Rebuild its
+    // caches so a failed external-device adoption degrades back to the prior
+    // renderer instead of leaving a half-configured device behind.
+    try {
+      invalidateImageUpscaler();
+      const partialModels = new Set([
+        ...models,
+        ...hiStages,
+        ...Object.values(artStages).flat(),
+      ]);
+      for (const model of partialModels) { try { model?.destroy?.(); } catch {} }
+      try { ssimds?.destroy?.(); } catch {}
+      models = []; modelsDevice = null; activeModel = null; hiStages = []; artStages = {};
+      device = old;
+      deviceOwnedByMain = oldOwnedByMain;
+      if (!device) throw new Error("no previous device available");
+      buildCore();
+      if (mode === "upscale") await loadModels();
+      if (engine === "artcnn") await ensureArtStages(artVariant, chainDepth);
+      if (engine === "fsrcnnx-hi") await ensureHiStages(chainDepth);
+      if (restartImages && optImages) (await ensureImageUpscaler())?.start();
+      warn("external device adoption rolled back to the previous renderer");
+    } catch (rollbackError) {
+      warn("device adoption rollback failed:", rollbackError.message);
+      device = null;
+      deviceOwnedByMain = false;
+      deactivateRendering({ persist: false });
+    }
     return false;
   } finally {
     adopting = false;
@@ -455,7 +779,8 @@ export async function adoptChainDevice(extDevice) {
 }
 
 function ensureLumaTexture(w, h) {
-  if (lumaTexture && lumaW === w && lumaH === h) return;
+  if (!textureSizeAllowed(w, h, "luma input")) return false;
+  if (lumaTexture && lumaW === w && lumaH === h) return true;
   lumaTexture?.destroy?.();
   lumaW = w; lumaH = h;
   lumaTexture = device.createTexture({
@@ -463,6 +788,7 @@ function ensureLumaTexture(w, h) {
     size: { width: w, height: h }, format: "rgba16float",
     usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
   });
+  return true;
 }
 
 // Lazily build the texture-ingest twins of the ext-consuming pipelines: same
@@ -501,6 +827,12 @@ function renderUpscale() {
   const _ts = _texSource; _texSource = null;
   const srcW = _ts ? _ts.w : video.videoWidth, srcH = _ts ? _ts.h : video.videoHeight;
   if (!srcW || !srcH) return;
+  // In the inverted interpolation chain the pooled texture is the authoritative
+  // frame. Falling back to the live video would alternate real decoder frames with
+  // interpolated ones and break cadence, so every early-out presents that texture.
+  const renderFallback = () => _ts
+    ? renderTexturePassthrough(_ts.tex, srcW, srcH)
+    : renderPassthrough();
 
   // Determine the target width (device pixels) we're scaling toward.
   // In fullscreen the element rect can lag the transition, so use the screen.
@@ -540,7 +872,7 @@ function renderUpscale() {
           .then(() => { hiLoadPending = false; log(`FSRCNNX-high ${Math.pow(2, depth)}x ready`); })
           .catch((e) => { hiLoadPending = false; warn("FSRCNNX-high load FAILED:", e.message); });
       }
-      renderPassthrough();
+      renderFallback();
       return;
     }
   } else if (engine === "artcnn") {
@@ -570,7 +902,7 @@ function renderUpscale() {
           .then(() => { artLoadPending = false; log(`ArtCNN ${artVariant} ${Math.pow(2, depth)}x ready`); })
           .catch((e) => { artLoadPending = false; warn("ArtCNN load FAILED:", e.message); });
       }
-      renderPassthrough();
+      renderFallback();
       return;
     }
   } else {
@@ -620,14 +952,20 @@ function renderUpscale() {
   }
 
   if (!activeModel) {
-    renderPassthrough();
+    renderFallback();
     return;
   }
   const scale = activeModel.scale;
   const outW = srcW * scale, outH = srcH * scale;
+  if (!textureSizeAllowed(srcW, srcH, "upscale input") ||
+      !textureSizeAllowed(outW, outH, `${engine} output`)) {
+    activeModel = null;
+    lastSSimDS = false;
+    renderFallback();
+    return;
+  }
 
-  positionCanvas(outW, outH);
-  ensureLumaTexture(srcW, srcH);
+  if (!positionCanvas(outW, outH) || !ensureLumaTexture(srcW, srcH)) return;
   activeModel.allocate(srcW, srcH, lumaTexture);
 
   const ext = _ts ? null : safeImportExternal();
@@ -662,15 +1000,16 @@ function renderUpscale() {
   // overshoots the display box (downscaling the oversized result is where
   // SSimDownscaler helps; otherwise the canvas just shows the hi-res directly).
   const fs2 = document.fullscreenElement != null;
-  const dispW = fs2 ? Math.round(window.screen.width * dpr)
-                    : Math.round(video.getBoundingClientRect().width * dpr);
-  const dispH = Math.round(dispW * outH / outW);
-  const overshoot = ssimdsEnabled && outW > dispW * 1.05;
+  const dispW = Math.max(1, fs2 ? Math.round(window.screen.width * dpr)
+                                : Math.round(video.getBoundingClientRect().width * dpr));
+  const dispH = Math.max(1, Math.round(dispW * outH / outW));
+  const displaySafe = textureSizeAllowed(dispW, dispH, "display output");
+  const overshoot = displaySafe && ssimdsEnabled && outW > dispW * 1.05;
   lastSSimDS = overshoot;
 
   if (overshoot) {
     // recombine -> offscreen hi-res RGB, then SSimDownscaler -> display-res texture
-    ensureHiRGB(outW, outH);
+    if (!ensureHiRGB(outW, outH)) return;
     {
       const bg = device.createBindGroup({
         layout: pRecombine16.getBindGroupLayout(0),
@@ -690,11 +1029,11 @@ function renderUpscale() {
     }
     ssimds.prepare(outW, outH, dispW, dispH, hiRGB);
     const dsOut = ssimds.run(enc, hiRGB);
-    positionCanvas(dispW, dispH);
+    if (!positionCanvas(dispW, dispH)) return;
     finalizeToCanvas(enc, dsOut);
-  } else if (sharpenEnabled) {
-    // recombine -> offscreen hi-res RGB, then sharpen -> canvas (sharpen at hi-res)
-    ensureHiRGB(outW, outH);
+  } else if (debandEnabled || sharpenEnabled) {
+    // recombine -> offscreen hi-res RGB, then filters -> canvas at hi-res.
+    if (!ensureHiRGB(outW, outH)) return;
     const bg = device.createBindGroup({
       layout: pRecombine16.getBindGroupLayout(0),
       entries: [
@@ -710,11 +1049,11 @@ function renderUpscale() {
     rp.setBindGroup(0, bg);
     rp.draw(3);
     rp.end();
-    positionCanvas(outW, outH);
+    if (!positionCanvas(outW, outH)) return;
     finalizeToCanvas(enc, hiRGB);
   } else {
-    // no overshoot, no sharpen: recombine straight to canvas at hi-res.
-    positionCanvas(outW, outH);
+    // no overshoot or filters: recombine straight to canvas at hi-res.
+    if (!positionCanvas(outW, outH)) return;
     const bg = device.createBindGroup({
       layout: pRecombine.getBindGroupLayout(0),
       entries: [
@@ -743,14 +1082,14 @@ function finalizeToCanvas(enc, srcTex) {
   let cur = srcTex;
   // 1. deband (optional) -> intermediate (if sharpen follows) or canvas
   if (debandEnabled) {
-    ensureDebandPipeline();
+    ensureDebandPipelines();
     // update time uniform for grain/temporal variation
     const t = (performance.now() % 100000) / 1000;
     device.queue.writeBuffer(debandTimeBuf, 0, new Float32Array([t]));
     if (sharpenEnabled) {
-      ensureDebandInter(canvas.width, canvas.height);
+      if (!ensureDebandInter(canvas.width, canvas.height)) return;
       const bg = device.createBindGroup({
-        layout: debandPipeline.getBindGroupLayout(0),
+        layout: debandFloatPipeline.getBindGroupLayout(0),
         entries: [
           { binding: 0, resource: sampler },
           { binding: 1, resource: cur.createView() },
@@ -760,12 +1099,12 @@ function finalizeToCanvas(enc, srcTex) {
       const rp = enc.beginRenderPass({
         colorAttachments: [{ view: debandInterTex.createView(), loadOp: "clear", clearValue: { r:0,g:0,b:0,a:1 }, storeOp: "store" }],
       });
-      rp.setPipeline(debandPipeline); rp.setBindGroup(0, bg); rp.draw(3); rp.end();
+      rp.setPipeline(debandFloatPipeline); rp.setBindGroup(0, bg); rp.draw(3); rp.end();
       cur = debandInterTex;
     } else {
       // deband straight to canvas
       const bg = device.createBindGroup({
-        layout: debandPipeline.getBindGroupLayout(0),
+        layout: debandCanvasPipeline.getBindGroupLayout(0),
         entries: [
           { binding: 0, resource: sampler },
           { binding: 1, resource: cur.createView() },
@@ -775,7 +1114,7 @@ function finalizeToCanvas(enc, srcTex) {
       const rp = enc.beginRenderPass({
         colorAttachments: [{ view: context.getCurrentTexture().createView(), loadOp: "clear", clearValue: { r:0,g:0,b:0,a:1 }, storeOp: "store" }],
       });
-      rp.setPipeline(debandPipeline); rp.setBindGroup(0, bg); rp.draw(3); rp.end();
+      rp.setPipeline(debandCanvasPipeline); rp.setBindGroup(0, bg); rp.draw(3); rp.end();
       return;
     }
   }
@@ -801,19 +1140,47 @@ function finalizeToCanvas(enc, srcTex) {
 // shared device. Output is full RGB at model scale in an rgba16float texture;
 // present reuses the existing tail (SSimDS overshoot doctrine, deband/sharpen,
 // canvas) — recombine is bypassed since chroma is neural.
-async function ensureNeural() {
+function pauseInterpolationForNeural() {
+  if (!optInterpolate) return;
+  interpolationSelectionGeneration++;
+  interpPausedByNeural = true;
+  if (interpolator) interpolator.stop();
+  log("neural engine v1: frame interpolation paused for this session; preference preserved");
+}
+
+function resumeInterpolationAfterNeural() {
+  if (!interpPausedByNeural) return;
+  interpPausedByNeural = false;
+  if (!optInterpolate) return;
+  setInterpolate(true).catch((e) => warn("interpolation resume after neural failed:", e.message));
+}
+
+function neuralSelectionCurrent(expectedSelection) {
+  return expectedSelection === engineSelectionGeneration && engine === "neural";
+}
+
+function neuralSupersededError() {
+  const error = new Error("neural activation superseded");
+  error.code = "NEURAL_SUPERSEDED";
+  return error;
+}
+
+async function ensureNeural(expectedSelection = engineSelectionGeneration) {
+  if (!neuralSelectionCurrent(expectedSelection)) throw neuralSupersededError();
   if (!neuralEng) neuralEng = createNeuralEngine({ log, warn });
-  if (optInterpolate) { // v1: neural + interpolation are mutually exclusive
-    log("neural engine v1: pausing frame interpolation (tap/inverted paths bypass the ORT upscaler)");
-    try { await setInterpolate(false); } catch {}
-  }
+  // v1: neural + interpolation are mutually exclusive. This is a runtime pause,
+  // not a settings change: leaving neural restores the user's prior preference.
+  pauseInterpolationForNeural();
   const entry = await neuralEng.init(neuralModelKey || undefined);
+  if (!neuralSelectionCurrent(expectedSelection)) throw neuralSupersededError();
   neuralModelKey = entry.key;
   const d = neuralEng.device();
   if (d && device && d !== device) {
     log("neural: adopting shared ORT device (upscaler + neural unified)");
-    await adoptChainDevice(d);
+    const adopted = await adoptChainDevice(d, () => neuralSelectionCurrent(expectedSelection));
+    if (!adopted || !neuralSelectionCurrent(expectedSelection)) throw neuralSupersededError();
   }
+  if (!neuralSelectionCurrent(expectedSelection)) throw neuralSupersededError();
   neuralFail = 0;
   return entry;
 }
@@ -821,7 +1188,12 @@ async function ensureNeural() {
 export async function setNeuralModel(key) {
   neuralModelKey = key || "";
   if (engine === "neural") {
-    try { await ensureNeural(); } catch (e) { warn("neural model switch failed:", e.message); return { ok: false, error: e.message }; }
+    const selectionGeneration = engineSelectionGeneration;
+    try { await ensureNeural(selectionGeneration); }
+    catch (e) {
+      if (e.code !== "NEURAL_SUPERSEDED") warn("neural model switch failed:", e.message);
+      return { ok: false, error: e.message };
+    }
   }
   saveSitePrefs();
   return { ok: true, model: neuralModelKey };
@@ -831,24 +1203,27 @@ export async function setNeuralModel(key) {
 // the result overshoots the display box, then deband/sharpen/blit to canvas.
 // Additive extraction — renderUpscale keeps its own battle-tested inline copy.
 function presentHiRGBTexture(tex, outW, outH) {
-  if (!device || !canvas || !context) return;
+  if (!device || !canvas || !context || !textureSizeAllowed(outW, outH, "neural output")) return false;
+  const dpr = window.devicePixelRatio || 1;
   const fs2 = document.fullscreenElement != null;
-  const dispW = fs2 ? Math.round(window.screen.width * dpr)
-                    : Math.round(video.getBoundingClientRect().width * dpr);
-  const dispH = Math.round(dispW * outH / outW);
-  const overshoot = ssimdsEnabled && ssimds && outW > dispW * 1.05;
+  const dispW = Math.max(1, fs2 ? Math.round(window.screen.width * dpr)
+                                : Math.round(video.getBoundingClientRect().width * dpr));
+  const dispH = Math.max(1, Math.round(dispW * outH / outW));
+  const overshoot = textureSizeAllowed(dispW, dispH, "neural display output") &&
+    ssimdsEnabled && ssimds && outW > dispW * 1.05;
   lastSSimDS = overshoot;
   const enc = device.createCommandEncoder();
   if (overshoot) {
     ssimds.prepare(outW, outH, dispW, dispH, tex);
     const dsOut = ssimds.run(enc, tex);
-    positionCanvas(dispW, dispH);
+    if (!positionCanvas(dispW, dispH)) return false;
     finalizeToCanvas(enc, dsOut);
   } else {
-    positionCanvas(outW, outH);
+    if (!positionCanvas(outW, outH)) return false;
     finalizeToCanvas(enc, tex);
   }
   device.queue.submit([enc.finish()]);
+  return true;
 }
 
 function renderNeuralFrame() {
@@ -861,44 +1236,70 @@ function renderNeuralFrame() {
   }
   const srcW = video.videoWidth, srcH = video.videoHeight;
   if (!srcW || !srcH) return;
+  const entry = neuralEng.activeEntry();
+  const scale = Number(entry?.scale) || 1;
+  const padMultiple = Math.max(1, Math.trunc(Number(entry?.padMultiple) || 1));
+  const padW = Math.ceil(srcW / padMultiple) * padMultiple;
+  const padH = Math.ceil(srcH / padMultiple) * padMultiple;
+  if (!textureSizeAllowed(srcW, srcH, "neural input") ||
+      !textureSizeAllowed(padW, padH, "neural padded input") ||
+      !textureSizeAllowed(srcW * scale, srcH * scale, "neural output") ||
+      !textureSizeAllowed(padW * scale, padH * scale, "neural padded output") ||
+      !storageBufferSizeAllowed(padW * padH * 3 * 4, "neural input buffer") ||
+      !storageBufferSizeAllowed(padW * scale * padH * scale * 3 * 4, "neural output buffer")) {
+    renderPassthrough();
+    return;
+  }
   const ext = safeImportExternal();
   if (!ext) return;
   neuralBusy = true;
   neuralEng.run(ext, srcW, srcH).then((res) => {
-    if (res && device) presentHiRGBTexture(res.tex, res.outW, res.outH);
-    neuralFail = 0;
+    if (res && device && mode === "upscale" && engine === "neural") {
+      presentHiRGBTexture(res.tex, res.outW, res.outH);
+    }
+    if (mode === "upscale" && engine === "neural") neuralFail = 0;
   }).catch((e) => {
+    // stop(), a mode change, or an engine change deliberately invalidates the
+    // run. Its rejection is lifecycle control, not an inference failure.
+    if (mode !== "upscale" || engine !== "neural" || /cancelled by stop/i.test(e.message)) return;
     neuralFail++;
     warn(`neural inference failed (${neuralFail}/3):`, e.message);
     if (neuralFail >= 3) {
       warn("neural engine failing repeatedly — reverting to FSRCNNX for this session (site pref NOT overwritten)");
+      engineSelectionGeneration++;
       engine = "fsrcnnx";
+      try { neuralEng?.stop?.(); } catch {}
+      resumeInterpolationAfterNeural();
     }
   }).finally(() => { neuralBusy = false; });
 }
 
 function ensureDebandInter(w, h) {
-  if (debandInterTex && debandInterW === w && debandInterH === h) return;
+  if (!textureSizeAllowed(w, h, "deband intermediate")) return false;
+  if (debandInterTex && debandInterW === w && debandInterH === h) return true;
   debandInterTex?.destroy?.();
   debandInterW = w; debandInterH = h;
   debandInterTex = device.createTexture({
     size: { width: w, height: h }, format: "rgba16float",
     usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
   });
+  return true;
 }
 
-function ensureDebandPipeline() {
+function ensureDebandPipelines() {
   if (!debandTimeBuf) {
     debandTimeBuf = device.createBuffer({ size: 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   }
-  if (debandPipeline && debandStrengthBuilt === debandStrength) return;
+  if (debandCanvasPipeline && debandFloatPipeline && debandStrengthBuilt === debandStrength) return;
   const mod = device.createShaderModule({ code: buildDebandShader(debandStrength) });
-  debandPipeline = device.createRenderPipeline({
+  const descriptor = (targetFormat) => ({
     layout: "auto",
     vertex: { module: mod, entryPoint: "vs" },
-    fragment: { module: mod, entryPoint: "fs", targets: [{ format }] },
+    fragment: { module: mod, entryPoint: "fs", targets: [{ format: targetFormat }] },
     primitive: { topology: "triangle-list" },
   });
+  debandCanvasPipeline = device.createRenderPipeline(descriptor(format));
+  debandFloatPipeline = device.createRenderPipeline(descriptor("rgba16float"));
   debandStrengthBuilt = debandStrength;
 }
 
@@ -928,7 +1329,8 @@ struct VsOut { @builtin(position) pos:vec4f, @location(0) uv:vec2f };
 }`;
 
 function ensureHiRGB(w, h) {
-  if (hiRGB && hiRGBW === w && hiRGBH === h) return;
+  if (!textureSizeAllowed(w, h, "RGB intermediate")) return false;
+  if (hiRGB && hiRGBW === w && hiRGBH === h) return true;
   hiRGB?.destroy?.();
   hiRGBW = w; hiRGBH = h;
   hiRGB = device.createTexture({
@@ -936,6 +1338,7 @@ function ensureHiRGB(w, h) {
     size: { width: w, height: h }, format: "rgba16float",
     usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
   });
+  return true;
 }
 
 const PASSTHROUGH_WGSL = `
@@ -961,7 +1364,11 @@ function renderPassthrough() {
       primitive: { topology: "triangle-list" },
     });
   }
-  positionCanvas(video.videoWidth, video.videoHeight);
+  if (!textureSizeAllowed(video.videoWidth, video.videoHeight, "passthrough output")) {
+    if (canvas) canvas.style.display = "none";
+    return;
+  }
+  if (!positionCanvas(video.videoWidth, video.videoHeight)) return;
   const ext = safeImportExternal();
   if (!ext) return;
   const enc = device.createCommandEncoder();
@@ -979,49 +1386,114 @@ function renderPassthrough() {
   device.queue.submit([enc.finish()]);
 }
 
+// Safe presentation fallback for the inverted interpolation chain. The source is
+// already a persistent same-device rgba texture, so presenting it directly keeps
+// interpolation cadence intact when an upscale model is unavailable or its output
+// would exceed adapter/resource limits.
+function renderTexturePassthrough(tex, width, height) {
+  if (!tex || !textureSizeAllowed(width, height, "interpolated fallback") ||
+      !positionCanvas(width, height)) return false;
+  const enc = device.createCommandEncoder();
+  const bg = device.createBindGroup({
+    layout: blitPipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: sampler },
+      { binding: 1, resource: tex.createView() },
+    ],
+  });
+  const rp = enc.beginRenderPass({
+    colorAttachments: [{
+      view: context.getCurrentTexture().createView(),
+      loadOp: "clear",
+      clearValue: { r: 0, g: 0, b: 0, a: 1 },
+      storeOp: "store",
+    }],
+  });
+  rp.setPipeline(blitPipeline);
+  rp.setBindGroup(0, bg);
+  rp.draw(3);
+  rp.end();
+  device.queue.submit([enc.finish()]);
+  return true;
+}
+
 let frameTimes = [];
+function cancelMainLoop() {
+  if (rvfc == null) return;
+  const id = rvfc, kind = rvfcKind;
+  rvfc = null; rvfcKind = null;
+  try {
+    if (kind === "video" && video?.cancelVideoFrameCallback) video.cancelVideoFrameCallback(id);
+    else cancelAnimationFrame(id);
+  } catch {}
+}
+
+function scheduleMainLoop() {
+  if (mode === "off" || !video || rvfc != null) return;
+  if (typeof video.requestVideoFrameCallback === "function") {
+    rvfcKind = "video";
+    rvfc = video.requestVideoFrameCallback(loop);
+  } else {
+    rvfcKind = "animation";
+    rvfc = requestAnimationFrame(loop);
+  }
+}
+
+// One shutdown path keeps callback, observer, overlay, and badge state aligned.
+// Protected-source callers deliberately do not persist "off", preserving the
+// requested site mode for a future processable source.
+function deactivateRendering({ persist = true, protectedFailure = false } = {}) {
+  modeSelectionGeneration++;
+  mode = "off";
+  cancelMainLoop();
+  try { neuralEng?.stop?.(); } catch {}
+  chainTap(false);
+  chainInverted = false;
+  _texSource = null;
+  activeModel = null;
+  clearMultiTargets();
+  detach();
+  if (canvas) { canvas.style.display = "none"; canvas.style.opacity = "1"; }
+  if (persist) saveSitePrefs();
+  if (protectedFailure) notifyProtected(); else notifyState();
+}
+
 function loop() {
+  // A scheduled callback is single-use. Clear its handle before doing work so
+  // scheduleMainLoop() can register exactly one successor.
+  rvfc = null; rvfcKind = null;
   if (mode === "off" || !video) return;
   // Mid-playback protection guard: a source can start unprotected then switch to
   // DRM (e.g. navigating to protected content in an SPA). Re-check occasionally.
   if (mode !== "off" && frameCount > 0 && frameCount % 300 === 0) {
     if (isTaintedVideo(video)) {
       warn("source became DRM-protected mid-playback; disabling.");
-      mode = "off";
-      detach();
-      if (canvas) canvas.style.display = "none";
-      notifyProtected();
+      protectedSource = true;
+      protectedReason = probeVideo(video);
+      deactivateRendering({ persist: false, protectedFailure: true });
       return;
     }
   }
   const t0 = performance.now();
   try {
     if (adopting) { // device swap in progress — skip this frame, keep the loop alive
-      if (mode !== "off") {
-        rvfc = "requestVideoFrameCallback" in HTMLVideoElement.prototype
-          ? video.requestVideoFrameCallback(loop) : requestAnimationFrame(loop);
-      }
+      scheduleMainLoop();
       return;
     }
     if (chainInverted) { // #4: the interpolator drives upscales (chainUpscaleTex);
       // rendering here too would double-draw. Keep re-registering so leaving
       // inverted mode resumes the normal loop instantly.
-      if (mode !== "off") {
-        rvfc = "requestVideoFrameCallback" in HTMLVideoElement.prototype
-          ? video.requestVideoFrameCallback(loop) : requestAnimationFrame(loop);
-      }
+      scheduleMainLoop();
       return;
     }
     if (!device) { // deviceless window during interp restart — idle, adoption heals
-      if (mode !== "off") {
-        rvfc = "requestVideoFrameCallback" in HTMLVideoElement.prototype
-          ? video.requestVideoFrameCallback(loop) : requestAnimationFrame(loop);
-      }
+      scheduleMainLoop();
       return;
     }
     if (mode === "upscale" && engine === "neural") renderNeuralFrame();
     else if (mode === "upscale") renderUpscale();
     else renderPassthrough();
+    if (mode === "off") return; // a guarded import may have shut rendering down
     // CHAIN TAP: if the interpolation chain is consuming upscaled frames, copy the
     // finished frame (still valid pre-present within this task) into a persistent
     // texture the interpolator (same device) samples from. Only when tapped.
@@ -1029,6 +1501,7 @@ function loop() {
       try {
         const curTex = context.getCurrentTexture();
         if (!chainTapTex || chainTapTex.width !== curTex.width || chainTapTex.height !== curTex.height) {
+          if (!textureSizeAllowed(curTex.width, curTex.height, "interpolation chain tap")) throw new Error("chain tap dimensions exceed limits");
           try { chainTapTex && chainTapTex.destroy(); } catch {}
           chainTapTex = device.createTexture({
             size: [curTex.width, curTex.height], format,
@@ -1066,18 +1539,18 @@ function loop() {
     }
   } catch (e) {
     warn("render error:", e.message, "\n", e.stack);
-    mode = "off";
+    deactivateRendering({ persist: true });
   }
-  if (mode !== "off") {
-    rvfc = "requestVideoFrameCallback" in HTMLVideoElement.prototype
-      ? video.requestVideoFrameCallback(loop)
-      : requestAnimationFrame(loop);
-  }
+  scheduleMainLoop();
 }
 
 let ro = null, mo = null, onScroll = null, onResize = null, onFs = null;
 let hoverEl = null, onHoverEnter = null, onHoverLeave = null;
+let attachedVideo = null;
 function attach() {
+  if (attachedVideo === video && ro) return;
+  detach();
+  attachedVideo = video;
   const reposition = () => positionCanvas(canvas.width, canvas.height);
   ro = new ResizeObserver(reposition);
   if (video?.parentElement) ro.observe(video.parentElement);
@@ -1129,6 +1602,7 @@ function detach() {
   if (onScroll) window.removeEventListener("scroll", onScroll, { capture: true });
   if (onFs) document.removeEventListener("fullscreenchange", onFs);
   onResize = onScroll = onFs = null;
+  attachedVideo = null;
   detachHover();
   // remove the body-level overlay if we created one
   if (canvas && canvas.parentElement === document.body) canvas.remove();
@@ -1178,42 +1652,57 @@ function safeImportExternal() {
     const reason = (e && /tainted|cross-origin/i.test(e.message)) ? "tainted" : "drm";
     warn(`importExternalTexture failed (${reason}); disabling.`, e.message);
     protectedSource = true; protectedReason = reason;
-    mode = "off";
-    clearMultiTargets();
-    detach();
-    if (canvas) canvas.style.display = "none";
-    notifyProtected();
+    deactivateRendering({ persist: false, protectedFailure: true });
     return null;
   }
 }
 
-export async function setMode(next) {
-  if (next === mode) return { ok: true };
-  const wasOff = mode === "off";
+export async function setMode(next, autoEnableToken = null) {
+  if (!["off", "passthrough", "upscale"].includes(next)) return { ok: false, reason: "invalid mode" };
+  if (autoEnableToken == null) cancelAutoEnable();
+  else if (autoEnableToken !== autoEnableGeneration) return { ok: false, reason: "superseded" };
+  const selectionGeneration = ++modeSelectionGeneration;
+  if (next === mode && (mode === "off" || device)) {
+    // A second enable request can arrive while the first is awaiting neural
+    // session creation. The newer request owns the lifecycle, so wait for (or
+    // retry) that initialization instead of returning with a permanently
+    // unready neural engine.
+    if (mode === "upscale" && engine === "neural" && !neuralEng?.ready?.()) {
+      const neuralSelection = engineSelectionGeneration;
+      try { await ensureNeural(neuralSelection); }
+      catch (error) {
+        if (selectionGeneration !== modeSelectionGeneration) return { ok: false, reason: "superseded" };
+        if (neuralSelection === engineSelectionGeneration && engine === "neural") {
+          warn("neural activation failed; using FSRCNNX:", error.message);
+          engineSelectionGeneration++;
+          engine = "fsrcnnx";
+          resumeInterpolationAfterNeural();
+          await loadModels();
+        }
+      }
+    }
+    if (selectionGeneration !== modeSelectionGeneration) return { ok: false, reason: "superseded" };
+    if (mode !== "off") { attach(); scheduleMainLoop(); }
+    return { ok: true };
+  }
   // If interpolation is running, the chain decision (interpolate upscaled frames vs
   // raw video) is made at interp start — restart it after the mode change so either
   // enable order works.
   const restartInterp = async () => {
-    if (optInterpolate && interpolator) {
+    if (optInterpolate && interpolator && engine !== "neural") {
       try { interpolator.stop(); await interpolator.start(); log("interp: restarted for upscale-mode change (chain re-evaluated)"); }
       catch (e) { warn("interp restart failed:", e.message); }
     }
   };
   if (next === "off") {
-    mode = "off";
-    if (rvfc != null && video && "cancelVideoFrameCallback" in video) { try { video.cancelVideoFrameCallback(rvfc); } catch {} }
-    clearMultiTargets();
-    detach();
-    if (canvas) canvas.style.display = "none";
-    saveSitePrefs();
-    notifyState();
+    deactivateRendering({ persist: true });
     await restartInterp();
     return { ok: true };
   }
   protectedSource = false; protectedReason = null;
-  video = findVideo();
-  if (!video) return { ok: false, reason: "no video" };
-  const probe = probeVideo(video);
+  const nextVideo = findVideo();
+  if (!nextVideo) return { ok: false, reason: "no video" };
+  const probe = probeVideo(nextVideo);
   if (probe !== "ok") {
     protectedSource = true;
     protectedReason = probe;
@@ -1221,20 +1710,55 @@ export async function setMode(next) {
     return { ok: false, reason: probe };
   }
   if (!(await initWebGPU())) return { ok: false, reason: "WebGPU init failed" };
+  if (selectionGeneration !== modeSelectionGeneration) return { ok: false, reason: "superseded" };
   if (next === "upscale") await loadModels();
+  if (selectionGeneration !== modeSelectionGeneration) return { ok: false, reason: "superseded" };
+  cancelMainLoop();
+  if (video !== nextVideo) detach();
+  video = nextVideo;
   mode = next;
+  if (next === "upscale" && engine === "neural") {
+    const neuralSelection = engineSelectionGeneration;
+    try {
+      await ensureNeural(neuralSelection);
+    } catch (error) {
+      if (selectionGeneration !== modeSelectionGeneration) return { ok: false, reason: "superseded" };
+      if (neuralSelection === engineSelectionGeneration && engine === "neural") {
+        warn("neural activation failed; using FSRCNNX:", error.message);
+        engineSelectionGeneration++;
+        engine = "fsrcnnx";
+        resumeInterpolationAfterNeural();
+        await loadModels();
+      }
+    }
+  }
+  if (selectionGeneration !== modeSelectionGeneration) return { ok: false, reason: "superseded" };
   canvas.style.display = "block";
   attach();
-  loop();
+  scheduleMainLoop();
   saveSitePrefs();
   notifyState();
-  if (wasOff) await restartInterp();
+  await restartInterp();
   return { ok: true };
 }
 
 export function setEngine(e) {
+  const selectionGeneration = ++engineSelectionGeneration;
+  const wasNeural = engine === "neural";
   engine = e === "artcnn" ? "artcnn" : e === "fsrcnnx-hi" ? "fsrcnnx-hi" : e === "neural" ? "neural" : "fsrcnnx";
-  if (engine === "neural") ensureNeural().catch((er) => { warn("neural init failed:", er.message); engine = "fsrcnnx"; });
+  if (engine === "neural") {
+    ensureNeural(selectionGeneration).catch((er) => {
+      if (selectionGeneration !== engineSelectionGeneration || engine !== "neural") return;
+      if (mode === "off" && /initialization cancelled/i.test(er.message)) return;
+      warn("neural init failed:", er.message);
+      engineSelectionGeneration++;
+      engine = "fsrcnnx";
+      resumeInterpolationAfterNeural();
+    });
+  } else if (wasNeural || interpPausedByNeural) {
+    try { neuralEng?.stop?.(); } catch {}
+    resumeInterpolationAfterNeural();
+  }
   chainDepth = (engine === "artcnn" || engine === "fsrcnnx-hi") ? policyToDepth(upscalePolicy) : 1;
   artDiagLogged = false;
   if (engine === "artcnn" && device) {
@@ -1292,6 +1816,7 @@ class MultiTarget {
     Object.assign(this.canvas.style, { position: "absolute", top: "0", left: "0", pointerEvents: "none", zIndex: "10", transition: "opacity 0.18s ease" });
     this.lumaTexture = null; this.lumaW = 0; this.lumaH = 0;
     this.hiRGB = null; this.hiRGBW = 0; this.hiRGBH = 0;
+    this.debandInterTex = null; this.debandInterW = 0; this.debandInterH = 0;
     this.ssimds = new SsimDownscaler(device);
     this.sharpenPipeline = null; this.sharpenStrengthBuilt = null;
     // Each canvas needs its OWN GPUCanvasContext configured for the device.
@@ -1303,7 +1828,7 @@ class MultiTarget {
     // already-fetched manifest+wgsl (construction is cheap; the per-size textures
     // must exist per video anyway). Populated lazily by ensureTargetModels().
     this.models = []; this.hiStages = []; this.artStages = {};
-    this.rvfc = null; this.hoverHidden = false;
+    this.rvfc = null; this.hoverHidden = false; this.neuralBypassLogged = false;
     this.attachHover();
   }
   attachHover() {
@@ -1319,12 +1844,25 @@ class MultiTarget {
     region.addEventListener("pointerleave", this._leave, { passive: true });
   }
   destroy() {
+    if (this.rvfc != null && typeof this.video.cancelVideoFrameCallback === "function") {
+      try { this.video.cancelVideoFrameCallback(this.rvfc); } catch {}
+      this.rvfc = null;
+    }
     if (this._region) {
       this._region.removeEventListener("pointerenter", this._enter);
       this._region.removeEventListener("pointermove", this._enter);
       this._region.removeEventListener("pointerleave", this._leave);
     }
-    this.lumaTexture?.destroy?.(); this.hiRGB?.destroy?.(); this.ssimds?.destroy?.();
+    const ownedModels = new Set([
+      ...this.models,
+      ...this.hiStages,
+      ...Object.values(this.artStages).flat(),
+    ]);
+    for (const model of ownedModels) { try { model?.destroy?.(); } catch {} }
+    this.models = []; this.hiStages = []; this.artStages = {};
+    this.lumaTexture?.destroy?.(); this.hiRGB?.destroy?.();
+    this.debandInterTex?.destroy?.(); this.ssimds?.destroy?.();
+    try { this.context?.unconfigure?.(); } catch {}
     this.canvas.remove();
   }
 }
@@ -1332,31 +1870,34 @@ let multiTargets = new Map(); // video element -> MultiTarget
 
 // Build per-target model instances from cached sources (lazy, cheap).
 function ensureTargetModels(t) {
+  if (engine === "neural") return false; // one ORT session/queue currently serves only the primary video
   if (engine === "fsrcnnx") {
-    if (t.models.length) return;
+    if (t.models.length) return true;
     for (const name of MODEL_FILES) {
       const s = srcCache.fsrcnnx[name];
       if (s) t.models.push(new FsrcnnxModel(device, s.manifest, s.wgsl));
     }
   } else if (engine === "fsrcnnx-hi") {
     const s = srcCache.fsrcnnx[HI_MODEL];
-    if (!s) return; // primary path triggers the fetch
+    if (!s) return false; // primary path triggers the fetch
     while (t.hiStages.length < chainDepth) t.hiStages.push(new FsrcnnxModel(device, s.manifest, s.wgsl));
-  } else {
+  } else if (engine === "artcnn") {
     const s = srcCache.artcnn[artVariant];
-    if (!s) return; // not loaded yet; primary path will have triggered the fetch
+    if (!s) return false; // not loaded yet; primary path will have triggered the fetch
     if (!t.artStages[artVariant]) t.artStages[artVariant] = [];
     while (t.artStages[artVariant].length < chainDepth) t.artStages[artVariant].push(new ArtCnnModel(device, s.manifest, s.wgsl));
   }
+  return true;
 }
 
 // Swap a MultiTarget's state into the globals (returns a restore function).
 function withTarget(t, fn) {
   ensureTargetModels(t);
-  const saved = { video, canvas, context, lumaTexture, lumaW, lumaH, hiRGB, hiRGBW, hiRGBH, ssimds, sharpenPipeline, sharpenStrengthBuilt, hoverHidden, models, hiStages, artStages };
+  const saved = { video, canvas, context, lumaTexture, lumaW, lumaH, hiRGB, hiRGBW, hiRGBH, debandInterTex, debandInterW, debandInterH, ssimds, sharpenPipeline, sharpenStrengthBuilt, hoverHidden, models, hiStages, artStages };
   video = t.video; canvas = t.canvas; context = t.context;
   lumaTexture = t.lumaTexture; lumaW = t.lumaW; lumaH = t.lumaH;
   hiRGB = t.hiRGB; hiRGBW = t.hiRGBW; hiRGBH = t.hiRGBH;
+  debandInterTex = t.debandInterTex; debandInterW = t.debandInterW; debandInterH = t.debandInterH;
   ssimds = t.ssimds; sharpenPipeline = t.sharpenPipeline; sharpenStrengthBuilt = t.sharpenStrengthBuilt;
   hoverHidden = t.hoverHidden;
   models = t.models; hiStages = t.hiStages; artStages = t.artStages;
@@ -1367,8 +1908,9 @@ function withTarget(t, fn) {
     // persist any lazily-created resources back onto the target
     t.lumaTexture = lumaTexture; t.lumaW = lumaW; t.lumaH = lumaH;
     t.hiRGB = hiRGB; t.hiRGBW = hiRGBW; t.hiRGBH = hiRGBH;
+    t.debandInterTex = debandInterTex; t.debandInterW = debandInterW; t.debandInterH = debandInterH;
     t.sharpenPipeline = sharpenPipeline; t.sharpenStrengthBuilt = sharpenStrengthBuilt;
-    ({ video, canvas, context, lumaTexture, lumaW, lumaH, hiRGB, hiRGBW, hiRGBH, ssimds, sharpenPipeline, sharpenStrengthBuilt, hoverHidden, models, hiStages, artStages } = saved);
+    ({ video, canvas, context, lumaTexture, lumaW, lumaH, hiRGB, hiRGBW, hiRGBH, debandInterTex, debandInterW, debandInterH, ssimds, sharpenPipeline, sharpenStrengthBuilt, hoverHidden, models, hiStages, artStages } = saved);
     chainedHi = null; chainedArt = null;
   }
 }
@@ -1418,7 +1960,14 @@ function renderMultiOne(vid) {
   if (!t || !vid.videoWidth) return;
   try {
     withTarget(t, () => {
-      if (mode === "upscale") renderUpscale(); else renderPassthrough();
+      if (mode === "upscale" && engine === "neural") {
+        if (!t.neuralBypassLogged) {
+          log("multi-video: neural upscaling is primary-video only; secondary video uses passthrough");
+          t.neuralBypassLogged = true;
+        }
+        renderPassthrough();
+      } else if (mode === "upscale") renderUpscale();
+      else renderPassthrough();
       if (t.canvas) t.canvas.style.opacity = (optHoverReveal && t.hoverHidden) ? "0" : "1";
     });
   } catch (e) { warn("multi render error:", e.message); }
@@ -1462,11 +2011,21 @@ export function setPolicy(p) {
 // mode IS the per-site memory — "off" stays off, "upscale"/"passthrough"
 // re-activates once a playable video is present. No separate toggle.
 export async function restoreSitePrefs() {
+  const restoreToken = autoEnableGeneration;
   const p = await loadSitePrefs();
   if (!p) return { ok: true, restored: false };
+  if (restoreToken !== autoEnableGeneration) return { ok: false, restored: false, reason: "superseded" };
+  const selectionGeneration = ++engineSelectionGeneration;
   if (p.engine) engine = p.engine === "artcnn" ? "artcnn" : p.engine === "fsrcnnx-hi" ? "fsrcnnx-hi" : p.engine === "neural" ? "neural" : "fsrcnnx";
   if (typeof p.neuralModel === "string") neuralModelKey = p.neuralModel;
-  if (engine === "neural") ensureNeural().catch((er) => { warn("neural restore failed:", er.message); engine = "fsrcnnx"; });
+  if (engine === "neural") ensureNeural(selectionGeneration).catch((er) => {
+    if (selectionGeneration !== engineSelectionGeneration || engine !== "neural") return;
+    if (mode === "off" && /initialization cancelled/i.test(er.message)) return;
+    warn("neural restore failed:", er.message);
+    engineSelectionGeneration++;
+    engine = "fsrcnnx";
+    resumeInterpolationAfterNeural();
+  });
   if (p.artVariant && ART_FILES.includes(p.artVariant)) artVariant = p.artVariant;
   if (typeof p.policy === "string") upscalePolicy = p.policy;
   if (typeof p.ssimds === "boolean") ssimdsEnabled = p.ssimds;
@@ -1500,25 +2059,33 @@ export async function restoreSitePrefs() {
 
 // Wait (with backoff) for a playable, non-protected video, then enter `targetMode`.
 // Pages often load the player after the content script runs, so we poll briefly.
-let autoEnableTimer = null;
+let autoEnableTimer = null, autoEnableGeneration = 0;
+function cancelAutoEnable() {
+  autoEnableGeneration++;
+  if (autoEnableTimer != null) clearTimeout(autoEnableTimer);
+  autoEnableTimer = null;
+}
 function scheduleAutoEnable(targetMode, alsoInterp = false) {
+  if (autoEnableTimer != null) clearTimeout(autoEnableTimer);
+  const generation = ++autoEnableGeneration;
   let attempts = 0;
   const tryEnable = async () => {
+    if (generation !== autoEnableGeneration) return;
     if (targetMode && mode !== "off") return; // user already acted
     attempts++;
     const v = findVideo();
     if (v && probeVideo(v) === "ok") {
       log(`auto-enabling (${targetMode || "interp-only"}${alsoInterp && targetMode ? "+interp" : ""}) for ${siteHost()}`);
-      if (targetMode) await setMode(targetMode);
+      if (targetMode) await setMode(targetMode, generation);
+      if (generation !== autoEnableGeneration) return;
       if (alsoInterp && !optInterpolate) {
         // upscaling (if any) is on first, so the interp start makes the chain decision
-        try { await setInterpolate(true); } catch (e) { warn("interp auto-enable failed:", e.message); }
+        try { await setInterpolate(true, generation); } catch (e) { warn("interp auto-enable failed:", e.message); }
       }
       return;
     }
-    if (attempts < 40) autoEnableTimer = setTimeout(tryEnable, 500); // up to ~20s
+    if (attempts < 40 && generation === autoEnableGeneration) autoEnableTimer = setTimeout(tryEnable, 500); // up to ~20s
   };
-  clearTimeout(autoEnableTimer);
   autoEnableTimer = setTimeout(tryEnable, 600);
 }
 
@@ -1534,7 +2101,8 @@ export function getStatus() {
            hoverReveal: optHoverReveal, allVideos: optAllVideos,
            deband: debandEnabled, debandStrength,
            images: optImages, imageCount: imageUpscaledCount,
-           interpolate: optInterpolate, interpStats: interpolator ? interpolator.getStats() : null,
+           interpolate: optInterpolate, interpPausedByNeural,
+           interpStats: interpolator ? interpolator.getStats() : null,
            interpAutoFallback: interpAutoFallbackPref,
            interpLadder: interpLadderPref, interpInvert: interpInvertPref,
            multiCount: multiTargets.size };
@@ -1542,16 +2110,25 @@ export function getStatus() {
 
 // ---- image upscaling (advanced option) -----------------------------------
 // Provides the image module with the shared GPU device and a freshly-built
-// FSRCNNX x4 model (its own instance, so it doesn't fight the video model's
-// per-size texture cache) plus an SSimDownscaler. Lazily initialized.
-let imageUpscaler = null, optImages = false, imageUpscaledCount = 0;
+// quality-focused FSRCNNX x2 model. It owns a separate per-size texture cache so
+// image work cannot reallocate the active video model. Lazily initialized.
+let imageUpscaler = null, imageUpscalerInitPromise = null, imageUpscalerInitDevice = null;
+let imageUpscalerInitToken = -1;
+let imageUpscalerInitGeneration = 0, imagesSelectionGeneration = 0;
+let optImages = false, imageUpscaledCount = 0;
 
-async function ensureImageUpscaler() {
-  if (imageUpscaler) return imageUpscaler;
-  if (!(await initWebGPU())) return null;
+function invalidateImageUpscaler() {
+  imageUpscalerInitGeneration++;
+  const up = imageUpscaler;
+  if (!up) return;
+  try { up.destroy?.(); } catch {}
+  imageUpscaler = null;
+  imageUpscaledCount = 0;
+}
+
+async function createImageUpscaler(initDevice, initFormat, initSampler, initGeneration) {
   // Images use the stronger, quality-focused FSRCNNX_x2_56-16-4-1 (56 feature
-  // maps) once for a 2x upscale — heavier than the video model but image load
-  // was measured negligible. Load its source on demand.
+  // maps) once for a 2x upscale. Load its source on demand.
   const IMG_MODEL = "FSRCNNX_x2_56-16-4-1";
   if (!srcCache.fsrcnnx[IMG_MODEL]) {
     const base = chrome.runtime.getURL(`model/${IMG_MODEL}`);
@@ -1562,24 +2139,86 @@ async function ensureImageUpscaler() {
     srcCache.fsrcnnx[IMG_MODEL] = { manifest, wgsl };
   }
   const mod = await import(chrome.runtime.getURL("fsrcnnx-images.js"));
-  imageUpscaler = new mod.ImageUpscaler({
-    device, format, sampler,
+  if (initGeneration !== imageUpscalerInitGeneration || device !== initDevice) {
+    const error = new Error("image upscaler initialization superseded");
+    error.code = "IMAGE_INIT_SUPERSEDED";
+    throw error;
+  }
+  const created = new mod.ImageUpscaler({
+    device: initDevice, format: initFormat, sampler: initSampler,
     fsrcnnxSource: srcCache.fsrcnnx[IMG_MODEL],
     FsrcnnxModel, SsimDownscaler,
     onCount: (n) => { imageUpscaledCount = n; },
+    warn,
   });
-  return imageUpscaler;
+  if (initGeneration !== imageUpscalerInitGeneration || device !== initDevice) {
+    try { created.destroy?.(); } catch {}
+    const error = new Error("image upscaler initialization superseded");
+    error.code = "IMAGE_INIT_SUPERSEDED";
+    throw error;
+  }
+  if (imageUpscaler) {
+    try { created.destroy?.(); } catch {}
+    return imageUpscaler;
+  }
+  imageUpscaler = created;
+  return created;
+}
+
+async function ensureImageUpscaler() {
+  if (imageUpscaler) return imageUpscaler;
+  if (imageUpscalerInitPromise) {
+    if (imageUpscalerInitDevice === device && imageUpscalerInitToken === imageUpscalerInitGeneration) {
+      return imageUpscalerInitPromise;
+    }
+    try { await imageUpscalerInitPromise; } catch {}
+    return ensureImageUpscaler();
+  }
+  if (!(await initWebGPU())) return null;
+  if (imageUpscaler) return imageUpscaler;
+  if (imageUpscalerInitPromise) return imageUpscalerInitPromise;
+  const initDevice = device;
+  const initFormat = format;
+  const initSampler = sampler;
+  const initGeneration = imageUpscalerInitGeneration;
+  const promise = createImageUpscaler(initDevice, initFormat, initSampler, initGeneration).finally(() => {
+    if (imageUpscalerInitPromise === promise) {
+      imageUpscalerInitPromise = null;
+      imageUpscalerInitDevice = null;
+      imageUpscalerInitToken = -1;
+    }
+  });
+  imageUpscalerInitDevice = initDevice;
+  imageUpscalerInitToken = initGeneration;
+  imageUpscalerInitPromise = promise;
+  return promise;
 }
 
 export async function setImages(on) {
+  const selectionGeneration = ++imagesSelectionGeneration;
   optImages = !!on;
   saveSitePrefs();
   if (optImages) {
-    const up = await ensureImageUpscaler();
+    let up;
+    try { up = await ensureImageUpscaler(); }
+    catch (error) {
+      if (selectionGeneration !== imagesSelectionGeneration || !optImages || error.code === "IMAGE_INIT_SUPERSEDED") {
+        return { ok: false, images: optImages, reason: "superseded" };
+      }
+      warn("image upscaler initialization failed:", error.message);
+      return { ok: false, images: optImages, reason: error.message };
+    }
+    if (selectionGeneration !== imagesSelectionGeneration || !optImages) {
+      if (!optImages) { try { up?.stop?.(); } catch {} }
+      return { ok: false, images: optImages, reason: "superseded" };
+    }
     if (up) up.start();
   } else if (imageUpscaler) {
+    imageUpscalerInitGeneration++;
     imageUpscaler.stop();
     imageUpscaledCount = 0;
+  } else {
+    imageUpscalerInitGeneration++;
   }
   return { ok: true, images: optImages };
 }
@@ -1588,30 +2227,91 @@ export async function setImages(on) {
 // Stage 1 is passthrough only (capture -> present -> sync test), no RIFE. This
 // is gated, off by default, and NOT persisted per-site yet — it's an opt-in
 // experiment while we validate feasibility.
-let interpolator = null, optInterpolate = false;
+let interpolator = null, interpolatorInitPromise = null;
+let interpolationSelectionGeneration = 0, interpolationConfigGeneration = 0;
+let optInterpolate = false;
 let pendingEngine = null;     // "blend" or a RIFE model key, chosen before start
 let pendingTargetFps = null;  // target fps chosen before start
-export async function setInterpolate(on) {
-  optInterpolate = !!on;
-  if (optInterpolate) {
+
+function configureInterpolator(instance) {
+  if (pendingEngine && instance.setInterpEngine) instance.setInterpEngine(pendingEngine);
+  if (pendingTargetFps != null && instance.setTargetFps) instance.setTargetFps(pendingTargetFps);
+  if (instance.setAutoFallback) instance.setAutoFallback(interpAutoFallbackPref);
+  if (instance.setLadder) instance.setLadder(interpLadderPref);
+}
+
+function scheduleInterpolatorGpuRestart() {
+  const instance = interpolator;
+  if (!instance?.running || !optInterpolate || engine === "neural") return;
+  const selectionGeneration = interpolationSelectionGeneration;
+  try { instance.stop(); }
+  catch (error) { warn("interpolation GPU-error stop failed:", error.message); return; }
+  setTimeout(() => {
+    // A delayed recovery must never override a newer user toggle, engine switch,
+    // or replacement instance. The current selection owns whether it may start.
+    if (selectionGeneration !== interpolationSelectionGeneration ||
+        instance !== interpolator || !optInterpolate || engine === "neural") return;
+    instance.start().catch((error) => warn("interpolation GPU-error restart failed:", error.message));
+  }, 50);
+}
+
+async function ensureInterpolatorInstance() {
+  if (interpolator) return interpolator;
+  if (interpolatorInitPromise) return interpolatorInitPromise;
+  const promise = import(chrome.runtime.getURL("fsrcnnx-interpolate.js")).then((mod) => {
     if (!interpolator) {
-      const mod = await import(chrome.runtime.getURL("fsrcnnx-interpolate.js"));
       interpolator = new mod.Interpolator({ findVideo, log, warn,
         chain: { tap: chainTap, info: chainInfo, available: chainAvailable, device: chainDevice, adopt: adoptChainDevice, targetDims: chainTargetDims,
                  upscaleTex: chainUpscaleTex, setInverted: setChainInverted, invert: () => interpInvertPref,
                  ladder: () => interpLadderPref } });
-      // apply any engine/target chosen before the interpolator existed
-      if (pendingEngine && interpolator.setInterpEngine) interpolator.setInterpEngine(pendingEngine);
-      if (pendingTargetFps != null && interpolator.setTargetFps) interpolator.setTargetFps(pendingTargetFps);
-      if (interpolator.setAutoFallback) interpolator.setAutoFallback(interpAutoFallbackPref);
-      if (interpolator.setLadder) interpolator.setLadder(interpLadderPref);
     }
-    const r = await interpolator.start();
-    if (!r.ok) { optInterpolate = false; warn("interpolation start failed:", r.reason); }
+    return interpolator;
+  }).finally(() => {
+    if (interpolatorInitPromise === promise) interpolatorInitPromise = null;
+  });
+  interpolatorInitPromise = promise;
+  return promise;
+}
+
+export async function setInterpolate(on, autoEnableToken = null) {
+  if (autoEnableToken == null) cancelAutoEnable();
+  else if (autoEnableToken !== autoEnableGeneration) {
+    return { ok: false, interpolate: optInterpolate, reason: "superseded" };
+  }
+  const selectionGeneration = ++interpolationSelectionGeneration;
+  optInterpolate = !!on;
+  if (optInterpolate) {
+    if (engine === "neural") {
+      pauseInterpolationForNeural();
+      saveSitePrefs();
+      return { ok: true, interpolate: true, running: false, paused: "neural" };
+    }
+    interpPausedByNeural = false;
+    const instance = await ensureInterpolatorInstance();
+    if (selectionGeneration !== interpolationSelectionGeneration || !optInterpolate) {
+      if (!optInterpolate) instance.stop();
+      return { ok: false, interpolate: optInterpolate, reason: "superseded" };
+    }
+    if (engine === "neural") {
+      pauseInterpolationForNeural();
+      saveSitePrefs();
+      return { ok: true, interpolate: true, running: false, paused: "neural" };
+    }
+    configureInterpolator(instance);
+    const r = await instance.start();
+    if (selectionGeneration !== interpolationSelectionGeneration || !optInterpolate || engine === "neural") {
+      if (!optInterpolate || engine === "neural") instance.stop();
+      if (engine === "neural" && optInterpolate) interpPausedByNeural = true;
+      return { ok: false, interpolate: optInterpolate, reason: "superseded" };
+    }
+    if (!r.ok) { optInterpolate = false; interpPausedByNeural = false; warn("interpolation start failed:", r.reason); }
     saveSitePrefs();
     return r;
   } else if (interpolator) {
+    interpPausedByNeural = false;
     interpolator.stop();
+  } else {
+    interpPausedByNeural = false;
   }
   saveSitePrefs();
   return { ok: true, interpolate: optInterpolate };
@@ -1628,6 +2328,10 @@ export function setInterpolateAvOffset(ms) {
   return { ok: false };
 }
 export async function setInterpolateModel(key) {
+  // Model changes are configuration revisions, not lifecycle selections. In
+  // particular, they must not cancel an enable that is awaiting the shared
+  // module import; configureInterpolator() will apply the newest pending key.
+  const configGeneration = ++interpolationConfigGeneration;
   pendingEngine = key; // remember for a future interpolator instance
   saveSitePrefs();
   if (!interpolator) return { ok: true, model: key, pending: true };
@@ -1637,12 +2341,13 @@ export async function setInterpolateModel(key) {
   // why Blend used to "stick with RIFE" until a manual off/on.
   const wasRunning = !!interpolator.running;
   if (wasRunning) interpolator.stop();
-  if (interpolator.setInterpEngine && !interpolator.setInterpEngine(key)) {
-    const m = interpolator._rifeMod;
-    if (m && m.setModel) m.setModel(key); // start() re-inits the session
-  }
+  if (interpolator.setInterpEngine) interpolator.setInterpEngine(key);
   if (wasRunning) {
     const r = await interpolator.start();
+    if (configGeneration !== interpolationConfigGeneration || !optInterpolate || engine === "neural") {
+      if (!optInterpolate || engine === "neural") interpolator.stop();
+      return { ok: false, model: key, reason: "superseded" };
+    }
     return { ok: r.ok, model: key, restarted: true };
   }
   return { ok: true, model: key, ready: true };
