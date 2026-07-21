@@ -62,31 +62,127 @@ async function loadedApi() {
   return api;
 }
 
+function invalidInput(reason, field) {
+  return { ok: false, error: "invalid-input", reason, field };
+}
+
+function validatePayloadShape(msg, fields) {
+  for (const field of fields) {
+    if (!Object.prototype.hasOwnProperty.call(msg, field)) {
+      return invalidInput(`Missing required field: ${field}`, field);
+    }
+  }
+  const allowed = new Set(["type", ...fields]);
+  const extra = Object.keys(msg).filter((field) => !allowed.has(field)).sort()[0];
+  return extra === undefined ? null : invalidInput(`Unexpected field: ${extra}`, extra);
+}
+
+function noPayload(run) {
+  return Object.freeze({
+    validate: (msg) => validatePayloadShape(msg, []),
+    run,
+  });
+}
+
+function fieldPayload(field, accepts, expectation, run) {
+  return Object.freeze({
+    validate(msg) {
+      const shapeError = validatePayloadShape(msg, [field]);
+      if (shapeError) return shapeError;
+      return accepts(msg[field]) ? null : invalidInput(`${field} ${expectation}`, field);
+    },
+    run,
+  });
+}
+
+function booleanPayload(run) {
+  return fieldPayload("on", (value) => typeof value === "boolean", "must be a boolean", run);
+}
+
+function enumPayload(field, values, run) {
+  const accepted = new Set(values);
+  return fieldPayload(
+    field,
+    (value) => typeof value === "string" && accepted.has(value),
+    `must be one of: ${values.join(", ")}`,
+    run,
+  );
+}
+
+function boundedNumberPayload(field, min, max, run) {
+  return fieldPayload(
+    field,
+    (value) => typeof value === "number" && Number.isFinite(value) && value >= min && value <= max,
+    `must be a finite number from ${min} to ${max}`,
+    run,
+  );
+}
+
 const COMMANDS = Object.freeze({
-  FSRCNNX_SETMODE: (module, msg) => module.setMode(msg.mode),
-  FSRCNNX_RESTORE: () => restoreOnce().then(() => restoreResult),
-  FSRCNNX_SETENGINE: (module, msg) => module.setEngine(msg.engine),
-  FSRCNNX_SETNEURALMODEL: (module, msg) => module.setNeuralModel(msg.model),
-  FSRCNNX_SETARTVARIANT: (module, msg) => module.setArtVariant(msg.variant),
-  FSRCNNX_SETINTERPOLATE: (module, msg) => module.setInterpolate(msg.on),
-  FSRCNNX_SETINTERPRES: (module, msg) => module.setInterpolateRes(msg.mode),
-  FSRCNNX_SETINTERPAVOFFSET: (module, msg) => module.setInterpolateAvOffset(msg.ms),
-  FSRCNNX_SETINTERPMODEL: (module, msg) => module.setInterpolateModel(msg.key),
-  FSRCNNX_SETINTERPTARGETFPS: (module, msg) => module.setInterpolateTargetFps(msg.value),
-  FSRCNNX_SETLADDER: (module, msg) => module.setInterpolateLadder(msg.on),
-  FSRCNNX_SETAUTOFALLBACK: (module, msg) => module.setInterpolateAutoFallback(msg.on),
-  FSRCNNX_SETINVERT: (module, msg) => module.setInterpolateInvert(msg.on),
-  FSRCNNX_SETINTERPDIAG: (module, msg) => module.setInterpolateDiag(msg.on),
-  FSRCNNX_SETIMAGES: (module, msg) => module.setImages(msg.on),
-  FSRCNNX_SETDEBAND: (module, msg) => module.setDeband(msg.on),
-  FSRCNNX_SETDEBANDSTR: (module, msg) => module.setDebandStrength(msg.strength),
-  FSRCNNX_SETHOVERREVEAL: (module, msg) => module.setHoverReveal(msg.on),
-  FSRCNNX_SETALLVIDEOS: (module, msg) => module.setAllVideos(msg.on),
-  FSRCNNX_SETSHARPEN: (module, msg) => module.setSharpen(msg.on),
-  FSRCNNX_SETSHARPENSTR: (module, msg) => module.setSharpenStrength(msg.strength),
-  FSRCNNX_SETSSIMDS: (module, msg) => module.setSSimDS(msg.on),
-  FSRCNNX_SETPOLICY: (module, msg) => module.setPolicy(msg.policy),
+  FSRCNNX_SETMODE: enumPayload("mode", ["off", "passthrough", "upscale"],
+    (module, msg) => module.setMode(msg.mode)),
+  FSRCNNX_RESTORE: noPayload(() => restoreOnce().then(() => restoreResult)),
+  FSRCNNX_SETENGINE: enumPayload("engine", ["fsrcnnx", "fsrcnnx-hi", "artcnn", "neural"],
+    (module, msg) => module.setEngine(msg.engine)),
+  FSRCNNX_SETNEURALMODEL: fieldPayload(
+    "model",
+    (value) => typeof value === "string" && /^[A-Za-z0-9._-]{1,128}$/.test(value),
+    "must be a safe model key",
+    (module, msg) => module.setNeuralModel(msg.model),
+  ),
+  FSRCNNX_SETARTVARIANT: enumPayload(
+    "variant",
+    ["ArtCNN_C4F32", "ArtCNN_C4F32_DS", "ArtCNN_C4F32_DN"],
+    (module, msg) => module.setArtVariant(msg.variant),
+  ),
+  FSRCNNX_SETINTERPOLATE: booleanPayload((module, msg) => module.setInterpolate(msg.on)),
+  FSRCNNX_SETINTERPRES: enumPayload("mode", ["auto", "full", "half", "quarter"],
+    (module, msg) => module.setInterpolateRes(msg.mode)),
+  FSRCNNX_SETINTERPAVOFFSET: boundedNumberPayload("ms", -100, 300,
+    (module, msg) => module.setInterpolateAvOffset(msg.ms)),
+  FSRCNNX_SETINTERPMODEL: enumPayload(
+    "key",
+    ["rife_v4.26_fp16", "rife_v4.26", "rife_orig", "blend"],
+    (module, msg) => module.setInterpolateModel(msg.key),
+  ),
+  FSRCNNX_SETINTERPTARGETFPS: fieldPayload(
+    "value",
+    (value) => value === "auto" ||
+      (typeof value === "number" && Number.isFinite(value) && value >= 24 && value <= 480),
+    'must be "auto" or a finite number from 24 to 480',
+    (module, msg) => module.setInterpolateTargetFps(msg.value),
+  ),
+  FSRCNNX_SETLADDER: booleanPayload((module, msg) => module.setInterpolateLadder(msg.on)),
+  FSRCNNX_SETAUTOFALLBACK: booleanPayload((module, msg) => module.setInterpolateAutoFallback(msg.on)),
+  FSRCNNX_SETINVERT: booleanPayload((module, msg) => module.setInterpolateInvert(msg.on)),
+  FSRCNNX_SETINTERPDIAG: booleanPayload((module, msg) => module.setInterpolateDiag(msg.on)),
+  FSRCNNX_SETIMAGES: booleanPayload((module, msg) => module.setImages(msg.on)),
+  FSRCNNX_SETDEBAND: booleanPayload((module, msg) => module.setDeband(msg.on)),
+  FSRCNNX_SETDEBANDSTR: boundedNumberPayload("strength", 0.3, 3,
+    (module, msg) => module.setDebandStrength(msg.strength)),
+  FSRCNNX_SETHOVERREVEAL: booleanPayload((module, msg) => module.setHoverReveal(msg.on)),
+  FSRCNNX_SETALLVIDEOS: booleanPayload((module, msg) => module.setAllVideos(msg.on)),
+  FSRCNNX_SETSHARPEN: booleanPayload((module, msg) => module.setSharpen(msg.on)),
+  FSRCNNX_SETSHARPENSTR: boundedNumberPayload("strength", 0.1, 2,
+    (module, msg) => module.setSharpenStrength(msg.strength)),
+  FSRCNNX_SETSSIMDS: booleanPayload((module, msg) => module.setSSimDS(msg.on)),
+  FSRCNNX_SETPOLICY: enumPayload(
+    "policy",
+    ["display", "auto", "force2", "force3", "force4", "force8"],
+    (module, msg) => module.setPolicy(msg.policy),
+  ),
 });
+
+function normalizeCommandResponse(result) {
+  if (!result || typeof result !== "object" || typeof result.ok !== "boolean") {
+    return {
+      ok: false,
+      error: "invalid-response",
+      reason: "Command response must be an object with a boolean ok field",
+    };
+  }
+  return result;
+}
 
 function baseStatus(extra = {}) {
   return {
@@ -123,9 +219,14 @@ function statusSnapshot() {
 }
 
 async function dispatch(msg) {
-  if (msg.type === "FSRCNNX_STATUS") return statusSnapshot();
+  if (msg.type === "FSRCNNX_STATUS") {
+    return validatePayloadShape(msg, []) || statusSnapshot();
+  }
+  const command = COMMANDS[msg.type];
+  const validationError = command.validate(msg);
+  if (validationError) return validationError;
   const module = await loadedApi();
-  return COMMANDS[msg.type](module, msg);
+  return normalizeCommandResponse(await command.run(module, msg));
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {

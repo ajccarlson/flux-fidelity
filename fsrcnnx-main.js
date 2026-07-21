@@ -101,6 +101,7 @@ let _texSource = null;       // one-shot pooled-frame override for renderUpscale
 let interpInvertPref = true; // DEFAULT ON since v0.48.6 (experiment #4 verdict); per-site saved pref overrides
 let interpAutoFallbackPref = true; // RIFE→blend performance fallback (persisted per site)
 let interpLadderPref = false; // blend ladder (persisted per site)
+let interpStaticPassthroughPref = true; // preserve source pixels in static regions
 let _gpuErrWinStart = 0, _gpuErrCount = 0, _invRestarts = 0, _invRestartLast = 0; // present-path breaker state
 let recombine16Pipeline = null, blitPipeline = null;
 // Interpolation chain tap: the interpolator (blend engine, same device) can consume
@@ -162,13 +163,15 @@ let engineSelectionGeneration = 0;
 let neuralEng = null, neuralModelKey = "", neuralBusy = false, neuralFail = 0; // v0.49.0 ONNX engine
 let interpPausedByNeural = false;
 let _neuralList = []; // manifest summary for the popup, loaded eagerly
-(async () => { try {
+const neuralCatalogReady = (async () => { try {
   const r = await fetch(chrome.runtime.getURL("model/neural/manifest.json"));
   if (r.ok) {
     _neuralList = validateNeuralManifest(await r.json())
       .map((m) => ({ key: m.key, label: m.label || m.key, scale: m.scale }));
   }
-} catch {} })();
+} catch {}
+  return _neuralList;
+})();
 let artVariant = "ArtCNN_C4F32";
 let chainDepth = 1; // 1 = single 2x, 2 = chained 4x, 3 = chained 8x (2x-only engines)
 let artLoadPending = false, artDiagLogged = false;
@@ -216,9 +219,12 @@ async function saveSitePrefs() {
     deband: debandEnabled, debandStrength,
     images: optImages,
     interpolate: optInterpolate,
-    interpEngine: pendingEngine || null,
+    interpEngine: pendingEngine,
+    interpResMode: pendingResMode,
     neuralModel: neuralModelKey || null,
-    interpTargetFps: pendingTargetFps != null ? pendingTargetFps : null,
+    interpTargetFps: pendingTargetFps,
+    interpAvOffsetMs: pendingAvOffsetMs,
+    interpStaticPassthrough: interpStaticPassthroughPref,
     interpAutoFallback: interpAutoFallbackPref,
     interpLadder: interpLadderPref,
     interpInvert: interpInvertPref,
@@ -290,6 +296,60 @@ function policyToDepth(p) {
   if (p === "force4" || p === "force3") return 2;
   return 1;
 }
+
+// ---- validated setting contracts ----------------------------------------
+// These values cross both a message boundary and chrome.storage. Treat them as
+// untrusted even though the current popup only emits values from fixed controls.
+const VALID_ENGINES = Object.freeze(["fsrcnnx", "fsrcnnx-hi", "artcnn", "neural"]);
+const STANDARD_UPSCALE_POLICIES = Object.freeze(["display", "auto", "force2", "force3", "force4"]);
+const FIXED_2X_UPSCALE_POLICIES = Object.freeze(["display", "auto", "force2", "force4", "force8"]);
+const INTERPOLATION_MODEL_KEYS = Object.freeze([
+  "rife_v4.26_fp16",
+  "rife_v4.26",
+  "rife_orig",
+  "blend",
+]);
+const INTERPOLATION_RES_MODES = Object.freeze(["auto", "full", "half", "quarter"]);
+const DEFAULT_INTERPOLATION_MODEL = "rife_v4.26_fp16";
+const DEFAULT_INTERPOLATION_RES_MODE = "auto";
+const DEFAULT_INTERPOLATION_TARGET_FPS = "auto";
+const DEFAULT_INTERPOLATION_AV_OFFSET_MS = 0;
+
+function policyOptionsForEngine(targetEngine) {
+  return targetEngine === "artcnn" || targetEngine === "fsrcnnx-hi"
+    ? FIXED_2X_UPSCALE_POLICIES
+    : STANDARD_UPSCALE_POLICIES;
+}
+
+function normalizeUpscalePolicy(value, targetEngine, fallback = null) {
+  return typeof value === "string" && policyOptionsForEngine(targetEngine).includes(value)
+    ? value
+    : fallback;
+}
+
+function normalizeInterpolationModel(value) {
+  return typeof value === "string" && INTERPOLATION_MODEL_KEYS.includes(value) ? value : null;
+}
+
+function normalizeInterpolationResMode(value) {
+  return typeof value === "string" && INTERPOLATION_RES_MODES.includes(value) ? value : null;
+}
+
+function normalizeInterpolationTargetFps(value) {
+  if (value === "auto") return "auto";
+  if (typeof value !== "number" && typeof value !== "string") return null;
+  if (typeof value === "string" && value.trim() === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 24 && number <= 480 ? number : null;
+}
+
+function normalizeInterpolationAvOffset(value) {
+  if (typeof value !== "number" && typeof value !== "string") return null;
+  if (typeof value === "string" && value.trim() === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= -100 && number <= 300 ? number : null;
+}
+// ---- end validated setting contracts ------------------------------------
 
 // Build (and cache) `depth` FSRCNNX-high stage instances. Each stage needs its
 // own instance for its own per-size texture cache.
@@ -580,8 +640,11 @@ function sameVideoSource(left, right) {
 function interpolationRuntimeConfigKey() {
   return JSON.stringify([
     interpolationConfigGeneration,
-    pendingEngine || null,
-    pendingTargetFps ?? null,
+    pendingEngine,
+    pendingResMode,
+    pendingTargetFps,
+    pendingAvOffsetMs,
+    !!interpStaticPassthroughPref,
     !!interpAutoFallbackPref,
     !!interpLadderPref,
     !!interpInvertPref,
@@ -646,6 +709,8 @@ function recordInterpolationStartFailure(failedVideo, source, result) {
     "no-rvfc",
     "pipeline-unavailable",
     "rvfc-schedule-failed",
+    "configuration-failed",
+    "post-configuration-failed",
   ].includes(reason);
   const previous = interpolationStartFailureStreak;
   const count = previous?.video === failedVideo && previous.configKey === configKey &&
@@ -659,7 +724,7 @@ function recordInterpolationStartFailure(failedVideo, source, result) {
     source,
     configKey,
     stage: "startup",
-    detail: reason,
+    detail: String(result?.detail || reason),
   };
   interpolationStartFailureStreak = null;
   log(`interpolation quarantined for current source/config (startup: ${reason})`);
@@ -671,7 +736,10 @@ function requestInterpolationRetry(context = "configuration change") {
   if (pageSuspended || !optInterpolate || engine === "neural") return Promise.resolve(false);
   const candidate = findVideo();
   if (!candidate) return Promise.resolve(false);
-  return Promise.resolve(queueVideoSelection(candidate, { force: true })).catch((error) => {
+  return Promise.resolve(queueVideoSelection(candidate, {
+    force: true,
+    restartInterpolation: true,
+  })).catch((error) => {
     warn(`interpolation retry after ${context} failed:`, error.message);
     return false;
   });
@@ -1678,7 +1746,15 @@ async function ensureNeural(
 }
 
 export async function setNeuralModel(key) {
-  const requestedModelKey = key || "";
+  const requestedModelKey = typeof key === "string" ? key : "";
+  await neuralCatalogReady;
+  if (!_neuralList.some((entry) => entry.key === requestedModelKey)) {
+    return {
+      ok: false,
+      reason: "invalid neural model",
+      model: neuralModelKey || _neuralList[0]?.key || null,
+    };
+  }
   // Model selection is part of neural-engine selection. Give each switch its
   // own generation so overlapping initializations cannot publish out of order.
   const selectionGeneration = ++engineSelectionGeneration;
@@ -2197,10 +2273,14 @@ function updateVideoMonitor() {
   videoMonitor.start(video);
 }
 
-function queueVideoSelection(candidate, { force = false, sourceBoundary = false } = {}) {
+function queueVideoSelection(candidate, {
+  force = false,
+  sourceBoundary = false,
+  restartInterpolation = false,
+} = {}) {
   const source = captureVideoSource(candidate);
   const pendingRequest = videoSelectionPendingRequest;
-  if (!force && !sourceBoundary &&
+  if (!force && !sourceBoundary && !restartInterpolation &&
       videoSelectionPendingGeneration === videoSelectionGeneration &&
       pendingRequest?.modeGeneration === modeSelectionGeneration &&
       pendingRequest.candidate === candidate &&
@@ -2216,7 +2296,7 @@ function queueVideoSelection(candidate, { force = false, sourceBoundary = false 
   const interpolationReady = !optInterpolate || engine === "neural" ||
     interpolationQuarantined ||
     (interpolator?.running && interpolator.video === candidate);
-  if (!force && !sourceBoundary && !sourceChanged &&
+  if (!force && !sourceBoundary && !restartInterpolation && !sourceChanged &&
       candidate === video && rendererReady && sourceOwnerReady && interpolationReady &&
       videoSelectionPendingGeneration === 0) {
     if (optAllVideos && mode !== "off") syncMultiTargets();
@@ -2226,7 +2306,14 @@ function queueVideoSelection(candidate, { force = false, sourceBoundary = false 
   videoSelectionPendingGeneration = generation;
   const expectedModeGeneration = modeSelectionGeneration;
   const queued = videoSwitchTail.catch(() => {}).then(() =>
-    applyVideoSelection(candidate, generation, expectedModeGeneration, source, sourceBoundary));
+    applyVideoSelection(
+      candidate,
+      generation,
+      expectedModeGeneration,
+      source,
+      sourceBoundary,
+      restartInterpolation,
+    ));
   const request = { candidate, source, modeGeneration: expectedModeGeneration, operation: null };
   const operation = queued.then(
     (result) => {
@@ -2270,11 +2357,28 @@ async function restartInterpolationForVideoSelection(generation) {
   if (generation !== videoSelectionGeneration || !optInterpolate || engine === "neural" || !video ||
       interpolationQuarantineMatches(video)) return false;
   const selectionGeneration = interpolationSelectionGeneration;
-  configureInterpolator(instance);
   const selectedVideo = video;
   const selectedSource = captureVideoSource(selectedVideo);
+  try { configureInterpolator(instance); }
+  catch (error) {
+    recordInterpolationStartFailure(selectedVideo, selectedSource, {
+      reason: "configuration-failed",
+      detail: error?.message || String(error),
+    });
+    warn("interpolation configuration failed:", error.message);
+    return false;
+  }
   const configKey = interpolationRuntimeConfigKey();
-  const result = await instance.start(selectedVideo);
+  let result;
+  try { result = await instance.start(selectedVideo); }
+  catch (error) {
+    recordInterpolationStartFailure(selectedVideo, selectedSource, {
+      reason: "start-threw",
+      detail: error?.message || String(error),
+    });
+    warn("interpolation source handoff failed:", error.message);
+    return false;
+  }
   if (generation !== videoSelectionGeneration || selectionGeneration !== interpolationSelectionGeneration ||
       !optInterpolate || engine === "neural" || video !== selectedVideo ||
       configKey !== interpolationRuntimeConfigKey() ||
@@ -2285,10 +2389,29 @@ async function restartInterpolationForVideoSelection(generation) {
     return false;
   }
   interpolationStartFailureStreak = null;
+  // The RIFE module is loaded during start(), so apply static-passthrough to its
+  // CPU path once more after startup as well as to the pre-start GPU settings.
+  try { configureInterpolator(instance); }
+  catch (error) {
+    recordInterpolationStartFailure(selectedVideo, selectedSource, {
+      reason: "post-configuration-failed",
+      detail: error?.message || String(error),
+    });
+    warn("interpolation post-start configuration failed:", error.message);
+    try { instance.stop(); } catch {}
+    return false;
+  }
   return instance.video === selectedVideo;
 }
 
-async function applyVideoSelection(candidate, generation, expectedModeGeneration, source, sourceBoundary = false) {
+async function applyVideoSelection(
+  candidate,
+  generation,
+  expectedModeGeneration,
+  source,
+  sourceBoundary = false,
+  restartInterpolation = false,
+) {
   if (generation !== videoSelectionGeneration || expectedModeGeneration !== modeSelectionGeneration || pageSuspended) return false;
   const previous = video;
   const changed = candidate !== previous || sourceBoundary ||
@@ -2373,7 +2496,7 @@ async function applyVideoSelection(candidate, generation, expectedModeGeneration
     detach();
   }
 
-  if ((changed || !interpolator?.running || interpolator.video !== candidate) &&
+  if ((changed || restartInterpolation || !interpolator?.running || interpolator.video !== candidate) &&
       processable && optInterpolate && engine !== "neural" &&
       !interpolationQuarantineMatches(candidate, source)) {
     await restartInterpolationForVideoSelection(generation);
@@ -2526,9 +2649,15 @@ export async function setMode(next, restoreToken = null) {
 }
 
 export function setEngine(e) {
+  if (!VALID_ENGINES.includes(e)) {
+    return { ok: false, reason: "invalid engine", engine, policy: upscalePolicy, chainDepth };
+  }
   const selectionGeneration = ++engineSelectionGeneration;
   const wasNeural = engine === "neural";
-  engine = e === "artcnn" ? "artcnn" : e === "fsrcnnx-hi" ? "fsrcnnx-hi" : e === "neural" ? "neural" : "fsrcnnx";
+  engine = e;
+  // A policy is interpreted by the selected engine. Normalize atomically so an
+  // engine switch never exposes an incompatible intermediate configuration.
+  upscalePolicy = normalizeUpscalePolicy(upscalePolicy, engine, "display");
   resetScaleSelection();
   clearMultiTargets();
   const activateNeural = engine === "neural" && mode === "upscale" && !pageSuspended &&
@@ -2556,14 +2685,15 @@ export function setEngine(e) {
     ensureHiStages(chainDepth).catch((er) => warn("FSRCNNX-high preload failed:", er.message));
   }
   saveSitePrefs();
-  return { ok: true, engine };
+  return { ok: true, engine, policy: upscalePolicy, chainDepth };
 }
 export function setArtVariant(v) {
-  if (ART_FILES.includes(v)) {
-    artVariant = v;
-    resetScaleSelection();
-    clearMultiTargets();
+  if (!ART_FILES.includes(v)) {
+    return { ok: false, reason: "invalid art variant", artVariant };
   }
+  artVariant = v;
+  resetScaleSelection();
+  clearMultiTargets();
   artDiagLogged = false;
   if (engine === "artcnn" && device) ensureArtStages(artVariant, chainDepth).catch((er) => warn("ArtCNN preload failed:", er.message));
   saveSitePrefs();
@@ -2870,12 +3000,16 @@ export function setSSimDS(on) {
 }
 
 export function setPolicy(p) {
-  upscalePolicy = p;
+  const normalized = normalizeUpscalePolicy(p, engine);
+  if (!normalized) {
+    return { ok: false, reason: "invalid policy", policy: upscalePolicy, chainDepth };
+  }
+  upscalePolicy = normalized;
   resetScaleSelection();
   clearMultiTargets();
   // For 2x-only engines (ArtCNN / FSRCNNX high) the policy encodes the scale via
   // chain depth: force2 -> 1, force4 -> 2, force8 -> 3.
-  chainDepth = (engine === "artcnn" || engine === "fsrcnnx-hi") ? policyToDepth(p) : 1;
+  chainDepth = (engine === "artcnn" || engine === "fsrcnnx-hi") ? policyToDepth(upscalePolicy) : 1;
   artDiagLogged = false;
   if (engine === "artcnn" && device) {
     ensureArtStages(artVariant, chainDepth).catch(() => {});
@@ -2893,14 +3027,14 @@ export function setPolicy(p) {
 // re-activates once a playable video is present. No separate toggle.
 export async function restoreSitePrefs() {
   const restoreToken = preferenceRestoreGeneration;
-  const p = await loadSitePrefs();
+  const [p] = await Promise.all([loadSitePrefs(), neuralCatalogReady]);
   if (!p) return { ok: true, restored: false };
   if (restoreToken !== preferenceRestoreGeneration) return { ok: false, restored: false, reason: "superseded" };
   engineSelectionGeneration++;
-  if (p.engine) engine = p.engine === "artcnn" ? "artcnn" : p.engine === "fsrcnnx-hi" ? "fsrcnnx-hi" : p.engine === "neural" ? "neural" : "fsrcnnx";
-  if (typeof p.neuralModel === "string") neuralModelKey = p.neuralModel;
+  engine = VALID_ENGINES.includes(p.engine) ? p.engine : "fsrcnnx";
+  if (_neuralList.some((entry) => entry.key === p.neuralModel)) neuralModelKey = p.neuralModel;
   if (p.artVariant && ART_FILES.includes(p.artVariant)) artVariant = p.artVariant;
-  if (typeof p.policy === "string") upscalePolicy = p.policy;
+  upscalePolicy = normalizeUpscalePolicy(p.policy, engine, "display");
   if (typeof p.ssimds === "boolean") ssimdsEnabled = p.ssimds;
   if (typeof p.sharpen === "boolean") sharpenEnabled = p.sharpen;
   if (Number.isFinite(p.sharpenStrength)) {
@@ -2918,8 +3052,13 @@ export async function restoreSitePrefs() {
   // Interpolation configuration is applied before its lifecycle setting. The
   // renderer mode is activated first so an enabled interpolator makes the right
   // chained-versus-standalone decision on its first start.
-  if (typeof p.interpEngine === "string" && p.interpEngine) pendingEngine = p.interpEngine;
-  if (p.interpTargetFps != null) pendingTargetFps = p.interpTargetFps;
+  pendingEngine = normalizeInterpolationModel(p.interpEngine) || DEFAULT_INTERPOLATION_MODEL;
+  pendingResMode = normalizeInterpolationResMode(p.interpResMode) || DEFAULT_INTERPOLATION_RES_MODE;
+  pendingTargetFps = normalizeInterpolationTargetFps(p.interpTargetFps) ?? DEFAULT_INTERPOLATION_TARGET_FPS;
+  pendingAvOffsetMs = normalizeInterpolationAvOffset(p.interpAvOffsetMs) ?? DEFAULT_INTERPOLATION_AV_OFFSET_MS;
+  interpStaticPassthroughPref = typeof p.interpStaticPassthrough === "boolean"
+    ? p.interpStaticPassthrough
+    : true;
   if (typeof p.interpAutoFallback === "boolean") interpAutoFallbackPref = p.interpAutoFallback;
   if (typeof p.interpLadder === "boolean") interpLadderPref = p.interpLadder;
   if (typeof p.interpInvert === "boolean") interpInvertPref = p.interpInvert;
@@ -2944,11 +3083,13 @@ export function getStatus() {
   const activeMode = mode !== "off" && primaryController?.active && primaryController.video === video
     ? mode
     : "off";
+  const configuredNeuralModel = neuralModelKey || _neuralList[0]?.key || null;
   return { mode, activeMode, hasVideo: !!findVideo(), webgpu: "gpu" in navigator, frameCount,
            model: activeModel?.manifest?.name || null, scale: activeModel?.scale || null,
            policy: upscalePolicy, ssimds: ssimdsEnabled,
            sharpen: sharpenEnabled, sharpenStrength,
            engine, artVariant, chainDepth,
+           neuralModel: configuredNeuralModel,
            neural: engine === "neural" && neuralEng ? { model: neuralModelKey || (neuralEng.activeEntry()?.key ?? null), label: neuralEng.activeEntry()?.label ?? null, scale: neuralEng.activeEntry()?.scale ?? null, ready: neuralEng.ready(), ...neuralEng.stats() } : null,
            neuralModels: _neuralList,
            protected: protectedSource, protectedReason, host: siteHost(),
@@ -2961,6 +3102,11 @@ export function getStatus() {
              ? { stage: interpolationTerminalQuarantine.stage, detail: interpolationTerminalQuarantine.detail }
              : null,
            interpStats: interpolator ? interpolator.getStats() : null,
+           interpModel: pendingEngine,
+           interpResMode: pendingResMode,
+           interpTargetFps: pendingTargetFps,
+           interpAvOffsetMs: pendingAvOffsetMs,
+           interpStaticPassthrough: interpStaticPassthroughPref,
            interpAutoFallback: interpAutoFallbackPref,
            interpLadder: interpLadderPref, interpInvert: interpInvertPref,
            multiCount: multiTargets.size,
@@ -3092,14 +3238,28 @@ export async function setImages(on) {
 let interpolator = null, interpolatorInitPromise = null;
 let interpolationSelectionGeneration = 0, interpolationConfigGeneration = 0;
 let optInterpolate = false;
-let pendingEngine = null;     // "blend" or a RIFE model key, chosen before start
-let pendingTargetFps = null;  // target fps chosen before start
+let pendingEngine = DEFAULT_INTERPOLATION_MODEL; // "blend" or a RIFE model key
+let pendingResMode = DEFAULT_INTERPOLATION_RES_MODE;
+let pendingTargetFps = DEFAULT_INTERPOLATION_TARGET_FPS;
+let pendingAvOffsetMs = DEFAULT_INTERPOLATION_AV_OFFSET_MS;
 
 function configureInterpolator(instance) {
-  if (pendingEngine && instance.setInterpEngine) instance.setInterpEngine(pendingEngine);
-  if (pendingTargetFps != null && instance.setTargetFps) instance.setTargetFps(pendingTargetFps);
+  if (instance.setInterpEngine) instance.setInterpEngine(pendingEngine);
+  if (instance.setResMode) instance.setResMode(pendingResMode);
+  if (instance.setTargetFps) instance.setTargetFps(pendingTargetFps);
+  if (instance.setAvOffset) instance.setAvOffset(pendingAvOffsetMs);
   if (instance.setAutoFallback) instance.setAutoFallback(interpAutoFallbackPref);
   if (instance.setLadder) instance.setLadder(interpLadderPref);
+  if (instance._rifeMod?.setStaticPassthrough) {
+    instance._rifeMod.setStaticPassthrough(interpStaticPassthroughPref);
+  }
+  instance._staticOn = interpStaticPassthroughPref;
+  // Inversion is selected during start(). Refresh these accessors for injected
+  // or replaced instances so that they always read the authoritative prefs.
+  if (instance.chain && typeof instance.chain === "object") {
+    instance.chain.invert = () => interpInvertPref;
+    instance.chain.ladder = () => interpLadderPref;
+  }
 }
 
 function scheduleInterpolatorGpuRestart() {
@@ -3171,7 +3331,13 @@ export async function setInterpolate(on, restoreToken = null) {
       return { ok: true, interpolate: true, running: false, paused: "neural" };
     }
     interpPausedByNeural = false;
-    const instance = await ensureInterpolatorInstance();
+    let instance;
+    try { instance = await ensureInterpolatorInstance(); }
+    catch (error) {
+      saveSitePrefs();
+      return { ok: false, interpolate: true, running: false,
+        reason: "runtime unavailable", detail: error?.message || String(error), pending: true };
+    }
     if (selectionGeneration !== interpolationSelectionGeneration || !optInterpolate) {
       if (!optInterpolate) instance.stop();
       return { ok: false, interpolate: optInterpolate, reason: "superseded" };
@@ -3181,7 +3347,12 @@ export async function setInterpolate(on, restoreToken = null) {
       saveSitePrefs();
       return { ok: true, interpolate: true, running: false, paused: "neural" };
     }
-    configureInterpolator(instance);
+    try { configureInterpolator(instance); }
+    catch (error) {
+      saveSitePrefs();
+      return { ok: false, interpolate: true, running: false,
+        reason: "runtime failure", detail: error?.message || String(error), pending: true };
+    }
     const candidate = findVideo();
     if (!candidate) {
       await queueVideoSelection(null, { force: true });
@@ -3232,66 +3403,162 @@ export async function setInterpolate(on, restoreToken = null) {
 export function getInterpolateStats() {
   return interpolator ? interpolator.getStats() : { running: false };
 }
+
+function acceptedPendingInterpolationSetting(context, state, reason, error = null) {
+  void requestInterpolationRetry(context);
+  return {
+    ok: true,
+    pending: true,
+    ...state,
+    reason,
+    ...(error ? { detail: error?.message || String(error) } : {}),
+  };
+}
+
 export function setInterpolateRes(mode) {
+  const normalized = normalizeInterpolationResMode(mode);
+  if (!normalized) {
+    return { ok: false, reason: "invalid resolution", resMode: pendingResMode };
+  }
+  pendingResMode = normalized;
   const { retry } = reviseInterpolationConfiguration();
-  if (interpolator) interpolator.setResMode(mode);
+  saveSitePrefs();
+  if (!interpolator) {
+    if (retry) void requestInterpolationRetry("resolution change");
+    return { ok: true, resMode: pendingResMode, pending: true };
+  }
+  if (!interpolator.setResMode) {
+    return acceptedPendingInterpolationSetting(
+      "resolution change", { resMode: pendingResMode }, "runtime unavailable");
+  }
+  try {
+    const applied = interpolator.setResMode(pendingResMode);
+    if (applied !== pendingResMode) {
+      return acceptedPendingInterpolationSetting(
+        "resolution change", { resMode: pendingResMode, applied }, "runtime rejected resolution");
+    }
+  } catch (error) {
+    return acceptedPendingInterpolationSetting(
+      "resolution change", { resMode: pendingResMode }, "runtime failure", error);
+  }
   if (retry) void requestInterpolationRetry("resolution change");
-  return { ok: true, resMode: mode };
+  return { ok: true, resMode: pendingResMode };
 }
 export function setInterpolateAvOffset(ms) {
-  const { retry } = reviseInterpolationConfiguration();
-  if (interpolator) {
-    const result = { ok: true, avOffsetMs: interpolator.setAvOffset(ms) };
-    if (retry) void requestInterpolationRetry("A/V offset change");
-    return result;
+  const normalized = normalizeInterpolationAvOffset(ms);
+  if (normalized == null) {
+    return { ok: false, reason: "invalid A/V offset", avOffsetMs: pendingAvOffsetMs };
   }
-  return { ok: false };
+  pendingAvOffsetMs = normalized;
+  const { retry } = reviseInterpolationConfiguration();
+  saveSitePrefs();
+  if (!interpolator) {
+    if (retry) void requestInterpolationRetry("A/V offset change");
+    return { ok: true, avOffsetMs: pendingAvOffsetMs, pending: true };
+  }
+  if (!interpolator.setAvOffset) {
+    return acceptedPendingInterpolationSetting(
+      "A/V offset change", { avOffsetMs: pendingAvOffsetMs }, "runtime unavailable");
+  }
+  try {
+    const applied = interpolator.setAvOffset(pendingAvOffsetMs);
+    if (applied !== pendingAvOffsetMs) {
+      return acceptedPendingInterpolationSetting(
+        "A/V offset change", { avOffsetMs: pendingAvOffsetMs, applied }, "runtime rejected A/V offset");
+    }
+  } catch (error) {
+    return acceptedPendingInterpolationSetting(
+      "A/V offset change", { avOffsetMs: pendingAvOffsetMs }, "runtime failure", error);
+  }
+  if (retry) void requestInterpolationRetry("A/V offset change");
+  return { ok: true, avOffsetMs: pendingAvOffsetMs };
 }
 export async function setInterpolateModel(key) {
+  const normalized = normalizeInterpolationModel(key);
+  if (!normalized) {
+    return { ok: false, reason: "invalid interpolation model", model: pendingEngine };
+  }
   // Model changes are configuration revisions, not lifecycle selections. In
   // particular, they must not cancel an enable that is awaiting the shared
   // module import; configureInterpolator() will apply the newest pending key.
   const { generation: configGeneration, retry } = reviseInterpolationConfiguration();
-  pendingEngine = key; // remember for a future interpolator instance
+  pendingEngine = normalized; // remember for a future interpolator instance
   saveSitePrefs();
   if (!interpolator) {
     if (retry) void requestInterpolationRetry("model change");
-    return { ok: true, model: key, pending: true };
+    return { ok: true, model: pendingEngine, pending: true };
   }
   // Apply the engine choice through the proper start path (standalone-blend vs RIFE,
   // chain decision, model init) by restarting a RUNNING interpolator. Mid-run flag
   // flips can't switch pipelines (e.g. RIFE session → standalone blend), which is
   // why Blend used to "stick with RIFE" until a manual off/on.
   const wasRunning = !!interpolator.running;
-  if (wasRunning) interpolator.stop();
-  if (interpolator.setInterpEngine) interpolator.setInterpEngine(key);
+  try {
+    if (wasRunning) interpolator.stop();
+    if (!interpolator.setInterpEngine) {
+      return acceptedPendingInterpolationSetting(
+        "model change", { model: pendingEngine }, "runtime unavailable");
+    }
+    interpolator.setInterpEngine(pendingEngine);
+  } catch (error) {
+    return acceptedPendingInterpolationSetting(
+      "model change", { model: pendingEngine }, "runtime failure", error);
+  }
   if (wasRunning) {
     const selectedVideo = video;
     const selectedSource = captureVideoSource(selectedVideo);
-    const r = await interpolator.start(selectedVideo);
+    let r;
+    try { r = await interpolator.start(selectedVideo); }
+    catch (error) {
+      recordInterpolationStartFailure(selectedVideo, selectedSource, {
+        reason: "start-threw", detail: error?.message || String(error),
+      });
+      return acceptedPendingInterpolationSetting(
+        "model change", { model: pendingEngine, restarted: true }, "runtime failure", error);
+    }
     if (configGeneration !== interpolationConfigGeneration || !optInterpolate || engine === "neural" ||
         video !== selectedVideo || !sameVideoSource(selectedSource, captureVideoSource(selectedVideo))) {
       if (!optInterpolate || engine === "neural") interpolator.stop();
-      return { ok: false, model: key, reason: "superseded" };
+      return { ok: false, model: pendingEngine, reason: "superseded" };
     }
     if (!r?.ok) recordInterpolationStartFailure(selectedVideo, selectedSource, r);
     else interpolationStartFailureStreak = null;
-    return { ok: r.ok, model: key, restarted: true };
+    return r?.ok
+      ? { ok: true, model: pendingEngine, restarted: true }
+      : acceptedPendingInterpolationSetting(
+          "model change", { model: pendingEngine, restarted: true }, r?.reason || "runtime failure");
   }
   if (retry) void requestInterpolationRetry("model change");
-  return { ok: true, model: key, ready: true };
+  return { ok: true, model: pendingEngine, ready: true };
 }
 export function setInterpolateTargetFps(v) {
-  pendingTargetFps = v;
+  const normalized = normalizeInterpolationTargetFps(v);
+  if (normalized == null) {
+    return { ok: false, reason: "invalid target FPS", target: pendingTargetFps };
+  }
+  pendingTargetFps = normalized;
   const { retry } = reviseInterpolationConfiguration();
   saveSitePrefs();
-  if (!interpolator || !interpolator.setTargetFps) {
+  if (!interpolator) {
     if (retry) void requestInterpolationRetry("target FPS change");
-    return { ok: true, target: v, pending: true };
+    return { ok: true, target: pendingTargetFps, pending: true };
   }
-  const result = { ok: true, target: interpolator.setTargetFps(v) };
+  if (!interpolator.setTargetFps) {
+    return acceptedPendingInterpolationSetting(
+      "target FPS change", { target: pendingTargetFps }, "runtime unavailable");
+  }
+  try {
+    const applied = interpolator.setTargetFps(pendingTargetFps);
+    if (applied !== pendingTargetFps) {
+      return acceptedPendingInterpolationSetting(
+        "target FPS change", { target: pendingTargetFps, applied }, "runtime rejected target FPS");
+    }
+  } catch (error) {
+    return acceptedPendingInterpolationSetting(
+      "target FPS change", { target: pendingTargetFps }, "runtime failure", error);
+  }
   if (retry) void requestInterpolationRetry("target FPS change");
-  return result;
+  return { ok: true, target: pendingTargetFps };
 }
 export function listInterpolateModels() {
   if (interpolator && interpolator._rifeMod && interpolator._rifeMod.listModels) {
@@ -3335,11 +3602,23 @@ export async function setInterpolateInvert(on) {
   // Mode selection happens at interpolator start (capture path, pin dims, present
   // sink) — mirror the model-change restart so the flip takes effect cleanly.
   const wasRunning = !!interpolator.running;
-  if (wasRunning) interpolator.stop();
+  try { if (wasRunning) interpolator.stop(); }
+  catch (error) {
+    return acceptedPendingInterpolationSetting(
+      "chain inversion change", { invert: interpInvertPref }, "runtime failure", error);
+  }
   if (wasRunning) {
     const selectedVideo = video;
     const selectedSource = captureVideoSource(selectedVideo);
-    const r = await interpolator.start(selectedVideo);
+    let r;
+    try { r = await interpolator.start(selectedVideo); }
+    catch (error) {
+      recordInterpolationStartFailure(selectedVideo, selectedSource, {
+        reason: "start-threw", detail: error?.message || String(error),
+      });
+      return acceptedPendingInterpolationSetting(
+        "chain inversion change", { invert: interpInvertPref, restarted: true }, "runtime failure", error);
+    }
     if (configGeneration !== interpolationConfigGeneration || !optInterpolate || engine === "neural" ||
         video !== selectedVideo || !sameVideoSource(selectedSource, captureVideoSource(selectedVideo))) {
       if (!optInterpolate || engine === "neural") interpolator.stop();
@@ -3347,7 +3626,10 @@ export async function setInterpolateInvert(on) {
     }
     if (!r?.ok) recordInterpolationStartFailure(selectedVideo, selectedSource, r);
     else interpolationStartFailureStreak = null;
-    return { ok: r.ok, invert: interpInvertPref, restarted: true };
+    return r?.ok
+      ? { ok: true, invert: interpInvertPref, restarted: true }
+      : acceptedPendingInterpolationSetting(
+          "chain inversion change", { invert: interpInvertPref, restarted: true }, r?.reason || "runtime failure");
   }
   if (retry) void requestInterpolationRetry("chain inversion change");
   return { ok: true, invert: interpInvertPref, ready: true };
@@ -3356,29 +3638,59 @@ export function setInterpolateAutoFallback(on) {
   interpAutoFallbackPref = !!on;
   const { retry } = reviseInterpolationConfiguration();
   saveSitePrefs();
-  if (interpolator && interpolator.setAutoFallback) interpolator.setAutoFallback(interpAutoFallbackPref);
+  if (interpolator && !interpolator.setAutoFallback) {
+    return acceptedPendingInterpolationSetting(
+      "fallback change", { autoFallback: interpAutoFallbackPref }, "runtime unavailable");
+  }
+  try { interpolator?.setAutoFallback?.(interpAutoFallbackPref); }
+  catch (error) {
+    return acceptedPendingInterpolationSetting(
+      "fallback change", { autoFallback: interpAutoFallbackPref }, "runtime failure", error);
+  }
   if (retry) void requestInterpolationRetry("fallback change");
-  return { ok: true, autoFallback: interpAutoFallbackPref };
+  return { ok: true, autoFallback: interpAutoFallbackPref, pending: !interpolator };
 }
 export function setInterpolateLadder(on) {
   interpLadderPref = !!on;
   const { retry } = reviseInterpolationConfiguration();
   saveSitePrefs();
-  if (interpolator && interpolator.setLadder) interpolator.setLadder(interpLadderPref);
+  if (interpolator && !interpolator.setLadder) {
+    return acceptedPendingInterpolationSetting(
+      "ladder change", { ladder: interpLadderPref }, "runtime unavailable");
+  }
+  try { interpolator?.setLadder?.(interpLadderPref); }
+  catch (error) {
+    return acceptedPendingInterpolationSetting(
+      "ladder change", { ladder: interpLadderPref }, "runtime failure", error);
+  }
   if (retry) void requestInterpolationRetry("ladder change");
-  return { ok: true, ladder: interpLadderPref };
+  return { ok: true, ladder: interpLadderPref, pending: !interpolator };
 }
 export function setInterpolateDiag(on) {
+  interpStaticPassthroughPref = !!on;
   const { retry } = reviseInterpolationConfiguration();
+  saveSitePrefs();
   // controls the static-region passthrough (jitter fix). Sets both the CPU-path
   // flag (rife module) and the interpolator flag (used by the GPU composite shader).
-  let ok = false;
-  if (interpolator && interpolator._rifeMod && interpolator._rifeMod.setStaticPassthrough) {
-    interpolator._rifeMod.setStaticPassthrough(on); ok = true;
+  if (!interpolator) {
+    if (retry) void requestInterpolationRetry("static detail change");
+    return { ok: true, staticPassthrough: interpStaticPassthroughPref, pending: true };
   }
-  if (interpolator) { interpolator._staticOn = !!on; ok = true; }
-  if (retry) void requestInterpolationRetry("diagnostic change");
-  return { ok, staticPassthrough: !!on };
+  try {
+    if (interpolator._rifeMod?.setStaticPassthrough) {
+      interpolator._rifeMod.setStaticPassthrough(interpStaticPassthroughPref);
+    }
+    interpolator._staticOn = interpStaticPassthroughPref;
+  } catch (error) {
+    return acceptedPendingInterpolationSetting(
+      "static detail change",
+      { staticPassthrough: interpStaticPassthroughPref },
+      "runtime failure",
+      error,
+    );
+  }
+  if (retry) void requestInterpolationRetry("static detail change");
+  return { ok: true, staticPassthrough: interpStaticPassthroughPref };
 }
 
 log("pipeline module loaded");

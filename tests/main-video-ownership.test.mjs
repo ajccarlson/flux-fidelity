@@ -47,8 +47,10 @@ async function loadSelectionCoordinator(deps) {
     let modeSelectionGeneration = 0;
     let interpolationSelectionGeneration = 0, interpolationConfigGeneration = 0;
     let interpolationTerminalQuarantine = null, interpolationStartFailureStreak = null;
-    let pendingEngine = null, pendingTargetFps = null;
+    let pendingEngine = "rife_v4.26_fp16", pendingResMode = "auto";
+    let pendingTargetFps = "auto", pendingAvOffsetMs = 0;
     let interpAutoFallbackPref = true, interpLadderPref = false, interpInvertPref = true;
+    let interpStaticPassthroughPref = true;
     let engineSelectionGeneration = 0;
     let engine = deps.engine || "fsrcnnx";
     let interpolator = deps.interpolator || null;
@@ -62,7 +64,9 @@ async function loadSelectionCoordinator(deps) {
     const findVideo = () => deps.selected;
     const log = (...args) => deps.events.push(["log", ...args]);
     const warn = (...args) => deps.events.push(["warn", ...args]);
-    const configureInterpolator = () => {};
+    const configureInterpolator = () => {
+      if (deps.configureError) throw deps.configureError;
+    };
     const cancelMainLoop = () => deps.events.push(["cancel", primaryController?.video || null]);
     const detach = () => {
       deps.events.push(["detach", primaryController?.video || null]);
@@ -94,6 +98,7 @@ async function loadSelectionCoordinator(deps) {
     }
     export function invalidateSelection() { videoSelectionGeneration++; }
     export function terminalFailure(failure) { return handleInterpolationTerminalFailure(failure); }
+    export function retryInterpolation() { return requestInterpolationRetry("test configuration change"); }
     export function quarantined(candidate = video) { return interpolationQuarantineMatches(candidate); }
     export function state() {
       return { mode, video, primaryController, protectedSource, protectedReason,
@@ -157,6 +162,11 @@ async function loadPositionBoundary() {
 
 async function loadEngineSelection(deps) {
   const source = await readFile(mainUrl, "utf8");
+  const settingsContract = section(
+    source,
+    "// ---- validated setting contracts",
+    "// ---- end validated setting contracts",
+  );
   const production = section(source, "export function setEngine", "export function setArtVariant");
   const harness = `
     const deps = globalThis.__videoOwnershipDeps;
@@ -175,6 +185,7 @@ async function loadEngineSelection(deps) {
     const ensureHiStages = async () => {};
     const saveSitePrefs = () => deps.events.push("save");
     const warn = (...args) => deps.events.push(["warn", ...args]);
+    ${settingsContract}
     ${production}
     export function setSuspended(value) { pageSuspended = value; }
     export function state() { return { engine, engineSelectionGeneration }; }
@@ -188,6 +199,10 @@ async function loadNeuralModelSelection(deps) {
   const production = section(source, "export async function setNeuralModel", "// Shared present tail");
   const harness = `
     const deps = globalThis.__videoOwnershipDeps;
+    const _neuralList = deps.neuralModels || [
+      { key: "span" }, { key: "span-a" }, { key: "span-b" },
+    ];
+    const neuralCatalogReady = Promise.resolve(_neuralList);
     let neuralModelKey = "", engine = "neural", engineSelectionGeneration = 2;
     let mode = deps.mode, pageSuspended = !!deps.pageSuspended;
     const video = {};
@@ -205,16 +220,25 @@ async function loadNeuralModelSelection(deps) {
 
 async function loadPreferenceRestore(deps) {
   const source = await readFile(mainUrl, "utf8");
+  const settingsContract = section(
+    source,
+    "// ---- validated setting contracts",
+    "// ---- end validated setting contracts",
+  );
   const production = section(source, "export async function restoreSitePrefs()", "function cancelPreferenceRestore()");
   const harness = `
     const deps = globalThis.__videoOwnershipDeps;
+    const _neuralList = deps.neuralModels || [{ key: "span" }];
+    const neuralCatalogReady = Promise.resolve(_neuralList);
     const ART_FILES = ["ArtCNN_C4F32"];
     let preferenceRestoreGeneration = 0, engineSelectionGeneration = 0;
     let engine = "fsrcnnx", neuralModelKey = "", artVariant = "ArtCNN_C4F32";
     let upscalePolicy = "display", ssimdsEnabled = true, sharpenEnabled = false, sharpenStrength = 1;
     let optHoverReveal = false, optAllVideos = false, debandEnabled = false, debandStrength = 1;
-    let chainDepth = 1, pendingEngine = null, pendingTargetFps = null;
+    let chainDepth = 1, pendingEngine = "rife_v4.26_fp16", pendingResMode = "auto";
+    let pendingTargetFps = "auto", pendingAvOffsetMs = 0;
     let interpAutoFallbackPref = true, interpLadderPref = false, interpInvertPref = true;
+    let interpStaticPassthroughPref = true;
     const loadSitePrefs = async () => deps.prefs;
     const policyToDepth = () => 1;
     const resetScaleSelection = () => {};
@@ -222,6 +246,7 @@ async function loadPreferenceRestore(deps) {
     const setMode = async (value) => { deps.events.push(["mode", value, deps.pageSuspended]); return { ok: true }; };
     const setImages = async (value) => { deps.events.push(["images", value]); return { ok: true }; };
     const setInterpolate = async (value) => { deps.events.push(["interpolate", value]); return { ok: true }; };
+    ${settingsContract}
     ${production}
     export function state() { return { engine, neuralModelKey, engineSelectionGeneration }; }
   `;
@@ -328,6 +353,7 @@ function setup({
   optInterpolate = true,
   engine = "fsrcnnx",
   startResults = [],
+  startErrors = [],
 } = {}) {
   const events = [];
   const interpolator = {
@@ -340,6 +366,7 @@ function setup({
     },
     async start(candidate) {
       events.push(["interp-start", candidate]);
+      if (startErrors.length) throw startErrors.shift();
       const result = startResults.length ? startResults.shift() : { ok: true };
       this.video = result.ok ? candidate : null;
       this.running = !!result.ok;
@@ -631,6 +658,66 @@ test("deterministic interpolation start failure is quarantined without clearing 
   assert.equal(deps.events.filter(([type]) => type === "interp-start").length, starts);
 });
 
+test("thrown interpolation setup failures enter the normal quarantine circuit", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  const selected = {
+    id: "A", currentSrc: "https://example.test/a.mp4", src: "https://example.test/a.mp4",
+    videoWidth: 640, videoHeight: 360,
+  };
+  const deps = setup({ initialVideo: selected });
+  deps.configureError = new Error("invalid runtime configuration");
+  const coordinator = await loadSelectionCoordinator(deps);
+  deps.interpolator.stop();
+
+  assert.equal(await coordinator.reconcile(selected, true), true);
+  assert.equal(coordinator.state().interpolationQuarantined, true,
+    "deterministic configuration exceptions quarantine immediately");
+  assert.equal(coordinator.state().optInterpolate, true);
+  const starts = deps.events.filter(([type]) => type === "interp-start").length;
+  await coordinator.reconcile(selected, false);
+  assert.equal(deps.events.filter(([type]) => type === "interp-start").length, starts);
+});
+
+test("configuration recovery restarts an already-running interpolator", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  const selected = {
+    id: "A", currentSrc: "https://example.test/a.mp4", src: "https://example.test/a.mp4",
+    videoWidth: 640, videoHeight: 360,
+  };
+  const deps = setup({ initialVideo: selected });
+  deps.configureError = new Error("live setter still rejects the desired value");
+  const coordinator = await loadSelectionCoordinator(deps);
+
+  assert.equal(deps.interpolator.running, true);
+  assert.equal(await coordinator.retryInterpolation(), true);
+  assert.equal(coordinator.state().interpolationQuarantined, true,
+    "a forced configuration retry must not skip an already-running instance");
+  assert.ok(deps.events.some(([type]) => type === "interp-stop"));
+});
+
+test("thrown interpolation starts quarantine after the existing retry threshold", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  const selected = {
+    id: "A", currentSrc: "https://example.test/a.mp4", src: "https://example.test/a.mp4",
+    videoWidth: 640, videoHeight: 360,
+  };
+  const deps = setup({
+    initialVideo: selected,
+    startErrors: [new Error("transient start exception"), new Error("transient start exception")],
+  });
+  const coordinator = await loadSelectionCoordinator(deps);
+  deps.interpolator.stop();
+
+  assert.equal(await coordinator.reconcile(selected, true), true);
+  assert.equal(coordinator.state().interpolationQuarantined, false);
+  assert.equal(await coordinator.reconcile(selected, false), true);
+  assert.equal(coordinator.state().interpolationQuarantined, true);
+  assert.equal(coordinator.state().optInterpolate, true);
+});
+
 test("superseded interpolation start results remain retryable", async (t) => {
   const previous = globalThis.__videoOwnershipDeps;
   t.after(() => { globalThis.__videoOwnershipDeps = previous; });
@@ -742,7 +829,12 @@ test("neural configuration stays lazy while rendering is off or document-suspend
       ensureNeural: async () => { calls++; },
     };
     const selection = await loadEngineSelection(deps);
-    assert.deepEqual(selection.setEngine("neural"), { ok: true, engine: "neural" });
+    assert.deepEqual(selection.setEngine("neural"), {
+      ok: true,
+      engine: "neural",
+      policy: "display",
+      chainDepth: 1,
+    });
     await Promise.resolve();
     assert.equal(calls, 0, `neural initialized eagerly for ${JSON.stringify(scenario)}`);
 
@@ -769,6 +861,7 @@ test("overlapping neural model switches use distinct generations and preserve th
   const model = await loadNeuralModelSelection(deps);
   const first = model.setNeuralModel("span-a");
   const second = model.setNeuralModel("span-b");
+  await Promise.resolve();
 
   assert.deepEqual(pending.map(({ selection, options }) => [selection, options.modelKey]), [
     [3, "span-a"],
@@ -782,6 +875,27 @@ test("overlapping neural model switches use distinct generations and preserve th
   assert.deepEqual(await first, { ok: true, model: "span-b", pending: true });
   assert.deepEqual(await second, { ok: true, model: "span-b" });
   assert.deepEqual(model.state(), { neuralModelKey: "span-b", engineSelectionGeneration: 4 });
+});
+
+test("neural model selection rejects keys outside the loaded catalog without mutating intent", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  let calls = 0;
+  const model = await loadNeuralModelSelection({
+    mode: "upscale",
+    active: true,
+    events: [],
+    neuralModels: [{ key: "span" }],
+    ensureNeural: async () => { calls++; },
+  });
+
+  assert.deepEqual(await model.setNeuralModel("unknown"), {
+    ok: false,
+    reason: "invalid neural model",
+    model: "span",
+  });
+  assert.deepEqual(model.state(), { neuralModelKey: "", engineSelectionGeneration: 2 });
+  assert.equal(calls, 0);
 });
 
 test("active neural initialization cancellation on page suspension preserves engine intent", async (t) => {
