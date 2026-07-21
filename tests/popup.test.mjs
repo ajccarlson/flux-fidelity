@@ -154,14 +154,32 @@ function popupDocument() {
 }
 
 function readyStatus(overrides = {}) {
+  const runtime = {
+    api: "available",
+    adapter: "unrequested",
+    device: "uninitialized",
+    recovery: { phase: "idle", attempt: 0, maxAttempts: 3 },
+    lastFailure: null,
+    ...(overrides.runtime || {}),
+    recovery: {
+      phase: "idle", attempt: 0, maxAttempts: 3,
+      ...(overrides.runtime?.recovery || {}),
+    },
+  };
+  const persistence = {
+    state: "ready", operation: null, errorOperation: null, pendingWrites: 0, error: null,
+    ...(overrides.persistence || {}),
+  };
   return {
     activeMode: "off",
+    activeEngine: overrides.engine || "fsrcnnx",
     allVideos: false,
     artVariant: "ArtCNN_C4F32",
     deband: false,
     debandStrength: 1,
     engine: "fsrcnnx",
     frameCount: 12,
+    gpuState: "idle",
     hasVideo: true,
     hoverReveal: false,
     imageCount: 0,
@@ -187,6 +205,8 @@ function readyStatus(overrides = {}) {
     ssimds: true,
     webgpu: true,
     ...overrides,
+    runtime,
+    persistence,
   };
 }
 
@@ -476,6 +496,299 @@ test("controller disables every command while loading or failed and enables only
   assert.equal(document.getElementById("all-videos").disabled, true);
   assert.equal(document.getElementById("artvariant").disabled, true);
   assert.equal(document.getElementById("interp-model").disabled, true);
+});
+
+test("settings failures preserve the truthful WebGPU label and do not repeat their reason", () => {
+  const { controller, document } = controllerHarness();
+  const webgpu = document.getElementById("s-webgpu");
+  const operation = document.getElementById("operation-status");
+  const scenarios = [
+    [
+      "preference-sync-failed",
+      "storage unavailable",
+      "Settings could not be synchronized: storage unavailable",
+    ],
+    [
+      "storage-read-failed",
+      "profile read rejected",
+      "Settings could not be loaded: profile read rejected",
+    ],
+    [
+      "preference-application-failed",
+      "Preference application failed: mode rejected",
+      "Settings could not be applied: mode rejected",
+    ],
+  ];
+
+  for (const [error, reason, message] of scenarios) {
+    controller.render(readyStatus({ failed: true, error, reason, gpuState: "ready" }));
+    assert.equal(webgpu.textContent, "ready", error);
+    assert.equal(webgpu.className, "v ok", error);
+    assert.equal(operation.textContent, message, error);
+    assert.equal(operation.textContent.split(reason).length - 1, error === "preference-application-failed" ? 0 : 1,
+      `${error} must not repeat its raw reason`);
+    assert.ok(document.controls.every((control) => control.disabled), error);
+  }
+});
+
+test("WebGPU status distinguishes idle capability, initialization, readiness, recovery, and failure", () => {
+  const { controller, document } = controllerHarness();
+  const webgpu = document.getElementById("s-webgpu");
+
+  for (const [gpuState, label, className] of [
+    ["idle", "available", "v ok"],
+    ["initializing", "starting…", "v"],
+    ["ready", "ready", "v ok"],
+    ["recovering", "recovering…", "v"],
+    ["failed", "failed", "v no"],
+    ["unavailable", "unavailable", "v no"],
+  ]) {
+    controller.render(readyStatus({ gpuState }));
+    assert.equal(webgpu.textContent, label, gpuState);
+    assert.equal(webgpu.className, className, gpuState);
+  }
+
+  controller.render(readyStatus({
+    gpuState: undefined,
+    runtime: { api: "available", adapter: "requesting", device: "requesting" },
+  }));
+  assert.equal(webgpu.textContent, "starting…", "nested runtime state is accepted");
+
+  const legacy = readyStatus();
+  delete legacy.gpuState;
+  delete legacy.runtime;
+  controller.render(legacy);
+  assert.equal(webgpu.textContent, "available", "the legacy boolean remains a safe fallback");
+});
+
+test("runtime status explains requested-feature GPU recovery and bounded failure detail", () => {
+  const { controller, document } = controllerHarness();
+
+  controller.render(readyStatus({
+    mode: "upscale",
+    activeMode: "off",
+    gpuState: "recovering",
+    runtime: {
+      api: "available",
+      adapter: "ready",
+      device: "lost",
+      recovery: { phase: "running", attempt: 2, maxAttempts: 3 },
+    },
+  }));
+  assert.equal(document.getElementById("s-webgpu").textContent, "recovering…");
+  assert.equal(document.getElementById("runtime-status").textContent,
+    "Recovering the WebGPU device…");
+
+  const failed = readyStatus({
+    mode: "upscale",
+    activeMode: "off",
+    gpuState: "failed",
+    runtime: {
+      api: "available",
+      adapter: "failed",
+      device: "failed",
+      recovery: { phase: "exhausted", attempt: 3, maxAttempts: 3 },
+      lastFailure: { code: "adapter-request-failed", detail: "GPU process reset" },
+    },
+  });
+  controller.render(failed);
+  assert.equal(document.getElementById("s-webgpu").textContent, "failed");
+  assert.equal(document.getElementById("runtime-status").textContent,
+    "WebGPU failed: GPU process reset");
+
+  controller.render({ ...failed, mode: "off" });
+  assert.equal(document.getElementById("runtime-status").textContent, "",
+    "an old GPU failure is not presented as current when no GPU feature is requested");
+});
+
+test("settings persistence activity and errors take priority over renderer recovery", () => {
+  const { controller, document } = controllerHarness();
+  const recovering = {
+    mode: "upscale",
+    activeMode: "off",
+    gpuState: "recovering",
+    runtime: {
+      api: "available",
+      adapter: "ready",
+      device: "lost",
+      recovery: { phase: "running", attempt: 1, maxAttempts: 3 },
+    },
+  };
+
+  controller.render(readyStatus({
+    ...recovering,
+    persistence: { state: "writing", pending: 2, error: null },
+  }));
+  assert.equal(document.getElementById("runtime-status").textContent, "Saving settings…");
+
+  controller.render(readyStatus({
+    ...recovering,
+    persistence: { state: "error", pending: 0, error: "Storage quota exceeded" },
+  }));
+  assert.equal(document.getElementById("runtime-status").textContent,
+    "Settings could not be saved: Storage quota exceeded");
+});
+
+test("settings runtime wording distinguishes synchronization, reads, validation, and application", () => {
+  const { controller, document } = controllerHarness();
+  const runtimeStatus = document.getElementById("runtime-status");
+  const scenarios = [
+    [
+      { runtime: { phase: "syncing" }, persistence: { state: "writing", pendingWrites: 0 } },
+      "Synchronizing settings…",
+    ],
+    [
+      { persistence: { state: "reading", pendingWrites: 0 } },
+      "Loading settings…",
+    ],
+    [
+      {
+        persistence: {
+          state: "error", errorOperation: "validation", error: "Invalid stored setting: policy",
+        },
+      },
+      "Stored settings are invalid: policy",
+    ],
+    [
+      {
+        persistence: {
+          state: "error",
+          errorOperation: "application",
+          error: "Preference application failed: renderer rejected the saved mode",
+        },
+      },
+      "Settings could not be applied: renderer rejected the saved mode",
+    ],
+    [
+      {
+        persistence: {
+          state: "error", errorOperation: "loading", error: "storage backend rejected",
+        },
+      },
+      "Settings could not be loaded: storage backend rejected",
+    ],
+    [
+      {
+        persistence: {
+          state: "error", errorOperation: "syncing", error: "opaque storage rejection",
+        },
+      },
+      "Settings could not be synchronized: opaque storage rejection",
+    ],
+    [
+      {
+        persistence: {
+          state: "error", errorOperation: "writing", error: "opaque storage rejection",
+        },
+      },
+      "Settings could not be saved: opaque storage rejection",
+    ],
+  ];
+
+  for (const [overrides, expected] of scenarios) {
+    controller.render(readyStatus(overrides));
+    assert.equal(runtimeStatus.textContent, expected);
+  }
+});
+
+test("image and direct neural runtime states are visible behind higher-priority failures", () => {
+  const { controller, document } = controllerHarness();
+  const runtimeStatus = document.getElementById("runtime-status");
+
+  for (const [imagesRuntime, expected] of [
+    [
+      { requested: true, phase: "failed", lastFailure: { detail: "image pipeline rejected" } },
+      "Image upscaling failed: image pipeline rejected",
+    ],
+    [{ requested: true, phase: "starting" }, "Image upscaling is starting…"],
+    [{ requested: true, phase: "recovering" }, "Image upscaling is recovering…"],
+    [{ requested: true, phase: "waiting" }, "Image upscaling is waiting to start."],
+  ]) {
+    controller.render(readyStatus({ images: true, imagesRuntime }));
+    assert.equal(runtimeStatus.textContent, expected, imagesRuntime.phase);
+  }
+
+  controller.render(readyStatus({
+    engine: "neural",
+    neuralRuntime: {
+      requested: true,
+      phase: "failed",
+      lastFailure: { code: "neural-init-failed", detail: "ONNX provider unavailable" },
+    },
+  }));
+  assert.equal(runtimeStatus.textContent, "Neural upscaling failed: ONNX provider unavailable");
+
+  controller.render(readyStatus({
+    mode: "upscale",
+    activeMode: "off",
+    images: true,
+    imagesRuntime: {
+      requested: true,
+      phase: "failed",
+      lastFailure: { detail: "image pipeline rejected" },
+    },
+    renderer: { requestedMode: "upscale", activeMode: "off", phase: "failed" },
+  }));
+  assert.equal(runtimeStatus.textContent, "The requested renderer could not start.",
+    "renderer failure remains higher priority than an auxiliary image failure");
+});
+
+test("terminal interpolation failure outranks an image runtime wait", () => {
+  const { controller, document } = controllerHarness();
+  controller.render(readyStatus({
+    images: true,
+    imagesRuntime: { requested: true, phase: "waiting", lastFailure: null },
+    interpolate: true,
+    interpolationRuntime: {
+      requested: true,
+      phase: "failed",
+      lastFailure: { stage: "inference", detail: "RIFE failed repeatedly" },
+    },
+  }));
+
+  assert.equal(document.getElementById("runtime-status").textContent,
+    "Interpolation stopped after repeated failures: RIFE failed repeatedly");
+});
+
+test("requested neural controls remain selected while model and runtime expose the effective fallback", () => {
+  const { controller, document } = controllerHarness();
+  controller.render(readyStatus({
+    mode: "upscale",
+    activeMode: "upscale",
+    engine: "neural",
+    activeEngine: "fsrcnnx",
+    gpuState: "ready",
+    runtime: { api: "available", adapter: "ready", device: "ready" },
+    model: "FSRCNNX_x2_16-0-4-1",
+    neural: null,
+    neuralModel: "span2x_smoke",
+    neuralModels: [{ key: "span2x_smoke", label: "SPAN smoke", scale: 2 }],
+    renderer: {
+      requestedMode: "upscale",
+      activeMode: "upscale",
+      requestedEngine: "neural",
+      effectiveEngine: "fsrcnnx",
+      activeEngine: "fsrcnnx",
+      phase: "active",
+      fallback: {
+        from: "neural",
+        to: "fsrcnnx",
+        code: "neural-init-failed",
+        detail: "ONNX session creation failed",
+      },
+    },
+  }));
+
+  assert.equal(document.getElementById("engine").value, "neural");
+  assert.equal(document.getElementById("mode-upscale").getAttribute("aria-pressed"), "true");
+  assert.equal(document.getElementById("policy").disabled, true,
+    "control applicability follows the requested engine");
+  assert.match(document.getElementById("s-model").textContent, /FSRCNNX standard fallback/);
+  assert.doesNotMatch(document.getElementById("s-model").textContent, /SPAN smoke/);
+  assert.equal(document.getElementById("runtime-status").textContent,
+    "Neural upscaling fell back to FSRCNNX standard: ONNX session creation failed");
+  assert.equal(document.getElementById("neural-note").textContent,
+    "Using FSRCNNX standard fallback · ONNX session creation failed");
 });
 
 test("failed commands roll focused controls back from authoritative status and keep the operation error visible", async () => {

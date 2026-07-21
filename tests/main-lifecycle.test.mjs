@@ -68,6 +68,7 @@ async function loadInterpolationLifecycle(deps) {
     const chainUpscaleTex = () => false;
     const setChainInverted = () => false;
     const saveSitePrefs = () => {};
+    const reconcileDeviceRecoveryDemand = () => true;
     const updateVideoMonitor = () => {};
     const notifyState = () => {};
     const probeVideo = () => "ok";
@@ -181,16 +182,56 @@ async function loadAdoptionInternal(deps) {
   const production = section(original, "async function adoptChainDeviceInternal", "function ensureLumaTexture");
   const harness = `
     const deps = globalThis.__mainLifecycleTestDeps;
+    deps.notifications ||= [];
+    deps.gpuFailures ||= [];
+    deps.gpuReadyCalls ||= [];
+    deps.terminalCleanup ||= [];
     const warn = (...args) => deps.warnings.push(args);
     const log = (...args) => deps.logs.push(args);
     let device = deps.oldDevice || null, deviceOwnedByMain = !!deps.oldOwned;
     let adoptionGeneration = 1, adopting = false;
     let pageSuspended = false, primaryController = null, videoMonitor = null, video = {};
     const lostDevices = new WeakSet();
-    let optImages = false, mode = "upscale", engine = deps.engine || "fsrcnnx", chainDepth = 1;
+    let optImages = deps.images === true, mode = "upscale", engine = deps.engine || "fsrcnnx", chainDepth = 1;
     let artVariant = "ArtCNN_C4F32", interpInvertPref = true, chainInverted = false;
     let _gpuErrWinStart = 0, _gpuErrCount = 0, _invRestarts = 0, _invRestartLast = 0;
-    let canvas = { style: {} }, ro = {};
+    let canvas = { style: { display: "block" } }, ro = {};
+    let gpuAdapterPhase = "ready", gpuDevicePhase = "ready", gpuRecoveryPhase = "idle";
+    let gpuRecoveryAttempt = 0, gpuLastFailure = null, gpuRecoveredAt = null;
+    function boundedRuntimeDetail(error, fallback = "Unknown runtime failure") {
+      const detail = error?.message || (typeof error === "string" ? error : fallback);
+      return String(detail || fallback).replace(/\\s+/g, " ").trim().slice(0, 240);
+    }
+    function snapshotGpu() {
+      return {
+        adapter: gpuAdapterPhase,
+        device: gpuDevicePhase,
+        recovery: gpuRecoveryPhase,
+        attempt: gpuRecoveryAttempt,
+        lastFailure: gpuLastFailure ? { ...gpuLastFailure } : null,
+        recoveredAt: gpuRecoveredAt,
+      };
+    }
+    function notifyState() { deps.notifications.push(snapshotGpu()); }
+    function setGpuFailure(stage, code, error,
+      { adapter = gpuAdapterPhase, device: devicePhase = "failed" } = {}) {
+      gpuAdapterPhase = adapter;
+      gpuDevicePhase = devicePhase;
+      gpuLastFailure = { stage, code, detail: boundedRuntimeDetail(error), at: Date.now() };
+      deps.gpuFailures.push({ ...gpuLastFailure, adapter, device: devicePhase });
+      notifyState();
+    }
+    function setGpuReady({ recovered = false } = {}) {
+      gpuAdapterPhase = "ready";
+      gpuDevicePhase = "ready";
+      if (recovered || gpuRecoveryPhase === "idle") {
+        gpuRecoveryPhase = "idle";
+        gpuRecoveryAttempt = 0;
+      }
+      if (recovered) gpuRecoveredAt = Date.now();
+      deps.gpuReadyCalls.push({ recovered });
+      notifyState();
+    }
     const saveSitePrefs = () => {};
     const scheduleInterpolatorGpuRestart = () => {};
     const invalidateMainDeviceResources = () => {
@@ -199,6 +240,7 @@ async function loadAdoptionInternal(deps) {
     };
     const watchDeviceLoss = (owner) => deps.watchDeviceLoss(owner, {
       replace(next) { adoptionGeneration++; device = next; },
+      publishReady() { setGpuReady(); },
     });
     const buildCore = () => deps.buildCore();
     const loadModels = async () => deps.loadModels?.();
@@ -209,13 +251,19 @@ async function loadAdoptionInternal(deps) {
     const scheduleMainLoop = () => {};
     const pauseDeviceProducers = () => deps.pauseDeviceProducers?.();
     const resumeDeviceProducers = () => deps.resumeDeviceProducers?.();
+    const cancelMainLoop = () => deps.terminalCleanup.push("cancel-main-loop");
+    const clearMultiTargets = () => deps.terminalCleanup.push("clear-multi-targets");
+    const detach = () => deps.terminalCleanup.push("detach");
     const deactivateRendering = () => { deps.deactivations++; mode = "off"; };
     ${production}
     export function adopt(extDevice, options, isRequestCurrent = null) {
       return adoptChainDeviceInternal(extDevice, isRequestCurrent, options);
     }
     export function replace(next) { adoptionGeneration++; device = next; }
-    export function state() { return { device, mode, adopting, adoptionGeneration }; }
+    export function state() {
+      return { device, mode, images: optImages, adopting, adoptionGeneration,
+        display: canvas.style.display, gpu: snapshotGpu() };
+    }
   `;
   globalThis.__mainLifecycleTestDeps = deps;
   return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++moduleRevision}`);
@@ -895,6 +943,38 @@ test("recovery-owned adoption failure preserves mode for the retry coordinator",
   assert.equal(adoption.state().mode, "upscale");
   assert.equal(adoption.state().device, null);
   assert.equal(deps.deactivations, 0);
+  assert.equal(adoption.state().gpu.device, "failed");
+  assert.equal(adoption.state().gpu.lastFailure.stage, "adoption");
+  assert.equal(adoption.state().gpu.lastFailure.code, "device-adoption-failed");
+  assert.deepEqual(deps.gpuFailures.map(({ device }) => device), ["requesting", "failed"]);
+  assert.equal(deps.gpuReadyCalls.length, 0);
+  assert.deepEqual(deps.terminalCleanup, [],
+    "recovery-owned adoption leaves presentation cleanup to its retry coordinator");
+});
+
+test("terminal adoption failure preserves requested mode while retiring presentation", async (t) => {
+  const previousDeps = globalThis.__mainLifecycleTestDeps;
+  t.after(() => { globalThis.__mainLifecycleTestDeps = previousDeps; });
+  const deps = {
+    warnings: [], logs: [], invalidations: 0, deactivations: 0,
+    buildCore() { throw new Error("external device cannot build pipelines"); },
+    watchDeviceLoss() {},
+  };
+  const adoption = await loadAdoptionInternal(deps);
+
+  assert.equal(await adoption.adopt({ addEventListener() {} }), false);
+  assert.equal(adoption.state().mode, "upscale",
+    "terminal adoption failure must preserve the user's requested mode");
+  assert.equal(adoption.state().device, null);
+  assert.equal(adoption.state().display, "none");
+  assert.equal(deps.deactivations, 0);
+  assert.deepEqual(deps.terminalCleanup,
+    ["cancel-main-loop", "clear-multi-targets", "detach"]);
+  assert.equal(adoption.state().gpu.device, "failed");
+  assert.equal(adoption.state().gpu.lastFailure.code, "device-adoption-failed");
+  assert.equal(deps.gpuFailures.length, 2);
+  assert.equal(deps.notifications.length >= 3, true,
+    "both adoption failures and terminal presentation cleanup must be observable");
 });
 
 test("device adoption pauses every producer before fencing and retiring old resources", async (t) => {
@@ -930,6 +1010,10 @@ test("device adoption pauses every producer before fencing and retiring old reso
   assert.ok(events.indexOf("fence-end") < events.indexOf("invalidate"));
   assert.ok(events.indexOf("invalidate") < events.indexOf("build"));
   assert.equal(events.at(-1), "resume");
+  assert.equal(adoption.state().gpu.device, "ready");
+  assert.equal(adoption.state().gpu.lastFailure, null);
+  assert.deepEqual(deps.gpuReadyCalls, [{ recovered: false }]);
+  assert.equal(deps.gpuFailures.length, 0);
 });
 
 test("producer pause cancels primary, secondary, and unpublished image work without early destruction", async (t) => {
@@ -988,7 +1072,7 @@ test("caller cancellation during an adoption fence still resumes globally-curren
   assert.deepEqual(events, ["pause", "fence", "resume"]);
 });
 
-test("loss during adoption cannot roll a replacement device back to stale state", async (t) => {
+test("superseded adoption catch cannot overwrite newer replacement GPU telemetry", async (t) => {
   const previousDeps = globalThis.__mainLifecycleTestDeps;
   t.after(() => { globalThis.__mainLifecycleTestDeps = previousDeps; });
   const replacement = { name: "replacement" };
@@ -997,7 +1081,10 @@ test("loss during adoption cannot roll a replacement device back to stale state"
     warnings: [], logs: [], invalidations: 0, deactivations: 0,
     buildCore() {},
     watchDeviceLoss(_owner, coordinator) {
-      Promise.resolve().then(() => coordinator.replace(replacement));
+      Promise.resolve().then(() => {
+        coordinator.replace(replacement);
+        coordinator.publishReady();
+      });
     },
     resumeDeviceProducers() { resumes++; },
   };
@@ -1009,6 +1096,11 @@ test("loss during adoption cannot roll a replacement device back to stale state"
   assert.equal(adoption.state().mode, "upscale");
   assert.equal(deps.deactivations, 0);
   assert.equal(resumes, 0, "a globally superseded adoption must not resume stale producers");
+  assert.equal(adoption.state().gpu.device, "ready");
+  assert.equal(adoption.state().gpu.lastFailure, null,
+    "the stale adoption catch must not replace telemetry published for the replacement device");
+  assert.equal(deps.gpuFailures.length, 0);
+  assert.deepEqual(deps.gpuReadyCalls, [{ recovered: false }]);
 });
 
 test("a stale rollback rejection cannot null a newer recovered device", async (t) => {
@@ -1040,4 +1132,8 @@ test("a stale rollback rejection cannot null a newer recovered device", async (t
   assert.equal(adoption.state().device, replacement);
   assert.equal(adoption.state().mode, "upscale");
   assert.equal(deps.deactivations, 0);
+  assert.equal(deps.gpuFailures.length, 1,
+    "the stale rollback must not publish another failure for the replacement device");
+  assert.equal(deps.gpuFailures[0].code, "device-adoption-failed");
+  assert.equal(deps.gpuReadyCalls.length, 0);
 });

@@ -2929,6 +2929,7 @@ export class Interpolator {
     const elapsed = s.started ? (performance.now() - s.started) / 1000 : 0;
     return {
       running: this.running,
+      phase: this._state,
       framesIn: s.framesIn,
       framesOut: s.framesOut,
       fpsIn: elapsed ? +(s.framesIn / elapsed).toFixed(1) : 0,
