@@ -15,10 +15,8 @@ const errors = [];
 const pinnedArtifacts = {
   "GPL-3.0.txt": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
   "LGPL-3.0.txt": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118",
-  "model/rife.onnx": "6a31074c0f588648982b5e828aee6c27e005015a712a46ea63da48c65fa9a26b",
   "model/rife_v4.26.onnx": "af25762dfec02a4bbb949decea63988b01fa56c46c0ff9dc66ac8e2f12cbb661",
   "model/rife_v4.26_fp16.onnx": "d5672f39b493609220c95c709542d6b99204145a67d9ca496d4500cd8895301f",
-  "model/neural/span2x_smoke.fp16.onnx": "ae7642c2b3bdd96e475dfcbf6a9180d8ec41175a1329d9f9b2a402f186c05c25",
   "vendor/ort/ThirdPartyNotices.txt": "0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2",
   "vendor/ort/ort.webgpu.min.mjs": "46988a5a025f49449850f39f95eb0d21e40e67b3beb13a0b54efd3ab5d83f60e",
   "vendor/ort/ort-wasm-simd-threaded.asyncify.mjs": "7236653b8565da4046e459cd0e274123419a1d9f1f8f18fd36c28058346ca655",

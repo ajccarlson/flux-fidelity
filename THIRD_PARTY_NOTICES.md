@@ -32,7 +32,7 @@ Copyright (c) 2021 hzwer
 Upstream: <https://github.com/hzwer/Practical-RIFE/tree/de9a989bb7b8a71d94f058297e603633aaa43ad6><br>
 Verified export archive: <https://github.com/AmusementClub/vs-mlrt/releases/download/external-models/rife_v4.26.7z>
 
-This notice does not cover the unidentified `model/rife.onnx`, which remains blocked as described in `MODEL_PROVENANCE.md`.
+This notice does not cover the unidentified historical `model/rife.onnx`. That file is absent from the current tree and package, but its private-history tombstone remains blocked as described in `MODEL_PROVENANCE.md`.
 
 ### Spandrel 0.4.2
 
@@ -42,7 +42,7 @@ Copyright (c) 2024 The ChaiNNer Organization
 
 Upstream: <https://github.com/chaiNNer-org/spandrel/tree/724cca389f28c38e1050689d4862a452fd644484>
 
-The smoke-model generation environment was not retained, so this attribution does not by itself prove that exact version generated the bundled smoke model.
+The export tool remains available for locally supplied, appropriately licensed checkpoints. The former random-weight SPAN smoke model was removed because its generation environment was not retained; this attribution does not establish the origin or licensing of those historical bytes.
 
 ### MIT License text
 
@@ -87,4 +87,4 @@ The source module retains the preceding notice verbatim before its local port de
 
 ## Unresolved material
 
-No license is asserted here for the removed high-quality x2, x3, or x4 FSRCNNX artifacts. They are absent from the current tree and extension package, but their bytes remain in private Git history and block publication of that history until it is purged. The generic `model/rife.onnx`, the unreproducible SPAN smoke model, and the deband port remain current-tree and package blockers until the evidence listed in `MODEL_PROVENANCE.md` is supplied or the material is removed. The LGPL and ONNX Runtime applicability reviews also remain blocked in `release-clearance.json`; merely bundling complete upstream texts and notices does not clear them.
+No license is asserted here for the removed high-quality x2, x3, or x4 FSRCNNX artifacts, unidentified generic RIFE model, or unreproducible SPAN smoke model. They are absent from the current tree and extension package, but their bytes remain in private Git history and block publication of that history until it is purged. The deband port remains a current-tree and package blocker. The LGPL and ONNX Runtime applicability reviews also remain blocked in `release-clearance.json`; merely bundling complete upstream texts and notices does not clear them.

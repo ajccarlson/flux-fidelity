@@ -41,11 +41,16 @@ function installGlobals(values) {
   };
 }
 
+test("only verified bundled RIFE models remain selectable", () => {
+  assert.deepEqual(listModels().map(({ key }) => key).sort(), ["rife_v4.26", "rife_v4.26_fp16"]);
+  assert.equal(setModel("rife_orig"), false);
+});
+
 test("interpolator retains engine choices made before runtime import", () => {
   const interpolator = makeInterpolator();
 
-  assert.equal(interpolator.setInterpEngine("rife_orig"), false);
-  assert.equal(interpolator._rifeModelKey, "rife_orig");
+  assert.equal(interpolator.setInterpEngine("rife_v4.26_fp16"), false);
+  assert.equal(interpolator._rifeModelKey, "rife_v4.26_fp16");
   assert.equal(interpolator._forceBlend, false);
 
   assert.equal(interpolator.setInterpEngine("blend"), true);

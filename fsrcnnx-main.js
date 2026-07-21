@@ -8,7 +8,11 @@ import {
   ARTCNN_MODEL_NAMES,
   FSRCNNX_STANDARD_MODEL_NAMES,
 } from "./fsrcnnx-model-catalog.js";
-import { createNeuralEngine, validateNeuralManifest } from "./fsrcnnx-neural.js";
+import {
+  createNeuralEngine,
+  isValidNeuralModelKey,
+  validateNeuralManifest,
+} from "./fsrcnnx-neural.js";
 import { LUMA_EXTRACT_WGSL, RECOMBINE_WGSL } from "./fsrcnnx-color.js";
 import { SsimDownscaler } from "./fsrcnnx-ssimds-runtime.js";
 import { buildSharpenShader } from "./fsrcnnx-sharpen.js";
@@ -333,7 +337,7 @@ function validateSitePreferencePatch(patch) {
         (!Number.isFinite(value) || value < 0.1 || value > 2)) invalid.add(field);
     else if (field === "debandStrength" &&
         (!Number.isFinite(value) || value < 0.3 || value > 3)) invalid.add(field);
-    else if (field === "interpEngine" && !normalizeInterpolationModel(value)) invalid.add(field);
+    else if (field === "interpEngine" && !normalizeStoredInterpolationModel(value)) invalid.add(field);
     else if (field === "interpResMode" && !normalizeInterpolationResMode(value)) invalid.add(field);
     else if (field === "neuralModel" && value !== null &&
         !_neuralList.some((entry) => entry.key === value)) invalid.add(field);
@@ -534,9 +538,9 @@ const FIXED_2X_UPSCALE_POLICIES = Object.freeze(["display", "auto", "force2", "f
 const INTERPOLATION_MODEL_KEYS = Object.freeze([
   "rife_v4.26_fp16",
   "rife_v4.26",
-  "rife_orig",
   "blend",
 ]);
+const LEGACY_INTERPOLATION_MODEL = "rife_orig";
 const INTERPOLATION_RES_MODES = Object.freeze(["auto", "full", "half", "quarter"]);
 const DEFAULT_INTERPOLATION_MODEL = "rife_v4.26";
 const DEFAULT_INTERPOLATION_RES_MODE = "auto";
@@ -567,6 +571,11 @@ function normalizeStoredUpscalePolicy(value, targetEngine, fallback = null) {
 
 function normalizeInterpolationModel(value) {
   return typeof value === "string" && INTERPOLATION_MODEL_KEYS.includes(value) ? value : null;
+}
+
+function normalizeStoredInterpolationModel(value, fallback = null) {
+  if (value === LEGACY_INTERPOLATION_MODEL) return DEFAULT_INTERPOLATION_MODEL;
+  return normalizeInterpolationModel(value) || fallback;
 }
 
 function normalizeInterpolationResMode(value) {
@@ -3084,6 +3093,10 @@ export function setEngine(e, { persist = true } = {}) {
     return { ok: false, reason: "invalid engine", engine: requestedEngine,
       activeEngine: engine, policy: upscalePolicy, chainDepth };
   }
+  if (e === "neural" && _neuralList.length === 0) {
+    return { ok: false, reason: "no bundled neural models", engine: requestedEngine,
+      activeEngine: engine, policy: upscalePolicy, chainDepth };
+  }
   if (persist) cancelPreferenceRestore();
   const selectionGeneration = ++engineSelectionGeneration;
   const wasNeural = engine === "neural";
@@ -3485,16 +3498,34 @@ export async function restoreSitePrefs() {
   }
   if (restoreToken !== preferenceRestoreGeneration) return { ok: false, restored: false, reason: "superseded" };
   const migratedLegacyEngine = p.engine === LEGACY_HIGH_ENGINE;
-  const restoredEngine = normalizeStoredEngine(p.engine, "fsrcnnx");
+  const migratedUnavailableNeural = p.engine === "neural" && _neuralList.length === 0;
+  const replacementNeuralModel = _neuralList[0]?.key || null;
+  const migratedUnavailableNeuralModel = isValidNeuralModelKey(p.neuralModel) &&
+    !_neuralList.some((entry) => entry.key === p.neuralModel);
+  const restoredEngine = migratedUnavailableNeural ? "fsrcnnx" : normalizeStoredEngine(p.engine, "fsrcnnx");
   const migratedForce8Policy = restoredEngine !== "artcnn" && p.policy === "force8";
   const restoredPolicy = migratedForce8Policy ? "force4" : p.policy;
-  const validationPatch = migratedForce8Policy ? { ...p, policy: restoredPolicy } : p;
+  const migratedLegacyInterpolation = p.interpEngine === LEGACY_INTERPOLATION_MODEL;
+  const validationPatch = migratedLegacyEngine || migratedUnavailableNeural ||
+      migratedUnavailableNeuralModel || migratedForce8Policy || migratedLegacyInterpolation
+    ? {
+        ...p,
+        ...(migratedLegacyEngine || migratedUnavailableNeural ? { engine: restoredEngine } : {}),
+        ...(migratedUnavailableNeuralModel || migratedUnavailableNeural
+          ? { neuralModel: replacementNeuralModel }
+          : {}),
+        ...(migratedForce8Policy ? { policy: restoredPolicy } : {}),
+        ...(migratedLegacyInterpolation ? { interpEngine: DEFAULT_INTERPOLATION_MODEL } : {}),
+      }
+    : p;
   recordPreferenceValidation(validationPatch, validateSitePreferencePatch(validationPatch));
   engineSelectionGeneration++;
   requestedEngine = restoredEngine;
   engine = requestedEngine;
   clearNeuralFallback();
-  if (_neuralList.some((entry) => entry.key === p.neuralModel)) neuralModelKey = p.neuralModel;
+  neuralModelKey = _neuralList.some((entry) => entry.key === p.neuralModel)
+    ? p.neuralModel
+    : migratedUnavailableNeuralModel ? replacementNeuralModel || "" : "";
   if (p.artVariant && ART_FILES.includes(p.artVariant)) artVariant = p.artVariant;
   upscalePolicy = normalizeUpscalePolicy(restoredPolicy, engine, "display");
   if (typeof p.ssimds === "boolean") ssimdsEnabled = p.ssimds;
@@ -3511,14 +3542,19 @@ export async function restoreSitePrefs() {
   chainDepth = engine === "artcnn" || engine === "fsrcnnx" ? policyToDepth(upscalePolicy) : 1;
   resetScaleSelection();
 
-  if (migratedLegacyEngine || migratedForce8Policy) {
+  if (migratedLegacyEngine || migratedUnavailableNeural || migratedUnavailableNeuralModel ||
+      migratedForce8Policy || migratedLegacyInterpolation) {
     const migrationPatch = {};
-    if (migratedLegacyEngine) migrationPatch.engine = requestedEngine;
+    if (migratedLegacyEngine || migratedUnavailableNeural) migrationPatch.engine = requestedEngine;
+    if (migratedUnavailableNeural || migratedUnavailableNeuralModel) {
+      migrationPatch.neuralModel = replacementNeuralModel;
+    }
     if (migratedForce8Policy) migrationPatch.policy = upscalePolicy;
+    if (migratedLegacyInterpolation) migrationPatch.interpEngine = DEFAULT_INTERPOLATION_MODEL;
     try {
       await siteSettingsStore.write(migrationPatch);
     } catch (error) {
-      warn("legacy upscale preference could not be migrated:", boundedRuntimeDetail(error));
+      warn("stored preference migration failed:", boundedRuntimeDetail(error));
     }
     if (restoreToken !== preferenceRestoreGeneration) {
       return { ok: false, restored: false, reason: "superseded" };
@@ -3528,7 +3564,7 @@ export async function restoreSitePrefs() {
   // Interpolation configuration is applied before its lifecycle setting. The
   // renderer mode is activated first so an enabled interpolator makes the right
   // chained-versus-standalone decision on its first start.
-  pendingEngine = normalizeInterpolationModel(p.interpEngine) || DEFAULT_INTERPOLATION_MODEL;
+  pendingEngine = normalizeStoredInterpolationModel(p.interpEngine, DEFAULT_INTERPOLATION_MODEL);
   pendingResMode = normalizeInterpolationResMode(p.interpResMode) || DEFAULT_INTERPOLATION_RES_MODE;
   pendingTargetFps = normalizeInterpolationTargetFps(p.interpTargetFps) ?? DEFAULT_INTERPOLATION_TARGET_FPS;
   pendingAvOffsetMs = normalizeInterpolationAvOffset(p.interpAvOffsetMs) ?? DEFAULT_INTERPOLATION_AV_OFFSET_MS;
@@ -3573,8 +3609,22 @@ async function applyExternalSitePreferences(patch) {
   if (applyToken !== preferenceRestoreGeneration) return { ok: false, reason: "superseded" };
   const has = (field) => Object.prototype.hasOwnProperty.call(patch, field);
   const deleted = (field) => patch[field] === undefined;
-  const invalid = validateSitePreferencePatch(patch);
-  recordPreferenceValidation(patch, invalid);
+  const unavailableNeuralPreference = patch.engine === "neural" && _neuralList.length === 0;
+  const replacementNeuralModel = _neuralList[0]?.key || null;
+  const unavailableNeuralModelPreference = has("neuralModel") &&
+    isValidNeuralModelKey(patch.neuralModel) &&
+    !_neuralList.some((entry) => entry.key === patch.neuralModel);
+  const validationPatch = unavailableNeuralPreference || unavailableNeuralModelPreference
+    ? {
+        ...patch,
+        ...(unavailableNeuralPreference ? { engine: "fsrcnnx" } : {}),
+        ...(unavailableNeuralPreference || unavailableNeuralModelPreference
+          ? { neuralModel: replacementNeuralModel }
+          : {}),
+      }
+    : patch;
+  const invalid = validateSitePreferencePatch(validationPatch);
+  recordPreferenceValidation(validationPatch, invalid);
   const boolean = (field, fallback) => {
     const value = deleted(field) ? fallback : patch[field];
     if (typeof value !== "boolean") { invalid.add(field); return fallback; }
@@ -3591,13 +3641,17 @@ async function applyExternalSitePreferences(patch) {
   // always becomes the newer intent for the field it changes.
   if (has("engine")) {
     const stored = deleted("engine") ? "fsrcnnx" : patch.engine;
-    const next = normalizeStoredEngine(stored);
+    const unavailableNeural = stored === "neural" && _neuralList.length === 0;
+    const next = unavailableNeural ? "fsrcnnx" : normalizeStoredEngine(stored);
     if (!next) invalid.add("engine");
     setEngine(next || "fsrcnnx", { persist: false });
-    if (stored === LEGACY_HIGH_ENGINE) {
-      const migration = siteSettingsStore.write({ engine: next });
+    if (stored === LEGACY_HIGH_ENGINE || unavailableNeural) {
+      const migration = siteSettingsStore.write({
+        engine: next,
+        ...(unavailableNeural ? { neuralModel: null } : {}),
+      });
       migration.catch((error) => warn(
-        "legacy FSRCNNX engine preference could not be migrated:",
+        "stored engine preference migration failed:",
         boundedRuntimeDetail(error),
       ));
     }
@@ -3659,21 +3713,35 @@ async function applyExternalSitePreferences(patch) {
   if (has("interpLadder")) setInterpolateLadder(boolean("interpLadder", false), { persist: false });
 
   if (has("neuralModel")) {
-    const next = deleted("neuralModel") || patch.neuralModel == null ? _neuralList[0]?.key || null : patch.neuralModel;
+    const next = deleted("neuralModel") || patch.neuralModel == null || unavailableNeuralModelPreference
+      ? replacementNeuralModel
+      : patch.neuralModel;
     if (next && _neuralList.some((entry) => entry.key === next)) {
       await setNeuralModel(next, { persist: false });
-    } else if (next) {
-      invalid.add("neuralModel");
     } else {
       neuralModelKey = "";
+    }
+    if (unavailableNeuralModelPreference && !unavailableNeuralPreference) {
+      const migration = siteSettingsStore.write({ neuralModel: replacementNeuralModel });
+      migration.catch((error) => warn(
+        "stored neural model preference migration failed:",
+        boundedRuntimeDetail(error),
+      ));
     }
   }
   if (applyToken !== preferenceRestoreGeneration) return { ok: false, reason: "superseded" };
   if (has("interpEngine")) {
-    const next = normalizeInterpolationModel(deleted("interpEngine")
-      ? DEFAULT_INTERPOLATION_MODEL : patch.interpEngine);
+    const stored = deleted("interpEngine") ? DEFAULT_INTERPOLATION_MODEL : patch.interpEngine;
+    const next = normalizeStoredInterpolationModel(stored);
     if (!next) invalid.add("interpEngine");
     await setInterpolateModel(next || DEFAULT_INTERPOLATION_MODEL, { persist: false });
+    if (stored === LEGACY_INTERPOLATION_MODEL) {
+      const migration = siteSettingsStore.write({ interpEngine: DEFAULT_INTERPOLATION_MODEL });
+      migration.catch((error) => warn(
+        "legacy interpolation model preference could not be migrated:",
+        boundedRuntimeDetail(error),
+      ));
+    }
   }
   if (applyToken !== preferenceRestoreGeneration) return { ok: false, reason: "superseded" };
   if (has("interpInvert")) {

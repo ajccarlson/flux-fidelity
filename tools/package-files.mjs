@@ -1,6 +1,6 @@
 import { GENERATED_MODEL_ASSET_PATHS } from "../fsrcnnx-model-catalog.js";
 
-export const EXPECTED_PACKAGE_FILE_COUNT = 57;
+export const EXPECTED_PACKAGE_FILE_COUNT = 55;
 
 // These assets are selected indirectly from runtime model catalogs, so static
 // import/getURL scanning cannot prove their exact package membership. Keep this
@@ -8,7 +8,6 @@ export const EXPECTED_PACKAGE_FILE_COUNT = 57;
 // validation instead of degrading only the affected model at runtime.
 export const REQUIRED_RUNTIME_MODEL_FILES = Object.freeze([
   ...GENERATED_MODEL_ASSET_PATHS,
-  "model/rife.onnx",
   "model/rife_v4.26.onnx",
   "model/rife_v4.26_fp16.onnx",
 ]);
@@ -60,8 +59,6 @@ export const PACKAGE_FILES = Object.freeze([
   "model/FSRCNNX_x2_16-0-4-1.passes.json",
   "model/FSRCNNX_x2_16-0-4-1.wgsl",
   "model/neural/manifest.json",
-  "model/neural/span2x_smoke.fp16.onnx",
-  "model/rife.onnx",
   "model/rife_v4.26.onnx",
   "model/rife_v4.26_fp16.onnx",
   "popup.html",

@@ -144,7 +144,7 @@ const COMMANDS = Object.freeze({
     (module, msg) => module.setInterpolateAvOffset(msg.ms)),
   FSRCNNX_SETINTERPMODEL: enumPayload(
     "key",
-    ["rife_v4.26_fp16", "rife_v4.26", "rife_orig", "blend"],
+    ["rife_v4.26_fp16", "rife_v4.26", "blend"],
     (module, msg) => module.setInterpolateModel(msg.key),
   ),
   FSRCNNX_SETINTERPTARGETFPS: fieldPayload(

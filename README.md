@@ -26,7 +26,7 @@ The extension requests access to all sites so it can find and process eligible p
 3. Select an upscaling engine and policy, then choose **Upscale**. Optional filters and interpolation can be enabled separately.
 4. Choose **Off** to restore normal page rendering.
 
-Settings are stored per origin. GPU memory, source resolution, browser support, and model cost determine which combinations can sustain real-time playback. The bundled `SPAN 2x SMOKE` model has random weights and is only a pipeline test.
+Settings are stored per origin. GPU memory, source resolution, browser support, and model cost determine which combinations can sustain real-time playback. No ONNX super-resolution model is bundled, so that engine remains unavailable unless a compatible, licensed model is added to the neural manifest.
 
 ## Validate
 

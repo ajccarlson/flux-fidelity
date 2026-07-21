@@ -34,13 +34,18 @@ async function loadFsrcnnxPlanHarness() {
   `);
 }
 
-async function loadPolicyHarness({ engine = "fsrcnnx", policy = "display" } = {}) {
+async function loadPolicyHarness({
+  engine = "fsrcnnx",
+  policy = "display",
+  neuralModels = [{ key: "span" }],
+} = {}) {
   const engineSetters = section("export function setEngine", "export function setHoverReveal");
   const policySetter = section("export function setPolicy", "// Restore saved preferences");
   return importHarness(`
     const deps = globalThis.__mainSettingsContractDeps;
     const ART_FILES = ["ArtCNN_C4F32", "ArtCNN_C4F32_DS", "ArtCNN_C4F32_DN"];
     let requestedEngine = ${JSON.stringify(engine)}, engine = ${JSON.stringify(engine)}, upscalePolicy = ${JSON.stringify(policy)};
+    const _neuralList = ${JSON.stringify(neuralModels)};
     let engineSelectionGeneration = 0, chainDepth = 1, artVariant = "ArtCNN_C4F32";
     let mode = "off", pageSuspended = false, primaryController = null, video = null;
     let interpPausedByNeural = false, neuralEng = null, artDiagLogged = false, device = null;
@@ -88,7 +93,7 @@ async function loadSaveHarness() {
     let upscalePolicy = "force4", ssimdsEnabled = false, sharpenEnabled = true, sharpenStrength = 1.4;
     let optHoverReveal = true, optAllVideos = true, debandEnabled = true, debandStrength = 1.6;
     let optImages = true, optInterpolate = false, neuralModelKey = "span";
-    let pendingEngine = "rife_orig", pendingResMode = "half", pendingTargetFps = 144;
+    let pendingEngine = "rife_v4.26_fp16", pendingResMode = "half", pendingTargetFps = 144;
     let pendingAvOffsetMs = 35, interpStaticPassthroughPref = false;
     let interpAutoFallbackPref = false, interpLadderPref = true, interpInvertPref = false;
     ${currentValues}
@@ -98,7 +103,7 @@ async function loadSaveHarness() {
   return { module, writes };
 }
 
-async function loadRestoreHarness(prefs) {
+async function loadRestoreHarness(prefs, { neuralModels = [{ key: "span" }] } = {}) {
   const restore = section("export async function restoreSitePrefs()", "function cancelPreferenceRestore()");
   const validationHelpers = section("function validateSitePreferencePatch", "function saveSitePrefs");
   return importHarness(`
@@ -109,7 +114,9 @@ async function loadRestoreHarness(prefs) {
       "interpEngine", "interpResMode", "neuralModel", "interpTargetFps", "interpAvOffsetMs",
       "interpStaticPassthrough", "interpAutoFallback", "interpLadder", "interpInvert",
     ])};
-    const _neuralList = [{ key: "span" }];
+    const _neuralList = ${JSON.stringify(neuralModels)};
+    const isValidNeuralModelKey = (value) =>
+      typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value);
     const neuralCatalogReady = Promise.resolve(_neuralList);
     const ART_FILES = ["ArtCNN_C4F32", "ArtCNN_C4F32_DS", "ArtCNN_C4F32_DN"];
     let preferenceRestoreGeneration = 0, engineSelectionGeneration = 0;
@@ -153,7 +160,10 @@ async function loadRestoreHarness(prefs) {
   `, { prefs, calls: [], writes: [] });
 }
 
-async function loadInterpolationConfigHarness(instance = null, { neuralGate = null } = {}) {
+async function loadInterpolationConfigHarness(instance = null, {
+  neuralGate = null,
+  neuralModels = [{ key: "span" }],
+} = {}) {
   const configure = section("function configureInterpolator", "function scheduleInterpolatorGpuRestart");
   const primarySetters = section("function acceptedPendingInterpolationSetting", "export function listInterpolateModels");
   const secondarySetters = section("export async function setInterpolateInvert", "log(\"pipeline module loaded\")");
@@ -181,12 +191,19 @@ async function loadInterpolationConfigHarness(instance = null, { neuralGate = nu
     const captureVideoSource = (candidate) => candidate;
     const sameVideoSource = (left, right) => left === right;
     const recordInterpolationStartFailure = (_video, _source, result) => deps.failures.push(result);
-    const _neuralList = [{ key: "span" }];
+    const _neuralList = ${JSON.stringify(neuralModels)};
+    const isValidNeuralModelKey = (value) =>
+      typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value);
     const neuralCatalogReady = Promise.resolve(_neuralList);
     const validateSitePreferencePatch = () => new Set();
     const recordPreferenceValidation = () => {};
-    const setNeuralModel = async () => {
+    const siteSettingsStore = { write: async (value) => { deps.writes.push(value); } };
+    const boundedRuntimeDetail = (error) => error?.message || String(error);
+    const warn = () => {};
+    let neuralModelKey = "";
+    const setNeuralModel = async (key) => {
       deps.neuralCalls++;
+      neuralModelKey = key;
       if (deps.neuralGate) await deps.neuralGate.promise;
       return { ok: true };
     };
@@ -198,12 +215,14 @@ async function loadInterpolationConfigHarness(instance = null, { neuralGate = nu
     ${externalApply}
     export { configureInterpolator, applyExternalSitePreferences };
     export function setInstance(value) { interpolator = value; }
+    export function migrationWrites() { return [...deps.writes]; }
     export function state() {
       return { pendingEngine, pendingResMode, pendingTargetFps, pendingAvOffsetMs,
         interpStaticPassthroughPref, interpAutoFallbackPref, interpLadderPref,
-        interpInvertPref, interpolationConfigGeneration, preferenceFences: deps.fences };
+        interpInvertPref, interpolationConfigGeneration, preferenceFences: deps.fences,
+        neuralModelKey };
     }
-  `, { instance, saved: [], failures: [], fences: 0, neuralCalls: 0, neuralGate });
+  `, { instance, saved: [], failures: [], fences: 0, neuralCalls: 0, neuralGate, writes: [] });
 }
 
 async function loadStatusHarness(storeHealth = {
@@ -287,7 +306,7 @@ async function loadPreferenceApplicationHarness(
 async function loadRuntimeKeyHarness() {
   const runtimeKey = section("function interpolationRuntimeConfigKey()", "function interpolationQuarantineMatches");
   return importHarness(`
-    let interpolationConfigGeneration = 7, pendingEngine = "rife_orig", pendingResMode = "auto";
+    let interpolationConfigGeneration = 7, pendingEngine = "rife_v4.26_fp16", pendingResMode = "auto";
     let pendingTargetFps = "auto", pendingAvOffsetMs = 0, interpStaticPassthroughPref = true;
     let interpAutoFallbackPref = true, interpLadderPref = false, interpInvertPref = true;
     ${runtimeKey}
@@ -315,6 +334,15 @@ test("engine and policy setters reject invalid values and normalize incompatible
   assert.deepEqual(settings.state(), before, "an invalid engine must not mutate any state");
   assert.equal(settings.setEngine("fsrcnnx-hi").ok, false,
     "the removed high engine is accepted only by stored-preference migration");
+
+  const noNeuralModels = await loadPolicyHarness({ neuralModels: [] });
+  const noNeuralBefore = noNeuralModels.state();
+  assert.deepEqual(noNeuralModels.setEngine("neural"), {
+    ok: false, reason: "no bundled neural models", engine: "fsrcnnx",
+    activeEngine: "fsrcnnx", policy: "display", chainDepth: 1,
+  });
+  assert.deepEqual(noNeuralModels.state(), noNeuralBefore,
+    "an unavailable neural engine must not mutate or persist selection state");
 
   assert.deepEqual(settings.setEngine("artcnn"), {
     ok: true, engine: "artcnn", activeEngine: "artcnn", policy: "display", chainDepth: 1,
@@ -392,7 +420,7 @@ test("site persistence records requested intent and writes only selected fields"
     ssimds: false, sharpen: true, sharpenStrength: 1.4,
     hoverReveal: true, allVideos: true, deband: true, debandStrength: 1.6,
     images: true, interpolate: false,
-    interpEngine: "rife_orig", interpResMode: "half", neuralModel: "span",
+    interpEngine: "rife_v4.26_fp16", interpResMode: "half", neuralModel: "span",
     interpTargetFps: 144, interpAvOffsetMs: 35, interpStaticPassthrough: false,
     interpAutoFallback: false, interpLadder: true, interpInvert: false,
   });
@@ -421,6 +449,30 @@ test("preference restore normalizes valid legacy values and rejects corrupt stor
   assert.equal(legacyForce8.state().preferenceValidationFailure, null);
   assert.deepEqual(legacyForce8.migrationWrites(), [{ engine: "fsrcnnx", policy: "force4" }]);
 
+  const legacyInterpolation = await loadRestoreHarness({ interpEngine: "rife_orig" });
+  assert.equal((await legacyInterpolation.restoreSitePrefs()).ok, true);
+  assert.equal(legacyInterpolation.state().pendingEngine, "rife_v4.26");
+  assert.equal(legacyInterpolation.state().preferenceValidationFailure, null);
+  assert.deepEqual(legacyInterpolation.migrationWrites(), [{ interpEngine: "rife_v4.26" }]);
+
+  const removedNeuralWhileArt = await loadRestoreHarness({
+    engine: "artcnn", neuralModel: "span2x_smoke",
+  }, { neuralModels: [] });
+  assert.equal((await removedNeuralWhileArt.restoreSitePrefs()).ok, true);
+  assert.equal(removedNeuralWhileArt.state().engine, "artcnn");
+  assert.equal(removedNeuralWhileArt.state().neuralModelKey, "");
+  assert.equal(removedNeuralWhileArt.state().preferenceValidationFailure, null);
+  assert.deepEqual(removedNeuralWhileArt.migrationWrites(), [{ neuralModel: null }]);
+
+  const replacedNeuralCatalog = await loadRestoreHarness({
+    engine: "neural", neuralModel: "span2x_smoke",
+  }, { neuralModels: [{ key: "replacement" }] });
+  assert.equal((await replacedNeuralCatalog.restoreSitePrefs()).ok, true);
+  assert.equal(replacedNeuralCatalog.state().engine, "neural");
+  assert.equal(replacedNeuralCatalog.state().neuralModelKey, "replacement");
+  assert.equal(replacedNeuralCatalog.state().preferenceValidationFailure, null);
+  assert.deepEqual(replacedNeuralCatalog.migrationWrites(), [{ neuralModel: "replacement" }]);
+
   const valid = await loadRestoreHarness({
     engine: "artcnn", neuralModel: "span", artVariant: "ArtCNN_C4F32_DN", policy: "force8",
     mode: "upscale", images: true, interpolate: true,
@@ -438,7 +490,7 @@ test("preference restore normalizes valid legacy values and rejects corrupt stor
   });
 
   const corrupt = await loadRestoreHarness({
-    engine: { value: "artcnn" }, neuralModel: "unknown", artVariant: "../../bad", policy: "force8",
+    engine: { value: "artcnn" }, neuralModel: "../unknown", artVariant: "../../bad", policy: "force8",
     mode: "bogus", images: "true", interpolate: 1,
     interpEngine: "file:///tmp/model", interpResMode: "max", interpTargetFps: 999,
     interpAvOffsetMs: -101, interpStaticPassthrough: "false",
@@ -495,6 +547,8 @@ test("interpolation setters preserve invalid-state immutability and configure a 
   assert.equal(config.setInterpolateRes("eighth").ok, false);
   assert.equal(config.setInterpolateAvOffset(Infinity).ok, false);
   assert.equal((await config.setInterpolateModel("unknown")).ok, false);
+  assert.equal((await config.setInterpolateModel("rife_orig")).ok, false,
+    "the historical key is accepted only by stored-preference migration");
   assert.equal(config.setInterpolateTargetFps(1000).ok, false);
   assert.deepEqual(config.state(), initial);
 
@@ -542,12 +596,12 @@ test("interpolation runtime failures are returned as explicit command results", 
     ok: true, pending: true, reason: "runtime failure",
     detail: "GPU state unavailable", resMode: "full",
   });
-  assert.deepEqual(await config.setInterpolateModel("rife_orig"), {
-    ok: true, pending: true, model: "rife_orig",
+  assert.deepEqual(await config.setInterpolateModel("rife_v4.26_fp16"), {
+    ok: true, pending: true, model: "rife_v4.26_fp16",
     reason: "runtime failure", detail: "model switch failed",
   });
   assert.equal(config.state().pendingResMode, "full");
-  assert.equal(config.state().pendingEngine, "rife_orig");
+  assert.equal(config.state().pendingEngine, "rife_v4.26_fp16");
 });
 
 test("a newer local setting fences an older asynchronous external preference apply", async () => {
@@ -558,7 +612,7 @@ test("a newer local setting fences an older asynchronous external preference app
   const config = await loadInterpolationConfigHarness(null, { neuralGate });
   const applying = config.applyExternalSitePreferences({
     neuralModel: "span",
-    interpEngine: "rife_orig",
+    interpEngine: "rife_v4.26_fp16",
   });
   await Promise.resolve();
 
@@ -570,6 +624,17 @@ test("a newer local setting fences an older asynchronous external preference app
   assert.equal(config.state().pendingEngine, "blend",
     "the stale external continuation must not overwrite newer local intent");
   assert.equal(config.state().preferenceFences, 1);
+});
+
+test("external preference reconciliation replaces a neural model removed from the catalog", async () => {
+  const config = await loadInterpolationConfigHarness();
+  assert.deepEqual(await config.applyExternalSitePreferences({ neuralModel: "span2x_smoke" }), {
+    ok: true,
+    applied: true,
+    invalid: [],
+  });
+  assert.equal(config.state().neuralModelKey, "span");
+  assert.deepEqual(config.migrationWrites(), [{ neuralModel: "span" }]);
 });
 
 test("preference synchronization retries failed runtime application and reports persistent failure", async () => {

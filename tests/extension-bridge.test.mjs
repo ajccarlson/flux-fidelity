@@ -134,8 +134,8 @@ const COMMAND_CASES = [
   },
   {
     type: "FSRCNNX_SETNEURALMODEL", method: "setNeuralModel", field: "model",
-    valid: ["span2x_smoke", "span4x_future", "vendor.model-v2"],
-    invalid: ["", "../span2x_smoke", "key/with/slash", "contains space", null],
+    valid: ["local2x", "future4x", "vendor.model-v2"],
+    invalid: ["", "../local2x", "key/with/slash", "contains space", null],
   },
   {
     type: "FSRCNNX_SETARTVARIANT", method: "setArtVariant", field: "variant",
@@ -153,8 +153,8 @@ const COMMAND_CASES = [
   },
   {
     type: "FSRCNNX_SETINTERPMODEL", method: "setInterpolateModel", field: "key",
-    valid: ["rife_v4.26_fp16", "rife_v4.26", "rife_orig", "blend"],
-    invalid: ["", "rife_v4.25", "../rife_orig", null],
+    valid: ["rife_v4.26_fp16", "rife_v4.26", "blend"],
+    invalid: ["", "rife_orig", "rife_v4.25", "../rife_orig", null],
   },
   {
     type: "FSRCNNX_SETINTERPTARGETFPS", method: "setInterpolateTargetFps", field: "value",
