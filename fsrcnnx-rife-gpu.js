@@ -580,6 +580,11 @@ export class GpuInterp {
 
   hasPrev() { return this._frames >= 2; }
   advance() { const t = this.prevTex; this.prevTex = this.curTex; this.curTex = t; }
+  resetFrames() {
+    // Keep the allocated ping-pong textures, but forget their logical contents.
+    // The next capture becomes a fresh first frame after seek/source boundaries.
+    this._frames = 0;
+  }
 
 
   getSplit() { return this.lastTiming || { pack: 0, run: 0, comp: 0, read: 0 }; }

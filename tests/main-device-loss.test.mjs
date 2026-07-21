@@ -30,10 +30,11 @@ async function loadCoordinator(deps) {
     const lostDevices = new WeakSet();
     let device = deps.device, deviceOwnedByMain = true;
     let adoptionGeneration = 0;
+    let videoSelectionGeneration = 0;
     let deviceRecoveryGeneration = 0, deviceRecoveryPromise = null, deviceRecoveryTimer = null;
     let mode = deps.mode || "passthrough", optImages = false, engine = "fsrcnnx";
     let engineSelectionGeneration = 0, chainDepth = 1, artVariant = "ArtCNN_C4F32";
-    let adopting = false;
+    let adopting = false, pageSuspended = false, interpolator = null;
     let context = deps.context, format = "rgba8unorm", canvas = deps.canvas;
     let sampler = {}, extractPipeline = {}, recombinePipeline = {}, passthroughPipeline = {};
     let extractPipelineTex = {}, recombinePipelineTex = {}, recombine16PipelineTex = {};
@@ -67,6 +68,12 @@ async function loadCoordinator(deps) {
     async function ensureImageUpscaler() { return null; }
     function attach() { deps.attaches++; }
     function scheduleMainLoop() { deps.schedules++; }
+    function cancelMainLoop() {}
+    function findVideo() { return { id: "selected-video" }; }
+    async function queueVideoSelection() {
+      canvas.style.display = "block";
+      attach(); scheduleMainLoop(); return true;
+    }
     function deactivateRendering() { mode = "off"; cancelDeviceRecovery(); }
     ${production}
     export function watch() { watchDeviceLoss(device); }

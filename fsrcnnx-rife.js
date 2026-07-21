@@ -613,6 +613,7 @@ export function gpuCapture(video) { return gpuInterp ? gpuInterp.captureToPooled
 export function gpuLastCaptureError() { return gpuInterp?.lastCaptureError || null; }
 export function gpuHasPrev() { return gpuInterp ? gpuInterp.hasPrev() : false; }
 export function gpuAdvance() { if (gpuInterp) gpuInterp.advance(); }
+export function gpuResetFrames() { if (gpuInterp) gpuInterp.resetFrames(); }
 export async function gpuTween(w, h, t, useStatic) {
   if (!gpuInterp) return null;
   const t0 = performance.now();

@@ -16,6 +16,37 @@ function globRegex(pattern) {
   return new RegExp(`^${escaped}$`);
 }
 
+function localImportReferences(source) {
+  const references = [];
+  const patterns = [
+    /\b(?:import|export)\s+(?:[^"'`]*?\s+from\s*)?["'](\.[^"'`]+)["']/g,
+    /\bimport\s*\(\s*["'](\.[^"'`]+)["']\s*\)/g,
+  ];
+  for (const pattern of patterns) {
+    for (const match of source.matchAll(pattern)) references.push(match[1]);
+  }
+  return references;
+}
+
+function runtimeUrlReferences(source) {
+  const references = [];
+  const getUrlPattern = /chrome\.runtime\.getURL\(\s*(["'`])([^"'`]*)\1/g;
+  for (const match of source.matchAll(getUrlPattern)) {
+    const quote = match[1];
+    const expressionTail = source.slice(match.index + match[0].length);
+    const templateMarker = quote === "`" ? match[2].indexOf("${") : -1;
+    const expressionContinues = !/^\s*\)/.test(expressionTail);
+    if (templateMarker >= 0) {
+      references.push({ type: "prefix", value: match[2].slice(0, templateMarker) });
+    } else if (expressionContinues || match[2].endsWith("/")) {
+      references.push({ type: "prefix", value: match[2] });
+    } else {
+      references.push({ type: "file", value: match[2] });
+    }
+  }
+  return references;
+}
+
 function parseJson(rootDir, file, errors) {
   try {
     return JSON.parse(readFileSync(resolve(rootDir, file), "utf8"));
@@ -100,6 +131,55 @@ export function validatePackage({ rootDir = root, packageFiles = PACKAGE_FILES }
         } else requireFile(resource, "web_accessible_resources");
       }
     }
+
+    const webAccessiblePatterns = (manifest.web_accessible_resources || [])
+      .flatMap((group) => group.resources || []);
+    const isWebAccessible = (file) => webAccessiblePatterns.some((pattern) => (
+      pattern.includes("*") ? globRegex(pattern).test(file) : pattern === file
+    ));
+    const requireWebAccessible = (file, source) => {
+      if (!isWebAccessible(file)) {
+        errors.push(
+          `${source}: content-script dependency ${file} is not declared in web_accessible_resources`,
+        );
+      }
+    };
+
+    // Content scripts execute against arbitrary pages. Walk every module and
+    // runtime URL reachable from those entry points so a packaged file cannot
+    // work in extension-owned pages while failing only when the content script
+    // attempts to load it. Extension pages and the service worker deliberately
+    // remain outside this graph and do not need to be exposed to page origins.
+    const pendingContentModules = (manifest.content_scripts || [])
+      .flatMap((script) => script.js || []);
+    const visitedContentModules = new Set();
+    while (pendingContentModules.length) {
+      const sourceFile = pendingContentModules.shift();
+      if (visitedContentModules.has(sourceFile) || !fileSet.has(sourceFile)) continue;
+      visitedContentModules.add(sourceFile);
+      const source = readText(rootDir, sourceFile, errors);
+      if (source === null) continue;
+
+      const referencedFiles = [];
+      for (const reference of localImportReferences(source)) {
+        referencedFiles.push(normalizedRelativePath(rootDir, sourceFile, reference));
+      }
+      for (const reference of runtimeUrlReferences(source)) {
+        if (reference.type === "file") {
+          referencedFiles.push(reference.value);
+        } else {
+          referencedFiles.push(...packageFiles.filter((file) => file.startsWith(reference.value)));
+        }
+      }
+
+      for (const referencedFile of new Set(referencedFiles)) {
+        // The general reference pass below reports missing package inputs. Only
+        // packaged dependencies can be checked for accessibility or traversed.
+        if (!fileSet.has(referencedFile)) continue;
+        requireWebAccessible(referencedFile, sourceFile);
+        if (/\.(?:js|mjs)$/.test(referencedFile)) pendingContentModules.push(referencedFile);
+      }
+    }
   }
 
   for (const html of packageFiles.filter((file) => file.endsWith(".html"))) {
@@ -136,26 +216,15 @@ export function validatePackage({ rootDir = root, packageFiles = PACKAGE_FILES }
   for (const js of packageFiles.filter((file) => /\.(?:js|mjs)$/.test(file))) {
     const source = readText(rootDir, js, errors);
     if (source === null) continue;
-    const importReferences = [
-      ...source.matchAll(/(?:from\s*|import\s*\()\s*["'](\.[^"']+)["']/g),
-      ...source.matchAll(/\bimport\s*["'](\.[^"']+)["']/g),
-    ];
-    for (const match of importReferences) {
-      requireFile(normalizedRelativePath(rootDir, js, match[1]), js);
+    for (const reference of localImportReferences(source)) {
+      requireFile(normalizedRelativePath(rootDir, js, reference), js);
     }
 
-    const getUrlPattern = /chrome\.runtime\.getURL\(\s*(["'`])([^"'`]*)\1/g;
-    for (const match of source.matchAll(getUrlPattern)) {
-      const quote = match[1];
-      const expressionTail = source.slice(match.index + match[0].length);
-      const templateMarker = quote === "`" ? match[2].indexOf("${") : -1;
-      const expressionContinues = !/^\s*\)/.test(expressionTail);
-      if (templateMarker >= 0) {
-        requirePrefix(match[2].slice(0, templateMarker), js);
-      } else if (expressionContinues || match[2].endsWith("/")) {
-        requirePrefix(match[2], js);
+    for (const reference of runtimeUrlReferences(source)) {
+      if (reference.type === "prefix") {
+        requirePrefix(reference.value, js);
       } else {
-        requireFile(match[2], js);
+        requireFile(reference.value, js);
       }
     }
   }
