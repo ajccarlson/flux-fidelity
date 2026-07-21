@@ -1,34 +1,12 @@
 import { createHash } from "node:crypto";
 import { deflateRawSync } from "node:zlib";
-import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { PACKAGE_FILES } from "./package-files.mjs";
 
 const root = resolve(import.meta.dirname, "..");
-const dist = resolve(root, "dist");
-const stage = resolve(dist, "fsrcnnx-ext");
-const archive = resolve(dist, "fsrcnnx-ext.zip");
 const fixedMode = 0o100644;
-
-function walk(dir, prefix = "") {
-  const out = [];
-  for (const entry of readdirSync(dir).sort()) {
-    const path = resolve(dir, entry);
-    const rel = prefix ? `${prefix}/${entry}` : entry;
-    if (statSync(path).isDirectory()) out.push(...walk(path, rel));
-    else out.push(rel);
-  }
-  return out;
-}
-
-function runtimeFiles() {
-  const files = [
-    "manifest.json", "popup.html", "popup.js", "background.js", "content.js",
-    "validate.html", "validate.js", "LICENSE", "THIRD_PARTY_NOTICES.md", "MODEL_PROVENANCE.md",
-  ];
-  files.push(...readdirSync(root).filter((name) => /^fsrcnnx-.*\.js$/.test(name)));
-  for (const dir of ["icons", "model", "vendor/ort"]) files.push(...walk(resolve(root, dir), dir));
-  return [...new Set(files)].sort();
-}
 
 const crcTable = new Uint32Array(256);
 for (let n = 0; n < 256; n++) {
@@ -71,21 +49,36 @@ function makeZip(entries) {
   return Buffer.concat([...locals, central, end]);
 }
 
-rmSync(stage, { recursive: true, force: true });
-mkdirSync(stage, { recursive: true });
-const entries = [];
-for (const file of runtimeFiles()) {
-  const source = resolve(root, file);
-  const data = readFileSync(source);
-  const target = resolve(stage, file);
-  mkdirSync(dirname(target), { recursive: true });
-  writeFileSync(target, data, { mode: 0o644 });
-  entries.push({ name: file, data });
+export function buildPackage({ rootDir = root, distDir = resolve(rootDir, "dist") } = {}) {
+  const stage = resolve(distDir, "fsrcnnx-ext");
+  const archive = resolve(distDir, "fsrcnnx-ext.zip");
+
+  rmSync(stage, { recursive: true, force: true });
+  mkdirSync(stage, { recursive: true });
+  const entries = [];
+  for (const file of PACKAGE_FILES) {
+    const source = resolve(rootDir, file);
+    const metadata = lstatSync(source);
+    if (!metadata.isFile() || metadata.isSymbolicLink()) {
+      throw new Error(`Package input must be a regular file: ${file}`);
+    }
+    const data = readFileSync(source);
+    const target = resolve(stage, file);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, data, { mode: 0o644 });
+    entries.push({ name: file, data });
+  }
+
+  const zip = makeZip(entries);
+  mkdirSync(distDir, { recursive: true });
+  writeFileSync(archive, zip);
+  const digest = createHash("sha256").update(zip).digest("hex");
+  writeFileSync(resolve(distDir, "SHA256SUMS"), `${digest}  ${relative(distDir, archive)}\n`);
+  return { archive, digest, fileCount: entries.length, stage };
 }
 
-const zip = makeZip(entries);
-writeFileSync(archive, zip);
-const digest = createHash("sha256").update(zip).digest("hex");
-writeFileSync(resolve(dist, "SHA256SUMS"), `${digest}  ${relative(dist, archive)}\n`);
-console.log(`Packaged ${entries.length} files: ${relative(root, archive)}`);
-console.log(`SHA-256 ${digest}`);
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const result = buildPackage();
+  console.log(`Packaged ${result.fileCount} files: ${relative(root, result.archive)}`);
+  console.log(`SHA-256 ${result.digest}`);
+}
