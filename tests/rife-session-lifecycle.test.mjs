@@ -114,7 +114,7 @@ test("RIFE model switching commits the latest replacement before releasing the o
   assert.equal(rife.getOrtDevice(), devices.initial);
   assert.equal(rife.isReady(), true);
 
-  assert.equal(rife.setModel("rife_orig"), true);
+  assert.equal(rife.setModel("rife_v4.26_fp16"), true);
   const staleInit = rife.initRife();
   await waitFor(() => requests.length === 1, "stale candidate creation did not start");
   assert.equal(releases.initial, 0);
@@ -156,7 +156,7 @@ test("RIFE model switching commits the latest replacement before releasing the o
 
   // A subsequent replacement on the already-adopted device can release its
   // predecessor immediately because the candidate itself preserves that device.
-  assert.equal(rife.setModel("rife_orig"), true);
+  assert.equal(rife.setModel("rife_v4.26_fp16"), true);
   const sameDeviceInit = rife.initRife();
   await waitFor(() => requests.length === 3, "same-device candidate creation did not start");
   requests[2].resolve(sameDeviceSession);

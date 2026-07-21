@@ -244,8 +244,8 @@ async function loadAdoptionInternal(deps) {
     });
     const buildCore = () => deps.buildCore();
     const loadModels = async () => deps.loadModels?.();
+    const ensureFsrcnnxStages = async () => deps.ensureFsrcnnxStages?.();
     const ensureArtStages = async () => deps.ensureArtStages?.();
-    const ensureHiStages = async () => deps.ensureHiStages?.();
     const ensureImageUpscaler = async () => deps.ensureImageUpscaler?.() || null;
     const attach = () => {};
     const scheduleMainLoop = () => {};
@@ -332,8 +332,8 @@ async function loadModelLifecycle(deps) {
   const original = await readFile(mainUrl, "utf8");
   const production = section(original, "const srcCache =", "// Chains N ArtCnnModel stages");
   const harness = `
-    const MODEL_FILES = ["model-a", "model-b", "model-c", "model-d"];
-    const FSRCNNX_HIGH_MODEL_NAME = "model-high";
+    const FSRCNNX_STANDARD_MODEL_NAMES = ["model-standard"];
+    const MODEL_FILES = FSRCNNX_STANDARD_MODEL_NAMES;
     let device = globalThis.__mainLifecycleTestDeps.device;
     let models = [], activeModel = null;
     let modelsDevice = null, modelLoadPromise = null, modelLoadDevice = null;
@@ -343,9 +343,9 @@ async function loadModelLifecycle(deps) {
     const chrome = { runtime: { getURL: (path) => path } };
     const log = () => {};
     ${production}
-    export { loadModels, ensureHiStages, ensureArtStages };
+    export { loadModels, ensureFsrcnnxStages, ensureArtStages, reclaimInactiveStageAllocations };
     export function setDevice(next) { device = next; }
-    export function state() { return { models, modelsDevice, hiStages, artStages }; }
+    export function state() { return { models, modelsDevice, artStages }; }
   `;
   globalThis.__mainLifecycleTestDeps = deps;
   return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++moduleRevision}`);
@@ -356,7 +356,6 @@ async function loadRendererResourceHelpers(deps) {
   const production = [
     section(original, "function ensureLumaTexture", "// Lazily build the texture-ingest twins"),
     section(original, "function ensureTexPipelines", "function renderUpscale"),
-    section(original, "function ensureDebandInter", "function ensureDebandPipelines"),
     section(original, "function ensureHiRGB", "function ensureChainTapTexture"),
     section(original, "function ensureChainTapTexture", "const PASSTHROUGH_WGSL"),
   ].join("\n");
@@ -369,13 +368,12 @@ async function loadRendererResourceHelpers(deps) {
     let format = "rgba8unorm";
     let lumaTexture = null, lumaW = 0, lumaH = 0;
     let hiRGB = null, hiRGBW = 0, hiRGBH = 0;
-    let debandInterTex = null, debandInterW = 0, debandInterH = 0;
     let chainTapTex = null;
     let extractPipelineTex = null, recombinePipelineTex = null, recombine16PipelineTex = null;
     ${production}
-    export { ensureLumaTexture, ensureHiRGB, ensureDebandInter, ensureChainTapTexture, ensureTexPipelines };
+    export { ensureLumaTexture, ensureHiRGB, ensureChainTapTexture, ensureTexPipelines };
     export function state() { return { lumaTexture, lumaW, lumaH, hiRGB, hiRGBW, hiRGBH,
-      debandInterTex, debandInterW, debandInterH, chainTapTex,
+      chainTapTex,
       extractPipelineTex, recombinePipelineTex, recombine16PipelineTex }; }
   `;
   globalThis.__mainLifecycleTestDeps = deps;
@@ -421,18 +419,18 @@ test("model selection during the shared interpolation import does not lose the p
   const pendingEnable = lifecycle.setInterpolate(true);
   await loadStarted.promise;
   assert.deepEqual(
-    await lifecycle.setInterpolateModel("rife_orig"),
-    { ok: true, model: "rife_orig", pending: true },
+    await lifecycle.setInterpolateModel("rife_v4.26_fp16"),
+    { ok: true, model: "rife_v4.26_fp16", pending: true },
   );
   releaseModule.resolve();
 
   const enabled = await pendingEnable;
   assert.equal(enabled.ok, true);
   assert.ok(instance, "the shared import should construct an interpolator");
-  assert.equal(instance.engine, "rife_orig");
+  assert.equal(instance.engine, "rife_v4.26_fp16");
   assert.equal(instance.running, true);
   assert.equal(instance.startCalls, 1);
-  assert.deepEqual(lifecycle.getInterpolateStats(), { running: true, engine: "rife_orig" });
+  assert.deepEqual(lifecycle.getInterpolateStats(), { running: true, engine: "rife_v4.26_fp16" });
 });
 
 test("terminal interpolation failure preserves intent and retries only after explicit action or config change", async (t) => {
@@ -656,15 +654,15 @@ test("base model loading is single-flight, ordered, and atomically device-scoped
   const first = lifecycle.loadModels();
   const second = lifecycle.loadModels();
   await Promise.resolve();
-  assert.equal(calls.length, 8);
+  assert.equal(calls.length, 2);
   assert.equal(lifecycle.state().models.length, 0);
   releaseFetches.resolve();
   const [a, b] = await Promise.all([first, second]);
 
   assert.equal(a, b);
-  assert.deepEqual(a.map((model) => model.name), ["model-a", "model-b", "model-c", "model-d"]);
+  assert.deepEqual(a.map((model) => model.name), ["model-standard"]);
   assert.ok(a.every((model) => model.device === deviceA));
-  assert.equal(created.length, 4);
+  assert.equal(created.length, 1);
   assert.equal(lifecycle.state().modelsDevice, deviceA);
 });
 
@@ -702,7 +700,7 @@ test("a device replacement discards a stale base-model load before construction"
   assert.equal(lifecycle.state().models.length, 0);
 
   const current = await lifecycle.loadModels();
-  assert.equal(current.length, 4);
+  assert.equal(current.length, 1);
   assert.ok(current.every((model) => model.device === deviceB));
   assert.equal(lifecycle.state().modelsDevice, deviceB);
 });
@@ -728,12 +726,12 @@ test("chained model builders coalesce concurrent requests and capture their devi
     },
   };
   const lifecycle = await loadModelLifecycle(deps);
-  const [highA, highB] = await Promise.all([
-    lifecycle.ensureHiStages(2),
-    lifecycle.ensureHiStages(2),
+  const [standardA, standardB] = await Promise.all([
+    lifecycle.ensureFsrcnnxStages(2),
+    lifecycle.ensureFsrcnnxStages(2),
   ]);
-  assert.equal(highA.length, 2);
-  assert.equal(highB.length, 2);
+  assert.equal(standardA.length, 2);
+  assert.equal(standardB.length, 2);
   assert.equal(fetchCalls.length, 2);
   assert.equal(created.length, 2);
 
@@ -746,6 +744,35 @@ test("chained model builders coalesce concurrent requests and capture their devi
   assert.equal(fetchCalls.length, 4);
   assert.equal(created.length, 5);
   assert.ok(created.every((model) => model.device === device));
+});
+
+test("dropping a cascade to one stage reclaims only the inactive allocation", async (t) => {
+  const previousDeps = globalThis.__mainLifecycleTestDeps;
+  t.after(() => { globalThis.__mainLifecycleTestDeps = previousDeps; });
+  class FakeModel {}
+  const lifecycle = await loadModelLifecycle({
+    device: {},
+    FsrcnnxModel: FakeModel,
+    ArtCnnModel: FakeModel,
+    fetch: async () => ({ ok: true, json: async () => ({}), text: async () => "" }),
+  });
+  const calls = [];
+  const first = {
+    outputTexture: { stage: 0 },
+    resetAllocation() { calls.push(0); this.outputTexture = null; },
+  };
+  const second = {
+    outputTexture: { stage: 1 },
+    resetAllocation() { calls.push(1); this.outputTexture = null; },
+  };
+
+  lifecycle.reclaimInactiveStageAllocations([first, second], first);
+  assert.deepEqual(calls, [1]);
+  assert.ok(first.outputTexture, "the active first-stage allocation must remain stable");
+  assert.equal(second.outputTexture, null);
+
+  lifecycle.reclaimInactiveStageAllocations([first, second], { stages: [first, second] });
+  assert.deepEqual(calls, [1], "a later cascade selection must not reset either active stage");
 });
 
 test("a chained-model source load cannot commit stages after its device changes", async (t) => {
@@ -769,16 +796,16 @@ test("a chained-model source load cannot commit stages after its device changes"
     },
   };
   const lifecycle = await loadModelLifecycle(deps);
-  const staleBuild = lifecycle.ensureHiStages(2);
+  const staleBuild = lifecycle.ensureFsrcnnxStages(2);
   await Promise.resolve();
   lifecycle.setDevice(deviceB);
   releaseSource.resolve();
 
   await assert.rejects(staleBuild, /superseded by device change/);
   assert.equal(created.length, 0);
-  assert.equal(lifecycle.state().hiStages.length, 0);
+  assert.equal(lifecycle.state().models.length, 0);
 
-  const current = await lifecycle.ensureHiStages(2);
+  const current = await lifecycle.ensureFsrcnnxStages(2);
   assert.equal(current.length, 2);
   assert.ok(current.every((model) => model.device === deviceB));
 });
@@ -802,7 +829,6 @@ test("renderer texture helpers preserve their old generation when replacement al
   const specs = [
     { fn: helpers.ensureLumaTexture, key: "lumaTexture", dims: ["lumaW", "lumaH"] },
     { fn: helpers.ensureHiRGB, key: "hiRGB", dims: ["hiRGBW", "hiRGBH"] },
-    { fn: helpers.ensureDebandInter, key: "debandInterTex", dims: ["debandInterW", "debandInterH"] },
   ];
   for (const spec of specs) {
     assert.equal(spec.fn(16, 12), true);

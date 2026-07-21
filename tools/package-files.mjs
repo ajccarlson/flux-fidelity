@@ -1,6 +1,17 @@
 import { GENERATED_MODEL_ASSET_PATHS } from "../fsrcnnx-model-catalog.js";
 
-export const EXPECTED_PACKAGE_FILE_COUNT = 63;
+export const EXPECTED_PACKAGE_FILE_COUNT = 59;
+
+// These files let recipients inspect, rebuild, and substitute the LGPL-covered
+// shader portions and retain the exact license for the vendored ONNX Runtime.
+// Keep the inventory separate so package tests can enforce it explicitly.
+export const REQUIRED_COMPLIANCE_FILES = Object.freeze([
+  "LGPL_REBUILDING.md",
+  "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl",
+  "shaders/upstream/SSimDownscaler.glsl",
+  "transpile.js",
+  "vendor/ort/LICENSE",
+]);
 
 // These assets are selected indirectly from runtime model catalogs, so static
 // import/getURL scanning cannot prove their exact package membership. Keep this
@@ -8,7 +19,6 @@ export const EXPECTED_PACKAGE_FILE_COUNT = 63;
 // validation instead of degrading only the affected model at runtime.
 export const REQUIRED_RUNTIME_MODEL_FILES = Object.freeze([
   ...GENERATED_MODEL_ASSET_PATHS,
-  "model/rife.onnx",
   "model/rife_v4.26.onnx",
   "model/rife_v4.26_fp16.onnx",
 ]);
@@ -18,6 +28,7 @@ export const REQUIRED_RUNTIME_MODEL_FILES = Object.freeze([
 export const PACKAGE_FILES = Object.freeze([
   "GPL-3.0.txt",
   "LGPL-3.0.txt",
+  "LGPL_REBUILDING.md",
   "LICENSE",
   "MODEL_PROVENANCE.md",
   "THIRD_PARTY_NOTICES.md",
@@ -25,7 +36,6 @@ export const PACKAGE_FILES = Object.freeze([
   "content.js",
   "fsrcnnx-artcnn-runtime.js",
   "fsrcnnx-color.js",
-  "fsrcnnx-deband.js",
   "fsrcnnx-grab.js",
   "fsrcnnx-images.js",
   "fsrcnnx-interpolate.js",
@@ -59,22 +69,18 @@ export const PACKAGE_FILES = Object.freeze([
   "model/ArtCNN_C4F32_DS.artcnn.wgsl",
   "model/FSRCNNX_x2_16-0-4-1.passes.json",
   "model/FSRCNNX_x2_16-0-4-1.wgsl",
-  "model/FSRCNNX_x2_56-16-4-1.passes.json",
-  "model/FSRCNNX_x2_56-16-4-1.wgsl",
-  "model/FSRCNNX_x3_16-0-4-1.passes.json",
-  "model/FSRCNNX_x3_16-0-4-1.wgsl",
-  "model/FSRCNNX_x4_16-0-4-1.passes.json",
-  "model/FSRCNNX_x4_16-0-4-1.wgsl",
   "model/neural/manifest.json",
-  "model/neural/span2x_smoke.fp16.onnx",
-  "model/rife.onnx",
   "model/rife_v4.26.onnx",
   "model/rife_v4.26_fp16.onnx",
   "popup.html",
   "popup.js",
   "release-clearance.json",
+  "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl",
+  "shaders/upstream/SSimDownscaler.glsl",
+  "transpile.js",
   "validate.html",
   "validate.js",
+  "vendor/ort/LICENSE",
   "vendor/ort/ThirdPartyNotices.txt",
   "vendor/ort/ort-wasm-simd-threaded.asyncify.mjs",
   "vendor/ort/ort-wasm-simd-threaded.asyncify.wasm",
@@ -105,6 +111,16 @@ function assertPackageBoundary() {
   for (const file of REQUIRED_RUNTIME_MODEL_FILES) {
     if (!PACKAGE_FILES.includes(file)) {
       throw new Error(`Package allowlist is missing required runtime model asset ${file}`);
+    }
+  }
+  const sortedComplianceFiles = [...REQUIRED_COMPLIANCE_FILES].sort();
+  if (new Set(REQUIRED_COMPLIANCE_FILES).size !== REQUIRED_COMPLIANCE_FILES.length ||
+      REQUIRED_COMPLIANCE_FILES.some((file, index) => file !== sortedComplianceFiles[index])) {
+    throw new Error("Required compliance files must be unique and sorted");
+  }
+  for (const file of REQUIRED_COMPLIANCE_FILES) {
+    if (!PACKAGE_FILES.includes(file)) {
+      throw new Error(`Package allowlist is missing required compliance material ${file}`);
     }
   }
 }

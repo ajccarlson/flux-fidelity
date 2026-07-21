@@ -16,10 +16,4 @@ Export a checkpoint:
 python tools/neural-export/export.py --pth checkpoint.pth --key model-id --label "Model label"
 ```
 
-Output is written to `model/neural/`, and its entry is added to `model/neural/manifest.json`. Check the checkpoint's redistribution license before committing the generated ONNX file.
-
-To generate the random-weight pipeline fixture used for integration testing:
-
-```sh
-python tools/neural-export/export.py --smoke
-```
+Output is written to `model/neural/`, and its entry is added to `model/neural/manifest.json`. Check the checkpoint's provenance and redistribution license before adding the generated ONNX file to a release boundary. No neural model is bundled by default.

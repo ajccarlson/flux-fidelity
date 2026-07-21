@@ -16,6 +16,7 @@ import { validatePackage } from "../tools/check-package.mjs";
 import {
   EXPECTED_PACKAGE_FILE_COUNT,
   PACKAGE_FILES,
+  REQUIRED_COMPLIANCE_FILES,
   REQUIRED_RUNTIME_MODEL_FILES,
 } from "../tools/package-files.mjs";
 
@@ -40,24 +41,39 @@ function manifestGlob(pattern) {
   return new RegExp(`^${escaped}$`);
 }
 
-test("the package boundary is an exact, sorted 63-file allowlist", () => {
+test("the package boundary is an exact, sorted 59-file allowlist", () => {
   assert.equal(PACKAGE_FILES.length, EXPECTED_PACKAGE_FILE_COUNT);
-  assert.equal(EXPECTED_PACKAGE_FILE_COUNT, 63);
+  assert.equal(EXPECTED_PACKAGE_FILE_COUNT, 59);
   assert.equal(new Set(PACKAGE_FILES).size, PACKAGE_FILES.length);
   assert.deepEqual(PACKAGE_FILES, [...PACKAGE_FILES].sort());
   assert.equal(PACKAGE_FILES.includes("fsrcnnx-development-only.js"), false);
+  assert.equal(PACKAGE_FILES.includes("model/rife.onnx"), false);
+  assert.equal(PACKAGE_FILES.includes("model/neural/span2x_smoke.fp16.onnx"), false);
 });
 
 test("the package retains every legal notice and the machine-readable release gate", () => {
   for (const file of [
     "GPL-3.0.txt",
     "LGPL-3.0.txt",
+    "LGPL_REBUILDING.md",
     "LICENSE",
     "MODEL_PROVENANCE.md",
     "THIRD_PARTY_NOTICES.md",
     "release-clearance.json",
+    "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl",
+    "shaders/upstream/SSimDownscaler.glsl",
+    "transpile.js",
+    "vendor/ort/LICENSE",
     "vendor/ort/ThirdPartyNotices.txt",
   ]) {
+    assert.equal(PACKAGE_FILES.includes(file), true, `${file} must remain in the package`);
+  }
+});
+
+test("every required rebuilding and substitution file is packaged exactly", () => {
+  assert.deepEqual(REQUIRED_COMPLIANCE_FILES, [...REQUIRED_COMPLIANCE_FILES].sort());
+  assert.equal(new Set(REQUIRED_COMPLIANCE_FILES).size, REQUIRED_COMPLIANCE_FILES.length);
+  for (const file of REQUIRED_COMPLIANCE_FILES) {
     assert.equal(PACKAGE_FILES.includes(file), true, `${file} must remain in the package`);
   }
 });
@@ -70,7 +86,7 @@ test("package creation never discovers an extra runtime-looking local file", () 
 
     const result = buildPackage({ rootDir: fixture, distDir: join(fixture, "output") });
 
-    assert.equal(result.fileCount, 63);
+    assert.equal(result.fileCount, 59);
     assert.deepEqual(walk(result.stage), PACKAGE_FILES);
     assert.equal(existsSync(join(result.stage, "fsrcnnx-development-only.js")), false);
   } finally {

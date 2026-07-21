@@ -135,9 +135,6 @@ test("all shipped model bundles pass the shared strict validator", () => {
 test("working-set estimates describe the runtime's physical texture allocation", () => {
   const expectedBytesPerPixel = new Map([
     ["FSRCNNX_x2_16-0-4-1", 168],
-    ["FSRCNNX_x2_56-16-4-1", 392],
-    ["FSRCNNX_x3_16-0-4-1", 224],
-    ["FSRCNNX_x4_16-0-4-1", 288],
     ["ArtCNN_C4F32", 424],
     ["ArtCNN_C4F32_DN", 424],
     ["ArtCNN_C4F32_DS", 424],
@@ -239,8 +236,18 @@ test("malformed manifests and WGSL entry maps are rejected deterministically", (
 });
 
 for (const spec of [
-  { label: "FSRCNNX", bundle: shippedBundles[0], Model: FsrcnnxModel, lumaKey: "lumaTexture" },
-  { label: "ArtCNN", bundle: shippedBundles[4], Model: ArtCnnModel, lumaKey: "lumaTex" },
+  {
+    label: "FSRCNNX",
+    bundle: shippedBundles.find(({ kind }) => kind === "fsrcnnx"),
+    Model: FsrcnnxModel,
+    lumaKey: "lumaTexture",
+  },
+  {
+    label: "ArtCNN",
+    bundle: shippedBundles.find(({ name }) => name === "ArtCNN_C4F32"),
+    Model: ArtCnnModel,
+    lumaKey: "lumaTex",
+  },
 ]) {
   test(`${spec.label} publishes pipelines only after every pass builds`, () => {
     const device = fakeDevice();

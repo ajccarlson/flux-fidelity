@@ -1,6 +1,6 @@
 # FSRCNNX-EXT
 
-FSRCNNX-EXT is a pre-release Chromium extension for real-time WebGPU video enhancement. It provides FSRCNNX and ArtCNN upscaling, optional SSimDownscaler, sharpening and debanding, RIFE or blend frame interpolation, and an experimental ONNX super-resolution path.
+FSRCNNX-EXT is a pre-release Chromium extension for real-time WebGPU video enhancement. It provides FSRCNNX and ArtCNN upscaling, optional SSimDownscaler and sharpening, RIFE or blend frame interpolation, and an experimental ONNX super-resolution path.
 
 Public distribution is not yet cleared. Several bundled artifacts still have unresolved provenance or licensing records; see [Model provenance](MODEL_PROVENANCE.md) before packaging or publishing the extension.
 
@@ -26,7 +26,7 @@ The extension requests access to all sites so it can find and process eligible p
 3. Select an upscaling engine and policy, then choose **Upscale**. Optional filters and interpolation can be enabled separately.
 4. Choose **Off** to restore normal page rendering.
 
-Settings are stored per origin. GPU memory, source resolution, browser support, and model cost determine which combinations can sustain real-time playback. The bundled `SPAN 2x SMOKE` model has random weights and is only a pipeline test.
+Settings are stored per origin. GPU memory, source resolution, browser support, and model cost determine which combinations can sustain real-time playback. No ONNX super-resolution model is bundled, so that engine remains unavailable unless a compatible, licensed model is added to the neural manifest.
 
 ## Validate
 
@@ -44,7 +44,7 @@ npm run validate:browser
 
 Set `FSRCNNX_BROWSER` to an executable path when no supported browser is found automatically. After loading the extension manually, the GPU validation suite is available at `chrome-extension://<extension-id>/validate.html`; the ID is shown on `chrome://extensions`.
 
-`npm run package` creates a deterministic local archive under `dist/` after running the checks. A successful archive build verifies technical integrity only; `npm run release:check` must also pass before publication and currently reports the unresolved gates in [Model provenance](MODEL_PROVENANCE.md).
+`npm run package:internal` creates a deterministic validation archive under `dist/` after running the technical checks. `npm run package` additionally enforces the public-release gate and currently stops on the unresolved items in [Model provenance](MODEL_PROVENANCE.md).
 
 ## Licensing
 

@@ -12,7 +12,7 @@ Copyright (c) Microsoft Corporation
 
 Upstream: <https://github.com/microsoft/onnxruntime/tree/8f0278c77bf44b0cc83c098c6c722b92a36ac4b5>
 
-The official npm tarball does not carry a notice file. This package therefore preserves `vendor/ort/ThirdPartyNotices.txt` byte-for-byte from the pinned source commit (SHA-256 `0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2`). Bundling that upstream notice set does not replace the pending review of which notices and obligations apply to the distributed Web runtime files.
+This package preserves the official MIT text from the pinned source commit as `vendor/ort/LICENSE` (SHA-256 `2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c`). The official npm tarball does not carry a notice file, so the package also preserves `vendor/ort/ThirdPartyNotices.txt` byte-for-byte from that commit (SHA-256 `0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2`). Bundling the license and upstream notice set does not replace the pending review of which notices and obligations apply to the distributed Web runtime files.
 
 ### ArtCNN
 
@@ -25,14 +25,14 @@ Upstream: <https://github.com/Artoriuz/ArtCNN/tree/a20445ca420ed9f0c2a807e2d0c18
 
 ### Practical-RIFE 4.26
 
-The verified FP32 `model/rife_v4.26.onnx` is an ONNX export of the Practical-RIFE 4.26 trained model associated with commit `de9a989bb7b8a71d94f058297e603633aaa43ad6`. That revision explicitly states that content linked under “Trained Model” is under the project's MIT License.
+The verified FP32 `model/rife_v4.26.onnx` is an ONNX export of the Practical-RIFE 4.26 trained model associated with commit `de9a989bb7b8a71d94f058297e603633aaa43ad6`. That revision explicitly states that content linked under “Trained Model” is under the project's MIT License. The bundled `model/rife_v4.26_fp16.onnx` is a deterministically reproduced FP16 derivative of that exact FP32 artifact; its parent and output hashes, pinned conversion environment, structural checks, and numerical validation are recorded in `MODEL_PROVENANCE.md`.
 
 Copyright (c) 2021 hzwer
 
 Upstream: <https://github.com/hzwer/Practical-RIFE/tree/de9a989bb7b8a71d94f058297e603633aaa43ad6><br>
 Verified export archive: <https://github.com/AmusementClub/vs-mlrt/releases/download/external-models/rife_v4.26.7z>
 
-This notice does not cover the unidentified `model/rife.onnx`. The asserted FP16 derivative remains provenance-blocked as described in `MODEL_PROVENANCE.md`.
+This notice does not cover the unidentified historical `model/rife.onnx`. That file is absent from the current tree and package, but its private-history tombstone remains blocked as described in `MODEL_PROVENANCE.md`.
 
 ### Spandrel 0.4.2
 
@@ -42,7 +42,7 @@ Copyright (c) 2024 The ChaiNNer Organization
 
 Upstream: <https://github.com/chaiNNer-org/spandrel/tree/724cca389f28c38e1050689d4862a452fd644484>
 
-The smoke-model generation environment was not retained, so this attribution does not by itself prove that exact version generated the bundled smoke model.
+The export tool remains available for locally supplied, appropriately licensed checkpoints. The former random-weight SPAN smoke model was removed because its generation environment was not retained; this attribution does not establish the origin or licensing of those historical bytes.
 
 ### MIT License text
 
@@ -60,13 +60,13 @@ Copyright (C) 2017-2021 igv
 
 Upstream asset: <https://github.com/igv/FSRCNN-TensorFlow/releases/download/1.1/FSRCNNX_x2_16-0-4-1.glsl>
 
-The SSimDownscaler WebGPU port derives from `SSimDownscaler.glsl`, gist revision `38992bce7f9ff844f800820df0908692b65bb74a`.
+The SSimDownscaler WebGPU port derives from the packaged `shaders/upstream/SSimDownscaler.glsl`, gist revision `38992bce7f9ff844f800820df0908692b65bb74a`, SHA-256 `f46f4710a162d17058b9d82ed8610588b0c04d7be07cef6bf2a8c4077828f804`.
 
 Upstream: <https://gist.github.com/igv/36508af3ffc84410fe39761d6969be10/38992bce7f9ff844f800820df0908692b65bb74a>
 
 Both upstream files state that they may be redistributed and/or modified under the GNU Lesser General Public License, version 3 or, at the recipient's option, any later version; they disclaim warranty.
 
-The package includes the complete official [`LGPL-3.0.txt`](LGPL-3.0.txt) text and its [`GPL-3.0.txt`](GPL-3.0.txt) companion. The checked-in LGPL sources retain their upstream license headers, and the SSim module identifies its 2026 WebGPU port modifications. These additions do not clear public distribution: the applicable notice, corresponding-source, relinking/modification, and other obligations still require a completed compliance review.
+The package includes the exact FSRCNNX and SSim upstream sources, complete official [`LGPL-3.0.txt`](LGPL-3.0.txt) text and [`GPL-3.0.txt`](GPL-3.0.txt) companion, the FSRCNNX transformation script, generated source metadata, and [`LGPL_REBUILDING.md`](LGPL_REBUILDING.md) with offline rebuilding and Chromium substitution instructions. The checked-in sources retain their upstream license headers, and the generated/ported files identify local modifications. The project license also expressly avoids restricting modification, reverse engineering, or recombination needed to exercise LGPL rights in these portions. These materials do not clear public distribution: qualified review must still confirm that the plan satisfies every applicable obligation.
 
 ## Adaptive Sharpen redistribution notice
 
@@ -87,4 +87,4 @@ The source module retains the preceding notice verbatim before its local port de
 
 ## Unresolved material
 
-No license is asserted here for the high-quality x2, x3, or x4 FSRCNNX artifacts; the generic `model/rife.onnx`; the unproven FP16 RIFE conversion; or the deband port. They are public-release blockers until the evidence listed in `MODEL_PROVENANCE.md` is supplied or the material is removed. The LGPL and ONNX Runtime applicability reviews also remain blocked in `release-clearance.json`; merely bundling complete upstream texts and notices does not clear them.
+No license is asserted here for the removed high-quality x2, x3, or x4 FSRCNNX artifacts, unidentified generic RIFE model, unreproducible SPAN smoke model, or unresolved deband port. They are absent from the current tree and extension package, but their bytes remain in private Git history and block publication of that history until it is purged. The LGPL and ONNX Runtime applicability reviews also remain blocked in `release-clearance.json`; merely bundling complete upstream texts and notices does not clear them.
