@@ -83,6 +83,8 @@ async function loadBridge(importModule, { prerendering = false } = {}) {
 function completeApi(overrides = {}) {
   return {
     restoreSitePrefs: async () => ({ ok: true, restored: true }),
+    syncSitePrefs: async () => ({ ok: true }),
+    flushPreferenceWrites: async () => ({ ok: true }),
     getStatus: () => ({ mode: "upscale", hasVideo: true, webgpu: true, frameCount: 7 }),
     resumeDocument: async () => ({ ok: true }),
     suspendDocument: async () => ({ ok: true }),
@@ -198,6 +200,10 @@ test("status remains loading through restore and explicit restore is single-flig
   assert.equal(importingStatus.responses.length, 1);
   assert.equal(importingStatus.responses[0].loading, true);
   assert.equal(importingStatus.responses[0].failed, false);
+  assert.equal(importingStatus.responses[0].statusVersion, 1);
+  assert.equal(importingStatus.responses[0].gpuState, "idle");
+  assert.equal(importingStatus.responses[0].runtime.phase, "loading");
+  assert.equal(importingStatus.responses[0].renderer.phase, "loading");
 
   imported.resolve(completeApi({
     restoreSitePrefs: () => { restoreCalls++; return restored.promise; },
@@ -431,6 +437,10 @@ test("import and restore failures become truthful status and command responses",
     assert.equal(status.responses[0].loading, false, scenario);
     assert.equal(status.responses[0].failed, true, scenario);
     assert.equal(status.responses[0].error, "startup-failed", scenario);
+    assert.equal(status.responses[0].statusVersion, 1, scenario);
+    assert.equal(status.responses[0].gpuState, "idle", scenario);
+    assert.equal(status.responses[0].runtime.phase, "failed", scenario);
+    assert.equal(status.responses[0].renderer.phase, "failed", scenario);
     assert.match(status.responses[0].reason, scenario === "import" ? /module unavailable/ : /preferences corrupt/);
     assert.equal(command.responses.length, 1, scenario);
     assert.equal(command.responses[0].error, "startup-failed", scenario);
@@ -475,6 +485,243 @@ test("page lifecycle events coalesce and serialize suspend/resume transitions", 
   assert.deepEqual(calls, ["resume", "suspend", "resume"]);
 });
 
+test("BFCache activation synchronizes preferences once before resuming", async () => {
+  const calls = [];
+  const bridge = await loadBridge(async () => completeApi({
+    restoreSitePrefs: async () => { calls.push("restore"); return { ok: true }; },
+    syncSitePrefs: async () => { calls.push("sync"); return { ok: true }; },
+    resumeDocument: async () => { calls.push("resume"); return { ok: true }; },
+    suspendDocument: async () => { calls.push("suspend"); return { ok: true }; },
+  }));
+  await flush();
+  assert.deepEqual(calls, ["restore", "resume"],
+    "initial startup restores once without performing a redundant sync");
+
+  bridge.window.emit("pagehide");
+  await flush();
+  bridge.window.emit("pageshow");
+  bridge.document.emit("resume");
+  await flush();
+
+  assert.deepEqual(calls, ["restore", "resume", "suspend", "sync", "resume"]);
+  assert.equal(calls.filter((call) => call === "sync").length, 1,
+    "same-generation active signals share one preference sync");
+});
+
+test("pagehide during a deferred preference sync suppresses the obsolete resume", async () => {
+  const synced = deferred();
+  const calls = [];
+  const bridge = await loadBridge(async () => completeApi({
+    syncSitePrefs: async () => { calls.push("sync"); return synced.promise; },
+    resumeDocument: async () => { calls.push("resume"); return { ok: true }; },
+    suspendDocument: async () => { calls.push("suspend"); return { ok: true }; },
+  }));
+  await flush();
+
+  bridge.window.emit("pagehide");
+  await flush();
+  bridge.window.emit("pageshow");
+  await flush();
+  assert.deepEqual(calls, ["resume", "suspend", "sync"]);
+
+  bridge.window.emit("pagehide");
+  await flush();
+  assert.equal(calls.at(-1), "suspend", "the newly hidden document is quiesced during sync");
+
+  synced.resolve({ ok: true });
+  await flush();
+  assert.equal(calls.filter((call) => call === "resume").length, 1,
+    "the completed stale sync cannot resume the hidden document");
+  assert.equal(calls.at(-1), "suspend");
+});
+
+test("mutating commands wait behind active sync and flush before responding", async () => {
+  const synced = deferred();
+  const flushed = deferred();
+  const calls = [];
+  const bridge = await loadBridge(async () => completeApi({
+    syncSitePrefs: async () => { calls.push("sync"); return synced.promise; },
+    resumeDocument: async () => { calls.push("resume"); return { ok: true }; },
+    suspendDocument: async () => { calls.push("suspend"); return { ok: true }; },
+    setMode: async (mode) => { calls.push(`set:${mode}`); return { ok: true, mode }; },
+    flushPreferenceWrites: async () => { calls.push("flush"); return flushed.promise; },
+  }));
+  await flush();
+  bridge.window.emit("pagehide");
+  await flush();
+  bridge.window.emit("pageshow");
+  await flush();
+
+  const command = bridge.message({ type: "FSRCNNX_SETMODE", mode: "upscale" });
+  await flush();
+  assert.equal(command.responses.length, 0);
+  assert.equal(calls.some((call) => call.startsWith("set:")), false,
+    "the popup mutation cannot race ahead of restored preferences");
+
+  synced.resolve({ ok: true });
+  await flush();
+  assert.ok(calls.indexOf("sync") < calls.indexOf("set:upscale"));
+  assert.ok(calls.indexOf("set:upscale") < calls.indexOf("flush"));
+  assert.equal(command.responses.length, 0, "the response waits for durable persistence");
+
+  const status = bridge.message({ type: "FSRCNNX_STATUS" });
+  await flush();
+  assert.equal(status.responses.length, 1, "status reads do not wait for preference writes");
+  assert.equal(command.responses.length, 0);
+
+  flushed.resolve({ ok: true });
+  await flush();
+  assert.deepEqual(plain(command.responses), [{ ok: true, mode: "upscale" }]);
+});
+
+test("resolved false flush results fail the mutation response", async () => {
+  let setterCalls = 0;
+  const flushResults = [
+    { ok: false, reason: "quota exhausted" },
+    false,
+  ];
+  const bridge = await loadBridge(async () => completeApi({
+    setMode: async (mode) => { setterCalls++; return { ok: true, mode }; },
+    flushPreferenceWrites: async () => flushResults.shift(),
+  }));
+  await flush();
+
+  const objectFailure = bridge.message({ type: "FSRCNNX_SETMODE", mode: "upscale" });
+  await flush();
+  assert.equal(setterCalls, 1);
+  assert.deepEqual(plain(objectFailure.responses), [{
+    ok: false,
+    error: "command-failed",
+    reason: "Preference write flush failed: quota exhausted",
+  }]);
+
+  const literalFailure = bridge.message({ type: "FSRCNNX_SETMODE", mode: "passthrough" });
+  await flush();
+  assert.equal(setterCalls, 2);
+  assert.deepEqual(plain(literalFailure.responses), [{
+    ok: false,
+    error: "command-failed",
+    reason: "Preference write flush failed: Preference writes could not be flushed",
+  }]);
+});
+
+test("ordinary active-page mutations synchronize live external preferences before setting", async () => {
+  const synced = deferred();
+  const calls = [];
+  const bridge = await loadBridge(async () => completeApi({
+    syncSitePrefs: async () => { calls.push("sync"); return synced.promise; },
+    setMode: async (mode) => { calls.push(`set:${mode}`); return { ok: true, mode }; },
+    flushPreferenceWrites: async () => { calls.push("flush"); return { ok: true }; },
+  }));
+  await flush();
+  calls.length = 0;
+
+  const command = bridge.message({ type: "FSRCNNX_SETMODE", mode: "upscale" });
+  await flush();
+  assert.deepEqual(calls, ["sync"]);
+  assert.equal(command.responses.length, 0);
+
+  synced.resolve({ ok: true });
+  await flush();
+  assert.deepEqual(calls, ["sync", "set:upscale", "flush"]);
+  assert.deepEqual(plain(command.responses), [{ ok: true, mode: "upscale" }]);
+});
+
+test("preference sync and flush hooks remain optional for older main APIs", async () => {
+  const api = completeApi();
+  delete api.syncSitePrefs;
+  delete api.flushPreferenceWrites;
+  const bridge = await loadBridge(async () => api);
+  await flush();
+
+  bridge.window.emit("pagehide");
+  await flush();
+  bridge.window.emit("pageshow");
+  await flush();
+  const command = bridge.message({ type: "FSRCNNX_SETMODE", mode: "upscale" });
+  await flush();
+
+  assert.deepEqual(plain(command.responses), [{ ok: true, mode: "upscale" }]);
+});
+
+test("preference sync failures leave the document suspended and retry cleanly", async () => {
+  let syncCalls = 0;
+  let resumeCalls = 0;
+  let setterCalls = 0;
+  const bridge = await loadBridge(async () => completeApi({
+    syncSitePrefs: async () => {
+      syncCalls++;
+      if (syncCalls === 1) throw new Error("storage unavailable");
+      return { ok: true };
+    },
+    resumeDocument: async () => { resumeCalls++; return { ok: true }; },
+    setMode: async () => { setterCalls++; return { ok: true }; },
+  }));
+  await flush();
+  assert.equal(resumeCalls, 1);
+
+  bridge.window.emit("pagehide");
+  await flush();
+  bridge.window.emit("pageshow");
+  await flush();
+  assert.equal(syncCalls, 1);
+  assert.equal(resumeCalls, 1, "failed synchronization keeps the renderer suspended");
+
+  const status = bridge.message({ type: "FSRCNNX_STATUS" });
+  const command = bridge.message({ type: "FSRCNNX_SETMODE", mode: "upscale" });
+  await flush();
+  assert.equal(status.responses[0].failed, true);
+  assert.equal(status.responses[0].error, "preference-sync-failed");
+  assert.match(status.responses[0].reason, /storage unavailable/);
+  assert.equal(status.responses[0].runtime.phase, "failed");
+  assert.equal(status.responses[0].renderer.phase, "suspended");
+  assert.deepEqual(plain(command.responses), [{
+    ok: false,
+    error: "command-failed",
+    reason: "storage unavailable",
+  }]);
+  assert.equal(setterCalls, 0);
+
+  bridge.document.emit("resume");
+  await flush();
+  assert.equal(syncCalls, 2);
+  assert.equal(resumeCalls, 2);
+  const recovered = bridge.message({ type: "FSRCNNX_STATUS" });
+  await flush();
+  assert.equal(recovered.responses[0].failed, false);
+  assert.equal(recovered.responses[0].error, undefined);
+});
+
+test("a transient active preference sync failure retries without another lifecycle event", async () => {
+  let syncCalls = 0;
+  let resumeCalls = 0;
+  const bridge = await loadBridge(async () => completeApi({
+    syncSitePrefs: async () => {
+      syncCalls++;
+      if (syncCalls === 1) throw new Error("temporary storage failure");
+      return { ok: true };
+    },
+    resumeDocument: async () => { resumeCalls++; return { ok: true }; },
+  }));
+  await flush();
+
+  bridge.window.emit("pagehide");
+  await flush();
+  bridge.window.emit("pageshow");
+  await flush();
+  assert.equal(syncCalls, 1);
+  assert.equal(resumeCalls, 1);
+
+  await new Promise((resolve) => setTimeout(resolve, 140));
+  await flush();
+  assert.equal(syncCalls, 2);
+  assert.equal(resumeCalls, 2,
+    "the successful bounded retry resumes the still-active document");
+  const recovered = bridge.message({ type: "FSRCNNX_STATUS" });
+  await flush();
+  assert.equal(recovered.responses[0].failed, false);
+});
+
 test("a page hidden during restore never performs an obsolete initial resume", async () => {
   const imported = deferred();
   const restored = deferred();
@@ -517,6 +764,36 @@ test("pageshow cannot overtake an early asynchronous suspension", async () => {
   suspended.resolve();
   await flush();
   assert.deepEqual(calls, ["suspend", "resume"]);
+});
+
+test("failed hidden suspension cannot strand the next active preference gate", async () => {
+  const suspended = deferred();
+  const calls = [];
+  const bridge = await loadBridge(async () => completeApi({
+    syncSitePrefs: async () => { calls.push("sync"); return { ok: true }; },
+    resumeDocument: async () => { calls.push("resume"); return { ok: true }; },
+    suspendDocument: async () => { calls.push("suspend"); return suspended.promise; },
+    setMode: async (mode) => { calls.push(`set:${mode}`); return { ok: true, mode }; },
+    flushPreferenceWrites: async () => { calls.push("flush"); return { ok: true }; },
+  }));
+  await flush();
+  assert.deepEqual(calls, ["resume"]);
+
+  bridge.window.emit("pagehide");
+  await flush();
+  bridge.window.emit("pageshow");
+  await flush();
+  assert.deepEqual(calls, ["resume", "suspend"]);
+
+  suspended.resolve({ ok: false, reason: "suspension failed" });
+  await flush();
+  assert.deepEqual(calls, ["resume", "suspend", "sync", "resume"],
+    "the active gate must run even when the previously applied state was already active");
+
+  const command = bridge.message({ type: "FSRCNNX_SETMODE", mode: "upscale" });
+  await flush();
+  assert.deepEqual(plain(command.responses), [{ ok: true, mode: "upscale" }]);
+  assert.deepEqual(calls.slice(-3), ["sync", "set:upscale", "flush"]);
 });
 
 test("pagehide fences an in-flight resume before it can reactivate a hidden document", async () => {

@@ -32,7 +32,7 @@ async function loadPolicyHarness({ engine = "fsrcnnx", policy = "display" } = {}
   return importHarness(`
     const deps = globalThis.__mainSettingsContractDeps;
     const ART_FILES = ["ArtCNN_C4F32", "ArtCNN_C4F32_DS", "ArtCNN_C4F32_DN"];
-    let engine = ${JSON.stringify(engine)}, upscalePolicy = ${JSON.stringify(policy)};
+    let requestedEngine = ${JSON.stringify(engine)}, engine = ${JSON.stringify(engine)}, upscalePolicy = ${JSON.stringify(policy)};
     let engineSelectionGeneration = 0, chainDepth = 1, artVariant = "ArtCNN_C4F32";
     let mode = "off", pageSuspended = false, primaryController = null, video = null;
     let interpPausedByNeural = false, neuralEng = null, artDiagLogged = false, device = null;
@@ -40,75 +40,110 @@ async function loadPolicyHarness({ engine = "fsrcnnx", policy = "display" } = {}
     const clearMultiTargets = () => deps.events.push("clear");
     const ensureNeural = async () => {};
     const resumeInterpolationAfterNeural = () => deps.events.push("resume");
+    const reconcileDeviceRecoveryDemand = () => true;
+    const clearNeuralFallback = () => {};
+    const activateNeuralFallback = () => { engine = "fsrcnnx"; };
     const ensureArtStages = async () => {};
     const ensureHiStages = async () => {};
+    const cancelPreferenceRestore = () => deps.events.push("fence");
     const saveSitePrefs = () => deps.events.push("save");
     const warn = () => {};
     ${policyToDepth}
     ${settingsContract}
     ${engineSetters}
     ${policySetter}
-    export function state() { return { engine, policy: upscalePolicy, chainDepth, artVariant, engineSelectionGeneration }; }
+    export function state() {
+      return { requestedEngine, engine, policy: upscalePolicy, chainDepth, artVariant,
+        engineSelectionGeneration,
+        preferenceFences: deps.events.filter((event) => event === "fence").length };
+    }
   `, { events: [] });
 }
 
 async function loadSaveHarness() {
-  const save = section("async function saveSitePrefs()", "function sendRuntimeMessage");
+  const currentValues = section("function currentSitePreferenceValues()", "function validateSitePreferencePatch");
+  const save = section("function saveSitePrefs", "export async function flushPreferenceWrites()");
   const writes = [];
   const module = await importHarness(`
-    const chrome = { storage: { local: { set: async (value) => deps.writes.push(value) } } };
     const deps = globalThis.__mainSettingsContractDeps;
-    const siteHost = () => "video.example";
-    const siteStorageKey = (host) => \`fsrcnnx_site:\${encodeURIComponent(host)}\`;
-    let mode = "upscale", engine = "artcnn", artVariant = "ArtCNN_C4F32_DS";
+    const DEFAULT_SETTING_FIELDS = ${JSON.stringify([
+      "mode", "engine", "artVariant", "policy", "ssimds", "sharpen", "sharpenStrength",
+      "hoverReveal", "allVideos", "deband", "debandStrength", "images", "interpolate",
+      "interpEngine", "interpResMode", "neuralModel", "interpTargetFps", "interpAvOffsetMs",
+      "interpStaticPassthrough", "interpAutoFallback", "interpLadder", "interpInvert",
+    ])};
+    const siteSettingsStore = { write: async (value) => { deps.writes.push(value); } };
+    const warn = () => {};
+    const validateSitePreferencePatch = () => new Set();
+    const recordPreferenceValidation = () => {};
+    let mode = "upscale", requestedEngine = "artcnn", engine = "fsrcnnx", artVariant = "ArtCNN_C4F32_DS";
     let upscalePolicy = "force4", ssimdsEnabled = false, sharpenEnabled = true, sharpenStrength = 1.4;
     let optHoverReveal = true, optAllVideos = true, debandEnabled = true, debandStrength = 1.6;
     let optImages = true, optInterpolate = false, neuralModelKey = "span";
     let pendingEngine = "rife_orig", pendingResMode = "half", pendingTargetFps = 144;
     let pendingAvOffsetMs = 35, interpStaticPassthroughPref = false;
     let interpAutoFallbackPref = false, interpLadderPref = true, interpInvertPref = false;
+    ${currentValues}
     ${save}
-    export { saveSitePrefs };
+    export { currentSitePreferenceValues, saveSitePrefs };
   `, { writes });
   return { module, writes };
 }
 
 async function loadRestoreHarness(prefs) {
   const restore = section("export async function restoreSitePrefs()", "function cancelPreferenceRestore()");
+  const validationHelpers = section("function validateSitePreferencePatch", "function saveSitePrefs");
   return importHarness(`
     const deps = globalThis.__mainSettingsContractDeps;
+    const DEFAULT_SETTING_FIELDS = ${JSON.stringify([
+      "mode", "engine", "artVariant", "policy", "ssimds", "sharpen", "sharpenStrength",
+      "hoverReveal", "allVideos", "deband", "debandStrength", "images", "interpolate",
+      "interpEngine", "interpResMode", "neuralModel", "interpTargetFps", "interpAvOffsetMs",
+      "interpStaticPassthrough", "interpAutoFallback", "interpLadder", "interpInvert",
+    ])};
     const _neuralList = [{ key: "span" }];
     const neuralCatalogReady = Promise.resolve(_neuralList);
     const ART_FILES = ["ArtCNN_C4F32", "ArtCNN_C4F32_DS", "ArtCNN_C4F32_DN"];
     let preferenceRestoreGeneration = 0, engineSelectionGeneration = 0;
-    let engine = "fsrcnnx", neuralModelKey = "", artVariant = "ArtCNN_C4F32";
+    let requestedEngine = "fsrcnnx", engine = "fsrcnnx", neuralModelKey = "", artVariant = "ArtCNN_C4F32";
     let upscalePolicy = "display", ssimdsEnabled = true, sharpenEnabled = false, sharpenStrength = 1;
     let optHoverReveal = false, optAllVideos = false, debandEnabled = false, debandStrength = 1;
     let chainDepth = 1, pendingEngine = "rife_v4.26_fp16", pendingResMode = "auto";
     let pendingTargetFps = "auto", pendingAvOffsetMs = 0;
     let interpStaticPassthroughPref = true, interpAutoFallbackPref = true;
     let interpLadderPref = false, interpInvertPref = true;
+    let preferenceValidationFailure = null;
+    const invalidPreferenceFields = new Set();
     const loadSitePrefs = async () => deps.prefs;
+    const siteSettingsStore = { health: () => ({ state: "ready", error: null }) };
+    const clearNeuralFallback = () => {};
     const resetScaleSelection = () => {};
     const setMode = async (value) => { deps.calls.push(["mode", value]); return { ok: true }; };
     const setImages = async (value) => { deps.calls.push(["images", value]); return { ok: true }; };
     const setInterpolate = async (value) => { deps.calls.push(["interpolate", value]); return { ok: true }; };
     ${policyToDepth}
     ${settingsContract}
+    ${validationHelpers}
     ${restore}
+    export function applyValidation(patch) {
+      recordPreferenceValidation(patch, validateSitePreferencePatch(patch));
+      return preferenceValidationFailure;
+    }
     export function state() {
       return { engine, neuralModelKey, artVariant, policy: upscalePolicy, chainDepth,
         ssimdsEnabled, sharpenEnabled, sharpenStrength, debandStrength,
         pendingEngine, pendingResMode, pendingTargetFps, pendingAvOffsetMs,
-        interpStaticPassthroughPref, interpAutoFallbackPref, interpLadderPref, interpInvertPref };
+        interpStaticPassthroughPref, interpAutoFallbackPref, interpLadderPref, interpInvertPref,
+        preferenceValidationFailure };
     }
   `, { prefs, calls: [] });
 }
 
-async function loadInterpolationConfigHarness(instance = null) {
+async function loadInterpolationConfigHarness(instance = null, { neuralGate = null } = {}) {
   const configure = section("function configureInterpolator", "function scheduleInterpolatorGpuRestart");
   const primarySetters = section("function acceptedPendingInterpolationSetting", "export function listInterpolateModels");
   const secondarySetters = section("export async function setInterpolateInvert", "log(\"pipeline module loaded\")");
+  const externalApply = section("async function applyExternalSitePreferences", "export function getStatus");
   return importHarness(`
     const deps = globalThis.__mainSettingsContractDeps;
     ${settingsContract}
@@ -127,29 +162,48 @@ async function loadInterpolationConfigHarness(instance = null) {
       interpStaticPassthroughPref, interpAutoFallbackPref, interpLadderPref, interpInvertPref,
     });
     const requestInterpolationRetry = async () => false;
+    let preferenceRestoreGeneration = 0, preferenceValidationFailure = null;
+    const cancelPreferenceRestore = () => { preferenceRestoreGeneration++; deps.fences++; };
     const captureVideoSource = (candidate) => candidate;
     const sameVideoSource = (left, right) => left === right;
     const recordInterpolationStartFailure = (_video, _source, result) => deps.failures.push(result);
+    const _neuralList = [{ key: "span" }];
+    const neuralCatalogReady = Promise.resolve(_neuralList);
+    const validateSitePreferencePatch = () => new Set();
+    const recordPreferenceValidation = () => {};
+    const setNeuralModel = async () => {
+      deps.neuralCalls++;
+      if (deps.neuralGate) await deps.neuralGate.promise;
+      return { ok: true };
+    };
+    const notifyState = () => {};
     const log = () => {};
     ${configure}
     ${primarySetters}
     ${secondarySetters}
-    export { configureInterpolator };
+    ${externalApply}
+    export { configureInterpolator, applyExternalSitePreferences };
     export function setInstance(value) { interpolator = value; }
     export function state() {
       return { pendingEngine, pendingResMode, pendingTargetFps, pendingAvOffsetMs,
         interpStaticPassthroughPref, interpAutoFallbackPref, interpLadderPref,
-        interpInvertPref, interpolationConfigGeneration };
+        interpInvertPref, interpolationConfigGeneration, preferenceFences: deps.fences };
     }
-  `, { instance, saved: [], failures: [] });
+  `, { instance, saved: [], failures: [], fences: 0, neuralCalls: 0, neuralGate });
 }
 
-async function loadStatusHarness() {
+async function loadStatusHarness(storeHealth = {
+  state: "ready", operation: null, errorOperation: null, pending: 0, error: null,
+  schemaVersion: 2, scope: "https://video.example",
+}, gpu = { adapter: "unrequested", device: "uninitialized" }) {
   const getStatus = section("export function getStatus()", "// ---- image upscaling");
   return importHarness(`
+    const deps = globalThis.__mainSettingsContractDeps;
+    const STATUS_VERSION = 1, GPU_RECOVERY_MAX_ATTEMPTS = 3;
     let mode = "off", primaryController = null, video = null, frameCount = 0;
+    let primaryPresentationGeneration = 0;
     let activeModel = null, upscalePolicy = "display", ssimdsEnabled = true;
-    let sharpenEnabled = false, sharpenStrength = 1, engine = "neural";
+    let sharpenEnabled = false, sharpenStrength = 1, requestedEngine = "neural", engine = "neural";
     let artVariant = "ArtCNN_C4F32", chainDepth = 1, neuralModelKey = "span-lazy";
     let neuralEng = null, protectedSource = false, protectedReason = null;
     let optHoverReveal = false, optAllVideos = false, debandEnabled = false, debandStrength = 1;
@@ -159,14 +213,61 @@ async function loadStatusHarness() {
     let pendingAvOffsetMs = -25, interpStaticPassthroughPref = false;
     let interpAutoFallbackPref = false, interpLadderPref = true, interpInvertPref = false;
     let pageSuspended = false, deviceRecoveryPromise = null, deviceRecoveryTimer = null;
+    let gpuAdapterPhase = deps.gpu.adapter, gpuDevicePhase = deps.gpu.device;
+    let gpuRecoveryPhase = "idle", gpuRecoveryAttempt = 0, gpuLastFailure = null, gpuRecoveredAt = null;
+    let rendererFallback = null, neuralLastFailure = null, neuralFail = 0;
+    let imageUpscaler = null, imageUpscalerInitPromise = null, imageLastFailure = null;
+    let preferenceValidationFailure = null, preferenceApplicationFailure = null;
     const multiTargets = new Map();
     const _neuralList = [];
     const navigator = { gpu: {} };
     const findVideo = () => null;
     const siteHost = () => "video.example";
+    const siteScope = () => "https://video.example";
+    const siteSettingsStore = { health: () => deps.storeHealth };
+    const currentPresentedRuntime = () => ({ mode: "off", engine: null });
     const interpolationQuarantineMatches = () => false;
     ${getStatus}
-  `);
+  `, { storeHealth, gpu });
+}
+
+async function loadPreferenceApplicationHarness(
+  failures = 0,
+  syncPatch = null,
+  snapshot = { mode: "upscale" },
+) {
+  const production = section("export async function syncSitePrefs()", "function sendRuntimeMessage");
+  const deps = { listener: null, calls: [], failures, syncPatch, snapshot };
+  const module = await importHarness(`
+    const deps = globalThis.__mainSettingsContractDeps;
+    const DEFAULT_SETTING_FIELDS = ["mode", "images"];
+    let externalPreferenceTail = Promise.resolve();
+    let preferenceApplicationFailure = null, preferenceValidationFailure = null;
+    const boundedRuntimeDetail = (error) => error?.message || String(error);
+    const warn = () => {};
+    const siteSettingsStore = {
+      async sync() {
+        deps.calls.push("sync");
+        if (deps.syncPatch && deps.listener) deps.listener(deps.syncPatch);
+        return deps.syncPatch || {};
+      },
+      snapshot() { deps.calls.push("snapshot"); return { ...deps.snapshot }; },
+      health() { return { state: "ready" }; },
+      subscribe(listener) { deps.listener = listener; },
+    };
+    const persistenceStatus = () => ({ state: "ready", operation: null,
+      errorOperation: null, pendingWrites: 0, error: null });
+    const applyExternalSitePreferences = async (patch) => {
+      deps.calls.push(["apply", patch]);
+      if (deps.failures === Infinity || deps.failures-- > 0) throw new Error("application exploded");
+      return { ok: true };
+    };
+    ${production}
+    export function emit(patch) { deps.listener(patch); }
+    export async function drainOnly() { await drainExternalPreferenceApplications(); }
+    export function applicationFailure() { return preferenceApplicationFailure; }
+  `, deps);
+  return { module, deps };
 }
 
 async function loadRuntimeKeyHarness() {
@@ -194,12 +295,14 @@ test("engine and policy setters reject invalid values and normalize incompatible
   const settings = await loadPolicyHarness({ engine: "fsrcnnx", policy: "force3" });
   const before = settings.state();
   assert.deepEqual(settings.setEngine("unknown"), {
-    ok: false, reason: "invalid engine", engine: "fsrcnnx", policy: "force3", chainDepth: 1,
+    ok: false, reason: "invalid engine", engine: "fsrcnnx", activeEngine: "fsrcnnx",
+    policy: "force3", chainDepth: 1,
   });
   assert.deepEqual(settings.state(), before, "an invalid engine must not mutate any state");
 
   assert.deepEqual(settings.setEngine("artcnn"), {
-    ok: true, engine: "artcnn", policy: "display", chainDepth: 1,
+    ok: true, engine: "artcnn", activeEngine: "artcnn", policy: "display", chainDepth: 1,
+    pending: false,
   });
   assert.equal(settings.state().policy, "display");
   assert.deepEqual(settings.setPolicy("force3"), {
@@ -214,13 +317,15 @@ test("engine and policy setters reject invalid values and normalize incompatible
     ok: false, reason: "invalid art variant", artVariant: "ArtCNN_C4F32",
   });
   assert.deepEqual(settings.state(), artBefore);
+  assert.equal(settings.state().preferenceFences, 2,
+    "only accepted persistent engine and policy changes fence external reconciliation");
 });
 
-test("site persistence records every authoritative interpolation preference", async () => {
+test("site persistence records requested intent and writes only selected fields", async () => {
   const { module, writes } = await loadSaveHarness();
   await module.saveSitePrefs();
   assert.equal(writes.length, 1);
-  assert.deepEqual(writes[0]["fsrcnnx_site:video.example"], {
+  assert.deepEqual(writes[0], {
     mode: "upscale", engine: "artcnn", artVariant: "ArtCNN_C4F32_DS", policy: "force4",
     ssimds: false, sharpen: true, sharpenStrength: 1.4,
     hoverReveal: true, allVideos: true, deband: true, debandStrength: 1.6,
@@ -229,6 +334,10 @@ test("site persistence records every authoritative interpolation preference", as
     interpTargetFps: 144, interpAvOffsetMs: 35, interpStaticPassthrough: false,
     interpAutoFallback: false, interpLadder: true, interpInvert: false,
   });
+  writes.length = 0;
+  await module.saveSitePrefs(["engine", "policy"]);
+  assert.deepEqual(writes, [{ engine: "artcnn", policy: "force4" }],
+    "an effective fallback must not replace durable requested-engine intent");
 });
 
 test("preference restore normalizes valid legacy values and rejects corrupt storage fields", async () => {
@@ -245,7 +354,7 @@ test("preference restore normalizes valid legacy values and rejects corrupt stor
     ssimdsEnabled: true, sharpenEnabled: false, sharpenStrength: 1, debandStrength: 1,
     pendingEngine: "blend", pendingResMode: "half", pendingTargetFps: 144, pendingAvOffsetMs: 25,
     interpStaticPassthroughPref: false, interpAutoFallbackPref: false,
-    interpLadderPref: true, interpInvertPref: false,
+    interpLadderPref: true, interpInvertPref: false, preferenceValidationFailure: null,
   });
 
   const corrupt = await loadRestoreHarness({
@@ -265,7 +374,18 @@ test("preference restore normalizes valid legacy values and rejects corrupt stor
     pendingTargetFps: "auto", pendingAvOffsetMs: 0,
     interpStaticPassthroughPref: true, interpAutoFallbackPref: true,
     interpLadderPref: false, interpInvertPref: true,
+    preferenceValidationFailure: "Invalid stored settings: artVariant, debandStrength, engine, " +
+      "images, interpAutoFallback, interpAvOffsetMs, interpEngine, interpInvert, interpLadder, " +
+      "interpResMode, interpStaticPassthrough, interpTargetFps, interpolate, mode, neuralModel, " +
+      "policy, sharpenStrength",
   });
+
+  assert.equal(corrupt.applyValidation({ images: true }),
+    "Invalid stored settings: artVariant, debandStrength, engine, interpAutoFallback, " +
+      "interpAvOffsetMs, interpEngine, interpInvert, interpLadder, interpResMode, " +
+      "interpStaticPassthrough, interpTargetFps, interpolate, mode, neuralModel, policy, " +
+      "sharpenStrength",
+    "a valid unrelated field clears only its own validation error");
 });
 
 test("interpolation setters preserve invalid-state immutability and configure a future runtime", async () => {
@@ -285,6 +405,8 @@ test("interpolation setters preserve invalid-state immutability and configure a 
   assert.equal(config.setInterpolateAutoFallback(false).ok, true);
   assert.equal(config.setInterpolateLadder(true).ok, true);
   assert.equal((await config.setInterpolateInvert(false)).ok, true);
+  assert.equal(config.state().preferenceFences, 8,
+    "each accepted user setting fences older external reconciliation");
 
   const calls = [];
   const chain = {};
@@ -327,11 +449,83 @@ test("interpolation runtime failures are returned as explicit command results", 
   assert.equal(config.state().pendingEngine, "rife_orig");
 });
 
+test("a newer local setting fences an older asynchronous external preference apply", async () => {
+  let releaseNeural;
+  const neuralGate = {
+    promise: new Promise((resolve) => { releaseNeural = resolve; }),
+  };
+  const config = await loadInterpolationConfigHarness(null, { neuralGate });
+  const applying = config.applyExternalSitePreferences({
+    neuralModel: "span",
+    interpEngine: "rife_orig",
+  });
+  await Promise.resolve();
+
+  assert.equal((await config.setInterpolateModel("blend")).ok, true);
+  assert.equal(config.state().pendingEngine, "blend");
+  releaseNeural({ ok: true });
+
+  assert.deepEqual(await applying, { ok: false, reason: "superseded" });
+  assert.equal(config.state().pendingEngine, "blend",
+    "the stale external continuation must not overwrite newer local intent");
+  assert.equal(config.state().preferenceFences, 1);
+});
+
+test("preference synchronization retries failed runtime application and reports persistent failure", async () => {
+  const initialized = await loadPreferenceApplicationHarness(0, { mode: "passthrough" });
+  assert.equal((await initialized.module.syncSitePrefs()).ok, true);
+  assert.deepEqual(initialized.deps.calls, [
+    "sync",
+    ["apply", { mode: "passthrough" }],
+  ], "a snapshot recovered by store sync reaches the runtime subscriber");
+
+  const recovered = await loadPreferenceApplicationHarness(1);
+  recovered.module.emit({ mode: "passthrough" });
+  assert.equal((await recovered.module.syncSitePrefs()).ok, true);
+  assert.deepEqual(recovered.deps.calls, [
+    "sync",
+    ["apply", { mode: "passthrough" }],
+    "snapshot",
+    ["apply", { mode: "upscale", images: undefined }],
+  ]);
+  assert.equal(recovered.module.applicationFailure(), null);
+
+  const failed = await loadPreferenceApplicationHarness(Infinity);
+  failed.module.emit({ mode: "passthrough" });
+  await assert.rejects(failed.module.syncSitePrefs(), /application exploded/);
+  assert.equal(failed.module.applicationFailure(), "application exploded");
+
+  const deleted = await loadPreferenceApplicationHarness(1, null, { images: true });
+  deleted.module.emit({ mode: undefined });
+  deleted.module.emit({ images: true });
+  await deleted.module.drainOnly();
+  assert.equal(deleted.module.applicationFailure(), "application exploded",
+    "an unrelated successful patch cannot hide a failed deletion");
+
+  assert.equal((await deleted.module.syncSitePrefs()).ok, true);
+  assert.deepEqual(deleted.deps.calls, [
+    ["apply", { mode: undefined }],
+    ["apply", { images: true }],
+    "sync",
+    "snapshot",
+    ["apply", { mode: undefined, images: true }],
+  ], "authoritative replay includes tombstones for fields absent from the snapshot");
+  assert.equal(deleted.module.applicationFailure(), null);
+});
+
 test("status exposes configured interpolation and neural values without live runtimes", async () => {
   const statusModule = await loadStatusHarness();
   const status = statusModule.getStatus();
   assert.equal(status.neural, null);
   assert.equal(status.interpStats, null);
+  assert.equal(status.statusVersion, 1);
+  assert.equal(status.gpuState, "idle");
+  assert.deepEqual(status.persistence, {
+    scope: "https://video.example", schemaVersion: 2,
+    state: "ready", operation: null, errorOperation: null, pendingWrites: 0, error: null,
+  });
+  assert.equal(status.renderer.requestedEngine, "neural");
+  assert.equal(status.renderer.effectiveEngine, "neural");
   assert.deepEqual({
     neuralModel: status.neuralModel,
     interpModel: status.interpModel,
@@ -353,6 +547,22 @@ test("status exposes configured interpolation and neural values without live run
     interpLadder: true,
     interpInvert: false,
   });
+
+  const failedStatus = (await loadStatusHarness({
+    state: "error", operation: null, errorOperation: "syncing", pending: 0,
+    error: "opaque storage rejection", schemaVersion: 2, scope: "https://video.example",
+  })).getStatus();
+  assert.deepEqual(failedStatus.persistence, {
+    scope: "https://video.example", schemaVersion: 2,
+    state: "error", operation: null, errorOperation: "syncing", pendingWrites: 0,
+    error: "opaque storage rejection",
+  });
+
+  const unavailableGpu = (await loadStatusHarness(undefined, {
+    adapter: "unavailable", device: "uninitialized",
+  })).getStatus();
+  assert.equal(unavailableGpu.gpuState, "unavailable");
+  assert.equal(unavailableGpu.runtime.adapter, "unavailable");
 });
 
 test("interpolation quarantine identity includes every runtime-affecting preference", async () => {

@@ -79,6 +79,7 @@ function validatePayloadShape(msg, fields) {
 
 function noPayload(run) {
   return Object.freeze({
+    mutates: false,
     validate: (msg) => validatePayloadShape(msg, []),
     run,
   });
@@ -86,6 +87,7 @@ function noPayload(run) {
 
 function fieldPayload(field, accepts, expectation, run) {
   return Object.freeze({
+    mutates: true,
     validate(msg) {
       const shapeError = validatePayloadShape(msg, [field]);
       if (shapeError) return shapeError;
@@ -185,14 +187,62 @@ function normalizeCommandResponse(result) {
 }
 
 function baseStatus(extra = {}) {
+  const webgpu = typeof navigator !== "undefined" && "gpu" in navigator;
+  const loading = startupPhase === "loading";
+  const failed = startupPhase === "failed";
+  const runtimePhase = loading ? "loading" : failed ? "failed" : "idle";
   return {
+    statusVersion: 1,
     mode: "off",
+    activeMode: "off",
     hasVideo: false,
-    webgpu: typeof navigator !== "undefined" && "gpu" in navigator,
+    webgpu,
+    gpuState: webgpu ? "idle" : "unavailable",
     frameCount: 0,
-    loading: startupPhase === "loading",
-    failed: startupPhase === "failed",
+    runtime: {
+      phase: runtimePhase,
+      api: webgpu ? "available" : "unavailable",
+    },
+    renderer: {
+      phase: loading ? "loading" : failed ? "failed" : "off",
+      requestedMode: "off",
+      activeMode: "off",
+    },
+    loading,
+    failed,
     ...extra,
+  };
+}
+
+function preferenceSyncStatus(status) {
+  if (preferenceSyncPhase === "pending" || preferenceSyncPhase === "syncing") {
+    return {
+      ...status,
+      runtime: {
+        ...(status.runtime || {}),
+        phase: "syncing",
+      },
+      renderer: {
+        ...(status.renderer || {}),
+        phase: "suspended",
+      },
+    };
+  }
+  if (preferenceSyncPhase !== "failed") return status;
+  return {
+    ...status,
+    loading: false,
+    failed: true,
+    error: "preference-sync-failed",
+    reason: errorMessage(preferenceSyncError),
+    runtime: {
+      ...(status.runtime || {}),
+      phase: "failed",
+    },
+    renderer: {
+      ...(status.renderer || {}),
+      phase: "suspended",
+    },
   };
 }
 
@@ -207,7 +257,31 @@ function statusSnapshot() {
     });
   }
   try {
-    return { ...api.getStatus(), loading: false, failed: false };
+    const reported = api.getStatus();
+    const current = reported && typeof reported === "object" ? reported : {};
+    const fallback = baseStatus({ loading: false, failed: false });
+    const webgpu = typeof current.webgpu === "boolean" ? current.webgpu : fallback.webgpu;
+    return preferenceSyncStatus({
+      ...fallback,
+      ...current,
+      statusVersion: Number.isInteger(current.statusVersion) ? current.statusVersion : 1,
+      webgpu,
+      gpuState: typeof current.gpuState === "string"
+        ? current.gpuState
+        : webgpu ? "idle" : "unavailable",
+      runtime: {
+        ...fallback.runtime,
+        ...(current.runtime && typeof current.runtime === "object" ? current.runtime : {}),
+      },
+      renderer: {
+        ...fallback.renderer,
+        requestedMode: current.mode || fallback.renderer.requestedMode,
+        activeMode: current.activeMode || fallback.renderer.activeMode,
+        ...(current.renderer && typeof current.renderer === "object" ? current.renderer : {}),
+      },
+      loading: false,
+      failed: false,
+    });
   } catch (error) {
     return baseStatus({
       loading: false,
@@ -226,7 +300,46 @@ async function dispatch(msg) {
   const validationError = command.validate(msg);
   if (validationError) return validationError;
   const module = await loadedApi();
-  return normalizeCommandResponse(await command.run(module, msg));
+  if (command.mutates) {
+    await waitForActivePreferenceSync();
+    // BFCache activation owns one lifecycle sync, but mutations can also race
+    // a live storage.onChanged application while the page remains active. A
+    // fresh main-world barrier drains both physical storage and the stable
+    // external-application tail before the popup publishes newer intent.
+    if (typeof module.syncSitePrefs === "function") {
+      const syncResult = await module.syncSitePrefs();
+      if (!transitionSucceeded(syncResult)) {
+        throw new Error(errorMessage(
+          syncResult?.reason || syncResult?.error || "Site preferences could not be synchronized",
+        ));
+      }
+    }
+  }
+
+  let result;
+  let commandError = null;
+  try {
+    result = await command.run(module, msg);
+  } catch (error) {
+    commandError = error;
+  }
+
+  let flushError = null;
+  if (command.mutates && typeof module.flushPreferenceWrites === "function") {
+    try {
+      const flushResult = await module.flushPreferenceWrites();
+      if (!transitionSucceeded(flushResult)) {
+        throw new Error(errorMessage(
+          flushResult?.reason || flushResult?.error || "Preference writes could not be flushed",
+        ));
+      }
+    } catch (error) {
+      flushError = error;
+    }
+  }
+  if (commandError) throw commandError;
+  if (flushError) throw new Error(`Preference write flush failed: ${errorMessage(flushError)}`);
+  return normalizeCommandResponse(result);
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -293,9 +406,140 @@ let earlyHiddenDrain = null;
 let activeClaimRetry = null;
 let activeTransitionInFlight = false;
 let lifecycleFailureState = null;
+let activePreferenceSync = null;
+let preferenceSyncPhase = "idle";
+let preferenceSyncError = null;
+let preferenceSyncRetryTimer = null;
+let preferenceSyncRetryAttempt = 0;
+const PREFERENCE_SYNC_RETRY_MAX_ATTEMPTS = 3;
+const PREFERENCE_SYNC_RETRY_BASE_MS = 100;
 
 function transitionSucceeded(result) {
-  return !result || result.ok !== false;
+  return result !== false && (!result || result.ok !== false);
+}
+
+function createActivePreferenceSync(generation, replace = false) {
+  if (!replace && activePreferenceSync?.generation === generation) return activePreferenceSync;
+  let resolve;
+  const gate = {
+    generation,
+    started: false,
+    settled: false,
+    promise: new Promise((done) => { resolve = done; }),
+    resolve,
+  };
+  activePreferenceSync = gate;
+  preferenceSyncPhase = "pending";
+  preferenceSyncError = null;
+  return gate;
+}
+
+function settlePreferenceSync(gate, outcome) {
+  if (!gate || gate.settled) return;
+  gate.settled = true;
+  gate.resolve(outcome);
+}
+
+function cancelPreferenceSyncRetry({ resetAttempt = true } = {}) {
+  if (preferenceSyncRetryTimer != null) clearTimeout(preferenceSyncRetryTimer);
+  preferenceSyncRetryTimer = null;
+  if (resetAttempt) preferenceSyncRetryAttempt = 0;
+}
+
+function schedulePreferenceSyncRetry(generation) {
+  if (preferenceSyncRetryTimer != null ||
+      preferenceSyncRetryAttempt >= PREFERENCE_SYNC_RETRY_MAX_ATTEMPTS) return;
+  const delay = PREFERENCE_SYNC_RETRY_BASE_MS * Math.pow(2, preferenceSyncRetryAttempt);
+  preferenceSyncRetryAttempt++;
+  preferenceSyncRetryTimer = setTimeout(() => {
+    preferenceSyncRetryTimer = null;
+    if (requestedDocumentState !== "active" || documentStateGeneration !== generation ||
+        lifecycleFailureState !== "active") return;
+    lifecycleFailureState = null;
+    createActivePreferenceSync(generation, true);
+    startLifecycleDrain();
+  }, delay);
+}
+
+function supersedeActivePreferenceSync() {
+  cancelPreferenceSyncRetry();
+  const gate = activePreferenceSync;
+  if (gate && !gate.settled) {
+    settlePreferenceSync(gate, {
+      ok: false,
+      error: "preference-sync-superseded",
+      reason: "Document state changed during preference synchronization",
+      superseded: true,
+    });
+  }
+  activePreferenceSync = null;
+  preferenceSyncPhase = "idle";
+  preferenceSyncError = null;
+}
+
+function activePreferenceSyncIsCurrent(gate) {
+  return !!gate && activePreferenceSync === gate && requestedDocumentState === "active" &&
+    documentStateGeneration === gate.generation;
+}
+
+function activePreferenceSyncNeedsDrain() {
+  return activePreferenceSyncIsCurrent(activePreferenceSync) && !activePreferenceSync.settled;
+}
+
+async function syncPreferencesForActiveTransition(generation) {
+  const gate = activePreferenceSync?.generation === generation ? activePreferenceSync : null;
+  if (!gate) return { ok: true, synced: false };
+  if (gate.started) return gate.promise;
+
+  gate.started = true;
+  preferenceSyncPhase = typeof api?.syncSitePrefs === "function" ? "syncing" : "ready";
+  let syncResult;
+  let syncError = null;
+  try {
+    syncResult = typeof api?.syncSitePrefs === "function"
+      ? await api.syncSitePrefs()
+      : { ok: true, synced: false };
+  } catch (error) {
+    syncError = error;
+  }
+
+  if (!activePreferenceSyncIsCurrent(gate)) {
+    const outcome = {
+      ok: false,
+      error: "preference-sync-superseded",
+      reason: "Document state changed during preference synchronization",
+      superseded: true,
+    };
+    settlePreferenceSync(gate, outcome);
+    return outcome;
+  }
+
+  if (syncError || !transitionSucceeded(syncResult)) {
+    const reason = syncError
+      ? errorMessage(syncError)
+      : errorMessage(syncResult?.reason || syncResult?.error || "Site preferences could not be synchronized");
+    preferenceSyncPhase = "failed";
+    preferenceSyncError = syncError || new Error(reason);
+    const outcome = { ok: false, error: "preference-sync-failed", reason };
+    settlePreferenceSync(gate, outcome);
+    schedulePreferenceSyncRetry(generation);
+    console.error("[FSRCNNX] preference synchronization failed:", preferenceSyncError);
+    return outcome;
+  }
+
+  preferenceSyncPhase = "ready";
+  preferenceSyncError = null;
+  cancelPreferenceSyncRetry();
+  const outcome = { ok: true, result: syncResult };
+  settlePreferenceSync(gate, outcome);
+  return outcome;
+}
+
+async function waitForActivePreferenceSync() {
+  const gate = activePreferenceSync;
+  if (!activePreferenceSyncIsCurrent(gate)) return;
+  const outcome = await gate.promise;
+  if (!outcome.ok) throw new Error(outcome.reason || "Site preferences could not be synchronized");
 }
 
 function startEarlyHiddenDrain() {
@@ -331,7 +575,7 @@ function startEarlyHiddenDrain() {
 }
 
 async function drainDocumentLifecycle() {
-  while (appliedDocumentState !== requestedDocumentState) {
+  while (appliedDocumentState !== requestedDocumentState || activePreferenceSyncNeedsDrain()) {
     const state = requestedDocumentState;
     const stateGeneration = documentStateGeneration;
     // A suspend that started during restoration owns the transition until it
@@ -360,9 +604,24 @@ async function drainDocumentLifecycle() {
       await earlyHiddenDrain;
       continue;
     }
+    if (!result.ok || !api) {
+      if (state === "active") {
+        const gate = activePreferenceSync?.generation === stateGeneration
+          ? activePreferenceSync
+          : null;
+        settlePreferenceSync(gate, {
+          ok: false,
+          error: "startup-failed",
+          reason: errorMessage(result.error || startupError),
+        });
+      }
+      lifecycleFailureState = state;
+      return;
+    }
     if (result.ok && api) {
       const method = state === "hidden" ? "suspendDocument" : "resumeDocument";
       let succeeded = true;
+      let transitionInvoked = false;
       try {
         // Cross-document messages can arrive out of order around BFCache. A
         // second active claim immediately before resume gives the background
@@ -370,9 +629,16 @@ async function drainDocumentLifecycle() {
         if (state === "active") {
           activeTransitionInFlight = true;
           await sendDocumentState("active", stateGeneration);
+          if (state === requestedDocumentState && stateGeneration === documentStateGeneration) {
+            succeeded = transitionSucceeded(
+              await syncPreferencesForActiveTransition(stateGeneration),
+            );
+          }
         }
-        if (state === requestedDocumentState && stateGeneration === documentStateGeneration &&
+        if (succeeded && state === requestedDocumentState &&
+            stateGeneration === documentStateGeneration &&
             typeof api[method] === "function") {
+          transitionInvoked = true;
           succeeded = transitionSucceeded(await api[method]());
         }
       } catch (error) {
@@ -385,7 +651,7 @@ async function drainDocumentLifecycle() {
         // A resume that settled after pagehide may have performed work before
         // observing main's generation fence. Force one final suspension rather
         // than trusting the previously-applied hidden marker.
-        if (state === "active" && requestedDocumentState === "hidden") {
+        if (state === "active" && transitionInvoked && requestedDocumentState === "hidden") {
           appliedDocumentState = null;
           startEarlyHiddenDrain();
         }
@@ -412,6 +678,10 @@ function requestDocumentState(state) {
     void sendDocumentState(state);
     if (lifecycleFailureState === state) {
       lifecycleFailureState = null;
+      if (state === "active") {
+        cancelPreferenceSyncRetry();
+        createActivePreferenceSync(documentStateGeneration, true);
+      }
       if (state === "hidden") startEarlyHiddenDrain();
       startLifecycleDrain();
     } else if (state === "hidden") {
@@ -419,9 +689,16 @@ function requestDocumentState(state) {
     }
     return;
   }
+  const previousState = requestedDocumentState;
   requestedDocumentState = state;
   documentStateGeneration++;
   lifecycleFailureState = null;
+  if (state === "active" && previousState === "hidden") {
+    cancelPreferenceSyncRetry();
+    createActivePreferenceSync(documentStateGeneration);
+  } else if (state === "hidden") {
+    supersedeActivePreferenceSync();
+  }
   if (activeClaimRetry != null) {
     clearTimeout(activeClaimRetry);
     activeClaimRetry = null;
@@ -448,7 +725,8 @@ function requestDocumentState(state) {
 function startLifecycleDrain() {
   if (requestedDocumentState === "hidden" && earlyHiddenDrain) return;
   if (lifecycleFailureState === requestedDocumentState) return;
-  if (lifecycleDrain || appliedDocumentState === requestedDocumentState) return;
+  if (lifecycleDrain ||
+      (appliedDocumentState === requestedDocumentState && !activePreferenceSyncNeedsDrain())) return;
   lifecycleDrain = drainDocumentLifecycle()
     .catch((error) => console.error("[FSRCNNX] document lifecycle failed:", error))
     .finally(() => {
