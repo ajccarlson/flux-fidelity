@@ -47,7 +47,7 @@ async function loadSelectionCoordinator(deps) {
     let modeSelectionGeneration = 0;
     let interpolationSelectionGeneration = 0, interpolationConfigGeneration = 0;
     let interpolationTerminalQuarantine = null, interpolationStartFailureStreak = null;
-    let pendingEngine = "rife_v4.26_fp16", pendingResMode = "auto";
+    let pendingEngine = "rife_v4.26", pendingResMode = "auto";
     let pendingTargetFps = "auto", pendingAvOffsetMs = 0;
     let interpAutoFallbackPref = true, interpLadderPref = false, interpInvertPref = true;
     let interpStaticPassthroughPref = true;
@@ -272,7 +272,7 @@ async function loadPreferenceRestore(deps) {
     let requestedEngine = "fsrcnnx", engine = "fsrcnnx", neuralModelKey = "", artVariant = "ArtCNN_C4F32";
     let upscalePolicy = "display", ssimdsEnabled = true, sharpenEnabled = false, sharpenStrength = 1;
     let optHoverReveal = false, optAllVideos = false, debandEnabled = false, debandStrength = 1;
-    let chainDepth = 1, pendingEngine = "rife_v4.26_fp16", pendingResMode = "auto";
+    let chainDepth = 1, pendingEngine = "rife_v4.26", pendingResMode = "auto";
     let pendingTargetFps = "auto", pendingAvOffsetMs = 0;
     let interpAutoFallbackPref = true, interpLadderPref = false, interpInvertPref = true;
     let interpStaticPassthroughPref = true;

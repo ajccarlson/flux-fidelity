@@ -15,7 +15,9 @@ import {
   createValidationPlan,
   float16ToNumber,
   inspectRgba16Float,
+  inspectOrtFloatTensor,
   numberToFloat16,
+  ONNX_VALIDATION_CHECKS,
   summarizeValidation,
   withGpuErrorScopes,
   withTimeout,
@@ -42,11 +44,18 @@ test("the shared generated-model catalog is complete, immutable, and backed by f
 
 test("validation accounting is fixed before execution and treats skips as incompatible", () => {
   const plan = createValidationPlan(GENERATED_MODEL_CATALOG);
-  assert.equal(plan.length, 24);
+  assert.equal(plan.length, 27);
   assert.equal(new Set(plan.map(({ id }) => id)).size, plan.length);
+  assert.equal(Object.isFrozen(ONNX_VALIDATION_CHECKS), true);
+  assert.ok(ONNX_VALIDATION_CHECKS.every(Object.isFrozen));
+  assert.deepEqual(plan.slice(3, 6).map(({ id }) => id), [
+    "onnx:span2x-smoke",
+    "onnx:rife-v4.26-fp16",
+    "onnx:rife-v4.26",
+  ]);
   const results = new Map();
   assert.deepEqual(summarizeValidation(plan, results), {
-    pass: 0, fail: 0, skip: 0, pending: 24, total: 24, complete: false, ok: false,
+    pass: 0, fail: 0, skip: 0, pending: 27, total: 27, complete: false, ok: false,
   });
   for (const check of plan) results.set(check.id, { status: "pass" });
   assert.equal(summarizeValidation(plan, results).ok, true);
@@ -57,6 +66,54 @@ test("validation accounting is fixed before execution and treats skips as incomp
   assert.equal(incompatible.ok, false);
   results.set("unknown", { status: "pass" });
   assert.throws(() => summarizeValidation(plan, results), /does not belong/);
+});
+
+test("ORT output inspection reads GPU tensors and rejects shape, dtype, and numeric corruption", async () => {
+  const cpu = await inspectOrtFloatTensor({
+    type: "float32",
+    dims: [1, 1, 1, 3],
+    data: new Float32Array([0.1, 0.5, 0.9]),
+  }, [1, 1, 1, 3], "CPU fixture");
+  assert.equal(cpu.elements, 3);
+  assert.ok(Math.abs(cpu.min - 0.1) < 1e-6);
+  assert.ok(Math.abs(cpu.max - 0.9) < 1e-6);
+  assert.equal(Object.isFrozen(cpu), true);
+  assert.equal(Object.isFrozen(cpu.dims), true);
+
+  let readbacks = 0;
+  const gpu = await inspectOrtFloatTensor({
+    dataType: "float32",
+    dims: [1, 1, 2, 2],
+    location: "gpu-buffer",
+    async getData() {
+      readbacks++;
+      return new Float32Array([-1, -0.25, 0.25, 1]);
+    },
+  }, [1, 1, 2, 2], "GPU fixture");
+  assert.equal(readbacks, 1);
+  assert.deepEqual(gpu.dims, [1, 1, 2, 2]);
+  assert.equal(gpu.min, -1);
+  assert.equal(gpu.max, 1);
+
+  await assert.rejects(inspectOrtFloatTensor(null, [1], "missing fixture"), /missing fixture is missing/);
+  await assert.rejects(inspectOrtFloatTensor({
+    type: "float16", dims: [1], data: new Uint16Array([0]),
+  }, [1]), /dtype 'float16'/);
+  await assert.rejects(inspectOrtFloatTensor({
+    type: "float32", dims: [1, 2], data: new Float32Array(2),
+  }, [2, 1]), /shape \[1,2\]; expected \[2,1\]/);
+  await assert.rejects(inspectOrtFloatTensor({
+    type: "float32", dims: [2], data: new Float32Array([0, NaN]),
+  }, [2]), /1\/2 non-finite/);
+  await assert.rejects(inspectOrtFloatTensor({
+    type: "float32", dims: [2], data: new Float32Array([0.5, 0.5]),
+  }, [2]), /constant \(0\.5\)/);
+  await assert.rejects(inspectOrtFloatTensor({
+    type: "float32", dims: [2], location: "gpu-buffer",
+  }, [2]), /no getData\(\) readback/);
+  await assert.rejects(inspectOrtFloatTensor({
+    type: "float32", dims: [Number.MAX_SAFE_INTEGER, 2], data: new Float32Array(1),
+  }, [Number.MAX_SAFE_INTEGER, 2]), /element count exceeds the safe integer range/);
 });
 
 test("WebGPU acquisition mirrors production adapter preferences and optional features", async () => {

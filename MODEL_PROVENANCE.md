@@ -1,8 +1,10 @@
 # Model and generated-asset provenance
 
-Audit date: 2026-07-20.
+Audit date: 2026-07-21.
 
 This inventory is a release gate for bundled model, generated shader, and inference-runtime artifacts. A matching hash proves byte identity, not ownership or permission. `Verified` means the recorded bytes, source, and stated upstream license were checked. `Blocked` means the artifact must be removed from a public package or its missing evidence must be supplied first.
+
+The machine-readable gate ledger is [`release-clearance.json`](release-clearance.json). `npm run release:check` must pass before public distribution; it intentionally fails while any recorded gate remains blocked.
 
 ## Unresolved public-release gates
 
@@ -12,7 +14,8 @@ This inventory is a release gate for bundled model, generated shader, and infere
 - The x3 and x4 FSRCNNX generated assets have no retained source shader or upstream revision.
 - The random-weight SPAN smoke model has no recorded random seed or exact generation environment and is not a production model.
 - The exact source/revision and license for the deband port have not been established.
-- Public packages containing LGPL-derived files need the complete applicable license text and a reviewed compliance plan; the repository currently records notices and source links but does not carry a standalone LGPL-3.0 text.
+- The complete LGPL-3.0 and GPL-3.0 companion texts and source notices are now bundled, but public distribution of the LGPL-derived files still needs a reviewed compliance plan.
+- ONNX Runtime's pinned upstream third-party notice set is bundled, but the notices and obligations applicable to the distributed Web runtime files still need review.
 
 The current package builder includes these artifacts. Therefore, a successful `npm run check` or `npm run package` does **not** clear the repository for public distribution.
 
@@ -55,7 +58,9 @@ All three files below are byte-identical to their paths in the official [`onnxru
 | `vendor/ort/ort-wasm-simd-threaded.asyncify.mjs` | `7236653b8565da4046e459cd0e274123419a1d9f1f8f18fd36c28058346ca655` |
 | `vendor/ort/ort-wasm-simd-threaded.asyncify.wasm` | `7e83cd6cee77e478bc96a7e91b198144fb5e4126287daf1f9b54bb195ebcd55a` |
 
-Status: **Verified**. Preserve the MIT notice.
+The package also preserves `ThirdPartyNotices.txt` byte-for-byte from the pinned ONNX Runtime source commit as `vendor/ort/ThirdPartyNotices.txt`, SHA-256 `0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2`.
+
+Runtime byte identity and the Microsoft MIT notice are **verified**. The upstream notice set is preserved, but the applicability review remains a public-release gate.
 
 ## Hand-ported runtime shaders
 
@@ -63,8 +68,8 @@ These are runtime source modules rather than generated model files, but their de
 
 | Local file | SHA-256 | Recorded source | Status |
 | --- | --- | --- | --- |
-| `fsrcnnx-ssimds.js` | `09a07f30ac718600ea529005d5056d2e54ff6a868b9ddb988683a16057673cbf` | [igv/SSimDownscaler.glsl](https://gist.github.com/igv/36508af3ffc84410fe39761d6969be10/38992bce7f9ff844f800820df0908692b65bb74a), gist revision `38992bce7f9ff844f800820df0908692b65bb74a`, source SHA-256 `ef19b89e82b543a84caa539b91bb8f1a3b853f39ce313abee4d26ee4f1b4cfba`, LGPL-3.0-or-later. The local WebGPU port adds finite ratio validation and zero-weight numerical guards. | Source/revision identified; LGPL public-package obligations remain gated. |
-| `fsrcnnx-sharpen.js` | `9b47a6aa2e5cc6294bb7e747d6d54b141aee1cf2a03c95d079e1fa9aeec23f9d` | [igv/adaptive-sharpen.glsl](https://gist.github.com/igv/8a77e4eb8276753b54bb94c1c50c317e/572f59099cd0e3eb5e321a6da0a3d90a7382e2dc), gist revision `572f59099cd0e3eb5e321a6da0a3d90a7382e2dc`, source SHA-256 `0f1d82afa20b1536c45d5b11cddbab1dae5312442e9b6bfb0eb7ae4c43331851`, Copyright 2015-2021 bacondither under its two-clause redistribution notice. The local WebGPU port adds finite strength normalization and flat-field numerical guards. | Source/revision and notice identified. |
+| `fsrcnnx-ssimds.js` | `0f55f8f2b49bea3cb8ee2e4c801a663f21d4dfabb88efaf2de23b709c6ade3c6` | [igv/SSimDownscaler.glsl](https://gist.github.com/igv/36508af3ffc84410fe39761d6969be10/38992bce7f9ff844f800820df0908692b65bb74a), gist revision `38992bce7f9ff844f800820df0908692b65bb74a`, raw source SHA-256 `f46f4710a162d17058b9d82ed8610588b0c04d7be07cef6bf2a8c4077828f804`, LGPL-3.0-or-later. The local WebGPU port adds finite ratio validation and zero-weight numerical guards. | Source/revision and license header retained; LGPL public-package obligations remain gated. |
+| `fsrcnnx-sharpen.js` | `9312f5445791792634679bac74f01d3292e8e776c6fc7e3be348435f2913ef8a` | [igv/adaptive-sharpen.glsl](https://gist.github.com/igv/8a77e4eb8276753b54bb94c1c50c317e/572f59099cd0e3eb5e321a6da0a3d90a7382e2dc), gist revision `572f59099cd0e3eb5e321a6da0a3d90a7382e2dc`, raw source SHA-256 `827fb3d662ac9a91b4075e9117fe6e1dbc1c06d85959ba719cdb954dfb7fb8e4`, Copyright 2015-2021 bacondither under its two-clause redistribution notice. The local WebGPU port adds finite strength normalization and flat-field numerical guards. | Source/revision and verbatim source notice retained. |
 | `fsrcnnx-deband.js` | `56155c7bd5a15b5524ec1b44baeb4b5cb368e57f9adaf5ff8635bd1a2dba3f84` | Comments say it was modeled on mpv's `f_deband` / haasn algorithm. The local builder now normalizes non-finite strength inputs, but no exact source file or revision is recorded. | **Blocked** pending a source-and-license record or a documented original/clean-room implementation basis. |
 
 ## Reproduction checks
@@ -73,6 +78,7 @@ These are runtime source modules rather than generated model files, but their de
 npm run fetch:shader-sources
 npm run check:generated
 npm run check
+npm run release:check
 ```
 
 The fetch step accepts upstream bytes only when their pinned hashes match. The generated check covers standard x2, high x2, and the three ArtCNN variants; it cannot regenerate x3 or x4.

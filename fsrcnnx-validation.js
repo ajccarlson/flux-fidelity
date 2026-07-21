@@ -12,11 +12,18 @@ import {
 
 export const VALIDATION_TIMEOUT_MS = 30_000;
 
+export const ONNX_VALIDATION_CHECKS = Object.freeze([
+  Object.freeze({ id: "onnx:span2x-smoke", label: "ORT SPAN 2x WASM asset/inference smoke" }),
+  Object.freeze({ id: "onnx:rife-v4.26-fp16", label: "ORT RIFE 4.26 FP16 WASM asset/inference smoke" }),
+  Object.freeze({ id: "onnx:rife-v4.26", label: "ORT default RIFE 4.26 WebGPU inference smoke" }),
+]);
+
 export function createValidationPlan(catalog) {
   const plan = [
     Object.freeze({ id: "webgpu", label: "WebGPU device" }),
     Object.freeze({ id: "core:pipelines", label: "Supporting color/filter pipelines" }),
     Object.freeze({ id: "webgpu:errors", label: "GPU error channel" }),
+    ...ONNX_VALIDATION_CHECKS,
   ];
   for (const spec of catalog) {
     plan.push(
@@ -29,6 +36,63 @@ export function createValidationPlan(catalog) {
     throw new Error("validation plan contains duplicate check identifiers");
   }
   return Object.freeze(plan);
+}
+
+export async function inspectOrtFloatTensor(tensor, expectedDims, label = "ORT output") {
+  if (!tensor || typeof tensor !== "object") throw new TypeError(`${label} is missing`);
+  if (!Array.isArray(expectedDims) || !expectedDims.length ||
+      expectedDims.some((value) => !Number.isSafeInteger(value) || value <= 0)) {
+    throw new TypeError(`${label} expected dimensions are invalid`);
+  }
+
+  const type = tensor.type || tensor.dataType;
+  if (type !== "float32") throw new Error(`${label} has dtype '${type || "unknown"}'; expected float32`);
+  const dims = Array.from(tensor.dims || [], Number);
+  if (dims.length !== expectedDims.length || dims.some((value, index) => value !== expectedDims[index])) {
+    throw new Error(`${label} has shape [${dims.join(",")}]; expected [${expectedDims.join(",")}]`);
+  }
+
+  let expectedElements = 1;
+  for (const value of expectedDims) {
+    if (expectedElements > Number.MAX_SAFE_INTEGER / value) {
+      throw new RangeError(`${label} expected element count exceeds the safe integer range`);
+    }
+    expectedElements *= value;
+  }
+  let data;
+  if (tensor.location && tensor.location !== "cpu") {
+    if (typeof tensor.getData !== "function") {
+      throw new Error(`${label} is at '${tensor.location}' but has no getData() readback`);
+    }
+    data = await tensor.getData();
+  } else {
+    data = tensor.data;
+  }
+  if (!(data instanceof Float32Array)) {
+    throw new Error(`${label} data is not Float32Array`);
+  }
+  if (data.length !== expectedElements) {
+    throw new Error(`${label} has ${data.length} values; expected ${expectedElements}`);
+  }
+
+  let min = Infinity;
+  let max = -Infinity;
+  let nonFinite = 0;
+  for (const value of data) {
+    if (!Number.isFinite(value)) nonFinite++;
+    else {
+      min = Math.min(min, value);
+      max = Math.max(max, value);
+    }
+  }
+  if (nonFinite) throw new Error(`${label} has ${nonFinite}/${data.length} non-finite values`);
+  if (!(max - min > 1e-6)) throw new Error(`${label} is constant (${min})`);
+  return Object.freeze({
+    dims: Object.freeze([...dims]),
+    elements: data.length,
+    min,
+    max,
+  });
 }
 
 export function summarizeValidation(plan, results) {

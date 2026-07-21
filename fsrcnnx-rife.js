@@ -84,14 +84,14 @@ function endCpuRun() {
 // 4.26 rife_v2 exports, channels 0-2 = frame A, 3-5 = frame B, 6 = timestep plane,
 // and t drives interpolation position (t=0→frameA, 1→frameB, 0.5→midpoint).
 const MODELS = {
-  "rife_v4.26":      { file: "model/rife_v4.26.onnx",      channels: 7, timestepPlane: true,  label: "4.26 (smoother; waves on bright motion)",
+  "rife_v4.26":      { file: "model/rife_v4.26.onnx",      channels: 7, timestepPlane: true,  label: "4.26 (default; may wave on bright motion)",
                        dims: (w, h) => ({ batch: 1, height: h, width: w }) },
-  "rife_v4.26_fp16": { file: "model/rife_v4.26_fp16.onnx", channels: 7, timestepPlane: true,  fp16: true, label: "4.26 FP16 (faster; near-identical output)",
+  "rife_v4.26_fp16": { file: "model/rife_v4.26_fp16.onnx", channels: 7, timestepPlane: true,  fp16: true, label: "4.26 FP16 (experimental)",
                        dims: (w, h) => ({ batch: 1, height: h, width: w }) },
   "rife_orig":       { file: "model/rife.onnx",            channels: 6, timestepPlane: false, label: "original (no bright-wave artifacts)",
                        dims: (w, h) => ({ dynamic_dim_0: 1, dynamic_dim_1: 6, dynamic_dim_2: h, dynamic_dim_3: w }) },
 };
-let currentModelKey = "rife_v4.26_fp16"; // default: fp16 (validated near-identical; ~half the inference cost)
+let currentModelKey = "rife_v4.26"; // default: verified FP32 model with broad WebGPU support
 
 const MODEL_IO = {
   url: () => chrome.runtime.getURL(MODELS[currentModelKey].file),

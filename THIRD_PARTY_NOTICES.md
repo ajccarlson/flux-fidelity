@@ -1,6 +1,6 @@
 # Third-party notices
 
-FSRCNNX-EXT includes or derives from the components below. Exact artifact hashes and unresolved release gates are recorded in [MODEL_PROVENANCE.md](MODEL_PROVENANCE.md). This file records verified notices; it does not assign a license to artifacts whose origin remains unknown.
+FSRCNNX-EXT includes or derives from the components below. Exact artifact hashes and unresolved release gates are recorded in [MODEL_PROVENANCE.md](MODEL_PROVENANCE.md) and the machine-readable [`release-clearance.json`](release-clearance.json). `npm run release:check` remains the authoritative pre-publication gate. This file records verified notices; it does not assign a license to artifacts whose origin remains unknown.
 
 ## MIT-licensed components
 
@@ -11,6 +11,8 @@ Bundled files under `vendor/ort/` come from the official `onnxruntime-web@1.27.0
 Copyright (c) Microsoft Corporation
 
 Upstream: <https://github.com/microsoft/onnxruntime/tree/8f0278c77bf44b0cc83c098c6c722b92a36ac4b5>
+
+The official npm tarball does not carry a notice file. This package therefore preserves `vendor/ort/ThirdPartyNotices.txt` byte-for-byte from the pinned source commit (SHA-256 `0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2`). Bundling that upstream notice set does not replace the pending review of which notices and obligations apply to the distributed Web runtime files.
 
 ### ArtCNN
 
@@ -62,9 +64,9 @@ The SSimDownscaler WebGPU port derives from `SSimDownscaler.glsl`, gist revision
 
 Upstream: <https://gist.github.com/igv/36508af3ffc84410fe39761d6969be10/38992bce7f9ff844f800820df0908692b65bb74a>
 
-Both upstream files state that they may be redistributed and/or modified under the GNU Lesser General Public License, version 3 or, at the recipient's option, any later version; they disclaim warranty. License text: <https://www.gnu.org/licenses/lgpl-3.0.html>.
+Both upstream files state that they may be redistributed and/or modified under the GNU Lesser General Public License, version 3 or, at the recipient's option, any later version; they disclaim warranty.
 
-The repository does not currently include a standalone copy of the complete LGPL-3.0 license. Public distribution of these derived files remains gated until the applicable notice, source, and relinking/modification requirements have been reviewed and satisfied.
+The package includes the complete official [`LGPL-3.0.txt`](LGPL-3.0.txt) text and its [`GPL-3.0.txt`](GPL-3.0.txt) companion. The checked-in LGPL sources retain their upstream license headers, and the SSim module identifies its 2026 WebGPU port modifications. These additions do not clear public distribution: the applicable notice, corresponding-source, relinking/modification, and other obligations still require a completed compliance review.
 
 ## Adaptive Sharpen redistribution notice
 
@@ -81,6 +83,8 @@ THIS SOFTWARE IS PROVIDED BY THE AUTHORS “AS IS” AND ANY EXPRESS OR IMPLIED 
 
 Upstream: <https://gist.github.com/igv/8a77e4eb8276753b54bb94c1c50c317e/572f59099cd0e3eb5e321a6da0a3d90a7382e2dc>
 
+The source module retains the preceding notice verbatim before its local port description.
+
 ## Unresolved material
 
-No license is asserted here for the high-quality x2, x3, or x4 FSRCNNX artifacts; the generic `model/rife.onnx`; the unproven FP16 RIFE conversion; or the deband port. They are public-release blockers until the evidence listed in `MODEL_PROVENANCE.md` is supplied or the material is removed.
+No license is asserted here for the high-quality x2, x3, or x4 FSRCNNX artifacts; the generic `model/rife.onnx`; the unproven FP16 RIFE conversion; or the deband port. They are public-release blockers until the evidence listed in `MODEL_PROVENANCE.md` is supplied or the material is removed. The LGPL and ONNX Runtime applicability reviews also remain blocked in `release-clearance.json`; merely bundling complete upstream texts and notices does not clear them.

@@ -13,10 +13,13 @@ const errors = [];
 // shader checks. Pin their reviewed bytes so a package never silently substitutes
 // a different model/runtime while retaining the same provenance record.
 const pinnedArtifacts = {
+  "GPL-3.0.txt": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+  "LGPL-3.0.txt": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118",
   "model/rife.onnx": "6a31074c0f588648982b5e828aee6c27e005015a712a46ea63da48c65fa9a26b",
   "model/rife_v4.26.onnx": "af25762dfec02a4bbb949decea63988b01fa56c46c0ff9dc66ac8e2f12cbb661",
   "model/rife_v4.26_fp16.onnx": "65494496be256b2809b6760f87a941c0d80bbc5cb09de0f3f6795488ae1fcd9d",
   "model/neural/span2x_smoke.fp16.onnx": "ae7642c2b3bdd96e475dfcbf6a9180d8ec41175a1329d9f9b2a402f186c05c25",
+  "vendor/ort/ThirdPartyNotices.txt": "0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2",
   "vendor/ort/ort.webgpu.min.mjs": "46988a5a025f49449850f39f95eb0d21e40e67b3beb13a0b54efd3ab5d83f60e",
   "vendor/ort/ort-wasm-simd-threaded.asyncify.mjs": "7236653b8565da4046e459cd0e274123419a1d9f1f8f18fd36c28058346ca655",
   "vendor/ort/ort-wasm-simd-threaded.asyncify.wasm": "7e83cd6cee77e478bc96a7e91b198144fb5e4126287daf1f9b54bb195ebcd55a",
@@ -39,8 +42,8 @@ const pinnedArtifacts = {
   "model/ArtCNN_C4F32_DN.artcnn.json": "b5911c707c83462c79dcf954bcaf422efd2d6b42efd4d08228361ab8ea52fe79",
   "model/ArtCNN_C4F32_DS.artcnn.wgsl": "f6de86466a0ae261c178f53d72d2cb79032ade94b8ec452f51fa1315b93be3c5",
   "model/ArtCNN_C4F32_DS.artcnn.json": "f98bbd5e834cbfb2ed66ba07865889f76466279e356bfbd62c33df73e95b30cb",
-  "fsrcnnx-ssimds.js": "09a07f30ac718600ea529005d5056d2e54ff6a868b9ddb988683a16057673cbf",
-  "fsrcnnx-sharpen.js": "9b47a6aa2e5cc6294bb7e747d6d54b141aee1cf2a03c95d079e1fa9aeec23f9d",
+  "fsrcnnx-ssimds.js": "0f55f8f2b49bea3cb8ee2e4c801a663f21d4dfabb88efaf2de23b709c6ade3c6",
+  "fsrcnnx-sharpen.js": "9312f5445791792634679bac74f01d3292e8e776c6fc7e3be348435f2913ef8a",
   "fsrcnnx-deband.js": "56155c7bd5a15b5524ec1b44baeb4b5cb368e57f9adaf5ff8635bd1a2dba3f84",
 };
 

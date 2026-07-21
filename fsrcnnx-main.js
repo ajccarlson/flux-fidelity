@@ -330,9 +330,11 @@ function validateSitePreferencePatch(patch) {
     else if (field === "artVariant" && !ART_FILES.includes(value)) invalid.add(field);
     else if (field === "policy" && !normalizeUpscalePolicy(value, targetEngine)) invalid.add(field);
     else if (booleanFields.has(field) && typeof value !== "boolean") invalid.add(field);
-    else if ((field === "sharpenStrength" || field === "debandStrength") && !Number.isFinite(value)) {
-      invalid.add(field);
-    } else if (field === "interpEngine" && !normalizeInterpolationModel(value)) invalid.add(field);
+    else if (field === "sharpenStrength" &&
+        (!Number.isFinite(value) || value < 0.1 || value > 2)) invalid.add(field);
+    else if (field === "debandStrength" &&
+        (!Number.isFinite(value) || value < 0.3 || value > 3)) invalid.add(field);
+    else if (field === "interpEngine" && !normalizeInterpolationModel(value)) invalid.add(field);
     else if (field === "interpResMode" && !normalizeInterpolationResMode(value)) invalid.add(field);
     else if (field === "neuralModel" && value !== null &&
         !_neuralList.some((entry) => entry.key === value)) invalid.add(field);
@@ -515,7 +517,7 @@ const INTERPOLATION_MODEL_KEYS = Object.freeze([
   "blend",
 ]);
 const INTERPOLATION_RES_MODES = Object.freeze(["auto", "full", "half", "quarter"]);
-const DEFAULT_INTERPOLATION_MODEL = "rife_v4.26_fp16";
+const DEFAULT_INTERPOLATION_MODEL = "rife_v4.26";
 const DEFAULT_INTERPOLATION_RES_MODE = "auto";
 const DEFAULT_INTERPOLATION_TARGET_FPS = "auto";
 const DEFAULT_INTERPOLATION_AV_OFFSET_MS = 0;
