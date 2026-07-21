@@ -385,7 +385,27 @@ test("preference restore normalizes valid legacy values and rejects corrupt stor
       "interpAvOffsetMs, interpEngine, interpInvert, interpLadder, interpResMode, " +
       "interpStaticPassthrough, interpTargetFps, interpolate, mode, neuralModel, policy, " +
       "sharpenStrength",
-    "a valid unrelated field clears only its own validation error");
+      "a valid unrelated field clears only its own validation error");
+});
+
+test("persisted filter strengths enforce the same inclusive bounds as popup commands", async () => {
+  for (const [sharpenStrength, debandStrength] of [[0.1, 0.3], [2, 3]]) {
+    const valid = await loadRestoreHarness({ sharpenStrength, debandStrength });
+    assert.equal((await valid.restoreSitePrefs()).ok, true);
+    assert.equal(valid.state().sharpenStrength, sharpenStrength);
+    assert.equal(valid.state().debandStrength, debandStrength);
+    assert.equal(valid.state().preferenceValidationFailure, null);
+  }
+
+  const invalid = await loadRestoreHarness({ sharpenStrength: 2.01, debandStrength: 0.29 });
+  assert.equal((await invalid.restoreSitePrefs()).ok, true);
+  assert.equal(invalid.state().sharpenStrength, 2, "unsafe stored sharpen strength is clamped");
+  assert.equal(invalid.state().debandStrength, 0.3, "unsafe stored deband strength is clamped");
+  assert.equal(
+    invalid.state().preferenceValidationFailure,
+    "Invalid stored settings: debandStrength, sharpenStrength",
+    "finite out-of-range values remain observable as invalid storage",
+  );
 });
 
 test("interpolation setters preserve invalid-state immutability and configure a future runtime", async () => {
