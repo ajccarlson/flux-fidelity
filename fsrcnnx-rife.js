@@ -26,6 +26,45 @@ let cpuInterpolateTail = Promise.resolve();
 let ortLoadPromise = null;
 let ortSessionCreateTail = Promise.resolve();
 const ortSessionDevices = new WeakMap();
+const deviceLossListeners = new Set();
+let deviceInvalidationTail = Promise.resolve();
+const watchedOrtDevices = new WeakSet();
+
+// Consumers which own presentation state (notably Interpolator) need to leave
+// GPU-present mode as soon as either ORT's shared device or a standalone blend
+// device is lost.  Keep this deliberately tiny: session/resource invalidation
+// remains owned by this module and listeners only coordinate their lifecycle.
+export function addDeviceLossListener(listener) {
+  if (typeof listener !== "function") return () => {};
+  deviceLossListeners.add(listener);
+  return () => deviceLossListeners.delete(listener);
+}
+
+function emitDeviceLoss(device, info) {
+  for (const listener of [...deviceLossListeners]) {
+    try { listener(device, info); } catch {}
+  }
+}
+
+// The GPU-resident helper also observes device loss, but it is deliberately torn
+// down when WebGPU canvas presentation is unavailable.  The CPU/readback fallback
+// still uses the committed ORT WebGPU session, so the session's device needs its
+// own watcher or that path can keep reporting a dead session as ready forever.
+function watchOrtDevice(ownerDevice) {
+  if (!ownerDevice || watchedOrtDevices.has(ownerDevice) || !ownerDevice.lost?.then) return;
+  watchedOrtDevices.add(ownerDevice);
+  const handleLoss = (info) => {
+    // A replaced session can release its old device intentionally.  Only the
+    // device backing the currently committed session may invalidate public state.
+    if (getOrtSessionDevice(session) !== ownerDevice) return;
+    invalidateDevice(ownerDevice, info).catch((error) =>
+      console.warn("[RIFE] ORT device-loss invalidation failed:", error.message));
+  };
+  ownerDevice.lost.then(
+    handleLoss,
+    (error) => handleLoss({ reason: "unknown", message: error?.message || String(error) }),
+  );
+}
 
 function whenCpuRunsIdle() {
   if (activeCpuRuns === 0) return Promise.resolve();
@@ -396,6 +435,7 @@ async function initRifeGeneration(pinW, pinH, generation, modelKey) {
     session = candidateSession;
     candidateSession = null;
     sessionModelKey = modelKey;
+    watchOrtDevice(getOrtSessionDevice(session));
     MODEL_IO.inputName = nextInputName;
     MODEL_IO.outputName = nextOutputName;
     pinnedDims = nextPinnedDims;
@@ -462,7 +502,7 @@ let gpuLifecycleGeneration = 0;
 // Expose ORT's device so the GPU path can build buffers on the same device (required
 // for Tensor.fromGpuBuffer). Available after session creation in ORT WebGPU builds.
 export function getOrtDevice() {
-  if (usingWasmEp) return null;
+  if (usingWasmEp || !session) return null;
   try { return getOrtSessionDevice(session) || (ort?.env?.webgpu?.device ?? null); } catch { return null; }
 }
 export function getOrt() { return ort; }
@@ -492,7 +532,14 @@ export async function initGpuInterp({ log, warn } = {}) {
       const mod = await import(chrome.runtime.getURL("fsrcnnx-rife-gpu.js"));
       if (session !== targetSession || modelGeneration !== targetModelGeneration ||
           lifecycleGeneration !== gpuLifecycleGeneration || !isReady()) return false;
-      candidate = new mod.GpuInterp({ log, warn });
+      candidate = new mod.GpuInterp({
+        log,
+        warn,
+        onDeviceLost: (lostDevice, info) => {
+          invalidateDevice(lostDevice, info).catch((error) =>
+            (warn || console.warn)("[RIFE] device-loss invalidation failed:", error.message));
+        },
+      });
       if (!(await candidate.init(targetDevice, targetOrt))) return false;
       if (session !== targetSession || modelGeneration !== targetModelGeneration ||
           lifecycleGeneration !== gpuLifecycleGeneration || !isReady()) {
@@ -534,7 +581,14 @@ export async function initGpuBlendStandalone({ log, warn, device } = {}) {
   if (gpuInterp) return true; // already have a pipeline (RIFE or standalone)
   try {
     const mod = await import(chrome.runtime.getURL("fsrcnnx-rife-gpu.js"));
-    const g = new mod.GpuInterp({ log, warn });
+    const g = new mod.GpuInterp({
+      log,
+      warn,
+      onDeviceLost: (lostDevice, info) => {
+        invalidateDevice(lostDevice, info).catch((error) =>
+          (warn || console.warn)("[RIFE] blend device-loss invalidation failed:", error.message));
+      },
+    });
     if (await g.init(device || null, null)) { gpuInterp = g; gpuTried = true; (log||console.log)(`[RIFE] standalone blend GPU path active${device ? " (shared device)" : ""}`); return true; }
     return false;
   } catch (e) { (warn||console.warn)("[RIFE] standalone blend init failed:", e.message); return false; }
@@ -556,6 +610,7 @@ export function destroyGpuInterp() {
 // pooled texture, interpolate to a pooled texture, present a texture, recycle.
 export function gpuConfigureCanvas(canvas) { return gpuInterp ? gpuInterp.configureCanvas(canvas) : false; }
 export function gpuCapture(video) { return gpuInterp ? gpuInterp.captureToPooled(video, MODEL_IO.padTo, MODEL_IO.channels()) : null; }
+export function gpuLastCaptureError() { return gpuInterp?.lastCaptureError || null; }
 export function gpuHasPrev() { return gpuInterp ? gpuInterp.hasPrev() : false; }
 export function gpuAdvance() { if (gpuInterp) gpuInterp.advance(); }
 export async function gpuTween(w, h, t, useStatic) {
@@ -640,6 +695,77 @@ function fillPlanar(srcCanvasCtx, padW, padH, dst, base, normalize = MODEL_IO.no
 let _ca = null, _cb = null, _cout = null, _ctxA = null, _ctxB = null, _octx = null;
 let _inBuf = null, _inTensor = null, _outImg = null, _bufW = 0, _bufH = 0;
 let _tsFilled = null, _tsPlaneW = 0, _tsPlaneH = 0; // timestep-plane fill cache
+
+// Invalidate every RIFE object backed by a lost device before any restart can
+// mistake the still-referenced session for a healthy reusable one. Calls are
+// serialized because the main renderer and GpuInterp can observe the same shared
+// loss independently. Identity checks make the second notification a no-op.
+export function invalidateDevice(lostDevice, info = null) {
+  if (!lostDevice) return Promise.resolve(false);
+  const operation = deviceInvalidationTail.catch(() => {}).then(
+    () => invalidateDeviceSerial(lostDevice, info),
+  );
+  deviceInvalidationTail = operation.then(() => undefined, () => undefined);
+  return operation;
+}
+
+async function invalidateDeviceSerial(lostDevice, info) {
+  const committedSession = session;
+  const committedDevice = getOrtSessionDevice(committedSession);
+  const activeGpu = gpuInterp;
+  const affectsSession = !!committedSession && committedDevice === lostDevice;
+  const affectsGpu = !!activeGpu && activeGpu.device === lostDevice;
+  if (!affectsSession && !affectsGpu) return false;
+
+  if (affectsSession) {
+    // Cancel in-flight initialization/CPU continuations and make initRife build a
+    // fresh session even though the selected model key itself did not change.
+    modelGeneration++;
+    session = null;
+    sessionModelKey = null;
+    modelLoadTried = false;
+    modelAvailable = false;
+    pinnedDims = null;
+    captureActive = false;
+    captureBroken = false;
+    _skipOutDispose = false;
+    usingWasmEp = false;
+    fp16Active = false;
+    MODEL_IO.inputName = null;
+    MODEL_IO.outputName = null;
+    lastError = `device-lost: ${info?.message || info?.reason || "unknown reason"}`;
+  }
+
+  // Notify synchronously after state publication so a controller restart can
+  // never re-enter initRife and observe the dead committed session as ready.
+  emitDeviceLoss(lostDevice, info);
+
+  if (affectsGpu) {
+    const gpuDone = destroyGpuInterp();
+    pendingGpuTeardown = pendingGpuTeardown.catch(() => {}).then(async () => {
+      try { await gpuDone; } catch {}
+    });
+    await pendingGpuTeardown;
+  }
+
+  if (!affectsSession) return true;
+  await whenCpuRunsIdle();
+
+  const oldInputTensor = _inTensor;
+  _inTensor = null; _inBuf = null; _outImg = null;
+  _ca = null; _cb = null; _cout = null; _ctxA = null; _ctxB = null; _octx = null;
+  _bufW = 0; _bufH = 0; _tsFilled = null; _tsPlaneW = 0; _tsPlaneH = 0;
+  try { oldInputTensor?.dispose?.(); } catch {}
+
+  const lostGuards = deferredDeviceGuards.filter((guard) => guard.device === lostDevice);
+  if (lostGuards.length) {
+    deferredDeviceGuards = deferredDeviceGuards.filter((guard) => guard.device !== lostDevice);
+    await releaseSessionGuards(lostGuards);
+  }
+  try { await committedSession.release?.(); } catch {}
+  return true;
+}
+
 export async function interpolate(frameA, frameB, w, h, t = 0.5, scale = 1.0) {
   // These canvases and typed arrays are module-global reuse buffers. A stopped
   // Interpolator can be restarted before its previous session.run() settles, so

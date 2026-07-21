@@ -1,3 +1,5 @@
+import { validateModelBundle } from "./fsrcnnx-model-bundle.js";
+
 const MODELS = [
   ["FSRCNNX x2", "model/FSRCNNX_x2_16-0-4-1.passes.json", "model/FSRCNNX_x2_16-0-4-1.wgsl"],
   ["FSRCNNX high x2", "model/FSRCNNX_x2_56-16-4-1.passes.json", "model/FSRCNNX_x2_56-16-4-1.wgsl"],
@@ -24,25 +26,6 @@ function addResult(name, ok, detail) {
   row.append(title, status, info);
   results.append(row);
   return ok;
-}
-
-function splitEntries(source) {
-  const marker = "//==== ENTRY";
-  const start = source.indexOf(marker);
-  if (start < 0) return [];
-  const prelude = source.slice(0, start);
-  return source.slice(start).split(/(?=\/\/==== ENTRY)/).map((chunk) => prelude + chunk);
-}
-
-function validateTopology(manifest) {
-  const available = new Set(["LUMA"]);
-  const errors = [];
-  manifest.passes.forEach((pass, index) => {
-    if (pass.index !== index) errors.push(`pass ${index} index=${pass.index}`);
-    for (const bind of pass.binds || []) if (!available.has(bind)) errors.push(`pass ${index} missing ${bind}`);
-    if (pass.save) available.add(pass.save);
-  });
-  return errors;
 }
 
 function validateColorRoundTrip() {
@@ -100,15 +83,26 @@ async function run() {
 
   for (const [label, manifestPath, wgslPath] of MODELS) {
     try {
-      const [manifest, source] = await Promise.all([
-        fetch(manifestPath).then((response) => response.json()),
-        fetch(wgslPath).then((response) => response.text()),
+      const [manifestResponse, wgslResponse] = await Promise.all([
+        fetch(manifestPath),
+        fetch(wgslPath),
       ]);
-      const topologyErrors = validateTopology(manifest);
-      const entries = splitEntries(source);
+      if (!manifestResponse.ok || !wgslResponse.ok) {
+        throw new Error(`fetch failed (${manifestResponse.status}/${wgslResponse.status})`);
+      }
+      const manifest = await manifestResponse.json();
+      const source = await wgslResponse.text();
+      const artcnn = manifestPath.endsWith(".artcnn.json");
+      const expectedName = manifestPath.split("/").pop()
+        .replace(/\.passes\.json$/, "").replace(/\.artcnn\.json$/, "");
+      const bundle = validateModelBundle(artcnn ? "artcnn" : "fsrcnnx", manifest, source, {
+        expectedName,
+        deviceLimits: device?.limits,
+      });
+      const entries = [...bundle.entries.values()];
       total++;
-      if (addResult(`${label} topology`, topologyErrors.length === 0 && entries.length === manifest.passes.length,
-        topologyErrors[0] || `${manifest.passes.length} passes and ${entries.length} WGSL entries`)) passed++;
+      if (addResult(`${label} topology`, true,
+        `${manifest.passes.length} validated passes and ${entries.length} exact WGSL entries`)) passed++;
 
       if (device) {
         const compilationErrors = await compileEntries(device, entries);

@@ -17,8 +17,13 @@
 // threshold + grain together.
 
 export function buildDebandShader(strength = 1.0) {
-  // strength 0.5..2.0 scales the smoothing aggressiveness.
-  const s = Math.max(0.1, Math.min(3.0, strength));
+  // Normalize here as well as at the UI boundary: this exported builder can be
+  // called directly, and NaN otherwise serializes into invalid WGSL constants.
+  let requested;
+  try { requested = Number(strength); } catch { requested = NaN; }
+  const s = Number.isFinite(requested)
+    ? Math.max(0.1, Math.min(3.0, requested))
+    : 1.0;
   const threshold = (0.004 * s).toFixed(6);   // higher => smooths bigger steps
   const range = (16.0 * s).toFixed(3);         // sampling radius in pixels (grows per iter)
   const grain = (0.006 * s).toFixed(6);        // dither grain magnitude

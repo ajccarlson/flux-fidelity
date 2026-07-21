@@ -1,7 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { GpuInterp } from "../fsrcnnx-rife-gpu.js";
+import {
+  DEFAULT_GPU_FRAME_BUDGET_BYTES,
+  DEFAULT_GPU_INPUT_BUDGET_BYTES,
+  DEFAULT_GPU_POOL_BUDGET_BYTES,
+  GpuInterp,
+  GpuResourceLimitError,
+} from "../fsrcnnx-rife-gpu.js";
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
 
 function makeResource(description, kind) {
   const extent = Array.isArray(description.size) ? description.size : null;
@@ -16,13 +28,16 @@ function makeResource(description, kind) {
   };
 }
 
-function makeDevice(name) {
+function makeDevice(name, { limits = {}, fence = null } = {}) {
+  const lost = deferred();
   const events = {
     calls: 0,
     destroys: 0,
     fences: 0,
     writes: [],
     submissions: [],
+    textures: [],
+    buffers: [],
   };
   let pipelineId = 0;
   const queue = {
@@ -36,7 +51,7 @@ function makeDevice(name) {
     },
     onSubmittedWorkDone() {
       events.fences++;
-      return Promise.resolve();
+      return fence?.promise || Promise.resolve();
     },
   };
   const makePipeline = (kind) => {
@@ -48,15 +63,33 @@ function makeDevice(name) {
   };
   return {
     name,
+    limits: {
+      maxTextureDimension2D: 8192,
+      maxBufferSize: 256 * 1024 * 1024,
+      maxStorageBufferBindingSize: 128 * 1024 * 1024,
+      maxComputeWorkgroupsPerDimension: 65535,
+      ...limits,
+    },
+    lost: lost.promise,
+    lose(info = { reason: "unknown", message: "test loss" }) { lost.resolve(info); },
     events,
     queue,
-    destroy() { events.destroys++; },
+    destroy() { events.destroys++; lost.resolve({ reason: "destroyed", message: "intentional test destroy" }); },
     createSampler() { return { name: `${name}-sampler` }; },
     createShaderModule({ code }) { return { code }; },
     createRenderPipeline() { return makePipeline("render"); },
     createComputePipeline() { return makePipeline("compute"); },
-    createBuffer(description) { return makeResource(description, "buffer"); },
-    createTexture(description) { return makeResource(description, "texture"); },
+    createBuffer(description) {
+      const resource = makeResource(description, "buffer");
+      events.buffers.push(resource);
+      return resource;
+    },
+    createTexture(description) {
+      const resource = makeResource(description, "texture");
+      events.textures.push(resource);
+      return resource;
+    },
+    importExternalTexture({ source }) { return { source }; },
     createBindGroup(description) { events.calls++; return description; },
     createCommandEncoder() {
       events.calls++;
@@ -70,6 +103,15 @@ function makeDevice(name) {
             end() {},
           };
         },
+        beginRenderPass() {
+          return {
+            setPipeline(pipeline) { command.pipeline = pipeline; },
+            setBindGroup(_slot, bindGroup) { command.bindGroup = bindGroup; },
+            draw(...dimensions) { command.draw = dimensions; },
+            end() {},
+          };
+        },
+        copyTextureToTexture(source, destination, size) { command.copy = { source, destination, size }; },
         finish() { return command; },
       };
     },
@@ -301,4 +343,284 @@ test("GpuInterp destroys only a standalone device it requested itself", async (t
   assert.equal(await standalone.init(null, null), true);
   await standalone.destroy();
   assert.equal(ownedDevice.events.destroys, 1);
+});
+
+test("standalone blend capture never allocates a RIFE inference buffer", async (t) => {
+  installWebGpuGlobals(t);
+  const device = makeDevice("blend-only", {
+    limits: { maxStorageBufferBindingSize: 64, maxBufferSize: 64 },
+  });
+  const gpu = new GpuInterp({ log() {}, warn() {} });
+  assert.equal(await gpu.init(device, null), true);
+  const uniformBuffers = device.events.buffers.length;
+
+  const captured = gpu.captureToPooled({ videoWidth: 96, videoHeight: 54 }, 8, 7);
+  assert.ok(captured);
+  assert.equal(gpu.inBuf, undefined);
+  assert.equal(device.events.buffers.length, uniformBuffers);
+  assert.equal(device.events.buffers.some(({ label }) => label?.startsWith("rife-inBuf-")), false);
+
+  gpu.releaseTex(captured);
+  await gpu.destroy();
+});
+
+test("GpuInterp resize is atomic across frame and inference allocation failures", async (t) => {
+  installWebGpuGlobals(t);
+  const device = makeDevice("atomic-resize");
+  const ort = { Tensor: { fromGpuBuffer() {} } };
+  const gpu = new GpuInterp({ log() {}, warn() {} });
+  assert.equal(await gpu.init(device, ort), true);
+  gpu._size(80, 72, 8, 7, 1);
+  const old = {
+    prev: gpu.prevTex,
+    cur: gpu.curTex,
+    input: gpu.inBuf,
+    dimensions: [gpu._w, gpu._h, gpu._padW, gpu._padH],
+  };
+
+  const createTexture = device.createTexture.bind(device);
+  let resizeTextureCalls = 0;
+  device.createTexture = (description) => {
+    resizeTextureCalls++;
+    if (resizeTextureCalls === 2) throw new Error("injected frame allocation failure");
+    return createTexture(description);
+  };
+  const failedFrameTextureStart = device.events.textures.length;
+  assert.throws(() => gpu._size(128, 96, 8, 7, 1), /injected frame allocation failure/);
+  const partialFrameCandidates = device.events.textures.slice(failedFrameTextureStart);
+  assert.equal(partialFrameCandidates.length, 1);
+  assert.equal(partialFrameCandidates[0].destroyed, true);
+  assert.equal(gpu.prevTex, old.prev);
+  assert.equal(gpu.curTex, old.cur);
+  assert.equal(gpu.inBuf, old.input);
+  assert.deepEqual([gpu._w, gpu._h, gpu._padW, gpu._padH], old.dimensions);
+  device.createTexture = createTexture;
+
+  const createBuffer = device.createBuffer.bind(device);
+  device.createBuffer = (description) => {
+    if (description.label?.startsWith("rife-inBuf-")) throw new Error("injected input allocation failure");
+    return createBuffer(description);
+  };
+  const textureCount = device.events.textures.length;
+  assert.throws(() => gpu._size(128, 96, 8, 7, 1), /injected input allocation failure/);
+
+  const candidates = device.events.textures.slice(textureCount);
+  assert.equal(candidates.length, 2);
+  assert.ok(candidates.every(({ destroyed }) => destroyed));
+  assert.equal(gpu.prevTex, old.prev);
+  assert.equal(gpu.curTex, old.cur);
+  assert.equal(gpu.inBuf, old.input);
+  assert.deepEqual([gpu._w, gpu._h, gpu._padW, gpu._padH], old.dimensions);
+  assert.equal(old.prev.destroyed, false);
+  assert.equal(old.cur.destroyed, false);
+  assert.equal(old.input.destroyed, false);
+
+  device.createBuffer = createBuffer;
+  await gpu.destroy();
+});
+
+test("failed standalone initialization destroys its requested device", async (t) => {
+  installWebGpuGlobals(t);
+  const device = makeDevice("failed-init");
+  device.createComputePipeline = () => { throw new Error("injected pipeline failure"); };
+  navigator.gpu.requestAdapter = async () => ({ requestDevice: async () => device });
+  const gpu = new GpuInterp({ log() {}, warn() {} });
+
+  assert.equal(await gpu.init(null, null), false);
+  assert.equal(device.events.destroys, 1);
+  assert.equal(gpu.device, null);
+  assert.equal(gpu.ready, false);
+});
+
+test("GpuInterp validates texture and storage limits before allocation", async (t) => {
+  installWebGpuGlobals(t);
+  const device = makeDevice("limits", {
+    limits: {
+      maxTextureDimension2D: 128,
+      maxBufferSize: 4096,
+      maxStorageBufferBindingSize: 4096,
+    },
+  });
+  const ort = { Tensor: { fromGpuBuffer() {} } };
+  const gpu = new GpuInterp({ log() {}, warn() {} });
+  assert.equal(await gpu.init(device, ort), true);
+  const textureCount = device.events.textures.length;
+  const bufferCount = device.events.buffers.length;
+
+  assert.throws(() => gpu._size(129, 64, 8, 7, 1), GpuResourceLimitError);
+  assert.throws(() => gpu._size(64, 64, 8, 7, 1), GpuResourceLimitError);
+  assert.equal(device.events.textures.length, textureCount);
+  assert.equal(device.events.buffers.length, bufferCount);
+  assert.deepEqual([gpu._w, gpu._h, gpu._padW, gpu._padH], [0, 0, 0, 0]);
+  await gpu.destroy();
+});
+
+test("GpuInterp bounds pooled textures by aggregate bytes before allocation", async (t) => {
+  installWebGpuGlobals(t);
+  const device = makeDevice("pool-budget");
+  const frameBytes = 64 * 48 * 4;
+  const gpu = new GpuInterp({ log() {}, warn() {}, maxPoolBytes: frameBytes * 2 });
+  assert.equal(await gpu.init(device, null), true);
+
+  const first = gpu._acquireTex(64, 48);
+  const second = gpu._acquireTex(64, 48);
+  const allocated = device.events.textures.length;
+  assert.throws(() => gpu._acquireTex(64, 48), (error) =>
+    error instanceof GpuResourceLimitError && error.details.resource === "texture-pool");
+  assert.equal(device.events.textures.length, allocated, "a rejected pool growth must not create a texture");
+
+  gpu.releaseTex(first);
+  assert.equal(gpu._acquireTex(64, 48), first, "a released same-size texture should be recycled");
+  gpu.releaseTex(first);
+  gpu.releaseTex(second);
+  await gpu.destroy();
+
+  assert.throws(() => new GpuInterp({ maxPoolBytes: 0 }), RangeError);
+  assert.throws(() => new GpuInterp({ maxFrameBytes: 0 }), RangeError);
+  assert.throws(() => new GpuInterp({ maxInputBytes: 0 }), RangeError);
+  assert.ok(DEFAULT_GPU_POOL_BUDGET_BYTES >= frameBytes * 2);
+  assert.ok(DEFAULT_GPU_FRAME_BUDGET_BYTES >= frameBytes * 2);
+  assert.ok(DEFAULT_GPU_INPUT_BUDGET_BYTES >= frameBytes * 2);
+});
+
+test("GpuInterp evicts every stale free texture and retries after fenced retirement", async (t) => {
+  installWebGpuGlobals(t);
+  const device = makeDevice("pool-resize");
+  const gpu = new GpuInterp({ log() {}, warn() {}, maxPoolBytes: 100 });
+  assert.equal(await gpu.init(device, null), true);
+
+  const stale = [gpu._acquireTex(4, 2), gpu._acquireTex(4, 2), gpu._acquireTex(4, 2)];
+  for (const texture of stale) gpu.releaseTex(texture);
+  assert.equal(gpu._pool.length, 3);
+
+  assert.throws(() => gpu._acquireTex(10, 2), (error) =>
+    error instanceof GpuResourceLimitError && error.details.requested === 176 && error.details.transient === true);
+  assert.equal(gpu._pool.length, 0, "all incompatible zero-reference textures should retire together");
+  assert.equal(gpu._retiringPooledBytes, 96);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const replacement = gpu._acquireTex(10, 2);
+  assert.equal(replacement._gpuInterpBytes, 80);
+  assert.equal(stale.every((texture) => texture.destroyed), true);
+  gpu.releaseTex(replacement);
+  await gpu.destroy();
+});
+
+test("GpuInterp counts textures behind unresolved fences against the pool budget", async (t) => {
+  installWebGpuGlobals(t);
+  const fence = deferred();
+  const device = makeDevice("pool-fence", { fence });
+  const gpu = new GpuInterp({ log() {}, warn() {}, maxPoolBytes: 40 });
+  assert.equal(await gpu.init(device, null), true);
+
+  const first = gpu._acquireTex(4, 2); // 32 bytes
+  gpu.releaseTex(first);
+  for (let attempt = 0; attempt < 20; attempt++) {
+    assert.throws(() => gpu._acquireTex(5, 2), GpuResourceLimitError);
+  }
+  assert.equal(device.events.textures.length, 1, "pending destruction must not create budget headroom");
+  assert.equal(gpu._retiringPooledBytes, 32);
+  assert.equal(first.destroyed, false);
+
+  fence.resolve();
+  await new Promise((resolve) => setImmediate(resolve));
+  const second = gpu._acquireTex(5, 2);
+  assert.equal(device.events.textures.length, 2);
+  gpu.releaseTex(second);
+  await gpu.destroy();
+});
+
+test("GpuInterp rejects the persistent frame pair before texture allocation", async (t) => {
+  installWebGpuGlobals(t);
+  const device = makeDevice("frame-budget");
+  const gpu = new GpuInterp({ log() {}, warn() {}, maxFrameBytes: 100 });
+  assert.equal(await gpu.init(device, null), true);
+  const before = device.events.textures.length;
+
+  assert.throws(() => gpu._ensureFrameSize(4, 4, 8, 7), (error) =>
+    error instanceof GpuResourceLimitError && error.details.resource === "frame-textures" && error.details.transient === false);
+  assert.equal(device.events.textures.length, before);
+  assert.deepEqual([gpu._w, gpu._h, gpu.prevTex, gpu.curTex], [0, 0, undefined, undefined]);
+  await gpu.destroy();
+});
+
+test("GpuInterp counts retired frame pairs until their queue fence resolves", async (t) => {
+  installWebGpuGlobals(t);
+  const fence = deferred();
+  const device = makeDevice("frame-fence", { fence });
+  const gpu = new GpuInterp({ log() {}, warn() {}, maxFrameBytes: 160 });
+  assert.equal(await gpu.init(device, null), true);
+
+  gpu._ensureFrameSize(4, 2, 8, 7); // 64 active bytes
+  gpu._ensureFrameSize(5, 2, 8, 7); // 80 active + 64 retiring
+  assert.equal(gpu._activeFrameBytes, 80);
+  assert.equal(gpu._retiringFrameBytes, 64);
+  const allocated = device.events.textures.length;
+
+  for (let attempt = 0; attempt < 20; attempt++) {
+    assert.throws(() => gpu._ensureFrameSize(4, 2, 8, 7), (error) =>
+      error instanceof GpuResourceLimitError && error.details.requested === 208 && error.details.transient === true);
+  }
+  assert.equal(device.events.textures.length, allocated);
+  assert.equal(device.events.textures.filter((texture) => !texture.destroyed).length, 4);
+
+  fence.resolve();
+  await new Promise((resolve) => setImmediate(resolve));
+  gpu._ensureFrameSize(4, 2, 8, 7);
+  assert.equal(gpu._activeFrameBytes, 64);
+  await gpu.destroy();
+});
+
+test("GpuInterp counts retired inference inputs until their queue fence resolves", async (t) => {
+  installWebGpuGlobals(t);
+  const fence = deferred();
+  const device = makeDevice("input-fence", { fence });
+  const gpu = new GpuInterp({
+    log() {},
+    warn() {},
+    maxFrameBytes: 1024,
+    maxInputBytes: 100000,
+  });
+  assert.equal(await gpu.init(device, { Tensor: { fromGpuBuffer() {} } }), true);
+
+  // _inferencePlan clamps each axis to 64, so vary channels to obtain distinct
+  // 16 KiB and 32 KiB buffers under a compact deterministic test budget.
+  gpu._size(4, 2, 1, 1, 1); // 16,384 active bytes
+  gpu._size(5, 2, 1, 2, 1); // 32,768 active + 16,384 retiring
+  assert.equal(gpu._activeInputBytes, 32768);
+  assert.equal(gpu._retiringInputBytes, 16384);
+  const allocated = device.events.buffers.length;
+
+  assert.throws(() => gpu._size(4, 2, 1, 4, 1), (error) =>
+    error instanceof GpuResourceLimitError && error.details.resource === "inference-inputs" && error.details.transient === true);
+  assert.equal(device.events.buffers.length, allocated);
+
+  fence.resolve();
+  await new Promise((resolve) => setImmediate(resolve));
+  gpu._size(4, 2, 1, 4, 1);
+  assert.equal(gpu._activeInputBytes, 65536);
+  await gpu.destroy();
+});
+
+test("GpuInterp device-loss notification is identity guarded", async (t) => {
+  installWebGpuGlobals(t);
+  const device = makeDevice("loss");
+  const losses = [];
+  const gpu = new GpuInterp({
+    log() {},
+    warn() {},
+    onDeviceLost: (owner, info) => losses.push({ info, owner }),
+  });
+  assert.equal(await gpu.init(device, null), true);
+  gpu._ensureFrameSize(64, 48, 8, 7);
+  gpu._handleDeviceLost({}, { message: "stale" });
+  assert.equal(losses.length, 0);
+
+  const info = { reason: "unknown", message: "adapter reset" };
+  device.lose(info);
+  await Promise.resolve();
+  await gpu.destroy();
+  assert.deepEqual(losses, [{ info, owner: device }]);
+  assert.equal(gpu.ready, false);
+  assert.equal(device.events.destroys, 0, "shared device ownership remains external");
 });

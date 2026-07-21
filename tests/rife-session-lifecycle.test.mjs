@@ -58,12 +58,14 @@ function installRuntimeMocks(t, state) {
 test("RIFE model switching commits the latest replacement before releasing the old session", async (t) => {
   const events = [];
   const requests = [];
+  const recoveredLoss = deferred();
   const devices = {
     initial: { id: "device-initial" },
     stale: { id: "device-stale" },
     latest: { id: "device-latest" },
+    recovered: { id: "device-recovered", lost: recoveredLoss.promise },
   };
-  const releases = { initial: 0, stale: 0, latest: 0, same: 0 };
+  const releases = { initial: 0, stale: 0, latest: 0, same: 0, recovered: 0 };
 
   const makeSession = (id, device) => ({
     id,
@@ -83,6 +85,7 @@ test("RIFE model switching commits the latest replacement before releasing the o
   const staleSession = makeSession("stale", devices.stale);
   const latestSession = makeSession("latest", devices.latest);
   const sameDeviceSession = makeSession("same", devices.latest);
+  const recoveredSession = makeSession("recovered", devices.recovered);
   let createCount = 0;
   const state = {
     env: { wasm: {}, webgpu: { enableFp16: false, device: null } },
@@ -163,4 +166,32 @@ test("RIFE model switching commits the latest replacement before releasing the o
   const latestRelease = events.find(({ type }) => type === "release-latest");
   assert.equal(latestRelease.activeDevice, devices.latest);
   assert.equal(latestRelease.ready, true);
+
+  // A lost committed device must invalidate the reusable session immediately.
+  // The next init for the same selected model then creates a new session/device.
+  const losses = [];
+  const unsubscribe = rife.addDeviceLossListener((device, info) => losses.push({ device, info }));
+  assert.equal(await rife.invalidateDevice(devices.latest, { message: "adapter reset" }), true);
+  assert.equal(rife.isReady(), false);
+  assert.equal(rife.getOrtDevice(), null);
+  assert.equal(releases.same, 1);
+  assert.equal(losses.length, 1);
+  assert.equal(losses[0].device, devices.latest);
+
+  const recoveredInit = rife.initRife();
+  await waitFor(() => requests.length === 4, "post-loss candidate creation did not start");
+  requests[3].resolve(recoveredSession);
+  assert.equal(await recoveredInit, true);
+  assert.equal(rife.isReady(), true);
+  assert.equal(rife.getOrtDevice(), devices.recovered);
+  assert.equal(rife.gpuActive(), false, "natural session loss must not depend on GpuInterp");
+
+  const naturalInfo = { reason: "unknown", message: "natural adapter reset" };
+  recoveredLoss.resolve(naturalInfo);
+  await waitFor(() => !rife.isReady(), "natural ORT device loss did not invalidate the session");
+  await waitFor(() => releases.recovered === 1, "naturally lost ORT session was not released");
+  assert.equal(rife.getOrtDevice(), null);
+  assert.equal(losses.length, 2);
+  assert.deepEqual(losses[1], { device: devices.recovered, info: naturalInfo });
+  unsubscribe();
 });

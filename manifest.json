@@ -35,6 +35,7 @@
     {
       "resources": [
         "fsrcnnx-main.js",
+        "fsrcnnx-model-bundle.js",
         "fsrcnnx-runtime.js",
         "fsrcnnx-color.js",
         "model/*.wgsl",
