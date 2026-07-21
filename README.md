@@ -34,7 +34,13 @@ Run the complete repository check with:
 npm run check
 ```
 
-After loading the extension, browser-side WebGPU and generated-shader checks are available at `chrome-extension://<extension-id>/validate.html`. The extension ID is shown on `chrome://extensions`.
+Run the production-pipeline and model-inference smoke checks in a temporary local Edge/Chromium profile with:
+
+```sh
+npm run validate:browser
+```
+
+Set `FSRCNNX_BROWSER` to an executable path when no supported browser is found automatically. After loading the extension manually, the same checks are available at `chrome-extension://<extension-id>/validate.html`; the ID is shown on `chrome://extensions`.
 
 `npm run package` creates a deterministic local archive under `dist/` after running the checks. A successful archive build verifies technical integrity only; it does not clear the unresolved release gates in [Model provenance](MODEL_PROVENANCE.md).
 

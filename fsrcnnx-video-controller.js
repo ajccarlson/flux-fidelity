@@ -6,6 +6,23 @@ function callable(value, fallback = null) {
   return typeof value === "function" ? value : fallback;
 }
 
+// Web-platform methods such as setTimeout() and getComputedStyle() are branded
+// in extension isolated worlds: invoking one as a property of a controller
+// supplies the controller as `this` and Chromium rejects it with an "Illegal
+// invocation" TypeError. Bind only host-provided defaults to their Window.
+// Explicit adapters stay untouched so deterministic tests and embedders retain
+// their existing callback semantics.
+function windowCallable(value, ownerWindow, name, fallback = null) {
+  if (value !== undefined) return callable(value, fallback);
+  let host = ownerWindow;
+  let method = host?.[name];
+  if (typeof method !== "function") {
+    host = globalThis;
+    method = host?.[name];
+  }
+  return typeof method === "function" ? method.bind(host) : fallback;
+}
+
 function boundedDelay(value, fallback, maximum) {
   let numeric;
   try { numeric = Number(value); } catch { return fallback; }
@@ -63,11 +80,11 @@ export class VideoController {
     document: ownerDocument = globalThis.document,
     ResizeObserver: ResizeObserverClass = globalThis.ResizeObserver,
     MutationObserver: MutationObserverClass = globalThis.MutationObserver,
-    requestAnimationFrame: requestFrame = globalThis.requestAnimationFrame,
-    cancelAnimationFrame: cancelFrame = globalThis.cancelAnimationFrame,
-    setTimeout: setTimer = globalThis.setTimeout,
-    clearTimeout: clearTimer = globalThis.clearTimeout,
-    getComputedStyle: computedStyle = globalThis.getComputedStyle,
+    requestAnimationFrame: requestFrame,
+    cancelAnimationFrame: cancelFrame,
+    setTimeout: setTimer,
+    clearTimeout: clearTimer,
+    getComputedStyle: computedStyle,
   } = {}) {
     if (!video) throw new TypeError("VideoController requires a video element");
     this.video = video;
@@ -80,11 +97,13 @@ export class VideoController {
     this.document = ownerDocument || null;
     this.ResizeObserverClass = callable(ResizeObserverClass);
     this.MutationObserverClass = callable(MutationObserverClass);
-    this.requestFrame = callable(requestFrame);
-    this.cancelFrame = callable(cancelFrame, () => {});
-    this.setTimer = callable(setTimer, (callback) => { callback(); return null; });
-    this.clearTimer = callable(clearTimer, () => {});
-    this.computedStyle = callable(computedStyle, () => ({ position: "static" }));
+    this.requestFrame = windowCallable(requestFrame, ownerWindow, "requestAnimationFrame");
+    this.cancelFrame = windowCallable(cancelFrame, ownerWindow, "cancelAnimationFrame", () => {});
+    this.setTimer = windowCallable(setTimer, ownerWindow, "setTimeout",
+      (callback) => { callback(); return null; });
+    this.clearTimer = windowCallable(clearTimer, ownerWindow, "clearTimeout", () => {});
+    this.computedStyle = windowCallable(computedStyle, ownerWindow, "getComputedStyle",
+      () => ({ position: "static" }));
     this.active = false;
     this._frame = null;
     this._resizeObserver = null;
@@ -328,10 +347,10 @@ export class VideoSelectionMonitor {
     window: ownerWindow = globalThis.window,
     document: ownerDocument = globalThis.document,
     MutationObserver: MutationObserverClass = globalThis.MutationObserver,
-    setTimeout: setTimer = globalThis.setTimeout,
-    clearTimeout: clearTimer = globalThis.clearTimeout,
-    setInterval: setRepeatingTimer = globalThis.setInterval,
-    clearInterval: clearRepeatingTimer = globalThis.clearInterval,
+    setTimeout: setTimer,
+    clearTimeout: clearTimer,
+    setInterval: setRepeatingTimer,
+    clearInterval: clearRepeatingTimer,
   } = {}) {
     if (typeof select !== "function" || typeof onSelection !== "function") {
       throw new TypeError("VideoSelectionMonitor requires select and onSelection callbacks");
@@ -345,10 +364,11 @@ export class VideoSelectionMonitor {
     this.window = ownerWindow || null;
     this.document = ownerDocument || null;
     this.MutationObserverClass = callable(MutationObserverClass);
-    this.setTimer = callable(setTimer, (callback) => { callback(); return null; });
-    this.clearTimer = callable(clearTimer, () => {});
-    this.setRepeatingTimer = callable(setRepeatingTimer);
-    this.clearRepeatingTimer = callable(clearRepeatingTimer, () => {});
+    this.setTimer = windowCallable(setTimer, ownerWindow, "setTimeout",
+      (callback) => { callback(); return null; });
+    this.clearTimer = windowCallable(clearTimer, ownerWindow, "clearTimeout", () => {});
+    this.setRepeatingTimer = windowCallable(setRepeatingTimer, ownerWindow, "setInterval");
+    this.clearRepeatingTimer = windowCallable(clearRepeatingTimer, ownerWindow, "clearInterval", () => {});
     this.active = false;
     this.current = null;
     this._observer = null;

@@ -12,6 +12,7 @@ import {
   validateModelBundle,
 } from "../fsrcnnx-model-bundle.js";
 import { FsrcnnxModel } from "../fsrcnnx-runtime.js";
+import { GENERATED_MODEL_CATALOG } from "../fsrcnnx-model-catalog.js";
 
 globalThis.GPUTextureUsage = {
   STORAGE_BINDING: 1,
@@ -29,15 +30,7 @@ function loadBundle(name, kind) {
   };
 }
 
-const shippedBundles = [
-  loadBundle("FSRCNNX_x2_16-0-4-1", "fsrcnnx"),
-  loadBundle("FSRCNNX_x2_56-16-4-1", "fsrcnnx"),
-  loadBundle("FSRCNNX_x3_16-0-4-1", "fsrcnnx"),
-  loadBundle("FSRCNNX_x4_16-0-4-1", "fsrcnnx"),
-  loadBundle("ArtCNN_C4F32", "artcnn"),
-  loadBundle("ArtCNN_C4F32_DN", "artcnn"),
-  loadBundle("ArtCNN_C4F32_DS", "artcnn"),
-];
+const shippedBundles = GENERATED_MODEL_CATALOG.map(({ name, kind }) => loadBundle(name, kind));
 
 function passSource(index, inputCount) {
   const bindings = [];
