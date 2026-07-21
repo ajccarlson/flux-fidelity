@@ -1,0 +1,128 @@
+{
+  "schemaVersion": 1,
+  "scope": "Public repository and distributable extension package",
+  "gates": [
+    {
+      "id": "unidentified-rife-model",
+      "status": "blocked",
+      "artifacts": [
+        {
+          "path": "model/rife.onnx",
+          "sha256": "6a31074c0f588648982b5e828aee6c27e005015a712a46ea63da48c65fa9a26b"
+        }
+      ],
+      "resolution": "Supply an authoritative source, immutable model revision, and license record, or remove the artifact."
+    },
+    {
+      "id": "unproven-rife-fp16-conversion",
+      "status": "blocked",
+      "artifacts": [
+        {
+          "path": "model/rife_v4.26_fp16.onnx",
+          "sha256": "65494496be256b2809b6760f87a941c0d80bbc5cb09de0f3f6795488ae1fcd9d"
+        }
+      ],
+      "resolution": "Recreate the model from the verified FP32 parent with pinned tooling and retain structural and numeric comparison evidence."
+    },
+    {
+      "id": "unknown-high-x2-shader-origin",
+      "status": "blocked",
+      "artifacts": [
+        {
+          "path": "shaders/FSRCNNX_x2_56-16-4-1.glsl",
+          "sha256": "34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6"
+        },
+        {
+          "path": "model/FSRCNNX_x2_56-16-4-1.wgsl",
+          "sha256": "267ba203867483a467c535fd03c36c62ff9428116111d4d258dc5c295ef8e0d7"
+        },
+        {
+          "path": "model/FSRCNNX_x2_56-16-4-1.passes.json",
+          "sha256": "57395ac668b4cbebea69938a9089c9bea0029ce785f7cc6dad239c4be31d43e7"
+        }
+      ],
+      "resolution": "Establish the source shader's author, immutable upstream revision, and redistribution license, or remove the source and generated artifacts."
+    },
+    {
+      "id": "missing-x3-x4-shader-sources",
+      "status": "blocked",
+      "artifacts": [
+        {
+          "path": "model/FSRCNNX_x3_16-0-4-1.wgsl",
+          "sha256": "7df8eaae1c6f50bfd2b494d403cce8e1638c7408e0b92362b174cb72fdf816fb"
+        },
+        {
+          "path": "model/FSRCNNX_x3_16-0-4-1.passes.json",
+          "sha256": "b96ed9241b9e5303d17eb05c13c923f2173465046317d44b4d95cf627fecb80b"
+        },
+        {
+          "path": "model/FSRCNNX_x4_16-0-4-1.wgsl",
+          "sha256": "3be5b66c0d87f222f2b192ceb4c4e66b6b5f6759e00872ab3b70a542c3ee38e3"
+        },
+        {
+          "path": "model/FSRCNNX_x4_16-0-4-1.passes.json",
+          "sha256": "25a5cdacc30aaef84b738bc64981afdaf6a17aabff5e68456a0afa4961f804ea"
+        }
+      ],
+      "resolution": "Supply checksum-pinned source shaders, immutable upstream revisions, and license records, or remove the generated artifacts."
+    },
+    {
+      "id": "unreproducible-span-smoke-model",
+      "status": "blocked",
+      "artifacts": [
+        {
+          "path": "model/neural/span2x_smoke.fp16.onnx",
+          "sha256": "ae7642c2b3bdd96e475dfcbf6a9180d8ec41175a1329d9f9b2a402f186c05c25"
+        }
+      ],
+      "resolution": "Regenerate the fixture from a pinned environment and seed with retained evidence, or remove it from public distribution."
+    },
+    {
+      "id": "unresolved-deband-port-origin",
+      "status": "blocked",
+      "artifacts": [
+        {
+          "path": "fsrcnnx-deband.js",
+          "sha256": "56155c7bd5a15b5524ec1b44baeb4b5cb368e57f9adaf5ff8635bd1a2dba3f84"
+        }
+      ],
+      "resolution": "Establish an exact source and license record or document a defensible original implementation basis."
+    },
+    {
+      "id": "lgpl-compliance-review",
+      "status": "blocked",
+      "artifacts": [
+        {
+          "path": "model/FSRCNNX_x2_16-0-4-1.wgsl"
+        },
+        {
+          "path": "model/FSRCNNX_x2_16-0-4-1.passes.json"
+        },
+        {
+          "path": "fsrcnnx-ssimds.js"
+        }
+      ],
+      "resolution": "The complete LGPL-3.0 and GPL-3.0 companion texts and source notices are bundled; complete and record the remaining public-distribution compliance review."
+    },
+    {
+      "id": "onnx-runtime-third-party-review",
+      "status": "blocked",
+      "artifacts": [
+        {
+          "path": "vendor/ort/ort.webgpu.min.mjs"
+        },
+        {
+          "path": "vendor/ort/ort-wasm-simd-threaded.asyncify.mjs"
+        },
+        {
+          "path": "vendor/ort/ort-wasm-simd-threaded.asyncify.wasm"
+        },
+        {
+          "path": "vendor/ort/ThirdPartyNotices.txt",
+          "sha256": "0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2"
+        }
+      ],
+      "resolution": "The pinned upstream notice set is bundled; complete and record which notices and obligations apply to the distributed web runtime files."
+    }
+  ]
+}

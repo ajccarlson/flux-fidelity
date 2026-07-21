@@ -8,14 +8,16 @@
   },
   "description": "Real-time WebGPU video upscaling and frame interpolation for Chromium",
   "scripts": {
-    "check": "npm run check:syntax && npm run check:package && npm run check:models && npm run check:generated && npm test",
-    "check:syntax": "node tools/check-syntax.mjs",
+    "check": "npm run check:syntax && npm run check:package && npm run check:models && npm run check:generated && npm run check:release-record && npm test",
+    "check:syntax": "node --experimental-vm-modules --no-warnings tools/check-syntax.mjs",
     "check:package": "node tools/check-package.mjs",
     "check:models": "node tools/check-models.mjs",
     "check:generated": "node tools/check-generated.mjs",
+    "check:release-record": "node tools/check-release-clearance.mjs --record-only",
     "validate:browser": "node tools/browser-validation.mjs",
     "fetch:shader-sources": "node tools/fetch-shader-sources.mjs",
     "package": "npm run check && node tools/build-package.mjs",
+    "release:check": "npm run check && node tools/check-release-clearance.mjs",
     "test": "node --test tests/*.test.mjs"
   }
 }

@@ -108,7 +108,7 @@ async function loadRestoreHarness(prefs) {
     let requestedEngine = "fsrcnnx", engine = "fsrcnnx", neuralModelKey = "", artVariant = "ArtCNN_C4F32";
     let upscalePolicy = "display", ssimdsEnabled = true, sharpenEnabled = false, sharpenStrength = 1;
     let optHoverReveal = false, optAllVideos = false, debandEnabled = false, debandStrength = 1;
-    let chainDepth = 1, pendingEngine = "rife_v4.26_fp16", pendingResMode = "auto";
+    let chainDepth = 1, pendingEngine = "rife_v4.26", pendingResMode = "auto";
     let pendingTargetFps = "auto", pendingAvOffsetMs = 0;
     let interpStaticPassthroughPref = true, interpAutoFallbackPref = true;
     let interpLadderPref = false, interpInvertPref = true;
@@ -370,7 +370,7 @@ test("preference restore normalizes valid legacy values and rejects corrupt stor
     engine: "fsrcnnx", neuralModelKey: "", artVariant: "ArtCNN_C4F32",
     policy: "display", chainDepth: 1,
     ssimdsEnabled: true, sharpenEnabled: false, sharpenStrength: 1, debandStrength: 1,
-    pendingEngine: "rife_v4.26_fp16", pendingResMode: "auto",
+    pendingEngine: "rife_v4.26", pendingResMode: "auto",
     pendingTargetFps: "auto", pendingAvOffsetMs: 0,
     interpStaticPassthroughPref: true, interpAutoFallbackPref: true,
     interpLadderPref: false, interpInvertPref: true,
@@ -385,7 +385,27 @@ test("preference restore normalizes valid legacy values and rejects corrupt stor
       "interpAvOffsetMs, interpEngine, interpInvert, interpLadder, interpResMode, " +
       "interpStaticPassthrough, interpTargetFps, interpolate, mode, neuralModel, policy, " +
       "sharpenStrength",
-    "a valid unrelated field clears only its own validation error");
+      "a valid unrelated field clears only its own validation error");
+});
+
+test("persisted filter strengths enforce the same inclusive bounds as popup commands", async () => {
+  for (const [sharpenStrength, debandStrength] of [[0.1, 0.3], [2, 3]]) {
+    const valid = await loadRestoreHarness({ sharpenStrength, debandStrength });
+    assert.equal((await valid.restoreSitePrefs()).ok, true);
+    assert.equal(valid.state().sharpenStrength, sharpenStrength);
+    assert.equal(valid.state().debandStrength, debandStrength);
+    assert.equal(valid.state().preferenceValidationFailure, null);
+  }
+
+  const invalid = await loadRestoreHarness({ sharpenStrength: 2.01, debandStrength: 0.29 });
+  assert.equal((await invalid.restoreSitePrefs()).ok, true);
+  assert.equal(invalid.state().sharpenStrength, 2, "unsafe stored sharpen strength is clamped");
+  assert.equal(invalid.state().debandStrength, 0.3, "unsafe stored deband strength is clamped");
+  assert.equal(
+    invalid.state().preferenceValidationFailure,
+    "Invalid stored settings: debandStrength, sharpenStrength",
+    "finite out-of-range values remain observable as invalid storage",
+  );
 });
 
 test("interpolation setters preserve invalid-state immutability and configure a future runtime", async () => {

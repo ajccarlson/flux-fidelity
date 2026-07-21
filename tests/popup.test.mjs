@@ -115,7 +115,7 @@ function popupDocument() {
     ["artvariant", "ArtCNN_C4F32"],
     ["neural-model", ""],
     ["policy", "display"],
-    ["interp-model", "rife_v4.26_fp16"],
+    ["interp-model", "rife_v4.26"],
     ["interp-res", "auto"],
     ["interp-target", "auto"],
   ]) document.add(id, "select", { value });
@@ -188,7 +188,7 @@ function readyStatus(overrides = {}) {
     interpAvOffsetMs: 0,
     interpInvert: true,
     interpLadder: false,
-    interpModel: "rife_v4.26_fp16",
+    interpModel: "rife_v4.26",
     interpResMode: "auto",
     interpStaticPassthrough: true,
     interpTargetFps: "auto",

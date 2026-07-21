@@ -27,8 +27,8 @@ export const POLICY_OPTIONS = Object.freeze({
 });
 
 const STATIC_INTERPOLATION_MODELS = Object.freeze([
-  ["rife_v4.26_fp16", "RIFE 4.26 FP16"],
-  ["rife_v4.26", "RIFE 4.26"],
+  ["rife_v4.26", "RIFE 4.26 (default; may wave on bright motion)"],
+  ["rife_v4.26_fp16", "RIFE 4.26 FP16 (experimental)"],
   ["rife_orig", "RIFE original"],
   ["blend", "Blend (no AI)"],
 ]);
@@ -819,7 +819,7 @@ export function createPopupController({
       ? status.interpStats.models.map((model) => [model.key, model.label])
       : STATIC_INTERPOLATION_MODELS;
     const selectedInterp = status.interpModel ||
-      status.interpStats?.models?.find((model) => model.current)?.key || "rife_v4.26_fp16";
+      status.interpStats?.models?.find((model) => model.current)?.key || "rife_v4.26";
     if (forceSync || documentRef.activeElement !== $("interp-model")) {
       reconcileSelectOptions(documentRef, $("interp-model"), interpModels, selectedInterp);
     }
