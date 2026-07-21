@@ -120,10 +120,15 @@
       "artifacts": [
         {
           "path": "fsrcnnx-deband.js",
-          "sha256": "56155c7bd5a15b5524ec1b44baeb4b5cb368e57f9adaf5ff8635bd1a2dba3f84"
+          "sha256": "56155c7bd5a15b5524ec1b44baeb4b5cb368e57f9adaf5ff8635bd1a2dba3f84",
+          "disposition": "removed"
         }
       ],
-      "resolution": "Establish an exact source and license record or document a defensible original implementation basis."
+      "evidence": [
+        "tools/package-files.mjs",
+        "MODEL_PROVENANCE.md"
+      ],
+      "resolution": "The artifact is absent from the current tree and package; purge it from private Git history before making the repository public."
     },
     {
       "id": "lgpl-compliance-review",

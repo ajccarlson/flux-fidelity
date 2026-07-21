@@ -16,7 +16,6 @@ import {
 import { LUMA_EXTRACT_WGSL, RECOMBINE_WGSL } from "./fsrcnnx-color.js";
 import { SsimDownscaler } from "./fsrcnnx-ssimds-runtime.js";
 import { buildSharpenShader } from "./fsrcnnx-sharpen.js";
-import { buildDebandShader } from "./fsrcnnx-deband.js";
 import { ArtCnnModel } from "./fsrcnnx-artcnn-runtime.js";
 import { VideoController, VideoSelectionMonitor } from "./fsrcnnx-video-controller.js";
 import { createSettingsStore, DEFAULT_SETTING_FIELDS } from "./fsrcnnx-settings-store.js";
@@ -164,10 +163,6 @@ function resetScaleSelection() {
 }
 let sharpenEnabled = false, sharpenStrength = 1.0;
 let sharpenPipeline = null, sharpenStrengthBuilt = null;
-let debandEnabled = false, debandStrength = 1.0;
-let debandCanvasPipeline = null, debandFloatPipeline = null;
-let debandStrengthBuilt = null, debandTimeBuf = null;
-let debandInterTex = null, debandInterW = 0, debandInterH = 0; // intermediate when chaining deband->sharpen
 let dispRGB = null, dispRGBW = 0, dispRGBH = 0; // offscreen display-res for sharpen input
 let models = [], activeModel = null;
 let modelsDevice = null, modelLoadPromise = null, modelLoadDevice = null;
@@ -299,7 +294,6 @@ function currentSitePreferenceValues() {
     mode, engine: requestedEngine, artVariant, policy: upscalePolicy,
     ssimds: ssimdsEnabled, sharpen: sharpenEnabled, sharpenStrength,
     hoverReveal: optHoverReveal, allVideos: optAllVideos,
-    deband: debandEnabled, debandStrength,
     images: optImages,
     interpolate: optInterpolate,
     interpEngine: pendingEngine,
@@ -318,7 +312,7 @@ function validateSitePreferencePatch(patch) {
   const invalid = new Set();
   const known = new Set(DEFAULT_SETTING_FIELDS);
   const booleanFields = new Set([
-    "ssimds", "sharpen", "hoverReveal", "allVideos", "deband", "images", "interpolate",
+    "ssimds", "sharpen", "hoverReveal", "allVideos", "images", "interpolate",
     "interpStaticPassthrough", "interpAutoFallback", "interpLadder", "interpInvert",
   ]);
   const hasEngine = Object.prototype.hasOwnProperty.call(patch, "engine");
@@ -335,8 +329,6 @@ function validateSitePreferencePatch(patch) {
     else if (booleanFields.has(field) && typeof value !== "boolean") invalid.add(field);
     else if (field === "sharpenStrength" &&
         (!Number.isFinite(value) || value < 0.1 || value > 2)) invalid.add(field);
-    else if (field === "debandStrength" &&
-        (!Number.isFinite(value) || value < 0.3 || value > 3)) invalid.add(field);
     else if (field === "interpEngine" && !normalizeStoredInterpolationModel(value)) invalid.add(field);
     else if (field === "interpResMode" && !normalizeInterpolationResMode(value)) invalid.add(field);
     else if (field === "neuralModel" && value !== null &&
@@ -1163,10 +1155,9 @@ function invalidateMainDeviceResources() {
     ...Object.values(artStages).flat(),
   ]);
   for (const model of oldModels) { try { model?.destroy?.(); } catch {} }
-  for (const texture of [chainTapTex, lumaTexture, hiRGB, dispRGB, debandInterTex]) {
+  for (const texture of [chainTapTex, lumaTexture, hiRGB, dispRGB]) {
     try { texture?.destroy?.(); } catch {}
   }
-  try { debandTimeBuf?.destroy?.(); } catch {}
   try { ssimds?.destroy?.(); } catch {}
   try { context?.unconfigure?.(); } catch {}
 
@@ -1174,14 +1165,11 @@ function invalidateMainDeviceResources() {
   lumaTexture = null; lumaW = 0; lumaH = 0;
   hiRGB = null; hiRGBW = 0; hiRGBH = 0;
   dispRGB = null; dispRGBW = 0; dispRGBH = 0;
-  debandInterTex = null; debandInterW = 0; debandInterH = 0;
-  debandTimeBuf = null;
   ssimds = null;
   extractPipeline = recombinePipeline = recombine16Pipeline = blitPipeline = null;
   extractPipelineTex = recombinePipelineTex = recombine16PipelineTex = null;
   passthroughPipeline = null;
   sharpenPipeline = null; sharpenStrengthBuilt = null;
-  debandCanvasPipeline = debandFloatPipeline = null; debandStrengthBuilt = null;
   sampler = null; context = null; format = null;
   models = []; modelsDevice = null; activeModel = null;
   artStages = {}; chainedFsrcnnx = null; chainedArt = null;
@@ -1975,7 +1963,7 @@ function renderUpscale() {
     const dsOut = ssimds.run(enc, hiRGB);
     if (!positionCanvas(outW, outH)) return;
     finalizeToCanvas(enc, dsOut);
-  } else if (debandEnabled || sharpenEnabled || presentation.downsample) {
+  } else if (sharpenEnabled || presentation.downsample) {
     // Recombine at the model's native size; the filter/blit tail samples it
     // into the selected presentation size (including exact force3 output).
     if (!ensureHiRGB(modelOutW, modelOutH)) return;
@@ -2021,55 +2009,13 @@ function renderUpscale() {
 }
 
 // Final stage: take an rgba16float RGB texture and put it on the canvas, applying
-// debanding and/or adaptive sharpen as enabled. Order: deband -> sharpen -> canvas
-// (smooth banding first, then sharpen detail). Uses an intermediate texture only
-// when both run.
+// adaptive sharpen when enabled or a plain normalized blit otherwise.
 function finalizeToCanvas(enc, srcTex) {
-  let cur = srcTex;
-  // 1. deband (optional) -> intermediate (if sharpen follows) or canvas
-  if (debandEnabled) {
-    ensureDebandPipelines();
-    // update time uniform for grain/temporal variation
-    const t = (performance.now() % 100000) / 1000;
-    device.queue.writeBuffer(debandTimeBuf, 0, new Float32Array([t]));
-    if (sharpenEnabled) {
-      if (!ensureDebandInter(canvas.width, canvas.height)) return;
-      const bg = device.createBindGroup({
-        layout: debandFloatPipeline.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: sampler },
-          { binding: 1, resource: cur.createView() },
-          { binding: 2, resource: { buffer: debandTimeBuf } },
-        ],
-      });
-      const rp = enc.beginRenderPass({
-        colorAttachments: [{ view: debandInterTex.createView(), loadOp: "clear", clearValue: { r:0,g:0,b:0,a:1 }, storeOp: "store" }],
-      });
-      rp.setPipeline(debandFloatPipeline); rp.setBindGroup(0, bg); rp.draw(3); rp.end();
-      cur = debandInterTex;
-    } else {
-      // deband straight to canvas
-      const bg = device.createBindGroup({
-        layout: debandCanvasPipeline.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: sampler },
-          { binding: 1, resource: cur.createView() },
-          { binding: 2, resource: { buffer: debandTimeBuf } },
-        ],
-      });
-      const rp = enc.beginRenderPass({
-        colorAttachments: [{ view: context.getCurrentTexture().createView(), loadOp: "clear", clearValue: { r:0,g:0,b:0,a:1 }, storeOp: "store" }],
-      });
-      rp.setPipeline(debandCanvasPipeline); rp.setBindGroup(0, bg); rp.draw(3); rp.end();
-      return;
-    }
-  }
-  // 2. sharpen or blit -> canvas
   ensureSharpenPipeline();
   const pipe = sharpenEnabled ? sharpenPipeline : blitPipeline;
   const bg = device.createBindGroup({
     layout: pipe.getBindGroupLayout(0),
-    entries: [{ binding: 0, resource: sampler }, { binding: 1, resource: cur.createView() }],
+    entries: [{ binding: 0, resource: sampler }, { binding: 1, resource: srcTex.createView() }],
   });
   const rp = enc.beginRenderPass({
     colorAttachments: [{ view: context.getCurrentTexture().createView(), loadOp: "clear", clearValue: { r:0,g:0,b:0,a:1 }, storeOp: "store" }],
@@ -2084,7 +2030,7 @@ function finalizeToCanvas(enc, srcTex) {
 // ---- neural engine (v0.49.0) ----------------------------------------------
 // ONNX SR models (SPAN/RealPLKSR/DAT2/ATD...) via a second ORT session on the
 // shared device. Output is full RGB at model scale in an rgba16float texture;
-// present reuses the existing tail (SSimDS overshoot doctrine, deband/sharpen,
+// present reuses the existing tail (SSimDS overshoot doctrine, sharpen,
 // canvas) — recombine is bypassed since chroma is neural.
 function pauseInterpolationForNeural() {
   if (!optInterpolate) return;
@@ -2215,7 +2161,7 @@ export async function setNeuralModel(key, { persist = true } = {}) {
 }
 
 // Shared present tail for any finished rgba16float RGB texture: SSimDS when
-// the result overshoots the display box, then deband/sharpen/blit to canvas.
+// the result overshoots the display box, then sharpen/blit to canvas.
 // Additive extraction — renderUpscale keeps its own battle-tested inline copy.
 function presentHiRGBTexture(tex, outW, outH) {
   if (!device || !canvas || !context || !textureSizeAllowed(outW, outH, "neural output")) return false;
@@ -2299,49 +2245,6 @@ function renderNeuralFrame() {
       activateNeuralFallback("neural-inference-failed", e);
     }
   }).finally(() => { neuralBusy = false; });
-}
-
-function ensureDebandInter(w, h) {
-  if (!textureSizeAllowed(w, h, "deband intermediate")) return false;
-  if (debandInterTex && debandInterW === w && debandInterH === h) return true;
-  const candidate = device.createTexture({
-    size: { width: w, height: h }, format: "rgba16float",
-    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-  });
-  const old = debandInterTex;
-  debandInterTex = candidate;
-  debandInterW = w; debandInterH = h;
-  try { old?.destroy?.(); } catch {}
-  return true;
-}
-
-function ensureDebandPipelines() {
-  if (debandCanvasPipeline && debandFloatPipeline && debandStrengthBuilt === debandStrength) return;
-  let candidateTimeBuf = debandTimeBuf;
-  let createdTimeBuf = null;
-  let candidateCanvas, candidateFloat;
-  try {
-    if (!candidateTimeBuf) {
-      createdTimeBuf = device.createBuffer({ size: 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-      candidateTimeBuf = createdTimeBuf;
-    }
-    const mod = device.createShaderModule({ code: buildDebandShader(debandStrength) });
-    const descriptor = (targetFormat) => ({
-      layout: "auto",
-      vertex: { module: mod, entryPoint: "vs" },
-      fragment: { module: mod, entryPoint: "fs", targets: [{ format: targetFormat }] },
-      primitive: { topology: "triangle-list" },
-    });
-    candidateCanvas = device.createRenderPipeline(descriptor(format));
-    candidateFloat = device.createRenderPipeline(descriptor("rgba16float"));
-  } catch (error) {
-    try { createdTimeBuf?.destroy?.(); } catch {}
-    throw error;
-  }
-  debandTimeBuf = candidateTimeBuf;
-  debandCanvasPipeline = candidateCanvas;
-  debandFloatPipeline = candidateFloat;
-  debandStrengthBuilt = debandStrength;
 }
 
 function ensureSharpenPipeline() {
@@ -2622,7 +2525,6 @@ function loop(owner) {
           (mode === "upscale" && engine === "neural" && neuralEng && neuralEng.ready() ? ` NEURAL ${neuralEng.activeEntry()?.label || neuralModelKey} ${neuralEng.activeEntry()?.scale}x mu=${neuralEng.stats().mu.toFixed(1)}ms skip:${neuralEng.stats().skip}` : "") +
           (mode === "upscale" && lastSSimDS ? " +SSimDS" : "") +
           (mode === "upscale" && sharpenEnabled ? ` +Sharpen(${sharpenStrength})` : "") +
-          (mode === "upscale" && debandEnabled ? ` +Deband(${debandStrength})` : "") +
           ` | CPU encode avg=${avg.toFixed(1)}ms max=${max.toFixed(1)}ms`);
     }
   } catch (e) {
@@ -3172,19 +3074,6 @@ export function setAllVideos(on, { persist = true } = {}) {
   if (mode !== "off") syncMultiTargets();
   return { ok: true, allVideos: optAllVideos };
 }
-export function setDeband(on, { persist = true } = {}) {
-  if (persist) cancelPreferenceRestore();
-  debandEnabled = !!on;
-  if (persist) saveSitePrefs(["deband"]);
-  return { ok: true, deband: debandEnabled };
-}
-export function setDebandStrength(v, { persist = true } = {}) {
-  if (persist) cancelPreferenceRestore();
-  debandStrength = Math.max(0.3, Math.min(3.0, Number(v) || 1.0));
-  if (persist) saveSitePrefs(["debandStrength"]);
-  return { ok: true, debandStrength };
-}
-
 // ---- multi-video support (optAllVideos) ----------------------------------
 // The render pipeline uses module-level globals (video/canvas/luma textures…).
 // To upscale several videos without rewriting every function, each extra video
@@ -3201,7 +3090,6 @@ class MultiTarget {
     this.lumaTexture = null; this.lumaW = 0; this.lumaH = 0;
     this.hiRGB = null; this.hiRGBW = 0; this.hiRGBH = 0;
     this.dispRGB = null; this.dispRGBW = 0; this.dispRGBH = 0;
-    this.debandInterTex = null; this.debandInterW = 0; this.debandInterH = 0;
     this.ssimds = new SsimDownscaler(device);
     this.sharpenPipeline = null; this.sharpenStrengthBuilt = null;
     // Each canvas needs its OWN GPUCanvasContext configured for the device.
@@ -3259,7 +3147,7 @@ class MultiTarget {
     for (const model of ownedModels) { try { model?.destroy?.(); } catch {} }
     this.models = []; this.artStages = {};
     this.lumaTexture?.destroy?.(); this.hiRGB?.destroy?.(); this.dispRGB?.destroy?.();
-    this.debandInterTex?.destroy?.(); this.ssimds?.destroy?.();
+    this.ssimds?.destroy?.();
     try { this.context?.unconfigure?.(); } catch {}
     this.canvas.remove();
   }
@@ -3312,7 +3200,6 @@ function withTarget(t, fn) {
     video, canvas, context, layoutController, renderTargetOwner,
     lumaTexture, lumaW, lumaH, hiRGB, hiRGBW, hiRGBH,
     dispRGB, dispRGBW, dispRGBH,
-    debandInterTex, debandInterW, debandInterH,
     ssimds, sharpenPipeline, sharpenStrengthBuilt, hoverHidden,
     models, artStages, activeModel, chainedFsrcnnx, chainedArt, lastSSimDS,
     _scaleHeld, _scalePending, _scalePendingSince, _scaleHeldSrcW, _scaleHeldSrcH, _scaleLockLogged,
@@ -3323,7 +3210,6 @@ function withTarget(t, fn) {
   lumaTexture = t.lumaTexture; lumaW = t.lumaW; lumaH = t.lumaH;
   hiRGB = t.hiRGB; hiRGBW = t.hiRGBW; hiRGBH = t.hiRGBH;
   dispRGB = t.dispRGB; dispRGBW = t.dispRGBW; dispRGBH = t.dispRGBH;
-  debandInterTex = t.debandInterTex; debandInterW = t.debandInterW; debandInterH = t.debandInterH;
   ssimds = t.ssimds; sharpenPipeline = t.sharpenPipeline; sharpenStrengthBuilt = t.sharpenStrengthBuilt;
   hoverHidden = t.hoverHidden;
   models = t.models; artStages = t.artStages; activeModel = t.activeModel;
@@ -3337,7 +3223,6 @@ function withTarget(t, fn) {
     t.lumaTexture = lumaTexture; t.lumaW = lumaW; t.lumaH = lumaH;
     t.hiRGB = hiRGB; t.hiRGBW = hiRGBW; t.hiRGBH = hiRGBH;
     t.dispRGB = dispRGB; t.dispRGBW = dispRGBW; t.dispRGBH = dispRGBH;
-    t.debandInterTex = debandInterTex; t.debandInterW = debandInterW; t.debandInterH = debandInterH;
     t.sharpenPipeline = sharpenPipeline; t.sharpenStrengthBuilt = sharpenStrengthBuilt;
     t.activeModel = activeModel; t.chainedFsrcnnx = chainedFsrcnnx;
     t.chainedArt = chainedArt; t.lastSSimDS = lastSSimDS;
@@ -3347,7 +3232,6 @@ function withTarget(t, fn) {
       video, canvas, context, layoutController, renderTargetOwner,
       lumaTexture, lumaW, lumaH, hiRGB, hiRGBW, hiRGBH,
       dispRGB, dispRGBW, dispRGBH,
-      debandInterTex, debandInterW, debandInterH,
       ssimds, sharpenPipeline, sharpenStrengthBuilt, hoverHidden,
       models, artStages, activeModel, chainedFsrcnnx, chainedArt, lastSSimDS,
       _scaleHeld, _scalePending, _scalePendingSince, _scaleHeldSrcW, _scaleHeldSrcH, _scaleLockLogged,
@@ -3535,10 +3419,6 @@ export async function restoreSitePrefs() {
   }
   if (typeof p.hoverReveal === "boolean") optHoverReveal = p.hoverReveal;
   if (typeof p.allVideos === "boolean") optAllVideos = p.allVideos;
-  if (typeof p.deband === "boolean") debandEnabled = p.deband;
-  if (Number.isFinite(p.debandStrength)) {
-    debandStrength = Math.max(0.3, Math.min(3.0, p.debandStrength));
-  }
   chainDepth = engine === "artcnn" || engine === "fsrcnnx" ? policyToDepth(upscalePolicy) : 1;
   resetScaleSelection();
 
@@ -3682,11 +3562,6 @@ async function applyExternalSitePreferences(patch) {
   }
   if (has("hoverReveal")) setHoverReveal(boolean("hoverReveal", false), { persist: false });
   if (has("allVideos")) setAllVideos(boolean("allVideos", false), { persist: false });
-  if (has("deband")) setDeband(boolean("deband", false), { persist: false });
-  if (has("debandStrength")) {
-    setDebandStrength(finite("debandStrength", 1, 0.3, 3), { persist: false });
-  }
-
   if (has("interpResMode")) {
     const next = normalizeInterpolationResMode(deleted("interpResMode") ? DEFAULT_INTERPOLATION_RES_MODE : patch.interpResMode);
     if (!next) invalid.add("interpResMode");
@@ -3838,7 +3713,6 @@ export function getStatus() {
            neuralModels: _neuralList,
            protected: protectedSource, protectedReason, host: siteHost(),
            hoverReveal: optHoverReveal, allVideos: optAllVideos,
-           deband: debandEnabled, debandStrength,
            images: optImages, imageCount: imageUpscaledCount,
            interpolate: optInterpolate, interpPausedByNeural,
            interpQuarantined: interpolationQuarantineMatches(video),
@@ -4396,7 +4270,7 @@ export function setChainInverted(on) {
 export function chainUpscaleTex(tex, w, h) {
   // Present-time upscale of ONE pooled source-res frame (real or RIFE tween).
   // Cost scales with PRESENTED frames; dropped frames never pay. Runs the full
-  // existing pass chain (FSRCNNX/ArtCNN, SSimDS, sharpen, deband) through the
+  // existing pass chain (FSRCNNX/ArtCNN, SSimDS, sharpen) through the
   // tex-ingest pipeline twins. Synchronous encode+submit, like a normal frame.
   if (!device || mode !== "upscale" || !tex) return false;
   const presentationBefore = primaryPresentationGeneration;

@@ -274,7 +274,7 @@ async function loadPreferenceRestore(deps) {
     let preferenceRestoreGeneration = 0, engineSelectionGeneration = 0;
     let requestedEngine = "fsrcnnx", engine = "fsrcnnx", neuralModelKey = "", artVariant = "ArtCNN_C4F32";
     let upscalePolicy = "display", ssimdsEnabled = true, sharpenEnabled = false, sharpenStrength = 1;
-    let optHoverReveal = false, optAllVideos = false, debandEnabled = false, debandStrength = 1;
+    let optHoverReveal = false, optAllVideos = false;
     let chainDepth = 1, pendingEngine = "rife_v4.26", pendingResMode = "auto";
     let pendingTargetFps = "auto", pendingAvOffsetMs = 0;
     let interpAutoFallbackPref = true, interpLadderPref = false, interpInvertPref = true;
@@ -304,7 +304,7 @@ async function loadPreferenceRestore(deps) {
 async function loadNeuralPresentation(deps) {
   const source = await readFile(mainUrl, "utf8");
   const sourceIdentity = section(source, "function captureVideoSource(target)", "function ensureCanvas()");
-  const production = section(source, "function renderNeuralFrame()", "function ensureDebandInter");
+  const production = section(source, "function renderNeuralFrame()", "function ensureSharpenPipeline");
   const harness = `
     const deps = globalThis.__videoOwnershipDeps;
     let device = {}, mode = "upscale", requestedEngine = "neural", engine = "neural", adopting = false;
@@ -1138,7 +1138,7 @@ test("main source keeps secondary mutable state and neural completion target-sco
   ]) {
     assert.match(targetSwap, new RegExp(fragment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
-  const neural = section(source, "function renderNeuralFrame()", "function ensureDebandInter");
+  const neural = section(source, "function renderNeuralFrame()", "function ensureSharpenPipeline");
   assert.match(neural, /video === runVideo/);
   assert.match(neural, /primaryController === runController/);
   assert.match(neural, /runVideoGeneration === videoSelectionGeneration/);

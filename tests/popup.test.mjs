@@ -106,7 +106,7 @@ function popupDocument() {
   for (const id of [
     "s-webgpu", "s-video", "s-model", "s-frames", "runtime-status", "drm-banner",
     "operation-status", "neuralrow", "neural-note", "sharpen-row", "sharpen-val",
-    "deband-row", "deband-val", "multi-count", "image-count", "interp-res-row",
+    "multi-count", "image-count", "interp-res-row",
     "interp-target-hz", "interp-avoff-val", "interp-stats",
   ]) document.add(id);
 
@@ -124,8 +124,6 @@ function popupDocument() {
     ["ssimds", ""],
     ["sharpen", ""],
     ["sharpen-str", "1"],
-    ["deband", ""],
-    ["deband-str", "1"],
     ["hover-reveal", ""],
     ["all-videos", ""],
     ["images", ""],
@@ -175,8 +173,6 @@ function readyStatus(overrides = {}) {
     activeEngine: overrides.engine || "fsrcnnx",
     allVideos: false,
     artVariant: "ArtCNN_C4F32",
-    deband: false,
-    debandStrength: 1,
     engine: "fsrcnnx",
     frameCount: 12,
     gpuState: "idle",

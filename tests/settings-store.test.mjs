@@ -316,6 +316,39 @@ test("legacy layouts remain zero-write read-through until the first explicit v2 
   second.close();
 });
 
+test("retired deband fields are inert and cannot poison the active settings schema", async () => {
+  const scope = "https://retired.example";
+  const host = "retired.example";
+  const retiredEnabledKey = fieldKey(scope, "deband");
+  const retiredStrengthKey = fieldKey(scope, "debandStrength");
+  const storage = new MemoryStorage({
+    [schemaKey(scope)]: { schemaVersion: SETTINGS_SCHEMA_VERSION },
+    [fieldKey(scope, "mode")]: record("upscale"),
+    [retiredEnabledKey]: { malformed: true },
+    [retiredStrengthKey]: record(Infinity),
+    fsrcnnx_sites: { [host]: { deband: true, debandStrength: 2.5 } },
+  });
+  const patches = [];
+  const store = createSettingsStore({
+    storage, onChanged: storage.onChanged, scope, legacyHosts: [host], sourceId: "retired-fields",
+  });
+  store.subscribe((patch) => patches.push(patch));
+
+  assert.deepEqual(await store.ready, { mode: "upscale" });
+  assert.equal(storage.getCalls[0].includes(retiredEnabledKey), false);
+  assert.equal(storage.getCalls[0].includes(retiredStrengthKey), false);
+  assert.equal(store.health().state, "ready", "malformed retired records are not active corruption");
+
+  storage.commit({
+    [retiredEnabledKey]: record(false, { source: "old-tab", time: 50 }),
+    [retiredStrengthKey]: { malformed: "again" },
+  });
+  assert.deepEqual(store.snapshot(), { mode: "upscale" });
+  assert.deepEqual(patches, [], "late writes from an old extension version are ignored");
+  assert.equal(storage.setCalls.length, 0, "retirement is zero-write and leaves unrelated storage untouched");
+  store.close();
+});
+
 test("a corrupt explicit v2 field blocks legacy fallback and reports bounded health", async () => {
   assert.equal(SETTINGS_SCHEMA_VERSION, 2);
   const scope = "https://corrupt.example";

@@ -35,7 +35,6 @@ const pinnedArtifacts = {
   "model/ArtCNN_C4F32_DS.artcnn.json": "f98bbd5e834cbfb2ed66ba07865889f76466279e356bfbd62c33df73e95b30cb",
   "fsrcnnx-ssimds.js": "0f55f8f2b49bea3cb8ee2e4c801a663f21d4dfabb88efaf2de23b709c6ade3c6",
   "fsrcnnx-sharpen.js": "9312f5445791792634679bac74f01d3292e8e776c6fc7e3be348435f2913ef8a",
-  "fsrcnnx-deband.js": "56155c7bd5a15b5524ec1b44baeb4b5cb368e57f9adaf5ff8635bd1a2dba3f84",
 };
 
 for (const [path, expected] of Object.entries(pinnedArtifacts)) {

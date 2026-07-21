@@ -81,7 +81,7 @@ async function loadSaveHarness() {
     const deps = globalThis.__mainSettingsContractDeps;
     const DEFAULT_SETTING_FIELDS = ${JSON.stringify([
       "mode", "engine", "artVariant", "policy", "ssimds", "sharpen", "sharpenStrength",
-      "hoverReveal", "allVideos", "deband", "debandStrength", "images", "interpolate",
+      "hoverReveal", "allVideos", "images", "interpolate",
       "interpEngine", "interpResMode", "neuralModel", "interpTargetFps", "interpAvOffsetMs",
       "interpStaticPassthrough", "interpAutoFallback", "interpLadder", "interpInvert",
     ])};
@@ -91,7 +91,7 @@ async function loadSaveHarness() {
     const recordPreferenceValidation = () => {};
     let mode = "upscale", requestedEngine = "artcnn", engine = "fsrcnnx", artVariant = "ArtCNN_C4F32_DS";
     let upscalePolicy = "force4", ssimdsEnabled = false, sharpenEnabled = true, sharpenStrength = 1.4;
-    let optHoverReveal = true, optAllVideos = true, debandEnabled = true, debandStrength = 1.6;
+    let optHoverReveal = true, optAllVideos = true;
     let optImages = true, optInterpolate = false, neuralModelKey = "span";
     let pendingEngine = "rife_v4.26_fp16", pendingResMode = "half", pendingTargetFps = 144;
     let pendingAvOffsetMs = 35, interpStaticPassthroughPref = false;
@@ -110,7 +110,7 @@ async function loadRestoreHarness(prefs, { neuralModels = [{ key: "span" }] } = 
     const deps = globalThis.__mainSettingsContractDeps;
     const DEFAULT_SETTING_FIELDS = ${JSON.stringify([
       "mode", "engine", "artVariant", "policy", "ssimds", "sharpen", "sharpenStrength",
-      "hoverReveal", "allVideos", "deband", "debandStrength", "images", "interpolate",
+      "hoverReveal", "allVideos", "images", "interpolate",
       "interpEngine", "interpResMode", "neuralModel", "interpTargetFps", "interpAvOffsetMs",
       "interpStaticPassthrough", "interpAutoFallback", "interpLadder", "interpInvert",
     ])};
@@ -122,7 +122,7 @@ async function loadRestoreHarness(prefs, { neuralModels = [{ key: "span" }] } = 
     let preferenceRestoreGeneration = 0, engineSelectionGeneration = 0;
     let requestedEngine = "fsrcnnx", engine = "fsrcnnx", neuralModelKey = "", artVariant = "ArtCNN_C4F32";
     let upscalePolicy = "display", ssimdsEnabled = true, sharpenEnabled = false, sharpenStrength = 1;
-    let optHoverReveal = false, optAllVideos = false, debandEnabled = false, debandStrength = 1;
+    let optHoverReveal = false, optAllVideos = false;
     let chainDepth = 1, pendingEngine = "rife_v4.26", pendingResMode = "auto";
     let pendingTargetFps = "auto", pendingAvOffsetMs = 0;
     let interpStaticPassthroughPref = true, interpAutoFallbackPref = true;
@@ -152,7 +152,7 @@ async function loadRestoreHarness(prefs, { neuralModels = [{ key: "span" }] } = 
     export function migrationWrites() { return [...deps.writes]; }
     export function state() {
       return { engine, neuralModelKey, artVariant, policy: upscalePolicy, chainDepth,
-        ssimdsEnabled, sharpenEnabled, sharpenStrength, debandStrength,
+        ssimdsEnabled, sharpenEnabled, sharpenStrength,
         pendingEngine, pendingResMode, pendingTargetFps, pendingAvOffsetMs,
         interpStaticPassthroughPref, interpAutoFallbackPref, interpLadderPref, interpInvertPref,
         preferenceValidationFailure };
@@ -239,7 +239,7 @@ async function loadStatusHarness(storeHealth = {
     let sharpenEnabled = false, sharpenStrength = 1, requestedEngine = "neural", engine = "neural";
     let artVariant = "ArtCNN_C4F32", chainDepth = 1, neuralModelKey = "span-lazy";
     let neuralEng = null, protectedSource = false, protectedReason = null;
-    let optHoverReveal = false, optAllVideos = false, debandEnabled = false, debandStrength = 1;
+    let optHoverReveal = false, optAllVideos = false;
     let optImages = false, imageUpscaledCount = 0, optInterpolate = false, interpPausedByNeural = false;
     let interpolationTerminalQuarantine = null, interpolator = null;
     let pendingEngine = "blend", pendingResMode = "quarter", pendingTargetFps = 165;
@@ -418,7 +418,7 @@ test("site persistence records requested intent and writes only selected fields"
   assert.deepEqual(writes[0], {
     mode: "upscale", engine: "artcnn", artVariant: "ArtCNN_C4F32_DS", policy: "force4",
     ssimds: false, sharpen: true, sharpenStrength: 1.4,
-    hoverReveal: true, allVideos: true, deband: true, debandStrength: 1.6,
+    hoverReveal: true, allVideos: true,
     images: true, interpolate: false,
     interpEngine: "rife_v4.26_fp16", interpResMode: "half", neuralModel: "span",
     interpTargetFps: 144, interpAvOffsetMs: 35, interpStaticPassthrough: false,
@@ -483,7 +483,7 @@ test("preference restore normalizes valid legacy values and rejects corrupt stor
   assert.deepEqual(valid.state(), {
     engine: "artcnn", neuralModelKey: "span", artVariant: "ArtCNN_C4F32_DN",
     policy: "force8", chainDepth: 3,
-    ssimdsEnabled: true, sharpenEnabled: false, sharpenStrength: 1, debandStrength: 1,
+    ssimdsEnabled: true, sharpenEnabled: false, sharpenStrength: 1,
     pendingEngine: "blend", pendingResMode: "half", pendingTargetFps: 144, pendingAvOffsetMs: 25,
     interpStaticPassthroughPref: false, interpAutoFallbackPref: false,
     interpLadderPref: true, interpInvertPref: false, preferenceValidationFailure: null,
@@ -495,18 +495,18 @@ test("preference restore normalizes valid legacy values and rejects corrupt stor
     interpEngine: "file:///tmp/model", interpResMode: "max", interpTargetFps: 999,
     interpAvOffsetMs: -101, interpStaticPassthrough: "false",
     interpAutoFallback: "false", interpLadder: 1, interpInvert: null,
-    sharpenStrength: "2", debandStrength: Infinity,
+    sharpenStrength: "2",
   });
   assert.equal((await corrupt.restoreSitePrefs()).ok, true);
   assert.deepEqual(corrupt.state(), {
     engine: "fsrcnnx", neuralModelKey: "", artVariant: "ArtCNN_C4F32",
     policy: "force4", chainDepth: 2,
-    ssimdsEnabled: true, sharpenEnabled: false, sharpenStrength: 1, debandStrength: 1,
+    ssimdsEnabled: true, sharpenEnabled: false, sharpenStrength: 1,
     pendingEngine: "rife_v4.26", pendingResMode: "auto",
     pendingTargetFps: "auto", pendingAvOffsetMs: 0,
     interpStaticPassthroughPref: true, interpAutoFallbackPref: true,
     interpLadderPref: false, interpInvertPref: true,
-    preferenceValidationFailure: "Invalid stored settings: artVariant, debandStrength, engine, " +
+    preferenceValidationFailure: "Invalid stored settings: artVariant, engine, " +
       "images, interpAutoFallback, interpAvOffsetMs, interpEngine, interpInvert, interpLadder, " +
       "interpResMode, interpStaticPassthrough, interpTargetFps, interpolate, mode, neuralModel, " +
       "sharpenStrength",
@@ -514,29 +514,27 @@ test("preference restore normalizes valid legacy values and rejects corrupt stor
   assert.deepEqual(corrupt.migrationWrites(), [{ policy: "force4" }]);
 
   assert.equal(corrupt.applyValidation({ images: true }),
-    "Invalid stored settings: artVariant, debandStrength, engine, interpAutoFallback, " +
+    "Invalid stored settings: artVariant, engine, interpAutoFallback, " +
       "interpAvOffsetMs, interpEngine, interpInvert, interpLadder, interpResMode, " +
       "interpStaticPassthrough, interpTargetFps, interpolate, mode, neuralModel, " +
       "sharpenStrength",
       "a valid unrelated field clears only its own validation error");
 });
 
-test("persisted filter strengths enforce the same inclusive bounds as popup commands", async () => {
-  for (const [sharpenStrength, debandStrength] of [[0.1, 0.3], [2, 3]]) {
-    const valid = await loadRestoreHarness({ sharpenStrength, debandStrength });
+test("persisted sharpen strength enforces the same inclusive bounds as popup commands", async () => {
+  for (const sharpenStrength of [0.1, 2]) {
+    const valid = await loadRestoreHarness({ sharpenStrength });
     assert.equal((await valid.restoreSitePrefs()).ok, true);
     assert.equal(valid.state().sharpenStrength, sharpenStrength);
-    assert.equal(valid.state().debandStrength, debandStrength);
     assert.equal(valid.state().preferenceValidationFailure, null);
   }
 
-  const invalid = await loadRestoreHarness({ sharpenStrength: 2.01, debandStrength: 0.29 });
+  const invalid = await loadRestoreHarness({ sharpenStrength: 2.01 });
   assert.equal((await invalid.restoreSitePrefs()).ok, true);
   assert.equal(invalid.state().sharpenStrength, 2, "unsafe stored sharpen strength is clamped");
-  assert.equal(invalid.state().debandStrength, 0.3, "unsafe stored deband strength is clamped");
   assert.equal(
     invalid.state().preferenceValidationFailure,
-    "Invalid stored settings: debandStrength, sharpenStrength",
+    "Invalid stored setting: sharpenStrength",
     "finite out-of-range values remain observable as invalid storage",
   );
 });

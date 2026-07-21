@@ -217,7 +217,6 @@
     #artvariant,
     #neuralrow,
     #sharpen-row,
-    #deband-row,
     #interp-res-row { display: none; }
 
     #artvariant { margin-top: 6px; }
@@ -475,21 +474,6 @@
           </div>
         </div>
 
-        <div>
-          <label class="switch-row" for="deband">
-            <input id="deband" type="checkbox">
-            <span class="copy">
-              <strong>Debanding</strong>
-              <small>Smooth visible steps in gradients.</small>
-            </span>
-          </label>
-          <div id="deband-row" class="range-row">
-            <div class="range-layout">
-              <input id="deband-str" type="range" min="0.3" max="3" step="0.1" value="1" aria-label="Debanding strength">
-              <output id="deband-val" for="deband-str">1.0</output>
-            </div>
-          </div>
-        </div>
       </div>
     </section>
 

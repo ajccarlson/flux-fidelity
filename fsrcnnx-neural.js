@@ -5,7 +5,7 @@
 // sharing the same ORT env/device. Unlike the WGSL mpv ports (luma-only), these
 // models are RGB: chroma gets neural treatment and the recombine stage is
 // bypassed — output composites straight into an rgba16float texture that
-// main.js presents through the existing SSimDS/sharpen/deband tail.
+// main.js presents through the existing SSimDS/sharpen tail.
 //
 // Frame flow (mirrors the RIFE GPU-resident pattern exactly):
 //   rvfc → pack pass (external texture → padded NCHW fp32 storage buffer,
