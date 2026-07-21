@@ -21,8 +21,19 @@
  * Usage: node transpile.js <input.glsl> [<input2.glsl> ...] --out ./model
  */
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+
+const VERIFIED_STANDARD_SOURCE = Object.freeze({
+  file: "FSRCNNX_x2_16-0-4-1.glsl",
+  sourcePath: "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl",
+  sourceSha256: "d5a24a271e5d9a3f7f7a053b150c460a44c25b3cf7f770857d57cc3a2e1c9965",
+  upstream: "https://github.com/igv/FSRCNN-TensorFlow/releases/download/1.1/FSRCNNX_x2_16-0-4-1.glsl",
+  license: "LGPL-3.0-or-later",
+  modificationNotice:
+    "Transpiled in 2026 from the mpv/libplacebo GLSL hook format to WGSL compute passes and a JSON pass manifest for FSRCNNX-EXT; model weights and pass order are preserved.",
+});
 
 // ---- arg parsing ----------------------------------------------------------
 const args = process.argv.slice(2);
@@ -397,8 +408,26 @@ fn clampCoord(c : vec2i, dim : vec2u) -> vec2i {
 
 // ---- main per-file --------------------------------------------------------
 for (const input of inputs) {
-  const src = fs.readFileSync(input, "utf8");
+  const sourceBytes = fs.readFileSync(input);
+  const src = sourceBytes.toString("utf8");
   const base = path.basename(input).replace(/\.glsl$/i, "");
+  const isVerifiedStandard = path.basename(input) === VERIFIED_STANDARD_SOURCE.file;
+  let sourceMetadata = null;
+  if (isVerifiedStandard) {
+    const sourceSha256 = createHash("sha256").update(sourceBytes).digest("hex");
+    if (sourceSha256 !== VERIFIED_STANDARD_SOURCE.sourceSha256) {
+      throw new Error(
+        `${VERIFIED_STANDARD_SOURCE.file}: SHA-256 ${sourceSha256}, ` +
+        `expected ${VERIFIED_STANDARD_SOURCE.sourceSha256}`,
+      );
+    }
+    sourceMetadata = {
+      license: VERIFIED_STANDARD_SOURCE.license,
+      sourcePath: VERIFIED_STANDARD_SOURCE.sourcePath,
+      sourceSha256,
+      modificationNotice: VERIFIED_STANDARD_SOURCE.modificationNotice,
+    };
+  }
   const rawPasses = splitPasses(src);
 
   const parsed = [];
@@ -412,6 +441,7 @@ for (const input of inputs) {
   const whenThreshold = parsed.map((p) => parseWhenThreshold(p.header.when)).find((x) => x != null) ?? null;
   const manifest = {
     name: base,
+    ...(sourceMetadata ?? {}),
     whenThreshold, // select this model when target/source ratio > this
     passes: parsed.map((p) => ({
       index: p.index,
@@ -427,7 +457,14 @@ for (const input of inputs) {
     })),
   };
 
-  let wgsl = PRELUDE + "\n";
+  const sourceHeader = sourceMetadata
+    ? `// License: ${sourceMetadata.license}\n` +
+      `// Upstream: ${VERIFIED_STANDARD_SOURCE.upstream}\n` +
+      `// Source path: ${sourceMetadata.sourcePath}\n` +
+      `// Source SHA-256: ${sourceMetadata.sourceSha256}\n` +
+      `// Modification notice: ${sourceMetadata.modificationNotice}\n`
+    : "";
+  let wgsl = sourceHeader + PRELUDE + "\n";
   const passMeta = [];
   for (const p of parsed) {
     const emitted = emitPassWGSL(p, p.index);

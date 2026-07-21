@@ -26,6 +26,15 @@ test("current release-clearance record is structurally valid and explicitly bloc
     assert.equal(gate.status, "blocked", `${id} must continue to block private-history publication`);
     assert.ok(gate.artifacts.every((artifact) => artifact.disposition === "removed"));
   }
+
+  const lgplGate = result.ledger.gates.find((gate) => gate.id === "lgpl-compliance-review");
+  const ortGate = result.ledger.gates.find((gate) => gate.id === "onnx-runtime-third-party-review");
+  assert.equal(lgplGate.status, "blocked");
+  assert.equal(ortGate.status, "blocked");
+  assert.ok(lgplGate.evidence.includes("LGPL_REBUILDING.md"));
+  assert.ok(lgplGate.artifacts.every((artifact) => /^[0-9a-f]{64}$/.test(artifact.sha256)));
+  assert.ok(ortGate.evidence.includes("vendor/ort/LICENSE"));
+  assert.ok(ortGate.artifacts.every((artifact) => /^[0-9a-f]{64}$/.test(artifact.sha256)));
 });
 
 test("release-clearance validation detects artifact drift", () => {
@@ -96,7 +105,7 @@ test("cleared gates require meaningful evidence references", () => {
   }
 });
 
-test("cleared gates require repository-local evidence files to exist", () => {
+test("blocked and cleared gates require repository-local evidence files to exist", () => {
   const fixture = mkdtempSync(join(tmpdir(), "fsrcnnx-release-clearance-missing-evidence-"));
   try {
     writeFileSync(join(fixture, "artifact.bin"), "fixture");
@@ -105,7 +114,7 @@ test("cleared gates require repository-local evidence files to exist", () => {
       scope: "test",
       gates: [{
         id: "required-gate",
-        status: "cleared",
+        status: "blocked",
         artifacts: [{ path: "artifact.bin" }],
         evidence: ["missing-evidence.md"],
         resolution: "Retain the evidence.",

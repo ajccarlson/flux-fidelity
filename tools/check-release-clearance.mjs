@@ -165,7 +165,10 @@ export function inspectReleaseClearance({
     if (gate.status === "cleared" && (!Array.isArray(gate.evidence) || gate.evidence.length === 0)) {
       errors.push(`${label}: a cleared gate must retain at least one evidence reference`);
     }
-    if (gate.status === "cleared" && validEvidenceInventory && Array.isArray(gate.evidence)) {
+    // Local evidence must remain inspectable even while a gate is blocked. A
+    // blocked record is still an auditable claim about the current boundary;
+    // accepting missing evidence until clearance would let its support rot.
+    if (validEvidenceInventory && Array.isArray(gate.evidence)) {
       for (const [evidenceIndex, reference] of gate.evidence.entries()) {
         if (isExternalEvidenceReference(reference)) continue;
         const evidenceLabel = `${label} evidence ${evidenceIndex + 1}`;

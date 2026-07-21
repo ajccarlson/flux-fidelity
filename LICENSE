@@ -6,3 +6,10 @@ from the copyright holder.
 
 Third-party components and model artifacts remain subject to their respective
 licenses. See THIRD_PARTY_NOTICES.md and MODEL_PROVENANCE.md.
+
+Notwithstanding the project terms above, recipients may use and modify project
+files, and reverse engineer or recombine this package, solely as needed to
+modify, rebuild, replace, or relink portions identified in
+THIRD_PARTY_NOTICES.md as LGPL-3.0-or-later-covered. Those portions remain
+governed by their stated third-party license; this exception grants no
+additional rights in the rest of the project.
