@@ -7,8 +7,10 @@ Public distribution is not yet cleared. Several bundled artifacts still have unr
 ## Requirements
 
 - A current Chromium-based browser with WebGPU enabled and a compatible GPU driver.
-- A readable, non-DRM HTML5 video. Protected video, cross-origin restrictions, and page-specific rendering can prevent capture.
+- A readable, non-DRM HTML5 video in the top-level page. Protected video, cross-origin restrictions, iframes, and page-specific rendering can prevent capture.
 - Node.js 20.11 or newer only for repository validation and packaging. Runtime use has no npm dependency.
+
+The extension requests access to all sites so it can find and process eligible page videos.
 
 ## Install locally
 
@@ -24,7 +26,7 @@ Public distribution is not yet cleared. Several bundled artifacts still have unr
 3. Select an upscaling engine and policy, then choose **Upscale**. Optional filters and interpolation can be enabled separately.
 4. Choose **Off** to restore normal page rendering.
 
-Settings are stored per hostname. GPU memory, source resolution, browser support, and model cost determine which combinations can sustain real-time playback. The bundled `SPAN 2x SMOKE` model has random weights and is only a pipeline test.
+Settings are stored per origin. GPU memory, source resolution, browser support, and model cost determine which combinations can sustain real-time playback. The bundled `SPAN 2x SMOKE` model has random weights and is only a pipeline test.
 
 ## Validate
 
@@ -34,13 +36,13 @@ Run the complete repository check with:
 npm run check
 ```
 
-Run the production-pipeline and model-inference smoke checks in a temporary local Edge/Chromium profile with:
+Run the production-pipeline and model-inference smoke checks in a temporary local Edge/Chrome/Chromium profile with:
 
 ```sh
 npm run validate:browser
 ```
 
-Set `FSRCNNX_BROWSER` to an executable path when no supported browser is found automatically. After loading the extension manually, the same checks are available at `chrome-extension://<extension-id>/validate.html`; the ID is shown on `chrome://extensions`.
+Set `FSRCNNX_BROWSER` to an executable path when no supported browser is found automatically. After loading the extension manually, the GPU validation suite is available at `chrome-extension://<extension-id>/validate.html`; the ID is shown on `chrome://extensions`.
 
 `npm run package` creates a deterministic local archive under `dist/` after running the checks. A successful archive build verifies technical integrity only; it does not clear the unresolved release gates in [Model provenance](MODEL_PROVENANCE.md).
 
