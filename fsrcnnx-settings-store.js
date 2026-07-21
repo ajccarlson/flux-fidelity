@@ -14,8 +14,6 @@ export const DEFAULT_SETTING_FIELDS = Object.freeze([
   "sharpenStrength",
   "hoverReveal",
   "allVideos",
-  "deband",
-  "debandStrength",
   "images",
   "interpolate",
   "interpEngine",

@@ -1,7 +1,6 @@
 import { ArtCnnModel } from "./fsrcnnx-artcnn-runtime.js";
 import { GENERATED_MODEL_CATALOG } from "./fsrcnnx-model-catalog.js";
 import { validateModelBundle } from "./fsrcnnx-model-bundle.js";
-import { validateNeuralManifest } from "./fsrcnnx-neural.js";
 import { createOrtSession, ensureOrt, getOrtSessionDevice } from "./fsrcnnx-rife.js";
 import { FsrcnnxModel } from "./fsrcnnx-runtime.js";
 import {
@@ -180,20 +179,6 @@ async function validateModel(runId, resultMap, spec, device) {
   }
 }
 
-function spanInput(width, height) {
-  const plane = width * height;
-  const data = new Float32Array(plane * 3);
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const index = y * width + x;
-      data[index] = 0.05 + 0.9 * (x / Math.max(1, width - 1));
-      data[plane + index] = 0.05 + 0.9 * (y / Math.max(1, height - 1));
-      data[2 * plane + index] = 0.05 + 0.9 * ((x + y) / Math.max(1, width + height - 2));
-    }
-  }
-  return data;
-}
-
 function rifeInput(width, height) {
   const plane = width * height;
   const data = new Float32Array(plane * 7);
@@ -212,21 +197,6 @@ function rifeInput(width, height) {
   }
   data.fill(0.5, 6 * plane);
   return data;
-}
-
-async function loadNeuralSmokeSpec() {
-  const response = await withTimeout(
-    fetch(chrome.runtime.getURL("model/neural/manifest.json")),
-    VALIDATION_TIMEOUT_MS,
-    "neural manifest fetch",
-  );
-  if (!response.ok) throw new Error(`neural manifest fetch returned HTTP ${response.status}`);
-  const entry = validateNeuralManifest(await response.json()).find(({ key }) => key === "span2x_smoke");
-  if (!entry) throw new Error("neural manifest has no span2x_smoke entry");
-  if (entry.file !== "span2x_smoke.fp16.onnx" || entry.scale !== 2) {
-    throw new Error(`span2x_smoke manifest contract changed (${entry.file}, ${entry.scale}x)`);
-  }
-  return entry;
 }
 
 async function createValidationOrtSession(modelUrl, label, { provider, gpuOutput, enableFp16 }) {
@@ -339,21 +309,6 @@ async function executeValidationOrtCheck(ort, check) {
 async function validateOnnxModels(runId, resultMap) {
   const checks = [
     {
-      id: "onnx:span2x-smoke",
-      label: "SPAN 2x smoke",
-      inputDims: [1, 3, 8, 8],
-      outputDims: [1, 3, 16, 16],
-      data: spanInput(8, 8),
-      // This proves the exact FP16 fixture and bundled WASM runtime only. The
-      // neural engine's WebGPU integration requires shader-f16, absent in the
-      // SwiftShader adapter used by the deterministic browser harness.
-      provider: "wasm",
-      enableFp16: false,
-      gpuInput: false,
-      gpuOutput: false,
-      modelUrl: null,
-    },
-    {
       id: "onnx:rife-v4.26-fp16",
       label: "RIFE 4.26 FP16",
       inputDims: [1, 7, 64, 64],
@@ -387,13 +342,6 @@ async function validateOnnxModels(runId, resultMap) {
   }
 
   if (ort) {
-    try {
-      const span = await loadNeuralSmokeSpec();
-      checks[0].modelUrl = chrome.runtime.getURL(`model/neural/${span.file}`);
-    } catch (error) {
-      outcomes.set(checks[0].id, { status: "fail", detail: `manifest: ${errorMessage(error)}` });
-    }
-
     for (const check of checks) {
       if (outcomes.has(check.id)) continue;
       try {

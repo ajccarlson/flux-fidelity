@@ -106,7 +106,7 @@ function popupDocument() {
   for (const id of [
     "s-webgpu", "s-video", "s-model", "s-frames", "runtime-status", "drm-banner",
     "operation-status", "neuralrow", "neural-note", "sharpen-row", "sharpen-val",
-    "deband-row", "deband-val", "multi-count", "image-count", "interp-res-row",
+    "multi-count", "image-count", "interp-res-row",
     "interp-target-hz", "interp-avoff-val", "interp-stats",
   ]) document.add(id);
 
@@ -124,8 +124,6 @@ function popupDocument() {
     ["ssimds", ""],
     ["sharpen", ""],
     ["sharpen-str", "1"],
-    ["deband", ""],
-    ["deband-str", "1"],
     ["hover-reveal", ""],
     ["all-videos", ""],
     ["images", ""],
@@ -175,8 +173,6 @@ function readyStatus(overrides = {}) {
     activeEngine: overrides.engine || "fsrcnnx",
     allVideos: false,
     artVariant: "ArtCNN_C4F32",
-    deband: false,
-    debandStrength: 1,
     engine: "fsrcnnx",
     frameCount: 12,
     gpuState: "idle",
@@ -399,15 +395,15 @@ test("select reconciliation safely replaces a placeholder with exactly one neura
   select.children = [placeholder];
 
   reconcileSelectOptions(document, select, [{
-    value: "span2x_smoke",
+    value: "local2x",
     label: "<img src=x onerror=alert(1)> (2×)",
-  }], "span2x_smoke");
+  }], "local2x");
 
   assert.equal(select.children.length, 1);
   assert.notStrictEqual(select.children[0], placeholder);
-  assert.equal(select.children[0].value, "span2x_smoke");
+  assert.equal(select.children[0].value, "local2x");
   assert.equal(select.children[0].textContent, "<img src=x onerror=alert(1)> (2×)");
-  assert.equal(select.value, "span2x_smoke");
+  assert.equal(select.value, "local2x");
 });
 
 test("select reconciliation detects same-count catalog changes and preserves identical options", () => {
@@ -480,6 +476,8 @@ test("controller disables every command while loading or failed and enables only
     interpolate: true,
   }));
   assert.equal(document.getElementById("engine").disabled, false);
+  assert.equal(document.getElementById("engine").children.find(({ value }) => value === "neural")?.disabled, true,
+    "the neural engine option stays unavailable while the bundled catalog is empty");
   assert.equal(document.getElementById("policy").disabled, false);
   assert.equal(document.getElementById("artvariant").disabled, false);
   assert.equal(document.getElementById("neural-model").disabled, true);
@@ -488,9 +486,10 @@ test("controller disables every command while loading or failed and enables only
 
   controller.render(readyStatus({
     engine: "neural",
-    neuralModel: "span2x_smoke",
-    neuralModels: [{ key: "span2x_smoke", label: "SPAN smoke", scale: 2 }],
+    neuralModel: "local2x",
+    neuralModels: [{ key: "local2x", label: "Local 2x", scale: 2 }],
   }));
+  assert.equal(document.getElementById("engine").children.find(({ value }) => value === "neural")?.disabled, false);
   assert.equal(document.getElementById("neural-model").disabled, false);
   assert.equal(document.getElementById("policy").disabled, true);
   assert.equal(document.getElementById("all-videos").disabled, true);
@@ -761,8 +760,8 @@ test("requested neural controls remain selected while model and runtime expose t
     runtime: { api: "available", adapter: "ready", device: "ready" },
     model: "FSRCNNX_x2_16-0-4-1",
     neural: null,
-    neuralModel: "span2x_smoke",
-    neuralModels: [{ key: "span2x_smoke", label: "SPAN smoke", scale: 2 }],
+    neuralModel: "local2x",
+    neuralModels: [{ key: "local2x", label: "Local 2x", scale: 2 }],
     renderer: {
       requestedMode: "upscale",
       activeMode: "upscale",
@@ -784,7 +783,7 @@ test("requested neural controls remain selected while model and runtime expose t
   assert.equal(document.getElementById("policy").disabled, true,
     "control applicability follows the requested engine");
   assert.match(document.getElementById("s-model").textContent, /FSRCNNX standard fallback/);
-  assert.doesNotMatch(document.getElementById("s-model").textContent, /SPAN smoke/);
+  assert.doesNotMatch(document.getElementById("s-model").textContent, /Local 2x/);
   assert.equal(document.getElementById("runtime-status").textContent,
     "Neural upscaling fell back to FSRCNNX standard: ONNX session creation failed");
   assert.equal(document.getElementById("neural-note").textContent,

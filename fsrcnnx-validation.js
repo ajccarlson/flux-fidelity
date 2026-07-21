@@ -1,7 +1,6 @@
 // Browser-validation primitives shared by the extension page and unit tests.
 
 import { LUMA_EXTRACT_WGSL, RECOMBINE_WGSL } from "./fsrcnnx-color.js";
-import { buildDebandShader } from "./fsrcnnx-deband.js";
 import { buildSharpenShader } from "./fsrcnnx-sharpen.js";
 import {
   buildL2Shader,
@@ -13,7 +12,6 @@ import {
 export const VALIDATION_TIMEOUT_MS = 30_000;
 
 export const ONNX_VALIDATION_CHECKS = Object.freeze([
-  Object.freeze({ id: "onnx:span2x-smoke", label: "ORT SPAN 2x WASM asset/inference smoke" }),
   Object.freeze({ id: "onnx:rife-v4.26-fp16", label: "ORT RIFE 4.26 FP16 WASM asset/inference smoke" }),
   Object.freeze({ id: "onnx:rife-v4.26", label: "ORT default RIFE 4.26 WebGPU inference smoke" }),
 ]);
@@ -303,8 +301,6 @@ export function buildCorePipelines(device, canvasFormat) {
   render(textureVariant(RECOMBINE_WGSL));
   render(textureVariant(RECOMBINE_WGSL), "rgba16float");
   render(buildSharpenShader(1, false));
-  render(buildDebandShader(1));
-  render(buildDebandShader(1), "rgba16float");
   render(buildMeanShader(2, 2), "rgba16float");
   render(buildL2Shader(1, 2), "rgba16float");
   render(buildL2Shader(0, 2), "rgba16float");

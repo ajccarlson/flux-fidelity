@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildDebandShader } from "../fsrcnnx-deband.js";
 import { buildSharpenShader } from "../fsrcnnx-sharpen.js";
 import {
   buildL2Shader,
@@ -20,20 +19,15 @@ function assertFiniteWgsl(source) {
   assert.doesNotMatch(source, /\b(?:NaN|Infinity)\b/);
 }
 
-test("sharpen and deband builders normalize non-finite inputs", () => {
+test("sharpen builder normalizes non-finite inputs", () => {
   for (const value of [NaN, Infinity, -Infinity, "invalid", Symbol("invalid")]) {
     const sharpen = buildSharpenShader(value);
-    const deband = buildDebandShader(value);
     assertFiniteWgsl(sharpen);
-    assertFiniteWgsl(deband);
     assert.match(sharpen, /const curve_height : f32 = 1\.0000;/);
-    assert.match(deband, /const THRESHOLD : f32 = 0\.004000;/);
   }
 
   assert.match(buildSharpenShader(-5), /const curve_height : f32 = 0\.1000;/);
   assert.match(buildSharpenShader(50), /const curve_height : f32 = 2\.0000;/);
-  assert.match(buildDebandShader(-5), /const THRESHOLD : f32 = 0\.000400;/);
-  assert.match(buildDebandShader(50), /const THRESHOLD : f32 = 0\.012000;/);
 });
 
 test("sharpen's flat-field guards preserve a finite constant field", () => {

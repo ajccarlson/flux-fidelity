@@ -14,9 +14,11 @@
     "check:models": "node tools/check-models.mjs",
     "check:generated": "node tools/check-generated.mjs",
     "check:release-record": "node tools/check-release-clearance.mjs --record-only",
+    "check:rife-reproduction": "sh tools/model-reproduction/check-rife-fp16.sh",
     "validate:browser": "node tools/browser-validation.mjs",
     "fetch:shader-sources": "node tools/fetch-shader-sources.mjs",
-    "package": "npm run check && node tools/build-package.mjs",
+    "package:internal": "npm run check && node tools/build-package.mjs",
+    "package": "npm run release:check && node tools/build-package.mjs",
     "release:check": "npm run check && node tools/check-release-clearance.mjs",
     "test": "node --test tests/*.test.mjs"
   }

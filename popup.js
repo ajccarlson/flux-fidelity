@@ -10,13 +10,6 @@ export const POLICY_OPTIONS = Object.freeze({
     ["force3", "Always ×3"],
     ["force4", "Always ×4"],
   ]),
-  "fsrcnnx-hi": Object.freeze([
-    ["display", "Source below display (recommended)"],
-    ["auto", "Auto (mpv thresholds)"],
-    ["force2", "Always ×2"],
-    ["force4", "Always ×4"],
-    ["force8", "Always ×8"],
-  ]),
   artcnn: Object.freeze([
     ["display", "Source below display (recommended)"],
     ["auto", "Auto (mpv thresholds)"],
@@ -29,7 +22,6 @@ export const POLICY_OPTIONS = Object.freeze({
 const STATIC_INTERPOLATION_MODELS = Object.freeze([
   ["rife_v4.26", "RIFE 4.26 (default; may wave on bright motion)"],
   ["rife_v4.26_fp16", "RIFE 4.26 FP16 (experimental)"],
-  ["rife_orig", "RIFE original"],
   ["blend", "Blend (no AI)"],
 ]);
 
@@ -358,7 +350,6 @@ function effectiveEngine(status) {
 function engineLabel(engine) {
   return ({
     fsrcnnx: "FSRCNNX standard",
-    "fsrcnnx-hi": "FSRCNNX high",
     artcnn: "ArtCNN",
     neural: "Neural",
   })[engine] || "Renderer";
@@ -732,10 +723,17 @@ export function createPopupController({
     setText($("drm-banner"), protectedMessage);
     setVisible($("drm-banner"), !!protectedMessage);
 
-    const engine = ["fsrcnnx", "fsrcnnx-hi", "artcnn", "neural"].includes(status.engine)
+    const engine = ["fsrcnnx", "artcnn", "neural"].includes(status.engine)
       ? status.engine
       : "fsrcnnx";
-    if (forceSync || documentRef.activeElement !== $("engine")) $("engine").value = engine;
+    const hasNeuralModels = Array.isArray(status.neuralModels) && status.neuralModels.length > 0;
+    if (forceSync || documentRef.activeElement !== $("engine")) {
+      reconcileSelectOptions(documentRef, $("engine"), [
+        ["fsrcnnx", "FSRCNNX standard"],
+        ["artcnn", "ArtCNN"],
+        { value: "neural", label: "Neural (ONNX)", disabled: !hasNeuralModels },
+      ], engine);
+    }
     setVisible($("artvariant"), engine === "artcnn");
     setVisible($("neuralrow"), engine === "neural");
     if (status.artVariant && (forceSync || documentRef.activeElement !== $("artvariant"))) {
@@ -789,7 +787,6 @@ export function createPopupController({
     };
     syncCheckbox("ssimds", status.ssimds);
     syncCheckbox("sharpen", status.sharpen);
-    syncCheckbox("deband", status.deband);
     syncCheckbox("hover-reveal", status.hoverReveal);
     syncCheckbox("all-videos", status.allVideos);
     syncCheckbox("images", status.images);
@@ -800,7 +797,6 @@ export function createPopupController({
     syncCheckbox("interp-autofallback", status.interpAutoFallback);
 
     setVisible($("sharpen-row"), status.sharpen === true);
-    setVisible($("deband-row"), status.deband === true);
     setVisible($("interp-res-row"), status.interpolate === true);
     $("multi-count").textContent = status.allVideos && status.multiCount
       ? `(${status.multiCount} active)` : "";
@@ -813,7 +809,6 @@ export function createPopupController({
       $(outputId).textContent = digits == null ? String(value) : value.toFixed(digits);
     };
     syncRange("sharpen-str", "sharpen-val", status.sharpenStrength, 1);
-    syncRange("deband-str", "deband-val", status.debandStrength, 1);
 
     const interpModels = Array.isArray(status.interpStats?.models) && status.interpStats.models.length
       ? status.interpStats.models.map((model) => [model.key, model.label])
@@ -892,8 +887,6 @@ export function createPopupController({
     command("ssimds", "change", "Updating downscaling", "FSRCNNX_SETSSIMDS", () => ({ on: $("ssimds").checked }));
     command("sharpen", "change", "Updating sharpening", "FSRCNNX_SETSHARPEN", () => ({ on: $("sharpen").checked }));
     command("sharpen-str", "change", "Changing sharpen strength", "FSRCNNX_SETSHARPENSTR", () => ({ strength: Number($("sharpen-str").value) }));
-    command("deband", "change", "Updating debanding", "FSRCNNX_SETDEBAND", () => ({ on: $("deband").checked }));
-    command("deband-str", "change", "Changing deband strength", "FSRCNNX_SETDEBANDSTR", () => ({ strength: Number($("deband-str").value) }));
     command("interpolate", "change", "Updating frame interpolation", "FSRCNNX_SETINTERPOLATE", () => ({ on: $("interpolate").checked }));
     command("interp-res", "change", "Changing inference resolution", "FSRCNNX_SETINTERPRES", () => ({ mode: $("interp-res").value }));
     command("interp-avoff", "change", "Changing audio sync trim", "FSRCNNX_SETINTERPAVOFFSET", () => ({ ms: Number($("interp-avoff").value) }));
@@ -912,9 +905,6 @@ export function createPopupController({
 
     $("sharpen-str").addEventListener("input", () => {
       $("sharpen-val").textContent = Number($("sharpen-str").value).toFixed(1);
-    });
-    $("deband-str").addEventListener("input", () => {
-      $("deband-val").textContent = Number($("deband-str").value).toFixed(1);
     });
     $("interp-avoff").addEventListener("input", () => {
       $("interp-avoff-val").textContent = $("interp-avoff").value;

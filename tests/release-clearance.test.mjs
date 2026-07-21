@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -12,6 +12,29 @@ test("current release-clearance record is structurally valid and explicitly bloc
   const result = inspectReleaseClearance({ rootDir: root });
   assert.deepEqual(result.errors, []);
   assert.ok(result.blocked.length > 0);
+
+  const fp16Gate = result.ledger.gates.find((gate) => gate.id === "unproven-rife-fp16-conversion");
+  const fp16Artifact = fp16Gate.artifacts.find(
+    (artifact) => artifact.path === "model/rife_v4.26_fp16.onnx",
+  );
+  assert.equal(fp16Gate.status, "cleared");
+  assert.match(readFileSync(join(root, "MODEL_PROVENANCE.md"), "utf8"),
+    new RegExp(fp16Artifact.sha256));
+
+  for (const id of ["unidentified-rife-model", "unreproducible-span-smoke-model"]) {
+    const gate = result.ledger.gates.find((entry) => entry.id === id);
+    assert.equal(gate.status, "blocked", `${id} must continue to block private-history publication`);
+    assert.ok(gate.artifacts.every((artifact) => artifact.disposition === "removed"));
+  }
+
+  const lgplGate = result.ledger.gates.find((gate) => gate.id === "lgpl-compliance-review");
+  const ortGate = result.ledger.gates.find((gate) => gate.id === "onnx-runtime-third-party-review");
+  assert.equal(lgplGate.status, "blocked");
+  assert.equal(ortGate.status, "blocked");
+  assert.ok(lgplGate.evidence.includes("LGPL_REBUILDING.md"));
+  assert.ok(lgplGate.artifacts.every((artifact) => /^[0-9a-f]{64}$/.test(artifact.sha256)));
+  assert.ok(ortGate.evidence.includes("vendor/ort/LICENSE"));
+  assert.ok(ortGate.artifacts.every((artifact) => /^[0-9a-f]{64}$/.test(artifact.sha256)));
 });
 
 test("release-clearance validation detects artifact drift", () => {
@@ -76,6 +99,104 @@ test("cleared gates require meaningful evidence references", () => {
     const result = inspectReleaseClearance({ rootDir: fixture, requiredGateIds: ["required-gate"] });
     assert.deepEqual(result.errors, [
       "release clearance gate 1: evidence must contain only non-empty string references",
+    ]);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("blocked and cleared gates require repository-local evidence files to exist", () => {
+  const fixture = mkdtempSync(join(tmpdir(), "fsrcnnx-release-clearance-missing-evidence-"));
+  try {
+    writeFileSync(join(fixture, "artifact.bin"), "fixture");
+    writeFileSync(join(fixture, "release-clearance.json"), JSON.stringify({
+      schemaVersion: 1,
+      scope: "test",
+      gates: [{
+        id: "required-gate",
+        status: "blocked",
+        artifacts: [{ path: "artifact.bin" }],
+        evidence: ["missing-evidence.md"],
+        resolution: "Retain the evidence.",
+      }],
+    }));
+
+    const result = inspectReleaseClearance({ rootDir: fixture, requiredGateIds: ["required-gate"] });
+    assert.deepEqual(result.errors, [
+      "release clearance gate 1 evidence 1: missing missing-evidence.md (ENOENT)",
+    ]);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("cleared FP16 gate requires its artifact hash in the provenance record", () => {
+  const fixture = mkdtempSync(join(tmpdir(), "fsrcnnx-release-clearance-fp16-evidence-"));
+  try {
+    mkdirSync(join(fixture, "model"));
+    const bytes = "reproduced FP16 fixture";
+    const hash = createHash("sha256").update(bytes).digest("hex");
+    writeFileSync(join(fixture, "model", "rife_v4.26_fp16.onnx"), bytes);
+    writeFileSync(join(fixture, "MODEL_PROVENANCE.md"), "# Missing the artifact digest\n");
+    writeFileSync(join(fixture, "release-clearance.json"), JSON.stringify({
+      schemaVersion: 1,
+      scope: "test",
+      gates: [{
+        id: "unproven-rife-fp16-conversion",
+        status: "cleared",
+        artifacts: [{ path: "model/rife_v4.26_fp16.onnx", sha256: hash }],
+        evidence: ["MODEL_PROVENANCE.md"],
+        resolution: "Retain deterministic reproduction evidence.",
+      }],
+    }));
+
+    const result = inspectReleaseClearance({
+      rootDir: fixture,
+      requiredGateIds: ["unproven-rife-fp16-conversion"],
+    });
+    assert.deepEqual(result.errors, [
+      "release clearance: cleared FP16 artifact hash is absent from MODEL_PROVENANCE.md",
+    ]);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("cleared removal records retain historical hashes and enforce absence", () => {
+  const fixture = mkdtempSync(join(tmpdir(), "fsrcnnx-release-clearance-removed-"));
+  try {
+    const ledger = {
+      schemaVersion: 1,
+      scope: "test",
+      gates: [{
+        id: "removed-gate",
+        status: "cleared",
+        artifacts: [{
+          path: "removed.bin",
+          sha256: createHash("sha256").update("historical bytes").digest("hex"),
+          disposition: "removed",
+        }],
+        evidence: ["evidence.txt"],
+        resolution: "Keep the artifact absent.",
+      }],
+    };
+    writeFileSync(join(fixture, "evidence.txt"), "The artifact was removed from the release boundary.\n");
+    writeFileSync(join(fixture, "release-clearance.json"), JSON.stringify(ledger));
+
+    const absent = inspectReleaseClearance({
+      rootDir: fixture,
+      requiredGateIds: ["removed-gate"],
+    });
+    assert.deepEqual(absent.errors, []);
+    assert.deepEqual(absent.blocked, []);
+
+    writeFileSync(join(fixture, "removed.bin"), "historical bytes");
+    const restored = inspectReleaseClearance({
+      rootDir: fixture,
+      requiredGateIds: ["removed-gate"],
+    });
+    assert.deepEqual(restored.errors, [
+      "release clearance gate 1 artifact 1: removed artifact removed.bin must remain absent",
     ]);
   } finally {
     rmSync(fixture, { recursive: true, force: true });

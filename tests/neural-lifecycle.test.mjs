@@ -45,6 +45,8 @@ test("neural manifests reject ambiguous keys and unsafe model paths", async (t) 
     getOrtSessionDevice: () => null,
   };
   const { validateNeuralManifest } = await loadNeuralEngine(deps);
+  assert.deepEqual(validateNeuralManifest([]), []);
+  assert.deepEqual(validateNeuralManifest({ models: [] }), []);
   const valid = validateNeuralManifest({ models: [
     { key: "span-2x", file: "span.fp16.onnx", label: "SPAN", scale: 2, padMultiple: 8, input: "input", output: "output" },
   ] });

@@ -124,7 +124,7 @@ const COMMANDS = Object.freeze({
   FSRCNNX_SETMODE: enumPayload("mode", ["off", "passthrough", "upscale"],
     (module, msg) => module.setMode(msg.mode)),
   FSRCNNX_RESTORE: noPayload(() => restoreOnce().then(() => restoreResult)),
-  FSRCNNX_SETENGINE: enumPayload("engine", ["fsrcnnx", "fsrcnnx-hi", "artcnn", "neural"],
+  FSRCNNX_SETENGINE: enumPayload("engine", ["fsrcnnx", "artcnn", "neural"],
     (module, msg) => module.setEngine(msg.engine)),
   FSRCNNX_SETNEURALMODEL: fieldPayload(
     "model",
@@ -144,7 +144,7 @@ const COMMANDS = Object.freeze({
     (module, msg) => module.setInterpolateAvOffset(msg.ms)),
   FSRCNNX_SETINTERPMODEL: enumPayload(
     "key",
-    ["rife_v4.26_fp16", "rife_v4.26", "rife_orig", "blend"],
+    ["rife_v4.26_fp16", "rife_v4.26", "blend"],
     (module, msg) => module.setInterpolateModel(msg.key),
   ),
   FSRCNNX_SETINTERPTARGETFPS: fieldPayload(
@@ -159,9 +159,6 @@ const COMMANDS = Object.freeze({
   FSRCNNX_SETINVERT: booleanPayload((module, msg) => module.setInterpolateInvert(msg.on)),
   FSRCNNX_SETINTERPDIAG: booleanPayload((module, msg) => module.setInterpolateDiag(msg.on)),
   FSRCNNX_SETIMAGES: booleanPayload((module, msg) => module.setImages(msg.on)),
-  FSRCNNX_SETDEBAND: booleanPayload((module, msg) => module.setDeband(msg.on)),
-  FSRCNNX_SETDEBANDSTR: boundedNumberPayload("strength", 0.3, 3,
-    (module, msg) => module.setDebandStrength(msg.strength)),
   FSRCNNX_SETHOVERREVEAL: booleanPayload((module, msg) => module.setHoverReveal(msg.on)),
   FSRCNNX_SETALLVIDEOS: booleanPayload((module, msg) => module.setAllVideos(msg.on)),
   FSRCNNX_SETSHARPEN: booleanPayload((module, msg) => module.setSharpen(msg.on)),

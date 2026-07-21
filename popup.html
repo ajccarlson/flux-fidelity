@@ -217,7 +217,6 @@
     #artvariant,
     #neuralrow,
     #sharpen-row,
-    #deband-row,
     #interp-res-row { display: none; }
 
     #artvariant { margin-top: 6px; }
@@ -423,9 +422,8 @@
           <label for="engine">Engine</label>
           <select id="engine">
             <option value="fsrcnnx">FSRCNNX standard</option>
-            <option value="fsrcnnx-hi">FSRCNNX high</option>
             <option value="artcnn">ArtCNN</option>
-            <option value="neural">Neural (ONNX)</option>
+            <option value="neural" disabled>Neural (ONNX)</option>
           </select>
           <select id="artvariant" aria-label="ArtCNN variant">
             <option value="ArtCNN_C4F32">C4F32 — neutral</option>
@@ -476,21 +474,6 @@
           </div>
         </div>
 
-        <div>
-          <label class="switch-row" for="deband">
-            <input id="deband" type="checkbox">
-            <span class="copy">
-              <strong>Debanding</strong>
-              <small>Smooth visible steps in gradients.</small>
-            </span>
-          </label>
-          <div id="deband-row" class="range-row">
-            <div class="range-layout">
-              <input id="deband-str" type="range" min="0.3" max="3" step="0.1" value="1" aria-label="Debanding strength">
-              <output id="deband-val" for="deband-str">1.0</output>
-            </div>
-          </div>
-        </div>
       </div>
     </section>
 
@@ -553,7 +536,6 @@
                 <select id="interp-model">
                   <option value="rife_v4.26">RIFE 4.26 (default; may wave on bright motion)</option>
                   <option value="rife_v4.26_fp16">RIFE 4.26 FP16 (experimental)</option>
-                  <option value="rife_orig">RIFE original</option>
                   <option value="blend">Blend (no AI)</option>
                 </select>
               </div>
