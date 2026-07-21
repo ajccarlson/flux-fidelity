@@ -517,7 +517,7 @@ const INTERPOLATION_MODEL_KEYS = Object.freeze([
   "blend",
 ]);
 const INTERPOLATION_RES_MODES = Object.freeze(["auto", "full", "half", "quarter"]);
-const DEFAULT_INTERPOLATION_MODEL = "rife_v4.26_fp16";
+const DEFAULT_INTERPOLATION_MODEL = "rife_v4.26";
 const DEFAULT_INTERPOLATION_RES_MODE = "auto";
 const DEFAULT_INTERPOLATION_TARGET_FPS = "auto";
 const DEFAULT_INTERPOLATION_AV_OFFSET_MS = 0;
