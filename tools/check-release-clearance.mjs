@@ -27,6 +27,37 @@ function safeRelativePath(path) {
     && !path.split("/").includes("..");
 }
 
+function inspectRegularFile(rootDir, path, label, errors) {
+  const absolute = resolve(rootDir, path);
+  const escaped = relative(rootDir, absolute).split(/[\\/]/).includes("..");
+  if (escaped) {
+    errors.push(`${label}: path escapes the repository`);
+    return null;
+  }
+
+  let metadata;
+  try {
+    metadata = lstatSync(absolute);
+  } catch (error) {
+    errors.push(`${label}: missing ${path} (${error.code || error.message})`);
+    return null;
+  }
+  if (!metadata.isFile() || metadata.isSymbolicLink()) {
+    errors.push(`${label}: ${path} must be a regular, non-symlink file`);
+    return null;
+  }
+  return absolute;
+}
+
+function isExternalEvidenceReference(reference) {
+  try {
+    const url = new URL(reference);
+    return url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 export function inspectReleaseClearance({
   rootDir = root,
   ledgerFile = "release-clearance.json",
@@ -98,11 +129,6 @@ export function inspectReleaseClearance({
       }
 
       const absolute = resolve(rootDir, artifact.path);
-      const escaped = relative(rootDir, absolute).split(/[\\/]/).includes("..");
-      if (escaped) {
-        errors.push(`${artifactLabel}: path escapes the repository`);
-        continue;
-      }
 
       if (disposition === "removed") {
         if (artifact.sha256 === undefined) {
@@ -120,32 +146,35 @@ export function inspectReleaseClearance({
         continue;
       }
 
-      let metadata;
-      try {
-        metadata = lstatSync(absolute);
-      } catch (error) {
-        errors.push(`${artifactLabel}: missing ${artifact.path} (${error.code || error.message})`);
-        continue;
-      }
-      if (!metadata.isFile() || metadata.isSymbolicLink()) {
-        errors.push(`${artifactLabel}: ${artifact.path} must be a regular, non-symlink file`);
-        continue;
-      }
+      const checkedPath = inspectRegularFile(rootDir, artifact.path, artifactLabel, errors);
+      if (checkedPath === null) continue;
 
       if (artifact.sha256 !== undefined) {
-        const actual = createHash("sha256").update(readFileSync(absolute)).digest("hex");
+        const actual = createHash("sha256").update(readFileSync(checkedPath)).digest("hex");
         if (actual !== artifact.sha256) {
           errors.push(`${artifactLabel}: ${artifact.path} hash is ${actual}, expected ${artifact.sha256}`);
         }
       }
     }
 
-    if (gate.evidence !== undefined && (!Array.isArray(gate.evidence) ||
-        gate.evidence.some((reference) => typeof reference !== "string" || !reference.trim()))) {
+    const validEvidenceInventory = gate.evidence === undefined || (Array.isArray(gate.evidence) &&
+      gate.evidence.every((reference) => typeof reference === "string" && reference.trim()));
+    if (!validEvidenceInventory) {
       errors.push(`${label}: evidence must contain only non-empty string references`);
     }
     if (gate.status === "cleared" && (!Array.isArray(gate.evidence) || gate.evidence.length === 0)) {
       errors.push(`${label}: a cleared gate must retain at least one evidence reference`);
+    }
+    if (gate.status === "cleared" && validEvidenceInventory && Array.isArray(gate.evidence)) {
+      for (const [evidenceIndex, reference] of gate.evidence.entries()) {
+        if (isExternalEvidenceReference(reference)) continue;
+        const evidenceLabel = `${label} evidence ${evidenceIndex + 1}`;
+        if (!safeRelativePath(reference)) {
+          errors.push(`${evidenceLabel}: evidence must be an HTTPS URL or normalized repository-relative path`);
+          continue;
+        }
+        inspectRegularFile(rootDir, reference, evidenceLabel, errors);
+      }
     }
   }
 
@@ -155,6 +184,26 @@ export function inspectReleaseClearance({
   }
   for (const id of ids) {
     if (!requiredIds.has(id)) errors.push(`release clearance: unexpected gate ${id}`);
+  }
+
+  const fp16Gate = ledger.gates.find((gate) => gate?.id === "unproven-rife-fp16-conversion");
+  if (fp16Gate?.status === "cleared") {
+    const fp16Artifact = fp16Gate.artifacts?.find(
+      (artifact) => artifact?.path === "model/rife_v4.26_fp16.onnx",
+    );
+    if (!SHA256_PATTERN.test(fp16Artifact?.sha256 ?? "")) {
+      errors.push("release clearance: cleared FP16 gate must retain the artifact SHA-256");
+    } else {
+      let provenance = "";
+      try {
+        provenance = readFileSync(resolve(rootDir, "MODEL_PROVENANCE.md"), "utf8");
+      } catch (error) {
+        errors.push(`release clearance: cannot read MODEL_PROVENANCE.md (${error.code || error.message})`);
+      }
+      if (provenance && !provenance.includes(fp16Artifact.sha256)) {
+        errors.push("release clearance: cleared FP16 artifact hash is absent from MODEL_PROVENANCE.md");
+      }
+    }
   }
 
   return {
@@ -167,15 +216,30 @@ export function inspectReleaseClearance({
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const recordOnly = process.argv.includes("--record-only");
   const result = inspectReleaseClearance();
+  const historyOnly = result.blocked.filter((gate) =>
+    Array.isArray(gate.artifacts) && gate.artifacts.length > 0 &&
+      gate.artifacts.every((artifact) => artifact.disposition === "removed"));
+  const currentBoundary = result.blocked.filter((gate) =>
+    Array.isArray(gate.artifacts) &&
+      gate.artifacts.some((artifact) => artifact.disposition !== "removed"));
   if (result.errors.length) {
     for (const error of result.errors) console.error(error);
     process.exitCode = 1;
   } else if (result.blocked.length && !recordOnly) {
-    console.error(`Public release blocked by ${result.blocked.length} unresolved gate(s):`);
-    for (const gate of result.blocked) console.error(`- ${gate.id}: ${gate.resolution}`);
+    console.error(`Public distribution blocked by ${result.blocked.length} unresolved gate(s):`);
+    if (currentBoundary.length) {
+      console.error(`Current tree or extension package (${currentBoundary.length}):`);
+      for (const gate of currentBoundary) console.error(`- ${gate.id}: ${gate.resolution}`);
+    }
+    if (historyOnly.length) {
+      console.error(`Repository-publication history only (${historyOnly.length}):`);
+      for (const gate of historyOnly) console.error(`- ${gate.id}: ${gate.resolution}`);
+    }
     process.exitCode = 1;
   } else {
-    const suffix = result.blocked.length ? `; ${result.blocked.length} remain blocked` : "";
+    const suffix = result.blocked.length
+      ? `; ${currentBoundary.length} current-boundary and ${historyOnly.length} history-only gate(s) remain blocked`
+      : "";
     console.log(`Release-clearance record: ok (${result.ledger.gates.length} gates${suffix})`);
   }
 }

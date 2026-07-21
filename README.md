@@ -44,7 +44,7 @@ npm run validate:browser
 
 Set `FSRCNNX_BROWSER` to an executable path when no supported browser is found automatically. After loading the extension manually, the GPU validation suite is available at `chrome-extension://<extension-id>/validate.html`; the ID is shown on `chrome://extensions`.
 
-`npm run package` creates a deterministic local archive under `dist/` after running the checks. A successful archive build verifies technical integrity only; `npm run release:check` must also pass before publication and currently reports the unresolved gates in [Model provenance](MODEL_PROVENANCE.md).
+`npm run package:internal` creates a deterministic validation archive under `dist/` after running the technical checks. `npm run package` additionally enforces the public-release gate and currently stops on the unresolved items in [Model provenance](MODEL_PROVENANCE.md).
 
 ## Licensing
 

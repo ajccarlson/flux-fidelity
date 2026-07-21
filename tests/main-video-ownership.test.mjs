@@ -205,8 +205,8 @@ async function loadEngineSelection(deps) {
     const clearNeuralFallback = () => {};
     const activateNeuralFallback = () => { engine = "fsrcnnx"; };
     const policyToDepth = () => 1;
+    const ensureFsrcnnxStages = async () => {};
     const ensureArtStages = async () => {};
-    const ensureHiStages = async () => {};
     const cancelPreferenceRestore = () => { deps.preferenceFences = (deps.preferenceFences || 0) + 1; };
     const saveSitePrefs = () => deps.events.push("save");
     const warn = (...args) => deps.events.push(["warn", ...args]);
@@ -1074,7 +1074,7 @@ test("main source keeps secondary mutable state and neural completion target-sco
     "renderTargetOwner = t",
     "activeModel = t.activeModel",
     "dispRGB = t.dispRGB",
-    "chainedHi = t.chainedHi",
+    "chainedFsrcnnx = t.chainedFsrcnnx",
     "_scaleHeld = t.scaleHeld",
     "t.activeModel = activeModel",
     "t.scaleHeld = _scaleHeld",

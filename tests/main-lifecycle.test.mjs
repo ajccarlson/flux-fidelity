@@ -244,8 +244,8 @@ async function loadAdoptionInternal(deps) {
     });
     const buildCore = () => deps.buildCore();
     const loadModels = async () => deps.loadModels?.();
+    const ensureFsrcnnxStages = async () => deps.ensureFsrcnnxStages?.();
     const ensureArtStages = async () => deps.ensureArtStages?.();
-    const ensureHiStages = async () => deps.ensureHiStages?.();
     const ensureImageUpscaler = async () => deps.ensureImageUpscaler?.() || null;
     const attach = () => {};
     const scheduleMainLoop = () => {};
@@ -332,8 +332,8 @@ async function loadModelLifecycle(deps) {
   const original = await readFile(mainUrl, "utf8");
   const production = section(original, "const srcCache =", "// Chains N ArtCnnModel stages");
   const harness = `
-    const MODEL_FILES = ["model-a", "model-b", "model-c", "model-d"];
-    const FSRCNNX_HIGH_MODEL_NAME = "model-high";
+    const FSRCNNX_STANDARD_MODEL_NAMES = ["model-standard"];
+    const MODEL_FILES = FSRCNNX_STANDARD_MODEL_NAMES;
     let device = globalThis.__mainLifecycleTestDeps.device;
     let models = [], activeModel = null;
     let modelsDevice = null, modelLoadPromise = null, modelLoadDevice = null;
@@ -343,9 +343,9 @@ async function loadModelLifecycle(deps) {
     const chrome = { runtime: { getURL: (path) => path } };
     const log = () => {};
     ${production}
-    export { loadModels, ensureHiStages, ensureArtStages };
+    export { loadModels, ensureFsrcnnxStages, ensureArtStages, reclaimInactiveStageAllocations };
     export function setDevice(next) { device = next; }
-    export function state() { return { models, modelsDevice, hiStages, artStages }; }
+    export function state() { return { models, modelsDevice, artStages }; }
   `;
   globalThis.__mainLifecycleTestDeps = deps;
   return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++moduleRevision}`);
@@ -656,15 +656,15 @@ test("base model loading is single-flight, ordered, and atomically device-scoped
   const first = lifecycle.loadModels();
   const second = lifecycle.loadModels();
   await Promise.resolve();
-  assert.equal(calls.length, 8);
+  assert.equal(calls.length, 2);
   assert.equal(lifecycle.state().models.length, 0);
   releaseFetches.resolve();
   const [a, b] = await Promise.all([first, second]);
 
   assert.equal(a, b);
-  assert.deepEqual(a.map((model) => model.name), ["model-a", "model-b", "model-c", "model-d"]);
+  assert.deepEqual(a.map((model) => model.name), ["model-standard"]);
   assert.ok(a.every((model) => model.device === deviceA));
-  assert.equal(created.length, 4);
+  assert.equal(created.length, 1);
   assert.equal(lifecycle.state().modelsDevice, deviceA);
 });
 
@@ -702,7 +702,7 @@ test("a device replacement discards a stale base-model load before construction"
   assert.equal(lifecycle.state().models.length, 0);
 
   const current = await lifecycle.loadModels();
-  assert.equal(current.length, 4);
+  assert.equal(current.length, 1);
   assert.ok(current.every((model) => model.device === deviceB));
   assert.equal(lifecycle.state().modelsDevice, deviceB);
 });
@@ -728,12 +728,12 @@ test("chained model builders coalesce concurrent requests and capture their devi
     },
   };
   const lifecycle = await loadModelLifecycle(deps);
-  const [highA, highB] = await Promise.all([
-    lifecycle.ensureHiStages(2),
-    lifecycle.ensureHiStages(2),
+  const [standardA, standardB] = await Promise.all([
+    lifecycle.ensureFsrcnnxStages(2),
+    lifecycle.ensureFsrcnnxStages(2),
   ]);
-  assert.equal(highA.length, 2);
-  assert.equal(highB.length, 2);
+  assert.equal(standardA.length, 2);
+  assert.equal(standardB.length, 2);
   assert.equal(fetchCalls.length, 2);
   assert.equal(created.length, 2);
 
@@ -746,6 +746,35 @@ test("chained model builders coalesce concurrent requests and capture their devi
   assert.equal(fetchCalls.length, 4);
   assert.equal(created.length, 5);
   assert.ok(created.every((model) => model.device === device));
+});
+
+test("dropping a cascade to one stage reclaims only the inactive allocation", async (t) => {
+  const previousDeps = globalThis.__mainLifecycleTestDeps;
+  t.after(() => { globalThis.__mainLifecycleTestDeps = previousDeps; });
+  class FakeModel {}
+  const lifecycle = await loadModelLifecycle({
+    device: {},
+    FsrcnnxModel: FakeModel,
+    ArtCnnModel: FakeModel,
+    fetch: async () => ({ ok: true, json: async () => ({}), text: async () => "" }),
+  });
+  const calls = [];
+  const first = {
+    outputTexture: { stage: 0 },
+    resetAllocation() { calls.push(0); this.outputTexture = null; },
+  };
+  const second = {
+    outputTexture: { stage: 1 },
+    resetAllocation() { calls.push(1); this.outputTexture = null; },
+  };
+
+  lifecycle.reclaimInactiveStageAllocations([first, second], first);
+  assert.deepEqual(calls, [1]);
+  assert.ok(first.outputTexture, "the active first-stage allocation must remain stable");
+  assert.equal(second.outputTexture, null);
+
+  lifecycle.reclaimInactiveStageAllocations([first, second], { stages: [first, second] });
+  assert.deepEqual(calls, [1], "a later cascade selection must not reset either active stage");
 });
 
 test("a chained-model source load cannot commit stages after its device changes", async (t) => {
@@ -769,16 +798,16 @@ test("a chained-model source load cannot commit stages after its device changes"
     },
   };
   const lifecycle = await loadModelLifecycle(deps);
-  const staleBuild = lifecycle.ensureHiStages(2);
+  const staleBuild = lifecycle.ensureFsrcnnxStages(2);
   await Promise.resolve();
   lifecycle.setDevice(deviceB);
   releaseSource.resolve();
 
   await assert.rejects(staleBuild, /superseded by device change/);
   assert.equal(created.length, 0);
-  assert.equal(lifecycle.state().hiStages.length, 0);
+  assert.equal(lifecycle.state().models.length, 0);
 
-  const current = await lifecycle.ensureHiStages(2);
+  const current = await lifecycle.ensureFsrcnnxStages(2);
   assert.equal(current.length, 2);
   assert.ok(current.every((model) => model.device === deviceB));
 });

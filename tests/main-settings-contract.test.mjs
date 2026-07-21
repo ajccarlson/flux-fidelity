@@ -26,6 +26,14 @@ async function importHarness(code, deps = {}) {
   return import(`data:text/javascript;base64,${encoded}#${++revision}`);
 }
 
+async function loadFsrcnnxPlanHarness() {
+  return importHarness(`
+    const STANDARD_CASCADE_THRESHOLD = 2.4;
+    ${policyToDepth}
+    export { fsrcnnxPlan, upscalePresentationPlan };
+  `);
+}
+
 async function loadPolicyHarness({ engine = "fsrcnnx", policy = "display" } = {}) {
   const engineSetters = section("export function setEngine", "export function setHoverReveal");
   const policySetter = section("export function setPolicy", "// Restore saved preferences");
@@ -43,8 +51,8 @@ async function loadPolicyHarness({ engine = "fsrcnnx", policy = "display" } = {}
     const reconcileDeviceRecoveryDemand = () => true;
     const clearNeuralFallback = () => {};
     const activateNeuralFallback = () => { engine = "fsrcnnx"; };
+    const ensureFsrcnnxStages = async () => {};
     const ensureArtStages = async () => {};
-    const ensureHiStages = async () => {};
     const cancelPreferenceRestore = () => deps.events.push("fence");
     const saveSitePrefs = () => deps.events.push("save");
     const warn = () => {};
@@ -115,7 +123,12 @@ async function loadRestoreHarness(prefs) {
     let preferenceValidationFailure = null;
     const invalidPreferenceFields = new Set();
     const loadSitePrefs = async () => deps.prefs;
-    const siteSettingsStore = { health: () => ({ state: "ready", error: null }) };
+    const siteSettingsStore = {
+      health: () => ({ state: "ready", error: null }),
+      write: async (value) => { deps.writes.push(value); },
+    };
+    const boundedRuntimeDetail = (error) => error?.message || String(error);
+    const warn = () => {};
     const clearNeuralFallback = () => {};
     const resetScaleSelection = () => {};
     const setMode = async (value) => { deps.calls.push(["mode", value]); return { ok: true }; };
@@ -129,6 +142,7 @@ async function loadRestoreHarness(prefs) {
       recordPreferenceValidation(patch, validateSitePreferencePatch(patch));
       return preferenceValidationFailure;
     }
+    export function migrationWrites() { return [...deps.writes]; }
     export function state() {
       return { engine, neuralModelKey, artVariant, policy: upscalePolicy, chainDepth,
         ssimdsEnabled, sharpenEnabled, sharpenStrength, debandStrength,
@@ -136,7 +150,7 @@ async function loadRestoreHarness(prefs) {
         interpStaticPassthroughPref, interpAutoFallbackPref, interpLadderPref, interpInvertPref,
         preferenceValidationFailure };
     }
-  `, { prefs, calls: [] });
+  `, { prefs, calls: [], writes: [] });
 }
 
 async function loadInterpolationConfigHarness(instance = null, { neuralGate = null } = {}) {
@@ -299,6 +313,8 @@ test("engine and policy setters reject invalid values and normalize incompatible
     policy: "force3", chainDepth: 1,
   });
   assert.deepEqual(settings.state(), before, "an invalid engine must not mutate any state");
+  assert.equal(settings.setEngine("fsrcnnx-hi").ok, false,
+    "the removed high engine is accepted only by stored-preference migration");
 
   assert.deepEqual(settings.setEngine("artcnn"), {
     ok: true, engine: "artcnn", activeEngine: "artcnn", policy: "display", chainDepth: 1,
@@ -319,6 +335,52 @@ test("engine and policy setters reject invalid values and normalize incompatible
   assert.deepEqual(settings.state(), artBefore);
   assert.equal(settings.state().preferenceFences, 2,
     "only accepted persistent engine and policy changes fence external reconciliation");
+
+  const standard = await loadPolicyHarness({ engine: "fsrcnnx", policy: "display" });
+  assert.deepEqual(standard.setPolicy("force3"), {
+    ok: true, policy: "force3", chainDepth: 2,
+  });
+  assert.deepEqual(standard.setPolicy("force4"), {
+    ok: true, policy: "force4", chainDepth: 2,
+  });
+});
+
+test("verified standard x2 planning cascades only for explicit or clearly larger targets", async () => {
+  const { fsrcnnxPlan, upscalePresentationPlan } = await loadFsrcnnxPlanHarness();
+  assert.deepEqual(fsrcnnxPlan("force2", 1), { shouldRun: true, depth: 1 });
+  assert.deepEqual(fsrcnnxPlan("force3", 1), { shouldRun: true, depth: 2 });
+  assert.deepEqual(fsrcnnxPlan("force4", 1), { shouldRun: true, depth: 2 });
+  assert.deepEqual(fsrcnnxPlan("display", 1), { shouldRun: false, depth: 1 });
+  assert.deepEqual(fsrcnnxPlan("display", 2.39), { shouldRun: true, depth: 1 });
+  assert.deepEqual(fsrcnnxPlan("display", 2.4), { shouldRun: true, depth: 2 });
+  assert.deepEqual(fsrcnnxPlan("auto", 1.4), { shouldRun: false, depth: 1 });
+  assert.deepEqual(fsrcnnxPlan("auto", 1.41), { shouldRun: true, depth: 1 });
+  assert.deepEqual(fsrcnnxPlan("auto", 3), { shouldRun: true, depth: 2 });
+
+  const exactThreeWithSSim = upscalePresentationPlan(
+    "force3", 640, 360, 4, 1280, { ssimdsEnabled: true, displaySafe: true },
+  );
+  const exactThreeWithoutSSim = upscalePresentationPlan(
+    "force3", 640, 360, 4, 3840, { ssimdsEnabled: false, displaySafe: true },
+  );
+  assert.deepEqual(exactThreeWithSSim, {
+    modelWidth: 2560, modelHeight: 1440,
+    outputWidth: 1920, outputHeight: 1080,
+    downsample: true, ssimds: true,
+  });
+  assert.deepEqual(exactThreeWithoutSSim, {
+    modelWidth: 2560, modelHeight: 1440,
+    outputWidth: 1920, outputHeight: 1080,
+    downsample: true, ssimds: false,
+  }, "force3 presentation must not depend on the display size or SSimDS toggle");
+
+  assert.deepEqual(upscalePresentationPlan(
+    "force4", 640, 360, 4, 1280, { ssimdsEnabled: false, displaySafe: true },
+  ), {
+    modelWidth: 2560, modelHeight: 1440,
+    outputWidth: 2560, outputHeight: 1440,
+    downsample: false, ssimds: false,
+  });
 });
 
 test("site persistence records requested intent and writes only selected fields", async () => {
@@ -341,6 +403,24 @@ test("site persistence records requested intent and writes only selected fields"
 });
 
 test("preference restore normalizes valid legacy values and rejects corrupt storage fields", async () => {
+  const legacyHigh = await loadRestoreHarness({
+    engine: "fsrcnnx-hi", artVariant: "ArtCNN_C4F32", policy: "force4",
+  });
+  assert.equal((await legacyHigh.restoreSitePrefs()).ok, true);
+  assert.equal(legacyHigh.state().engine, "fsrcnnx");
+  assert.equal(legacyHigh.state().policy, "force4");
+  assert.equal(legacyHigh.state().chainDepth, 2);
+  assert.equal(legacyHigh.state().preferenceValidationFailure, null);
+  assert.deepEqual(legacyHigh.migrationWrites(), [{ engine: "fsrcnnx" }]);
+
+  const legacyForce8 = await loadRestoreHarness({ engine: "fsrcnnx-hi", policy: "force8" });
+  assert.equal((await legacyForce8.restoreSitePrefs()).ok, true);
+  assert.equal(legacyForce8.state().engine, "fsrcnnx");
+  assert.equal(legacyForce8.state().policy, "force4");
+  assert.equal(legacyForce8.state().chainDepth, 2);
+  assert.equal(legacyForce8.state().preferenceValidationFailure, null);
+  assert.deepEqual(legacyForce8.migrationWrites(), [{ engine: "fsrcnnx", policy: "force4" }]);
+
   const valid = await loadRestoreHarness({
     engine: "artcnn", neuralModel: "span", artVariant: "ArtCNN_C4F32_DN", policy: "force8",
     mode: "upscale", images: true, interpolate: true,
@@ -368,7 +448,7 @@ test("preference restore normalizes valid legacy values and rejects corrupt stor
   assert.equal((await corrupt.restoreSitePrefs()).ok, true);
   assert.deepEqual(corrupt.state(), {
     engine: "fsrcnnx", neuralModelKey: "", artVariant: "ArtCNN_C4F32",
-    policy: "display", chainDepth: 1,
+    policy: "force4", chainDepth: 2,
     ssimdsEnabled: true, sharpenEnabled: false, sharpenStrength: 1, debandStrength: 1,
     pendingEngine: "rife_v4.26", pendingResMode: "auto",
     pendingTargetFps: "auto", pendingAvOffsetMs: 0,
@@ -377,13 +457,14 @@ test("preference restore normalizes valid legacy values and rejects corrupt stor
     preferenceValidationFailure: "Invalid stored settings: artVariant, debandStrength, engine, " +
       "images, interpAutoFallback, interpAvOffsetMs, interpEngine, interpInvert, interpLadder, " +
       "interpResMode, interpStaticPassthrough, interpTargetFps, interpolate, mode, neuralModel, " +
-      "policy, sharpenStrength",
+      "sharpenStrength",
   });
+  assert.deepEqual(corrupt.migrationWrites(), [{ policy: "force4" }]);
 
   assert.equal(corrupt.applyValidation({ images: true }),
     "Invalid stored settings: artVariant, debandStrength, engine, interpAutoFallback, " +
       "interpAvOffsetMs, interpEngine, interpInvert, interpLadder, interpResMode, " +
-      "interpStaticPassthrough, interpTargetFps, interpolate, mode, neuralModel, policy, " +
+      "interpStaticPassthrough, interpTargetFps, interpolate, mode, neuralModel, " +
       "sharpenStrength",
       "a valid unrelated field clears only its own validation error");
 });

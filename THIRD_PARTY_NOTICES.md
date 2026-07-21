@@ -25,14 +25,14 @@ Upstream: <https://github.com/Artoriuz/ArtCNN/tree/a20445ca420ed9f0c2a807e2d0c18
 
 ### Practical-RIFE 4.26
 
-The verified FP32 `model/rife_v4.26.onnx` is an ONNX export of the Practical-RIFE 4.26 trained model associated with commit `de9a989bb7b8a71d94f058297e603633aaa43ad6`. That revision explicitly states that content linked under “Trained Model” is under the project's MIT License.
+The verified FP32 `model/rife_v4.26.onnx` is an ONNX export of the Practical-RIFE 4.26 trained model associated with commit `de9a989bb7b8a71d94f058297e603633aaa43ad6`. That revision explicitly states that content linked under “Trained Model” is under the project's MIT License. The bundled `model/rife_v4.26_fp16.onnx` is a deterministically reproduced FP16 derivative of that exact FP32 artifact; its parent and output hashes, pinned conversion environment, structural checks, and numerical validation are recorded in `MODEL_PROVENANCE.md`.
 
 Copyright (c) 2021 hzwer
 
 Upstream: <https://github.com/hzwer/Practical-RIFE/tree/de9a989bb7b8a71d94f058297e603633aaa43ad6><br>
 Verified export archive: <https://github.com/AmusementClub/vs-mlrt/releases/download/external-models/rife_v4.26.7z>
 
-This notice does not cover the unidentified `model/rife.onnx`. The asserted FP16 derivative remains provenance-blocked as described in `MODEL_PROVENANCE.md`.
+This notice does not cover the unidentified `model/rife.onnx`, which remains blocked as described in `MODEL_PROVENANCE.md`.
 
 ### Spandrel 0.4.2
 
@@ -87,4 +87,4 @@ The source module retains the preceding notice verbatim before its local port de
 
 ## Unresolved material
 
-No license is asserted here for the high-quality x2, x3, or x4 FSRCNNX artifacts; the generic `model/rife.onnx`; the unproven FP16 RIFE conversion; or the deband port. They are public-release blockers until the evidence listed in `MODEL_PROVENANCE.md` is supplied or the material is removed. The LGPL and ONNX Runtime applicability reviews also remain blocked in `release-clearance.json`; merely bundling complete upstream texts and notices does not clear them.
+No license is asserted here for the removed high-quality x2, x3, or x4 FSRCNNX artifacts. They are absent from the current tree and extension package, but their bytes remain in private Git history and block publication of that history until it is purged. The generic `model/rife.onnx`, the unreproducible SPAN smoke model, and the deband port remain current-tree and package blockers until the evidence listed in `MODEL_PROVENANCE.md` is supplied or the material is removed. The LGPL and ONNX Runtime applicability reviews also remain blocked in `release-clearance.json`; merely bundling complete upstream texts and notices does not clear them.
