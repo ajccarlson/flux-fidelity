@@ -273,6 +273,72 @@ test("VideoController falls back to rAF and cancels it through the same owner", 
   assert.deepEqual(cancelled, [id]);
 });
 
+test("VideoController binds default Window methods to their native receiver", () => {
+  const ownerWindow = eventTarget();
+  const ownerDocument = eventTarget();
+  const parent = styledParent();
+  const video = videoElement(parent);
+  delete video.requestVideoFrameCallback;
+  delete video.cancelVideoFrameCallback;
+  const animationFrames = new Map();
+  const timers = new Map();
+  const cancelledFrames = [];
+  const clearedTimers = [];
+  let nextId = 0;
+  let styleCalls = 0;
+  const requireWindow = (implementation) => function (...args) {
+    assert.equal(this, ownerWindow, "the native default must receive its owning Window");
+    return implementation(...args);
+  };
+  Object.assign(ownerWindow, {
+    requestAnimationFrame: requireWindow((callback) => {
+      const id = ++nextId;
+      animationFrames.set(id, callback);
+      return id;
+    }),
+    cancelAnimationFrame: requireWindow((id) => {
+      cancelledFrames.push(id);
+      animationFrames.delete(id);
+    }),
+    setTimeout: requireWindow((callback) => {
+      const id = ++nextId;
+      timers.set(id, callback);
+      return id;
+    }),
+    clearTimeout: requireWindow((id) => {
+      clearedTimers.push(id);
+      timers.delete(id);
+    }),
+    getComputedStyle: requireWindow(() => {
+      styleCalls++;
+      return { position: "static" };
+    }),
+  });
+
+  const controller = new VideoController(video, {
+    window: ownerWindow,
+    document: ownerDocument,
+    ResizeObserver: null,
+    MutationObserver: null,
+  }).start();
+  assert.equal(controller.ensurePositionedParent(parent), true);
+  assert.equal(styleCalls, 1);
+  assert.equal(parent.style.position, "relative");
+  assert.equal(controller.scheduleFrame(), true);
+  const frameId = controller._frame.id;
+  ownerDocument.emit("fullscreenchange");
+  const timerId = controller._fullscreenTimer.id;
+  assert.equal(animationFrames.has(frameId), true);
+  assert.equal(timers.has(timerId), true);
+
+  controller.destroy();
+  assert.deepEqual(cancelledFrames, [frameId]);
+  assert.deepEqual(clearedTimers, [timerId]);
+  assert.equal(animationFrames.size, 0);
+  assert.equal(timers.size, 0);
+  assert.equal(parent.style.position, "");
+});
+
 test("VideoSelectionMonitor coalesces SPA mutations and reports identity changes", async () => {
   const ownerWindow = eventTarget();
   const ownerDocument = { ...eventTarget(), documentElement: {} };
@@ -375,6 +441,59 @@ test("VideoSelectionMonitor listens for route and lifecycle changes and periodic
   assert.equal(navigation.listeners.get("currententrychange")?.size || 0, 0);
   assert.equal(navigation.listeners.get("navigate")?.size || 0, 0);
   assert.equal(monitor.stop(), false, "stop should be idempotent");
+});
+
+test("VideoSelectionMonitor binds default Window timers and their clear methods", () => {
+  const ownerWindow = eventTarget();
+  const ownerDocument = { ...eventTarget(), documentElement: {} };
+  const timers = new Map();
+  const intervals = new Map();
+  const clearedTimers = [];
+  const clearedIntervals = [];
+  let nextId = 0;
+  const requireWindow = (implementation) => function (...args) {
+    assert.equal(this, ownerWindow, "the native default must receive its owning Window");
+    return implementation(...args);
+  };
+  Object.assign(ownerWindow, {
+    setTimeout: requireWindow((callback) => {
+      const id = ++nextId;
+      timers.set(id, callback);
+      return id;
+    }),
+    clearTimeout: requireWindow((id) => {
+      clearedTimers.push(id);
+      timers.delete(id);
+    }),
+    setInterval: requireWindow((callback) => {
+      const id = ++nextId;
+      intervals.set(id, callback);
+      return id;
+    }),
+    clearInterval: requireWindow((id) => {
+      clearedIntervals.push(id);
+      intervals.delete(id);
+    }),
+  });
+
+  const monitor = new VideoSelectionMonitor({
+    select: () => null,
+    onSelection: () => {},
+    window: ownerWindow,
+    document: ownerDocument,
+    MutationObserver: FakeObserver,
+    reconcileMs: 2000,
+  }).start();
+  const timerId = monitor._timer.id;
+  const intervalId = monitor._reconcileTimer.id;
+  assert.equal(timers.has(timerId), true);
+  assert.equal(intervals.has(intervalId), true);
+
+  monitor.stop();
+  assert.deepEqual(clearedTimers, [timerId]);
+  assert.deepEqual(clearedIntervals, [intervalId]);
+  assert.equal(timers.size, 0);
+  assert.equal(intervals.size, 0);
 });
 
 test("VideoSelectionMonitor reports selection failures, rolls back only the latest attempt, and recovers", async () => {

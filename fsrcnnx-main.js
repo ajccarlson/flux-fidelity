@@ -4,6 +4,11 @@
 
 import { FsrcnnxModel, selectModel } from "./fsrcnnx-runtime.js";
 import { allocateModelChain, preflightModelChain } from "./fsrcnnx-model-bundle.js";
+import {
+  ARTCNN_MODEL_NAMES,
+  FSRCNNX_HIGH_MODEL_NAME,
+  FSRCNNX_STANDARD_MODEL_NAMES,
+} from "./fsrcnnx-model-catalog.js";
 import { createNeuralEngine, validateNeuralManifest } from "./fsrcnnx-neural.js";
 import { LUMA_EXTRACT_WGSL, RECOMBINE_WGSL } from "./fsrcnnx-color.js";
 import { SsimDownscaler } from "./fsrcnnx-ssimds-runtime.js";
@@ -74,7 +79,7 @@ function modelFitsProcessingBudget(model, width, height, label) {
   }
 }
 
-const MODEL_FILES = ["FSRCNNX_x2_16-0-4-1", "FSRCNNX_x3_16-0-4-1", "FSRCNNX_x4_16-0-4-1"];
+const MODEL_FILES = FSRCNNX_STANDARD_MODEL_NAMES;
 
 let mode = "off";
 let modeSelectionGeneration = 0;
@@ -151,7 +156,7 @@ let debandInterTex = null, debandInterW = 0, debandInterH = 0; // intermediate w
 let dispRGB = null, dispRGBW = 0, dispRGBH = 0; // offscreen display-res for sharpen input
 let models = [], activeModel = null;
 let modelsDevice = null, modelLoadPromise = null, modelLoadDevice = null;
-const ART_FILES = ["ArtCNN_C4F32", "ArtCNN_C4F32_DS", "ArtCNN_C4F32_DN"];
+const ART_FILES = ARTCNN_MODEL_NAMES;
 let engine = "fsrcnnx"; // "fsrcnnx" | "fsrcnnx-hi" | "artcnn" | "neural"
 let engineSelectionGeneration = 0;
 let neuralEng = null, neuralModelKey = "", neuralBusy = false, neuralFail = 0; // v0.49.0 ONNX engine
@@ -252,7 +257,7 @@ function notifyState() {
 const srcCache = { fsrcnnx: {}, artcnn: {} }; // name -> {manifest, wgsl}
 
 // High-quality FSRCNNX (56-16-4-1, 2x-only). Two instances enable chaining to 4x.
-const HI_MODEL = "FSRCNNX_x2_56-16-4-1";
+const HI_MODEL = FSRCNNX_HIGH_MODEL_NAME;
 let hiLoadPending = false, chainedHi = null;
 let hiSourcePromise = null, hiStageBuildPromise = null;
 async function loadHiModelSource() {

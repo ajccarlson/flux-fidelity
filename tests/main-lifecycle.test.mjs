@@ -278,6 +278,7 @@ async function loadModelLifecycle(deps) {
   const production = section(original, "const srcCache =", "// Chains N ArtCnnModel stages");
   const harness = `
     const MODEL_FILES = ["model-a", "model-b", "model-c", "model-d"];
+    const FSRCNNX_HIGH_MODEL_NAME = "model-high";
     let device = globalThis.__mainLifecycleTestDeps.device;
     let models = [], activeModel = null;
     let modelsDevice = null, modelLoadPromise = null, modelLoadDevice = null;
