@@ -1,112 +1,366 @@
-// Thin content-script shim. Content scripts can't be ES modules directly, but
-// they can dynamic-import() a web-accessible module. We load the pipeline module
-// and relay popup messages to its exported API.
+// Thin content-script shim. Content scripts cannot be ES modules directly, so
+// this file loads the web-accessible pipeline module and exposes only the
+// commands used by the extension popup.
 
 let api = null;
-const ready = (async () => {
+let startupPhase = "loading";
+let startupError = null;
+let restorePromise = null;
+let restoreResult = null;
+
+function errorMessage(error) {
+  if (error && typeof error.message === "string" && error.message) return error.message;
+  if (typeof error === "string" && error) return error;
+  return "Unknown extension error";
+}
+
+function restoreOnce() {
+  if (!api) return Promise.reject(new Error("FSRCNNX module is not loaded"));
+  if (!restorePromise) {
+    restorePromise = Promise.resolve()
+      .then(() => api.restoreSitePrefs())
+      .then((result) => {
+        restoreResult = result;
+        return result;
+      });
+  }
+  return restorePromise;
+}
+
+const moduleLoaded = (async () => {
   const url = chrome.runtime.getURL("fsrcnnx-main.js");
   api = await import(url);
-  // restore saved per-site preferences (settings + saved mode)
-  try { await api.restoreSitePrefs(); } catch {}
-  console.log("[FSRCNNX] module imported into content script");
-})().catch((e) => console.error("[FSRCNNX] module import failed:", e));
+  return api;
+})();
 
-chrome.runtime.onMessage.addListener((msg, _sender, send) => {
-  if (msg?.type === "FSRCNNX_SETMODE") {
-    ready.then(() => api.setMode(msg.mode)).then(send);
-    return true;
+const startup = moduleLoaded.then(async () => {
+  // Prerendered and already-hidden documents must enter the renderer's
+  // suspended state before restoring durable preferences. Otherwise restore
+  // can allocate GPU resources for a document that is not yet eligible to own
+  // the tab and may activate without a fresh script injection.
+  if (requestedDocumentState === "hidden") {
+    startEarlyHiddenDrain();
+    if (earlyHiddenDrain) await earlyHiddenDrain;
+    if (lifecycleFailureState === "hidden") throw new Error("initial suspension failed");
   }
-  if (msg?.type === "FSRCNNX_RESTORE") {
-    ready.then(() => api.restoreSitePrefs()).then(send);
-    return true;
+  await restoreOnce();
+  startupPhase = "ready";
+  console.log("[FSRCNNX] module imported into content script");
+  return { ok: true };
+}).catch((error) => {
+  startupPhase = "failed";
+  startupError = error;
+  console.error("[FSRCNNX] module initialization failed:", error);
+  // Resolve with an explicit failure record so a failed import/restore never
+  // becomes an unhandled rejection while no popup is open.
+  return { ok: false, error };
+});
+
+async function loadedApi() {
+  const result = await startup;
+  if (!result.ok || !api) throw result.error || new Error("FSRCNNX module failed to load");
+  return api;
+}
+
+const COMMANDS = Object.freeze({
+  FSRCNNX_SETMODE: (module, msg) => module.setMode(msg.mode),
+  FSRCNNX_RESTORE: () => restoreOnce().then(() => restoreResult),
+  FSRCNNX_SETENGINE: (module, msg) => module.setEngine(msg.engine),
+  FSRCNNX_SETNEURALMODEL: (module, msg) => module.setNeuralModel(msg.model),
+  FSRCNNX_SETARTVARIANT: (module, msg) => module.setArtVariant(msg.variant),
+  FSRCNNX_SETINTERPOLATE: (module, msg) => module.setInterpolate(msg.on),
+  FSRCNNX_SETINTERPRES: (module, msg) => module.setInterpolateRes(msg.mode),
+  FSRCNNX_SETINTERPAVOFFSET: (module, msg) => module.setInterpolateAvOffset(msg.ms),
+  FSRCNNX_SETINTERPMODEL: (module, msg) => module.setInterpolateModel(msg.key),
+  FSRCNNX_SETINTERPTARGETFPS: (module, msg) => module.setInterpolateTargetFps(msg.value),
+  FSRCNNX_SETLADDER: (module, msg) => module.setInterpolateLadder(msg.on),
+  FSRCNNX_SETAUTOFALLBACK: (module, msg) => module.setInterpolateAutoFallback(msg.on),
+  FSRCNNX_SETINVERT: (module, msg) => module.setInterpolateInvert(msg.on),
+  FSRCNNX_SETINTERPDIAG: (module, msg) => module.setInterpolateDiag(msg.on),
+  FSRCNNX_SETIMAGES: (module, msg) => module.setImages(msg.on),
+  FSRCNNX_SETDEBAND: (module, msg) => module.setDeband(msg.on),
+  FSRCNNX_SETDEBANDSTR: (module, msg) => module.setDebandStrength(msg.strength),
+  FSRCNNX_SETHOVERREVEAL: (module, msg) => module.setHoverReveal(msg.on),
+  FSRCNNX_SETALLVIDEOS: (module, msg) => module.setAllVideos(msg.on),
+  FSRCNNX_SETSHARPEN: (module, msg) => module.setSharpen(msg.on),
+  FSRCNNX_SETSHARPENSTR: (module, msg) => module.setSharpenStrength(msg.strength),
+  FSRCNNX_SETSSIMDS: (module, msg) => module.setSSimDS(msg.on),
+  FSRCNNX_SETPOLICY: (module, msg) => module.setPolicy(msg.policy),
+});
+
+function baseStatus(extra = {}) {
+  return {
+    mode: "off",
+    hasVideo: false,
+    webgpu: typeof navigator !== "undefined" && "gpu" in navigator,
+    frameCount: 0,
+    loading: startupPhase === "loading",
+    failed: startupPhase === "failed",
+    ...extra,
+  };
+}
+
+function statusSnapshot() {
+  if (startupPhase === "loading") return baseStatus();
+  if (startupPhase === "failed" || !api) {
+    return baseStatus({
+      loading: false,
+      failed: true,
+      error: "startup-failed",
+      reason: errorMessage(startupError),
+    });
   }
-  if (msg?.type === "FSRCNNX_SETENGINE") {
-    ready.then(() => api.setEngine(msg.engine)).then(send);
-    return true;
+  try {
+    return { ...api.getStatus(), loading: false, failed: false };
+  } catch (error) {
+    return baseStatus({
+      loading: false,
+      failed: true,
+      error: "status-failed",
+      reason: errorMessage(error),
+    });
   }
-  if (msg?.type === "FSRCNNX_SETNEURALMODEL") {
-    ready.then(() => api.setNeuralModel(msg.model)).then(send);
-    return true;
-  }
-  if (msg?.type === "FSRCNNX_SETARTVARIANT") {
-    ready.then(() => api.setArtVariant(msg.variant)).then(send);
-    return true;
-  }
-  if (msg?.type === "FSRCNNX_SETINTERPOLATE") {
-    ready.then(() => api.setInterpolate(msg.on)).then(send);
-    return true;
-  }
-  if (msg?.type === "FSRCNNX_SETINTERPRES") {
-    ready.then(() => api.setInterpolateRes(msg.mode)).then(send);
-    return true;
-  }
-  if (msg?.type === "FSRCNNX_SETINTERPAVOFFSET") {
-    ready.then(() => api.setInterpolateAvOffset(msg.ms)).then(send);
-    return true;
-  }
-  if (msg?.type === "FSRCNNX_SETINTERPMODEL") {
-    ready.then(() => api.setInterpolateModel(msg.key)).then(send);
-    return true;
-  }
-  if (msg?.type === "FSRCNNX_SETINTERPTARGETFPS") {
-    ready.then(() => api.setInterpolateTargetFps(msg.value)).then(send);
-    return true;
-  }
-  if (msg?.type === "FSRCNNX_SETLADDER") {
-    ready.then(() => api.setInterpolateLadder(msg.on)).then(send);
-    return true;
-  }
-  if (msg?.type === "FSRCNNX_SETAUTOFALLBACK") {
-    ready.then(() => api.setInterpolateAutoFallback(msg.on)).then(send);
-    return true;
-  }
-  if (msg?.type === "FSRCNNX_SETINVERT") {
-    ready.then(() => api.setInterpolateInvert(msg.on)).then(send);
-    return true;
-  }
-  if (msg?.type === "FSRCNNX_SETINTERPDIAG") {
-    ready.then(() => api.setInterpolateDiag(msg.on)).then(send);
-    return true;
-  }
-  if (msg?.type === "FSRCNNX_SETIMAGES") {
-    ready.then(() => api.setImages(msg.on)).then(send);
-    return true;
-  }
-  if (msg?.type === "FSRCNNX_SETDEBAND") {
-    ready.then(() => api.setDeband(msg.on)).then(send);
-    return true;
-  }
-  if (msg?.type === "FSRCNNX_SETDEBANDSTR") {
-    ready.then(() => api.setDebandStrength(msg.strength)).then(send);
-    return true;
-  }
-  if (msg?.type === "FSRCNNX_SETHOVERREVEAL") {
-    ready.then(() => api.setHoverReveal(msg.on)).then(send);
-    return true;
-  }
-  if (msg?.type === "FSRCNNX_SETALLVIDEOS") {
-    ready.then(() => api.setAllVideos(msg.on)).then(send);
-    return true;
-  }
-  if (msg?.type === "FSRCNNX_SETSHARPEN") {
-    ready.then(() => api.setSharpen(msg.on)).then(send);
-    return true;
-  }
-  if (msg?.type === "FSRCNNX_SETSHARPENSTR") {
-    ready.then(() => api.setSharpenStrength(msg.strength)).then(send);
-    return true;
-  }
-  if (msg?.type === "FSRCNNX_SETSSIMDS") {
-    ready.then(() => api.setSSimDS(msg.on)).then(send);
-    return true;
-  }
-  if (msg?.type === "FSRCNNX_SETPOLICY") {
-    ready.then(() => api.setPolicy(msg.policy)).then(send);
-    return true;
-  }
-  if (msg?.type === "FSRCNNX_STATUS") {
-    if (!api) { send({ mode: "off", hasVideo: false, webgpu: "gpu" in navigator, frameCount: 0, loading: true }); return false; }
-    send(api.getStatus());
+}
+
+async function dispatch(msg) {
+  if (msg.type === "FSRCNNX_STATUS") return statusSnapshot();
+  const module = await loadedApi();
+  return COMMANDS[msg.type](module, msg);
+}
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  const type = msg && typeof msg === "object" ? msg.type : null;
+  if (type !== "FSRCNNX_STATUS" && !Object.prototype.hasOwnProperty.call(COMMANDS, type)) {
     return false;
   }
+
+  let responded = false;
+  const respondOnce = (response) => {
+    if (responded) return;
+    responded = true;
+    try { sendResponse(response); } catch {}
+  };
+
+  Promise.resolve()
+    .then(() => dispatch(msg))
+    .then(
+      (result) => respondOnce(result),
+      (error) => respondOnce({
+        ok: false,
+        error: startupPhase === "failed" ? "startup-failed" : "command-failed",
+        reason: errorMessage(error),
+      }),
+    );
+  return true;
+});
+
+function sendDocumentState(state, generation = documentStateGeneration) {
+  try {
+    const pending = chrome.runtime.sendMessage({
+      type: "FSRCNNX_DOCUMENT",
+      state,
+      generation,
+    });
+    if (pending && typeof pending.catch === "function") return pending.catch(() => {});
+  } catch {}
+  return Promise.resolve();
+}
+
+function publishCurrentDocumentState() {
+  if (!api || startupPhase !== "ready") return Promise.resolve();
+  try {
+    const status = api.getStatus();
+    const message = status.protected
+      ? { type: "FSRCNNX_PROTECTED", host: status.host }
+      : {
+          type: "FSRCNNX_STATE",
+          mode: status.activeMode || "off",
+          requestedMode: status.mode,
+          host: status.host,
+        };
+    const pending = chrome.runtime.sendMessage(message);
+    if (pending && typeof pending.catch === "function") return pending.catch(() => {});
+  } catch {}
+  return Promise.resolve();
+}
+
+let requestedDocumentState = null;
+let appliedDocumentState = null;
+let documentStateGeneration = 0;
+let lifecycleDrain = null;
+let earlyHiddenDrain = null;
+let activeClaimRetry = null;
+let activeTransitionInFlight = false;
+let lifecycleFailureState = null;
+
+function transitionSucceeded(result) {
+  return !result || result.ok !== false;
+}
+
+function startEarlyHiddenDrain() {
+  if (earlyHiddenDrain || requestedDocumentState !== "hidden" ||
+      (appliedDocumentState === "hidden" && !activeTransitionInFlight)) return;
+  earlyHiddenDrain = moduleLoaded.then(async () => {
+    // The outer check may have observed an active resume in flight while the
+    // last completed state was already hidden. Do not repeat that stale-state
+    // check here: the resume can finish between these two callbacks and must be
+    // fenced by a real suspend.
+    if (requestedDocumentState !== "hidden" || !api) return;
+    let succeeded = true;
+    try {
+      if (typeof api.suspendDocument === "function") {
+        succeeded = transitionSucceeded(await api.suspendDocument());
+      }
+    } catch (error) {
+      succeeded = false;
+      console.error("[FSRCNNX] document hidden transition failed:", error);
+    }
+    if (!succeeded) {
+      lifecycleFailureState = "hidden";
+      return;
+    }
+    // Record what actually completed, even if a pageshow arrived while suspend
+    // was in flight. The normal drain will then apply the newer active request.
+    lifecycleFailureState = null;
+    appliedDocumentState = "hidden";
+  }).catch(() => {}).finally(() => {
+    earlyHiddenDrain = null;
+    startLifecycleDrain();
+  });
+}
+
+async function drainDocumentLifecycle() {
+  while (appliedDocumentState !== requestedDocumentState) {
+    const state = requestedDocumentState;
+    const stateGeneration = documentStateGeneration;
+    // A suspend that started during restoration owns the transition until it
+    // settles, even if pageshow has already requested active again. Letting the
+    // active path overtake it can finish in the wrong (suspended) state.
+    if (earlyHiddenDrain) {
+      await earlyHiddenDrain;
+      continue;
+    }
+    let result;
+    try {
+      // Hidden documents must quiesce as soon as the module exists, even while
+      // preference restoration is still pending. Active/resumed documents wait
+      // for restoration so their first reconciliation uses authoritative intent.
+      result = state === "hidden" ? await moduleLoaded.then(() => ({ ok: true })) : await startup;
+    } catch (error) {
+      result = { ok: false, error };
+    }
+    // The page may have hidden again while import/restore was pending. Avoid
+    // briefly resuming an already-obsolete state; the loop will apply the most
+    // recent request instead.
+    if (state !== requestedDocumentState || stateGeneration !== documentStateGeneration) continue;
+    // earlyHiddenDrain can be created while the startup await above is pending.
+    // Recheck it before invoking resume so suspend/resume stay serialized.
+    if (earlyHiddenDrain) {
+      await earlyHiddenDrain;
+      continue;
+    }
+    if (result.ok && api) {
+      const method = state === "hidden" ? "suspendDocument" : "resumeDocument";
+      let succeeded = true;
+      try {
+        // Cross-document messages can arrive out of order around BFCache. A
+        // second active claim immediately before resume gives the background
+        // worker a post-pagehide ownership signal before renderer state emits.
+        if (state === "active") {
+          activeTransitionInFlight = true;
+          await sendDocumentState("active", stateGeneration);
+        }
+        if (state === requestedDocumentState && stateGeneration === documentStateGeneration &&
+            typeof api[method] === "function") {
+          succeeded = transitionSucceeded(await api[method]());
+        }
+      } catch (error) {
+        succeeded = false;
+        console.error(`[FSRCNNX] document ${state} transition failed:`, error);
+      } finally {
+        if (state === "active") activeTransitionInFlight = false;
+      }
+      if (state !== requestedDocumentState || stateGeneration !== documentStateGeneration) {
+        // A resume that settled after pagehide may have performed work before
+        // observing main's generation fence. Force one final suspension rather
+        // than trusting the previously-applied hidden marker.
+        if (state === "active" && requestedDocumentState === "hidden") {
+          appliedDocumentState = null;
+          startEarlyHiddenDrain();
+        }
+        continue;
+      }
+      if (!succeeded) {
+        lifecycleFailureState = state;
+        return;
+      }
+    }
+    if (state !== requestedDocumentState || stateGeneration !== documentStateGeneration) continue;
+    lifecycleFailureState = null;
+    appliedDocumentState = state;
+  }
+}
+
+function requestDocumentState(state) {
+  if (state !== "active" && state !== "hidden") return;
+  if (requestedDocumentState === state) {
+    // Repeated page lifecycle signals are useful recovery messages: service
+    // workers can restart and a previous send can be rejected during a
+    // navigation transition. Reannounce ownership even when no local state
+    // change is needed, and retry a transition that explicitly failed.
+    void sendDocumentState(state);
+    if (lifecycleFailureState === state) {
+      lifecycleFailureState = null;
+      if (state === "hidden") startEarlyHiddenDrain();
+      startLifecycleDrain();
+    } else if (state === "hidden") {
+      startEarlyHiddenDrain();
+    }
+    return;
+  }
+  requestedDocumentState = state;
+  documentStateGeneration++;
+  lifecycleFailureState = null;
+  if (activeClaimRetry != null) {
+    clearTimeout(activeClaimRetry);
+    activeClaimRetry = null;
+  }
+  // Announce immediately. In particular, an active document must own the tab
+  // before restore/resume can publish renderer state, and a hidden document must
+  // stop owning its badge before any late async work completes.
+  void sendDocumentState(state);
+  if (state === "active") {
+    // One bounded retry closes the remaining cross-context delivery window. It
+    // republishes the current effective state only after the ownership message
+    // has settled, so a recovered claim does not leave a falsely blank badge.
+    activeClaimRetry = setTimeout(async () => {
+      activeClaimRetry = null;
+      if (requestedDocumentState !== "active") return;
+      await sendDocumentState("active");
+      if (requestedDocumentState === "active") await publishCurrentDocumentState();
+    }, 250);
+  }
+  if (state === "hidden") startEarlyHiddenDrain();
+  startLifecycleDrain();
+}
+
+function startLifecycleDrain() {
+  if (requestedDocumentState === "hidden" && earlyHiddenDrain) return;
+  if (lifecycleFailureState === requestedDocumentState) return;
+  if (lifecycleDrain || appliedDocumentState === requestedDocumentState) return;
+  lifecycleDrain = drainDocumentLifecycle()
+    .catch((error) => console.error("[FSRCNNX] document lifecycle failed:", error))
+    .finally(() => {
+      lifecycleDrain = null;
+      startLifecycleDrain();
+    });
+}
+
+requestDocumentState(document.prerendering === true ? "hidden" : "active");
+window.addEventListener("pagehide", () => requestDocumentState("hidden"));
+document.addEventListener("freeze", () => requestDocumentState("hidden"));
+window.addEventListener("pageshow", () => requestDocumentState("active"));
+document.addEventListener("resume", () => requestDocumentState("active"));
+document.addEventListener("prerenderingchange", () => {
+  if (document.prerendering !== true) requestDocumentState("active");
 });

@@ -151,6 +151,23 @@ function installWebGpuGlobals(t) {
   });
 }
 
+test("GPU source flush forgets the retained pair without reallocating textures", async (t) => {
+  installWebGpuGlobals(t);
+  const device = makeDevice("flush");
+  const gpu = new GpuInterp({ log() {}, warn() {} });
+  assert.equal(await gpu.init(device, { Tensor: {} }), true);
+  gpu._ensureFrameSize(64, 48, 8, 7);
+  const before = [gpu.prevTex, gpu.curTex];
+  gpu._frames = 3;
+  assert.equal(gpu.hasPrev(), true);
+
+  gpu.resetFrames();
+
+  assert.equal(gpu.hasPrev(), false);
+  assert.deepEqual([gpu.prevTex, gpu.curTex], before);
+  await gpu.destroy();
+});
+
 test("RIFE GPU interpolation survives capture resize while inference is pending", async (t) => {
   installWebGpuGlobals(t);
 

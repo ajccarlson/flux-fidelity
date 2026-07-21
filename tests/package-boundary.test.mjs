@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -27,9 +35,14 @@ function walk(root, prefix = "") {
   return files.sort();
 }
 
-test("the package boundary is an exact, sorted 55-file allowlist", () => {
+function manifestGlob(pattern) {
+  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replaceAll("*", "[^/]*");
+  return new RegExp(`^${escaped}$`);
+}
+
+test("the package boundary is an exact, sorted 56-file allowlist", () => {
   assert.equal(PACKAGE_FILES.length, EXPECTED_PACKAGE_FILE_COUNT);
-  assert.equal(EXPECTED_PACKAGE_FILE_COUNT, 55);
+  assert.equal(EXPECTED_PACKAGE_FILE_COUNT, 56);
   assert.equal(new Set(PACKAGE_FILES).size, PACKAGE_FILES.length);
   assert.deepEqual(PACKAGE_FILES, [...PACKAGE_FILES].sort());
   assert.equal(PACKAGE_FILES.includes("fsrcnnx-development-only.js"), false);
@@ -43,7 +56,7 @@ test("package creation never discovers an extra runtime-looking local file", () 
 
     const result = buildPackage({ rootDir: fixture, distDir: join(fixture, "output") });
 
-    assert.equal(result.fileCount, 55);
+    assert.equal(result.fileCount, 56);
     assert.deepEqual(walk(result.stage), PACKAGE_FILES);
     assert.equal(existsSync(join(result.stage, "fsrcnnx-development-only.js")), false);
   } finally {
@@ -63,6 +76,125 @@ test("every runtime-selected FSRCNNX, ArtCNN, and RIFE asset is required exactly
       errors.includes(`runtime model assets: missing ${omitted} from package`),
       `${omitted} omission was not rejected:\n${errors.join("\n")}`,
     );
+  }
+});
+
+test("internal validation files and off-state icons stay packaged but private", () => {
+  const manifest = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8"));
+  const exposedPatterns = (manifest.web_accessible_resources || [])
+    .flatMap((group) => group.resources || []);
+  const internalFiles = [
+    "icons/icon-off-16.png",
+    "icons/icon-off-32.png",
+    "icons/icon-off-48.png",
+    "icons/icon-off-128.png",
+    "validate.html",
+    "validate.js",
+  ];
+
+  for (const file of internalFiles) {
+    assert.equal(PACKAGE_FILES.includes(file), true, `${file} must remain in the package`);
+    assert.equal(
+      exposedPatterns.some((pattern) => manifestGlob(pattern).test(file)),
+      false,
+      `${file} must not be web-accessible`,
+    );
+  }
+  assert.deepEqual(validatePackage(), []);
+});
+
+test("every transitive content-script import and runtime URL must be web-accessible", () => {
+  const fixture = mkdtempSync(join(tmpdir(), "fsrcnnx-content-closure-"));
+  try {
+    writeFixture(fixture, "package.json", JSON.stringify({ version: "1.0.0" }));
+    writeFixture(
+      fixture,
+      "content.js",
+      [
+        'import "./static.js";',
+        'void import("./dynamic.js");',
+        'chrome.runtime.getURL("asset.bin");',
+      ].join("\n"),
+    );
+    writeFixture(fixture, "static.js", 'export { marker } from "./nested/transitive.js";');
+    writeFixture(fixture, "dynamic.js", 'export const pending = import("./nested/dynamic-transitive.js");');
+    writeFixture(
+      fixture,
+      "nested/transitive.js",
+      'chrome.runtime.getURL("transitive.bin");\nexport const marker = true;',
+    );
+    writeFixture(
+      fixture,
+      "nested/dynamic-transitive.js",
+      'chrome.runtime.getURL("runtime/" + selected);',
+    );
+    writeFixture(fixture, "background.js", "void 0;");
+    writeFixture(fixture, "popup.html", "<!doctype html><title>Fixture</title>");
+    for (const file of ["asset.bin", "transitive.bin", "runtime/a.bin", "runtime/b.bin"]) {
+      writeFixture(fixture, file, "fixture asset");
+    }
+    for (const file of REQUIRED_RUNTIME_MODEL_FILES) writeFixture(fixture, file, "fixture model");
+
+    const exposed = [
+      "asset.bin",
+      "dynamic.js",
+      "nested/dynamic-transitive.js",
+      "nested/transitive.js",
+      "runtime/*",
+      "static.js",
+      "transitive.bin",
+    ];
+    const manifestFor = (resources) => ({
+      manifest_version: 3,
+      version: "1.0.0",
+      action: { default_popup: "popup.html" },
+      background: { service_worker: "background.js" },
+      content_scripts: [{ matches: ["<all_urls>"], js: ["content.js"] }],
+      web_accessible_resources: [{ resources, matches: ["<all_urls>"] }],
+    });
+    const packageFiles = [
+      ...REQUIRED_RUNTIME_MODEL_FILES,
+      "asset.bin",
+      "background.js",
+      "content.js",
+      "dynamic.js",
+      "manifest.json",
+      "nested/dynamic-transitive.js",
+      "nested/transitive.js",
+      "popup.html",
+      "runtime/a.bin",
+      "runtime/b.bin",
+      "static.js",
+      "transitive.bin",
+    ].sort();
+
+    writeFixture(fixture, "manifest.json", JSON.stringify(manifestFor(exposed)));
+    assert.deepEqual(validatePackage({ rootDir: fixture, packageFiles }), []);
+
+    const omissions = new Map([
+      ["static.js", "content.js: content-script dependency static.js"],
+      ["dynamic.js", "content.js: content-script dependency dynamic.js"],
+      ["nested/transitive.js", "static.js: content-script dependency nested/transitive.js"],
+      ["nested/dynamic-transitive.js", "dynamic.js: content-script dependency nested/dynamic-transitive.js"],
+      ["asset.bin", "content.js: content-script dependency asset.bin"],
+      ["transitive.bin", "nested/transitive.js: content-script dependency transitive.bin"],
+      ["runtime/*", "nested/dynamic-transitive.js: content-script dependency runtime/a.bin"],
+    ]);
+    for (const [omitted, expectedPrefix] of omissions) {
+      writeFixture(
+        fixture,
+        "manifest.json",
+        JSON.stringify(manifestFor(exposed.filter((resource) => resource !== omitted))),
+      );
+      const errors = validatePackage({ rootDir: fixture, packageFiles });
+      assert.ok(
+        errors.some((error) => error.startsWith(expectedPrefix) &&
+          error.endsWith("is not declared in web_accessible_resources")),
+        `${omitted} omission was not rejected:\n${errors.join("\n")}`,
+      );
+    }
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
   }
 });
 

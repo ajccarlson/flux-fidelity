@@ -10,6 +10,7 @@ import { SsimDownscaler } from "./fsrcnnx-ssimds-runtime.js";
 import { buildSharpenShader } from "./fsrcnnx-sharpen.js";
 import { buildDebandShader } from "./fsrcnnx-deband.js";
 import { ArtCnnModel } from "./fsrcnnx-artcnn-runtime.js";
+import { VideoController, VideoSelectionMonitor } from "./fsrcnnx-video-controller.js";
 
 const TAG = "[FSRCNNX]";
 const log = (...a) => console.log(TAG, ...a);
@@ -77,6 +78,7 @@ const MODEL_FILES = ["FSRCNNX_x2_16-0-4-1", "FSRCNNX_x3_16-0-4-1", "FSRCNNX_x4_1
 
 let mode = "off";
 let modeSelectionGeneration = 0;
+let preferenceRestoreGeneration = 0;
 let device = null, deviceOwnedByMain = false;
 const watchedDeviceLosses = new WeakSet();
 const lostDevices = new WeakSet();
@@ -84,6 +86,8 @@ let deviceRecoveryGeneration = 0;
 let deviceRecoveryPromise = null;
 let deviceRecoveryTimer = null;
 let context = null, format = null, canvas = null, video = null, sampler = null;
+let presentedCanvasVideo = null, presentedSourceW = 0, presentedSourceH = 0;
+let primaryPresentationGeneration = 0;
 let extractPipeline = null, recombinePipeline = null, passthroughPipeline = null;
 // INVERTED CHAIN (#4): tex-ingest twins of the ext-consuming pipelines, plus state.
 let extractPipelineTex = null, recombinePipelineTex = null, recombine16PipelineTex = null;
@@ -104,15 +108,24 @@ export function chainTap(on) {
 }
 export function chainInfo() {
   // available only when the upscaler is actively rendering the primary video
-  if (!device || mode === "off" || !chainTapTex) return null;
+  if (!device || mode === "off" || !primaryController?.active || !chainTapTex) return null;
   return { device, tex: chainTapTex, w: chainTapTex.width, h: chainTapTex.height, frame: chainTapFrame, format };
 }
-export function chainAvailable() { return !!(device && mode !== "off"); }
+export function chainAvailable() { return !!(device && mode !== "off" && primaryController?.active); }
+export function chainCanInvert() { return !!(device && mode === "upscale" && primaryController?.active); }
+export function chainSourceVideo() { return primaryController?.active ? primaryController.video : video; }
 export function chainDevice() { return device || null; }
 export function chainTargetDims() {
-  // upscaler OUTPUT dims (canvas) — knowable BEFORE the tap produces a frame, so
-  // the RIFE session can be dim-pinned at creation (graph capture requirement).
-  return (canvas && canvas.width && canvas.height) ? { w: canvas.width, h: canvas.height } : null;
+  // Only publish dimensions from a successfully submitted primary frame for
+  // this exact source geometry. A reused video element can change streams and
+  // dimensions without changing identity; returning its previous canvas size
+  // would permanently pin a new RIFE graph to stale output geometry.
+  if (!canvas || canvas.style.display === "none" ||
+      !primaryController?.active || primaryController.video !== video ||
+      presentedCanvasVideo !== video ||
+      presentedSourceW !== video?.videoWidth || presentedSourceH !== video?.videoHeight ||
+      !canvas.width || !canvas.height) return null;
+  return { w: canvas.width, h: canvas.height };
 }
 let lumaTexture = null, lumaW = 0, lumaH = 0;
 let hiRGB = null, hiRGBW = 0, hiRGBH = 0;
@@ -154,7 +167,16 @@ let _neuralList = []; // manifest summary for the popup, loaded eagerly
 let artVariant = "ArtCNN_C4F32";
 let chainDepth = 1; // 1 = single 2x, 2 = chained 4x, 3 = chained 8x (2x-only engines)
 let artLoadPending = false, artDiagLogged = false;
-let rvfc = null, rvfcKind = null, frameCount = 0, lastLog = 0;
+let primaryController = null, layoutController = null, videoMonitor = null;
+let videoSelectionGeneration = 0, videoSwitchTail = Promise.resolve();
+let videoSelectionPendingGeneration = 0;
+let videoSelectionPendingRequest = null;
+let selectedVideoSource = null;
+let interpolationTerminalQuarantine = null;
+let interpolationStartFailureStreak = null;
+let pageSuspended = false;
+let renderTargetOwner = null;
+let frameCount = 0, lastLog = 0;
 let upscalePolicy = "display"; // default: upscale whenever source < display (good for 4K)
 let protectedSource = false; // last setMode/recheck found DRM
 let protectedReason = null;  // "drm" | "tainted" | null
@@ -167,43 +189,64 @@ let hoverHidden = false;      // current hover-reveal state for the primary over
 // ---- per-site persistence (chrome.storage.local) -------------------------
 const SITE_KEY = "fsrcnnx_sites"; // { "<hostname>": { mode, engine, artVariant, policy, ssimds, sharpen, sharpenStrength } }
 function siteHost() { try { return location.hostname || "_"; } catch { return "_"; } }
+function siteStorageKey(host = siteHost()) { return `fsrcnnx_site:${encodeURIComponent(host)}`; }
 
 async function loadSitePrefs() {
   try {
-    const all = (await chrome.storage.local.get(SITE_KEY))[SITE_KEY] || {};
-    return all[siteHost()] || null;
+    const host = siteHost();
+    const key = siteStorageKey(host);
+    const stored = await chrome.storage.local.get([key, SITE_KEY]);
+    // Read the old shared map for migration compatibility. New writes use one
+    // key per host, so simultaneous saves from different tabs cannot clobber it.
+    return stored[key] || stored[SITE_KEY]?.[host] || null;
   } catch { return null; }
 }
 async function saveSitePrefs() {
+  const host = siteHost();
+  const key = siteStorageKey(host);
+  const value = {
+    mode, engine, artVariant, policy: upscalePolicy,
+    ssimds: ssimdsEnabled, sharpen: sharpenEnabled, sharpenStrength,
+    hoverReveal: optHoverReveal, allVideos: optAllVideos,
+    deband: debandEnabled, debandStrength,
+    images: optImages,
+    interpolate: optInterpolate,
+    interpEngine: pendingEngine || null,
+    neuralModel: neuralModelKey || null,
+    interpTargetFps: pendingTargetFps != null ? pendingTargetFps : null,
+    interpAutoFallback: interpAutoFallbackPref,
+    interpLadder: interpLadderPref,
+    interpInvert: interpInvertPref,
+  };
   try {
-    const all = (await chrome.storage.local.get(SITE_KEY))[SITE_KEY] || {};
-    all[siteHost()] = {
-      mode, engine, artVariant, policy: upscalePolicy,
-      ssimds: ssimdsEnabled, sharpen: sharpenEnabled, sharpenStrength,
-      hoverReveal: optHoverReveal, allVideos: optAllVideos,
-      deband: debandEnabled, debandStrength,
-      images: optImages,
-      interpolate: optInterpolate,
-      interpEngine: pendingEngine || null,
-      neuralModel: neuralModelKey || null,
-      interpTargetFps: pendingTargetFps != null ? pendingTargetFps : null,
-      interpAutoFallback: interpAutoFallbackPref,
-      interpLadder: interpLadderPref,
-      interpInvert: interpInvertPref,
-    };
-    await chrome.storage.local.set({ [SITE_KEY]: all });
+    await chrome.storage.local.set({ [key]: value });
+  } catch {}
+}
+
+function sendRuntimeMessage(message) {
+  try {
+    const pending = chrome.runtime.sendMessage(message);
+    if (pending && typeof pending.catch === "function") pending.catch(() => {});
   } catch {}
 }
 
 function notifyProtected() {
   protectedSource = true;
-  try { chrome.runtime.sendMessage({ type: "FSRCNNX_PROTECTED", host: siteHost() }); } catch {}
+  sendRuntimeMessage({ type: "FSRCNNX_PROTECTED", host: siteHost() });
 }
 
 // Tell the service worker the current mode so it can update the toolbar icon
 // (color when upscaling, monochrome otherwise) and badge.
 function notifyState() {
-  try { chrome.runtime.sendMessage({ type: "FSRCNNX_STATE", mode, host: siteHost() }); } catch {}
+  const activeMode = mode !== "off" && primaryController?.active && primaryController.video === video
+    ? mode
+    : "off";
+  sendRuntimeMessage({
+    type: "FSRCNNX_STATE",
+    mode: activeMode,
+    requestedMode: mode,
+    host: siteHost(),
+  });
 }
 
 const srcCache = { fsrcnnx: {}, artcnn: {} }; // name -> {manifest, wgsl}
@@ -470,30 +513,170 @@ function findVideo() {
   const vids = deepQueryVideos()
     .filter((v) => v.videoWidth > 0 && v.videoHeight > 0); // decoded, has dimensions
   if (!vids.length) return null;
-  // Prefer a known player container if present (YouTube), else the largest video
-  // that is actually on-screen and not tiny (skip hidden/background/ad pixels).
-  const inYt = vids.find((v) => v.closest("#movie_player"));
-  if (inYt) return inYt;
+  // Rank only visible candidates. A known player container is a tie-breaker, not
+  // an unconditional choice: sites may retain a hidden decoded video after SPA
+  // navigation while a new visible player is already active.
   const scored = vids
     .map((v) => {
       const r = v.getBoundingClientRect();
       const visible = r.width > 0 && r.height > 0 &&
         r.bottom > 0 && r.right > 0 &&
-        r.top < (window.innerHeight || 1e9) && r.left < (window.innerWidth || 1e9);
+        r.top < (window.innerHeight || 1e9) && r.left < (window.innerWidth || 1e9) &&
+        videoPageVisible(v);
       const area = r.width * r.height;
       const playing = !v.paused && !v.ended && v.readyState >= 2;
-      return { v, area, visible, playing };
+      const preferredPlayer = !!v.closest?.("#movie_player");
+      return { v, area, visible, playing, preferredPlayer };
     })
     .filter((s) => s.visible && s.area > 64 * 64) // ignore tiny/offscreen videos
-    .sort((a, b) => (b.playing - a.playing) || (b.area - a.area)); // playing first, then biggest
+    .sort((a, b) => (b.playing - a.playing) ||
+      (b.preferredPlayer - a.preferredPlayer) || (b.area - a.area));
   return scored.length ? scored[0].v : null;
+}
+
+function videoPageVisible(target) {
+  if (!target) return false;
+  try {
+    if (typeof target.checkVisibility === "function" &&
+        !target.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return false;
+  } catch {}
+  try {
+    const style = getComputedStyle(target);
+    if (style.display === "none" || style.visibility === "hidden" ||
+        style.visibility === "collapse" || Number(style.opacity) === 0) return false;
+  } catch {}
+  return true;
+}
+
+function captureVideoSource(target) {
+  if (!target) return null;
+  let currentSrc = "", declaredSrc = "", srcObject = null;
+  try { currentSrc = target.currentSrc || ""; } catch {}
+  try { declaredSrc = target.src || target.getAttribute?.("src") || ""; } catch {}
+  try { srcObject = target.srcObject || null; } catch {}
+  return {
+    currentSrc,
+    declaredSrc,
+    srcObject,
+    width: Number(target.videoWidth) || 0,
+    height: Number(target.videoHeight) || 0,
+  };
+}
+
+function sameVideoSource(left, right) {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return left.currentSrc === right.currentSrc &&
+    left.declaredSrc === right.declaredSrc &&
+    left.srcObject === right.srcObject &&
+    left.width === right.width && left.height === right.height;
+}
+
+function interpolationRuntimeConfigKey() {
+  return JSON.stringify([
+    interpolationConfigGeneration,
+    pendingEngine || null,
+    pendingTargetFps ?? null,
+    !!interpAutoFallbackPref,
+    !!interpLadderPref,
+    !!interpInvertPref,
+  ]);
+}
+
+function interpolationQuarantineMatches(candidate, source = captureVideoSource(candidate)) {
+  const quarantine = interpolationTerminalQuarantine;
+  return !!quarantine && quarantine.video === candidate &&
+    quarantine.configKey === interpolationRuntimeConfigKey() &&
+    sameVideoSource(quarantine.source, source);
+}
+
+function clearInterpolationTerminalQuarantine() {
+  const hadQuarantine = !!interpolationTerminalQuarantine;
+  interpolationTerminalQuarantine = null;
+  interpolationStartFailureStreak = null;
+  return hadQuarantine;
+}
+
+function reviseInterpolationConfiguration() {
+  const retry = clearInterpolationTerminalQuarantine();
+  return { generation: ++interpolationConfigGeneration, retry };
+}
+
+function handleInterpolationTerminalFailure(failure = {}) {
+  const failedVideo = failure.video;
+  if (!optInterpolate || !failedVideo || failedVideo !== video) return false;
+  const source = captureVideoSource(failedVideo);
+  if (!source) return false;
+  const reportedSource = failure.source;
+  if (reportedSource && (reportedSource.video && reportedSource.video !== failedVideo ||
+      (reportedSource.currentSrc || "") !== source.currentSrc ||
+      (reportedSource.src || "") !== source.declaredSrc ||
+      (reportedSource.srcObject || null) !== source.srcObject)) return false;
+  interpolationTerminalQuarantine = {
+    video: failedVideo,
+    source,
+    configKey: interpolationRuntimeConfigKey(),
+    stage: failure.stage || "runtime",
+    detail: failure.detail || failure.error?.message || "terminal failure",
+  };
+  log(`interpolation quarantined for current source/config (${interpolationTerminalQuarantine.stage})`);
+  notifyState();
+  // Interpolator reports before its queued stop runs. Publish once more after that
+  // cleanup so extension state never remains stuck at running=true.
+  Promise.resolve().then(() => {
+    if (interpolationQuarantineMatches(failedVideo)) notifyState();
+  });
+  return true;
+}
+
+function recordInterpolationStartFailure(failedVideo, source, result) {
+  const reason = String(result?.reason || "unknown");
+  if (["cancelled", "superseded", "no video", "source-active"].includes(reason) ||
+      !optInterpolate || failedVideo !== video ||
+      !sameVideoSource(source, captureVideoSource(failedVideo))) return false;
+  const configKey = interpolationRuntimeConfigKey();
+  const immediate = [
+    "unsupported",
+    "source-failed",
+    "no-rvfc",
+    "pipeline-unavailable",
+    "rvfc-schedule-failed",
+  ].includes(reason);
+  const previous = interpolationStartFailureStreak;
+  const count = previous?.video === failedVideo && previous.configKey === configKey &&
+      sameVideoSource(previous.source, source) && previous.reason === reason
+    ? previous.count + 1
+    : 1;
+  interpolationStartFailureStreak = { video: failedVideo, source, configKey, reason, count };
+  if (!immediate && count < 2) return false;
+  interpolationTerminalQuarantine = {
+    video: failedVideo,
+    source,
+    configKey,
+    stage: "startup",
+    detail: reason,
+  };
+  interpolationStartFailureStreak = null;
+  log(`interpolation quarantined for current source/config (startup: ${reason})`);
+  notifyState();
+  return true;
+}
+
+function requestInterpolationRetry(context = "configuration change") {
+  if (pageSuspended || !optInterpolate || engine === "neural") return Promise.resolve(false);
+  const candidate = findVideo();
+  if (!candidate) return Promise.resolve(false);
+  return Promise.resolve(queueVideoSelection(candidate, { force: true })).catch((error) => {
+    warn(`interpolation retry after ${context} failed:`, error.message);
+    return false;
+  });
 }
 
 function ensureCanvas() {
   if (canvas) return;
   canvas = document.createElement("canvas");
   canvas.id = "fsrcnnx-overlay";
-  Object.assign(canvas.style, { position: "absolute", top: "0", left: "0", pointerEvents: "none", zIndex: "10", transition: "opacity 0.18s ease" });
+  Object.assign(canvas.style, { position: "absolute", top: "0", left: "0", display: "none", pointerEvents: "none", zIndex: "10", transition: "opacity 0.18s ease" });
 }
 
 // True if the node lives inside a shadow tree (its root node is a ShadowRoot).
@@ -502,41 +685,76 @@ function inShadowDom(node) {
   return !!root && root instanceof ShadowRoot;
 }
 
-function positionCanvas(outW, outH) {
-  if (!canvas || !video) return false;
+function positionVideoCanvas(targetVideo, targetCanvas, owner, outW, outH) {
+  if (!targetCanvas || !targetVideo) return false;
   if (outW && outH && !textureSizeAllowed(outW, outH, "canvas output")) {
-    canvas.style.display = "none"; // expose the original video instead of a stale frame
+    targetCanvas.style.display = "none"; // expose the original video instead of a stale frame
     return false;
   }
-  const v = video.getBoundingClientRect();
-  // For videos inside a shadow root (e.g. Reddit's <shreddit-player>), don't try
-  // to inject the canvas into the component's shadow tree — it may re-render and
-  // remove it, and its styles can clash. Instead overlay at the document body
-  // using fixed positioning in viewport coordinates.
-  if (inShadowDom(video)) {
-    if (canvas.parentElement !== document.body) document.body.appendChild(canvas);
-    Object.assign(canvas.style, { position: "fixed", zIndex: "2147483646" });
-    canvas.style.left = `${v.left}px`;
-    canvas.style.top = `${v.top}px`;
-    canvas.style.width = `${v.width}px`;
-    canvas.style.height = `${v.height}px`;
+  const v = targetVideo.getBoundingClientRect();
+  // Shadow-tree videos normally use a fixed body overlay. During fullscreen the
+  // body is outside the browser's top layer, so mount in the video's open shadow
+  // root for that interval; the layout owner reattaches it after transitions.
+  if (inShadowDom(targetVideo)) {
+    const root = targetVideo.getRootNode?.();
+    const innerFullscreen = root?.fullscreenElement || null;
+    if (innerFullscreen === targetVideo ||
+        (innerFullscreen && typeof innerFullscreen.contains === "function" &&
+          !innerFullscreen.contains(targetVideo))) {
+      targetCanvas.style.display = "none";
+      return false;
+    }
+    const mount = innerFullscreen || (document.fullscreenElement && root instanceof ShadowRoot
+      ? root
+      : document.body);
+    if (targetCanvas.parentNode !== mount) mount.appendChild(targetCanvas);
+    Object.assign(targetCanvas.style, { position: "fixed", zIndex: "2147483646" });
+    targetCanvas.style.left = `${v.left}px`;
+    targetCanvas.style.top = `${v.top}px`;
+    targetCanvas.style.width = `${v.width}px`;
+    targetCanvas.style.height = `${v.height}px`;
   } else {
-    const parent = video.parentElement;
+    const fullscreen = document.fullscreenElement;
+    if (fullscreen && (fullscreen === targetVideo ||
+        (typeof fullscreen.contains === "function" && !fullscreen.contains(targetVideo)))) {
+      targetCanvas.style.display = "none";
+      return false;
+    }
+    const parent = targetVideo.parentElement;
     if (!parent) return false;
-    if (getComputedStyle(parent).position === "static") parent.style.position = "relative";
-    if (canvas.parentElement !== parent) parent.appendChild(canvas);
-    canvas.style.position = "absolute";
+    owner?.ensurePositionedParent?.(parent);
+    if (targetCanvas.parentElement !== parent) parent.appendChild(targetCanvas);
+    targetCanvas.style.position = "absolute";
     const p = parent.getBoundingClientRect();
-    canvas.style.left = `${v.left - p.left}px`;
-    canvas.style.top = `${v.top - p.top}px`;
-    canvas.style.width = `${v.width}px`;
-    canvas.style.height = `${v.height}px`;
+    targetCanvas.style.left = `${v.left - p.left}px`;
+    targetCanvas.style.top = `${v.top - p.top}px`;
+    targetCanvas.style.width = `${v.width}px`;
+    targetCanvas.style.height = `${v.height}px`;
   }
-  if (outW && outH && (canvas.width !== outW || canvas.height !== outH)) {
-    canvas.width = outW; canvas.height = outH;
+  if (outW && outH && (targetCanvas.width !== outW || targetCanvas.height !== outH)) {
+    targetCanvas.width = outW; targetCanvas.height = outH;
   }
-  if (mode !== "off") canvas.style.display = "block";
   return true;
+}
+
+function showPresentedCanvas() {
+  if (!canvas) return;
+  if (!videoPageVisible(video)) {
+    canvas.style.display = "none";
+    videoMonitor?.request?.();
+    return false;
+  }
+  canvas.style.display = "block";
+  if (!renderTargetOwner && primaryController?.active && primaryController.video === video) {
+    presentedCanvasVideo = video;
+    presentedSourceW = video.videoWidth;
+    presentedSourceH = video.videoHeight;
+    primaryPresentationGeneration++;
+  }
+}
+
+function positionCanvas(outW, outH) {
+  return positionVideoCanvas(video, canvas, layoutController, outW, outH);
 }
 
 let webGpuInitPromise = null;
@@ -615,11 +833,14 @@ function cancelDeviceRecovery() {
 function handleCurrentDeviceLoss(lostDevice, info) {
   if (device !== lostDevice) return;
   adoptionGeneration++;
+  videoSelectionGeneration++;
   const generation = ++deviceRecoveryGeneration;
   warn(`device lost: ${info?.message || info?.reason || "unknown reason"}`);
   device = null;
   deviceOwnedByMain = false;
   adopting = false;
+  cancelMainLoop();
+  try { interpolator?.stop?.(); } catch {}
   invalidateMainDeviceResources();
   if (canvas) {
     canvas.style.display = "none";
@@ -632,7 +853,7 @@ function handleCurrentDeviceLoss(lostDevice, info) {
 }
 
 function scheduleDeviceRecovery(generation, lostDevice, attempt) {
-  if (generation !== deviceRecoveryGeneration || (mode === "off" && !optImages)) return;
+  if (pageSuspended || generation !== deviceRecoveryGeneration || (mode === "off" && !optImages)) return;
   const promise = recoverDevice(generation, lostDevice, attempt).finally(() => {
     if (deviceRecoveryPromise === promise) deviceRecoveryPromise = null;
   });
@@ -642,7 +863,7 @@ function scheduleDeviceRecovery(generation, lostDevice, attempt) {
 async function recoverDevice(generation, lostDevice, attempt) {
   try {
     try { await neuralEng?.invalidateDevice?.(lostDevice); } catch {}
-    if (generation !== deviceRecoveryGeneration || (mode === "off" && !optImages)) return false;
+    if (pageSuspended || generation !== deviceRecoveryGeneration || (mode === "off" && !optImages)) return false;
 
     if (mode === "upscale" && engine === "neural") {
       const neuralSelection = engineSelectionGeneration;
@@ -657,17 +878,15 @@ async function recoverDevice(generation, lostDevice, attempt) {
       }
     }
 
-    if (generation !== deviceRecoveryGeneration || (mode === "off" && !optImages)) return false;
+    if (pageSuspended || generation !== deviceRecoveryGeneration || (mode === "off" && !optImages)) return false;
     if (optImages) (await ensureImageUpscaler())?.start();
-    if (mode !== "off") {
-      if (canvas) canvas.style.display = "block";
-      attach();
-      scheduleMainLoop();
+    if (mode !== "off" && !pageSuspended) {
+      await queueVideoSelection(findVideo(), { force: true });
     }
     log(`WebGPU recovered after device loss${attempt ? ` (attempt ${attempt + 1})` : ""}`);
     return true;
   } catch (error) {
-    if (generation !== deviceRecoveryGeneration || (mode === "off" && !optImages)) return false;
+    if (pageSuspended || generation !== deviceRecoveryGeneration || (mode === "off" && !optImages)) return false;
     warn(`device recovery attempt ${attempt + 1} failed:`, error.message);
     if (attempt < 2) {
       const delay = 250 * Math.pow(2, attempt);
@@ -764,8 +983,41 @@ function buildCore() {
 // and reloads models. Renders are paused via `adopting` during the swap.
 let adopting = false, adoptionPromise = null, adoptionTarget = null;
 let adoptionGeneration = 0;
+
+function pauseDeviceProducers() {
+  cancelMainLoop();
+  for (const target of multiTargets.values()) target.controller?.cancelScheduledFrame?.();
+  // Invalidate unpublished initialization and stop new submissions, but retain
+  // published resources until the old queue fence settles. Device-resource
+  // invalidation after the fence performs the actual destruction.
+  imageUpscalerInitGeneration++;
+  try { imageUpscaler?.stop?.(); } catch {}
+}
+
+function resumeDeviceProducers() {
+  if (mode !== "off" && video && !pageSuspended) {
+    if (primaryController?.active && primaryController.video === video) scheduleMainLoop();
+    else videoMonitor?.request?.();
+  }
+  if (optAllVideos && mode !== "off" && !pageSuspended) {
+    syncMultiTargets();
+    // Adoption cancels every target's outstanding callback before fencing the
+    // old device. Existing targets survive reconciliation, so explicitly seed
+    // their loops again; newly-created targets are harmlessly idempotent here.
+    for (const target of multiTargets.values()) {
+      if (target.device !== device || target.failedReason || !target.controller?.active) continue;
+      try { target.controller.scheduleFrame(); }
+      catch (error) { warn("secondary target resume failed:", error.message); }
+    }
+  }
+  if (optImages && !pageSuspended) {
+    ensureImageUpscaler().then((upscaler) => upscaler?.start?.())
+      .catch((error) => warn("image upscaler resume failed:", error.message));
+  }
+}
+
 export function adoptChainDevice(extDevice, isRequestCurrent = null, { preserveModeOnFailure = false } = {}) {
-  if (!extDevice) return Promise.resolve(false);
+  if (!extDevice || pageSuspended) return Promise.resolve(false);
   if (adoptionPromise) {
     if (adoptionTarget === extDevice) {
       // A same-device caller may be newer than the request which started this
@@ -785,7 +1037,13 @@ export function adoptChainDevice(extDevice, isRequestCurrent = null, { preserveM
       return adoptChainDevice(extDevice, isRequestCurrent, { preserveModeOnFailure });
     });
   }
-  if (device === extDevice) return Promise.resolve(true); // already unified
+  if (device === extDevice) {
+    const requestCurrent = typeof isRequestCurrent === "function" ? isRequestCurrent : () => true;
+    // Yield once so an already-settled `device.lost` watcher or a newer owner
+    // can publish before this no-op adoption reports success.
+    return Promise.resolve().then(() =>
+      device === extDevice && !pageSuspended && requestCurrent() && !lostDevices.has(extDevice));
+  }
   adoptionTarget = extDevice;
   adoptionGeneration++;
   const promise = adoptChainDeviceInternal(extDevice, isRequestCurrent, { preserveModeOnFailure }).finally(() => {
@@ -801,18 +1059,18 @@ export function adoptChainDevice(extDevice, isRequestCurrent = null, { preserveM
 async function adoptChainDeviceInternal(extDevice, isRequestCurrent, { preserveModeOnFailure = false } = {}) {
   const attemptGeneration = adoptionGeneration;
   const requestCurrent = typeof isRequestCurrent === "function" ? isRequestCurrent : () => true;
-  const generationCurrent = () => attemptGeneration === adoptionGeneration;
+  const generationCurrent = () => attemptGeneration === adoptionGeneration && !pageSuspended;
   const attemptCurrent = () => generationCurrent() && requestCurrent();
   if (!attemptCurrent()) return false;
   const old = device;
   const oldOwnedByMain = deviceOwnedByMain;
-  const restartImages = !!optImages;
   let swapped = false;
   adopting = true;
   try {
-    // Any work already submitted by the renderer or image helper must finish
-    // before their device-bound caches are retired. A stopped image job cannot
-    // submit new work after its current synchronous section has yielded.
+    // Invalidate every producer before taking the queue fence. Otherwise a
+    // secondary callback or the image observer can submit old-device work after
+    // the fence was requested and race resource retirement.
+    pauseDeviceProducers();
     try { await old?.queue?.onSubmittedWorkDone?.(); } catch {}
     if (!attemptCurrent() || device !== old) return false;
     invalidateMainDeviceResources();
@@ -836,6 +1094,7 @@ async function adoptChainDeviceInternal(extDevice, isRequestCurrent, { preserveM
       if (!d.__fsrcnnxErrHook) {
         d.__fsrcnnxErrHook = true;
         d.addEventListener("uncapturederror", () => {
+          if (device !== d) return;
           const now = performance.now();
           if (now - (_gpuErrWinStart || 0) > 2000) { _gpuErrWinStart = now; _gpuErrCount = 0; }
           _gpuErrCount++;
@@ -871,7 +1130,7 @@ async function adoptChainDeviceInternal(extDevice, isRequestCurrent, { preserveM
       error.code = "DEVICE_ADOPTION_SUPERSEDED";
       throw error;
     }
-    if (restartImages && optImages) {
+    if (optImages && !pageSuspended) {
       try { (await ensureImageUpscaler())?.start(); }
       catch (e) { warn("image upscaler rebuild failed:", e.message); }
     }
@@ -886,8 +1145,9 @@ async function adoptChainDeviceInternal(extDevice, isRequestCurrent, { preserveM
     // A user can turn the extension off while asynchronous adoption is rebuilding
     // pipelines. Respect that newer state instead of resurrecting rendering.
     if (mode !== "off") {
-      if (canvas) { canvas.style.display = ""; canvas.style.opacity = "1"; }
-      if (!ro) attach(); // detach() nulls ro; re-attach observers exactly once
+      if (canvas) canvas.style.opacity = "1";
+      if (primaryController?.active && primaryController.video === video) scheduleMainLoop();
+      else videoMonitor?.request?.();
     }
     log("upscaler ADOPTED shared device (RIFE chain unified)");
     return true;
@@ -896,7 +1156,9 @@ async function adoptChainDeviceInternal(extDevice, isRequestCurrent, { preserveM
     // A loss coordinator or newer adoption owns global device state now. Never
     // invalidate or overwrite its replacement from this stale continuation.
     if (!generationCurrent() || (swapped && device !== extDevice)) {
-      if (oldOwnedByMain) { try { old?.destroy?.(); } catch {} }
+      // A newer coordinator may itself have restored `old`; never destroy a
+      // device merely because this attempt once owned it.
+      if (oldOwnedByMain && device !== old) { try { old?.destroy?.(); } catch {} }
       return false;
     }
     // The old device has not been destroyed until the success path. Rebuild its
@@ -904,17 +1166,38 @@ async function adoptChainDeviceInternal(extDevice, isRequestCurrent, { preserveM
     // renderer instead of leaving a half-configured device behind.
     try {
       invalidateMainDeviceResources();
+      if (!generationCurrent() || (swapped && device !== extDevice)) return false;
       device = old;
       deviceOwnedByMain = oldOwnedByMain;
       if (!device || lostDevices.has(device)) throw new Error("no healthy previous device available");
+      const rollbackCurrent = () => generationCurrent() && device === old && !lostDevices.has(old);
       buildCore();
-      if (mode === "upscale") await loadModels();
-      if (engine === "artcnn") await ensureArtStages(artVariant, chainDepth);
-      if (engine === "fsrcnnx-hi") await ensureHiStages(chainDepth);
-      if (restartImages && optImages) (await ensureImageUpscaler())?.start();
+      if (!rollbackCurrent()) return false;
+      if (mode === "upscale") {
+        await loadModels();
+        if (!rollbackCurrent()) return false;
+      }
+      if (engine === "artcnn") {
+        await ensureArtStages(artVariant, chainDepth);
+        if (!rollbackCurrent()) return false;
+      }
+      if (engine === "fsrcnnx-hi") {
+        await ensureHiStages(chainDepth);
+        if (!rollbackCurrent()) return false;
+      }
+      if (optImages && !pageSuspended) {
+        const upscaler = await ensureImageUpscaler();
+        if (!rollbackCurrent()) return false;
+        upscaler?.start?.();
+      }
       warn("external device adoption rolled back to the previous renderer");
     } catch (rollbackError) {
       warn("device adoption rollback failed:", rollbackError.message);
+      // A replacement/loss that arrived during an await owns both the published
+      // device and cleanup. This stale rollback must not invalidate or null it.
+      if (!generationCurrent() || (device !== old && device !== extDevice)) return false;
+      invalidateMainDeviceResources();
+      if (!generationCurrent() || (device !== old && device !== extDevice)) return false;
       device = null;
       deviceOwnedByMain = false;
       if (!preserveModeOnFailure) deactivateRendering({ persist: false });
@@ -922,6 +1205,12 @@ async function adoptChainDeviceInternal(extDevice, isRequestCurrent, { preserveM
     return false;
   } finally {
     adopting = false;
+    // Caller-local work can be cancelled while the global renderer remains
+    // current and healthy. Reconcile every producer paused by this attempt;
+    // resumeDeviceProducers() applies the current mode/page/option guards.
+    if (generationCurrent() && device && !lostDevices.has(device)) {
+      resumeDeviceProducers();
+    }
   }
 }
 
@@ -1254,6 +1543,7 @@ function renderUpscale() {
   }
 
   device.queue.submit([enc.finish()]);
+  showPresentedCanvas();
 }
 
 // Final stage: take an rgba16float RGB texture and put it on the canvas, applying
@@ -1349,14 +1639,17 @@ function neuralSupersededError() {
 
 async function ensureNeural(
   expectedSelection = engineSelectionGeneration,
-  { preserveModeOnAdoptionFailure = false } = {},
+  { preserveModeOnAdoptionFailure = false, modelKey = neuralModelKey } = {},
 ) {
   if (!neuralSelectionCurrent(expectedSelection)) throw neuralSupersededError();
   if (!neuralEng) neuralEng = createNeuralEngine({ log, warn });
   // v1: neural + interpolation are mutually exclusive. This is a runtime pause,
   // not a settings change: leaving neural restores the user's prior preference.
   pauseInterpolationForNeural();
-  const entry = await neuralEng.init(neuralModelKey || undefined);
+  // Capture the requested model at operation creation. A newer model choice
+  // advances engineSelectionGeneration and cannot redirect this activation by
+  // mutating the shared preference while initialization is in flight.
+  const entry = await neuralEng.init(modelKey || undefined);
   if (!neuralSelectionCurrent(expectedSelection)) throw neuralSupersededError();
   neuralModelKey = entry.key;
   const d = neuralEng.device();
@@ -1380,12 +1673,22 @@ async function ensureNeural(
 }
 
 export async function setNeuralModel(key) {
-  neuralModelKey = key || "";
+  const requestedModelKey = key || "";
+  // Model selection is part of neural-engine selection. Give each switch its
+  // own generation so overlapping initializations cannot publish out of order.
+  const selectionGeneration = ++engineSelectionGeneration;
+  neuralModelKey = requestedModelKey;
   resetScaleSelection();
-  if (engine === "neural") {
-    const selectionGeneration = engineSelectionGeneration;
-    try { await ensureNeural(selectionGeneration); }
+  const activateNow = engine === "neural" && mode === "upscale" && !pageSuspended &&
+    primaryController?.active && primaryController.video === video;
+  if (activateNow) {
+    try { await ensureNeural(selectionGeneration, { modelKey: requestedModelKey }); }
     catch (e) {
+      if (pageSuspended || mode !== "upscale" || e.code === "NEURAL_SUPERSEDED" ||
+          /initialization cancelled/i.test(e.message)) {
+        saveSitePrefs();
+        return { ok: true, model: neuralModelKey, pending: true };
+      }
       if (e.code !== "NEURAL_SUPERSEDED") warn("neural model switch failed:", e.message);
       return { ok: false, error: e.message };
     }
@@ -1418,6 +1721,7 @@ function presentHiRGBTexture(tex, outW, outH) {
     finalizeToCanvas(enc, tex);
   }
   device.queue.submit([enc.finish()]);
+  showPresentedCanvas();
   return true;
 }
 
@@ -1449,17 +1753,28 @@ function renderNeuralFrame() {
   if (!ext) return;
   const runDevice = device;
   const runEngine = neuralEng;
+  const runVideo = video;
+  const runVideoSource = captureVideoSource(runVideo);
+  const runController = primaryController;
+  const runVideoGeneration = videoSelectionGeneration;
   neuralBusy = true;
   runEngine.run(ext, srcW, srcH).then((res) => {
     if (res && device === runDevice && neuralEng === runEngine &&
-        mode === "upscale" && engine === "neural") {
+        video === runVideo && primaryController === runController &&
+        sameVideoSource(captureVideoSource(runVideo), runVideoSource) &&
+        runVideoGeneration === videoSelectionGeneration &&
+        !adopting && mode === "upscale" && engine === "neural") {
       presentHiRGBTexture(res.tex, res.outW, res.outH);
     }
-    if (mode === "upscale" && engine === "neural") neuralFail = 0;
+    if (video === runVideo && sameVideoSource(captureVideoSource(runVideo), runVideoSource) &&
+        runVideoGeneration === videoSelectionGeneration &&
+        mode === "upscale" && engine === "neural") neuralFail = 0;
   }).catch((e) => {
     // stop(), a mode change, or an engine change deliberately invalidates the
     // run. Its rejection is lifecycle control, not an inference failure.
-    if (mode !== "upscale" || engine !== "neural" || /cancelled by stop/i.test(e.message)) return;
+    if (video !== runVideo || !sameVideoSource(captureVideoSource(runVideo), runVideoSource) ||
+        runVideoGeneration !== videoSelectionGeneration ||
+        mode !== "upscale" || engine !== "neural" || /cancelled by stop/i.test(e.message)) return;
     neuralFail++;
     warn(`neural inference failed (${neuralFail}/3):`, e.message);
     if (neuralFail >= 3) {
@@ -1613,6 +1928,7 @@ function renderPassthrough() {
   rp.draw(3);
   rp.end();
   device.queue.submit([enc.finish()]);
+  showPresentedCanvas();
 }
 
 // Safe presentation fallback for the inverted interpolation chain. The source is
@@ -1643,29 +1959,36 @@ function renderTexturePassthrough(tex, width, height) {
   rp.draw(3);
   rp.end();
   device.queue.submit([enc.finish()]);
+  showPresentedCanvas();
   return true;
 }
 
 let frameTimes = [];
 function cancelMainLoop() {
-  if (rvfc == null) return;
-  const id = rvfc, kind = rvfcKind;
-  rvfc = null; rvfcKind = null;
-  try {
-    if (kind === "video" && video?.cancelVideoFrameCallback) video.cancelVideoFrameCallback(id);
-    else cancelAnimationFrame(id);
-  } catch {}
+  primaryController?.cancelScheduledFrame?.();
 }
 
 function scheduleMainLoop() {
-  if (mode === "off" || !video || rvfc != null) return;
-  if (typeof video.requestVideoFrameCallback === "function") {
-    rvfcKind = "video";
-    rvfc = video.requestVideoFrameCallback(loop);
-  } else {
-    rvfcKind = "animation";
-    rvfc = requestAnimationFrame(loop);
-  }
+  if (pageSuspended || mode === "off" || !video || primaryController?.video !== video) return;
+  primaryController.scheduleFrame();
+}
+
+function handlePrimarySourceBoundary(owner, event = null) {
+  if (pageSuspended || owner !== primaryController || owner?.video !== video) return;
+  // Invalidate asynchronous neural/interpolation work synchronously with the
+  // media resource boundary. The serialized selector then establishes a fresh
+  // generation for whichever playable candidate the page exposes now.
+  cancelMainLoop();
+  try { neuralEng?.stop?.(); } catch {}
+  try { interpolator?.stop?.(); } catch {}
+  chainTap(false);
+  chainInverted = false;
+  _texSource = null;
+  if (canvas) { canvas.style.display = "none"; canvas.style.opacity = "1"; }
+  detach();
+  notifyState();
+  queueVideoSelection(findVideo(), { force: true, sourceBoundary: event?.type || true });
+  videoMonitor?.request?.();
 }
 
 // One shutdown path keeps callback, observer, overlay, and badge state aligned.
@@ -1675,9 +1998,11 @@ function deactivateRendering({ persist = true, protectedFailure = false } = {}) 
   cancelDeviceRecovery();
   adoptionGeneration++;
   modeSelectionGeneration++;
+  videoSelectionGeneration++;
   mode = "off";
   cancelMainLoop();
   try { neuralEng?.stop?.(); } catch {}
+  try { interpolator?.stop?.(); } catch {}
   chainTap(false);
   chainInverted = false;
   _texSource = null;
@@ -1686,14 +2011,37 @@ function deactivateRendering({ persist = true, protectedFailure = false } = {}) 
   detach();
   if (canvas) { canvas.style.display = "none"; canvas.style.opacity = "1"; }
   if (persist) saveSitePrefs();
+  updateVideoMonitor();
+  if (optInterpolate && engine !== "neural" && video && !pageSuspended) {
+    attach();
+    restartInterpolationForVideoSelection(videoSelectionGeneration)
+      .catch((error) => warn("standalone interpolation restart failed:", error.message));
+  }
   if (protectedFailure) notifyProtected(); else notifyState();
 }
 
-function loop() {
-  // A scheduled callback is single-use. Clear its handle before doing work so
-  // scheduleMainLoop() can register exactly one successor.
-  rvfc = null; rvfcKind = null;
-  if (mode === "off" || !video) return;
+function suspendSelectedVideo(reason) {
+  videoSelectionGeneration++;
+  cancelMainLoop();
+  try { neuralEng?.stop?.(); } catch {}
+  try { interpolator?.stop?.(); } catch {}
+  clearMultiTargets();
+  chainTap(false);
+  chainInverted = false;
+  _texSource = null;
+  activeModel = null;
+  resetScaleSelection();
+  detach();
+  if (canvas) { canvas.style.display = "none"; canvas.style.opacity = "1"; }
+  protectedSource = true;
+  protectedReason = reason;
+  notifyProtected();
+  videoMonitor?.setCurrent?.(video);
+  videoMonitor?.request?.();
+}
+
+function loop(owner) {
+  if (pageSuspended || owner !== primaryController || owner?.video !== video || mode === "off" || !video) return;
   // Mid-playback protection guard: a source can start unprotected then switch to
   // DRM (e.g. navigating to protected content in an SPA). Re-check occasionally.
   if (mode !== "off" && frameCount > 0 && frameCount % 300 === 0) {
@@ -1701,7 +2049,7 @@ function loop() {
       warn("source became DRM-protected mid-playback; disabling.");
       protectedSource = true;
       protectedReason = probeVideo(video);
-      deactivateRendering({ persist: false, protectedFailure: true });
+      suspendSelectedVideo(protectedReason);
       return;
     }
   }
@@ -1724,7 +2072,7 @@ function loop() {
     if (mode === "upscale" && engine === "neural") renderNeuralFrame();
     else if (mode === "upscale") renderUpscale();
     else renderPassthrough();
-    if (mode === "off") return; // a guarded import may have shut rendering down
+    if (mode === "off" || owner !== primaryController || owner.video !== video) return;
     // CHAIN TAP: if the interpolation chain is consuming upscaled frames, copy the
     // finished frame (still valid pre-present within this task) into a persistent
     // texture the interpolator (same device) samples from. Only when tapped.
@@ -1768,68 +2116,318 @@ function loop() {
   scheduleMainLoop();
 }
 
-let ro = null, mo = null, onScroll = null, onResize = null, onFs = null;
-let hoverEl = null, onHoverEnter = null, onHoverLeave = null;
-let attachedVideo = null;
 function attach() {
-  if (attachedVideo === video && ro) return;
+  if (primaryController?.active && primaryController.video === video) return;
   detach();
-  attachedVideo = video;
-  const reposition = () => positionCanvas(canvas.width, canvas.height);
-  ro = new ResizeObserver(reposition);
-  if (video?.parentElement) ro.observe(video.parentElement);
-  onResize = reposition;
-  // scroll matters for the fixed-position (shadow-DOM) overlay, which uses
-  // viewport coords; also harmless for the absolute case.
-  onScroll = reposition;
-  onFs = () => setTimeout(reposition, 50);
-  window.addEventListener("resize", onResize, { passive: true });
-  window.addEventListener("scroll", onScroll, { passive: true, capture: true });
-  document.addEventListener("fullscreenchange", onFs);
-  mo = new MutationObserver(reposition);
-  mo.observe(document.body, { attributes: true, childList: true, subtree: true, attributeFilter: ["class", "style"] });
-  attachHover();
+  if (!video) return;
+  const owner = new VideoController(video, {
+    onFrame: (current) => loop(current),
+    onLayout: (current) => {
+      if (current === primaryController && current.video === video) {
+        if (!videoPageVisible(current.video)) {
+          if (canvas) canvas.style.display = "none";
+          interpolator?.refreshLayout?.();
+          videoMonitor?.request?.();
+          return;
+        }
+        positionVideoCanvas(current.video, canvas, current, canvas?.width, canvas?.height);
+        interpolator?.refreshLayout?.();
+      }
+    },
+    onHoverChange: (hidden, current) => {
+      if (current === primaryController) hoverHidden = !!hidden && optHoverReveal;
+    },
+    onSourceChange: handlePrimarySourceBoundary,
+    resolveHoverRegion: hoverRegionFor,
+  });
+  primaryController = owner;
+  layoutController = owner;
+  owner.start();
 }
 // Hover-reveal: when enabled, fade the overlay out while the cursor is over the
 // player so the site's native controls (and real video) show through. We listen
 // on the player region; for shadow-DOM videos we use the shadow host (the
 // nearest light-DOM ancestor), since pointer events over the shadow tree surface
 // at the host in the light DOM.
-function hoverRegion() {
-  if (!video) return null;
-  if (inShadowDom(video)) {
-    const r = video.getRootNode();
-    return (r instanceof ShadowRoot ? r.host : null) || video.parentElement;
+function hoverRegionFor(targetVideo) {
+  if (!targetVideo) return null;
+  if (inShadowDom(targetVideo)) {
+    const r = targetVideo.getRootNode();
+    return (r instanceof ShadowRoot ? r.host : null) || targetVideo.parentElement;
   }
-  return video.parentElement || video;
-}
-function attachHover() {
-  hoverEl = hoverRegion();
-  if (!hoverEl) return;
-  onHoverEnter = () => { if (optHoverReveal) hoverHidden = true; };
-  onHoverLeave = () => { hoverHidden = false; };
-  hoverEl.addEventListener("pointerenter", onHoverEnter, { passive: true });
-  hoverEl.addEventListener("pointerleave", onHoverLeave, { passive: true });
-  hoverEl.addEventListener("pointermove", onHoverEnter, { passive: true });
-}
-function detachHover() {
-  if (hoverEl) {
-    if (onHoverEnter) { hoverEl.removeEventListener("pointerenter", onHoverEnter); hoverEl.removeEventListener("pointermove", onHoverEnter); }
-    if (onHoverLeave) hoverEl.removeEventListener("pointerleave", onHoverLeave);
-  }
-  hoverEl = onHoverEnter = onHoverLeave = null;
-  hoverHidden = false;
+  return targetVideo.parentElement || targetVideo;
 }
 function detach() {
-  ro?.disconnect(); mo?.disconnect(); ro = mo = null;
-  if (onResize) window.removeEventListener("resize", onResize);
-  if (onScroll) window.removeEventListener("scroll", onScroll, { capture: true });
-  if (onFs) document.removeEventListener("fullscreenchange", onFs);
-  onResize = onScroll = onFs = null;
-  attachedVideo = null;
-  detachHover();
-  // remove the body-level overlay if we created one
-  if (canvas && canvas.parentElement === document.body) canvas.remove();
+  const owner = primaryController;
+  primaryController = null;
+  if (layoutController === owner) layoutController = null;
+  try { owner?.destroy?.(); } catch {}
+  hoverHidden = false;
+  // A detached canvas must not remain over an SPA-replaced source.
+  try { canvas?.remove?.(); } catch {}
+}
+
+function videoMonitoringNeeded() {
+  return !pageSuspended && (mode !== "off" || optInterpolate);
+}
+
+function updateVideoMonitor() {
+  if (!videoMonitoringNeeded()) {
+    videoMonitor?.stop?.();
+    videoMonitor = null;
+    if (mode === "off") {
+      detach();
+      video = null;
+      selectedVideoSource = null;
+    }
+    return;
+  }
+  if (!videoMonitor) {
+    videoMonitor = new VideoSelectionMonitor({
+      select: findVideo,
+      onSelection: scheduleVideoSelection,
+      onError: (error, context) => warn(`video monitor ${context?.phase || "error"}:`, error.message),
+    });
+  }
+  videoMonitor.start(video);
+}
+
+function queueVideoSelection(candidate, { force = false, sourceBoundary = false } = {}) {
+  const source = captureVideoSource(candidate);
+  const pendingRequest = videoSelectionPendingRequest;
+  if (!force && !sourceBoundary &&
+      videoSelectionPendingGeneration === videoSelectionGeneration &&
+      pendingRequest?.modeGeneration === modeSelectionGeneration &&
+      pendingRequest.candidate === candidate &&
+      sameVideoSource(pendingRequest.source, source)) {
+    return pendingRequest.operation;
+  }
+  const sourceChanged = candidate === video && !sameVideoSource(source, selectedVideoSource);
+  const interpolationQuarantined = interpolationQuarantineMatches(candidate, source);
+  const rendererReady = mode === "off" ||
+    (primaryController?.active && primaryController.video === candidate);
+  const sourceOwnerReady = !optInterpolate || engine === "neural" ||
+    (primaryController?.active && primaryController.video === candidate);
+  const interpolationReady = !optInterpolate || engine === "neural" ||
+    interpolationQuarantined ||
+    (interpolator?.running && interpolator.video === candidate);
+  if (!force && !sourceBoundary && !sourceChanged &&
+      candidate === video && rendererReady && sourceOwnerReady && interpolationReady &&
+      videoSelectionPendingGeneration === 0) {
+    if (optAllVideos && mode !== "off") syncMultiTargets();
+    return videoSwitchTail;
+  }
+  const generation = ++videoSelectionGeneration;
+  videoSelectionPendingGeneration = generation;
+  const expectedModeGeneration = modeSelectionGeneration;
+  const queued = videoSwitchTail.catch(() => {}).then(() =>
+    applyVideoSelection(candidate, generation, expectedModeGeneration, source, sourceBoundary));
+  const request = { candidate, source, modeGeneration: expectedModeGeneration, operation: null };
+  const operation = queued.then(
+    (result) => {
+      if (videoSelectionPendingRequest === request) {
+        videoSelectionPendingGeneration = 0;
+        videoSelectionPendingRequest = null;
+      }
+      return result;
+    },
+    (error) => {
+      if (videoSelectionPendingRequest === request) {
+        videoSelectionPendingGeneration = 0;
+        videoSelectionPendingRequest = null;
+      }
+      throw error;
+    },
+  );
+  request.operation = operation;
+  videoSelectionPendingRequest = request;
+  videoSwitchTail = operation.catch((error) => {
+    warn("video ownership handoff failed:", error.message);
+  });
+  return operation;
+}
+
+function scheduleVideoSelection(candidate, _previous, _changed) {
+  return queueVideoSelection(candidate);
+}
+
+function videoSelectionCurrent(candidate, generation, expectedModeGeneration, source) {
+  return generation === videoSelectionGeneration &&
+    expectedModeGeneration === modeSelectionGeneration &&
+    video === candidate && sameVideoSource(captureVideoSource(candidate), source) &&
+    !pageSuspended;
+}
+
+async function restartInterpolationForVideoSelection(generation) {
+  const instance = interpolator;
+  if (!instance || interpolationQuarantineMatches(video)) return false;
+  try { instance.stop(); } catch {}
+  if (generation !== videoSelectionGeneration || !optInterpolate || engine === "neural" || !video ||
+      interpolationQuarantineMatches(video)) return false;
+  const selectionGeneration = interpolationSelectionGeneration;
+  configureInterpolator(instance);
+  const selectedVideo = video;
+  const selectedSource = captureVideoSource(selectedVideo);
+  const configKey = interpolationRuntimeConfigKey();
+  const result = await instance.start(selectedVideo);
+  if (generation !== videoSelectionGeneration || selectionGeneration !== interpolationSelectionGeneration ||
+      !optInterpolate || engine === "neural" || video !== selectedVideo ||
+      configKey !== interpolationRuntimeConfigKey() ||
+      !sameVideoSource(selectedSource, captureVideoSource(selectedVideo))) return false;
+  if (!result?.ok) {
+    recordInterpolationStartFailure(selectedVideo, selectedSource, result);
+    warn("interpolation source handoff failed:", result?.reason || "unknown");
+    return false;
+  }
+  interpolationStartFailureStreak = null;
+  return instance.video === selectedVideo;
+}
+
+async function applyVideoSelection(candidate, generation, expectedModeGeneration, source, sourceBoundary = false) {
+  if (generation !== videoSelectionGeneration || expectedModeGeneration !== modeSelectionGeneration || pageSuspended) return false;
+  const previous = video;
+  const changed = candidate !== previous || sourceBoundary ||
+    !sameVideoSource(source, selectedVideoSource);
+  const confirmedSourceBoundary = sourceBoundary === true || sourceBoundary === "loadedmetadata";
+  if (changed && interpolationTerminalQuarantine &&
+      (confirmedSourceBoundary || !interpolationQuarantineMatches(candidate, source))) {
+    clearInterpolationTerminalQuarantine();
+  }
+  if (changed) {
+    cancelMainLoop();
+    try { neuralEng?.stop?.(); } catch {}
+    try { interpolator?.stop?.(); } catch {}
+    detach();
+    clearMultiTargets();
+    chainTap(false);
+    chainInverted = false;
+    _texSource = null;
+    activeModel = null;
+    resetScaleSelection();
+    frameTimes = [];
+    video = candidate;
+    selectedVideoSource = source;
+    videoMonitor?.setCurrent?.(candidate);
+    protectedSource = false;
+    protectedReason = null;
+    if (canvas) { canvas.style.display = "none"; canvas.style.opacity = "1"; }
+  }
+
+  let processable = !!candidate;
+  if ((mode !== "off" || optInterpolate) && candidate) {
+    const reason = probeVideo(candidate);
+    processable = reason === "ok";
+    if (!processable) {
+      protectedSource = true;
+      protectedReason = reason;
+      notifyProtected();
+    } else {
+      protectedSource = false;
+      protectedReason = null;
+    }
+  } else if (!candidate) {
+    protectedSource = false;
+    protectedReason = null;
+  }
+  if (!videoSelectionCurrent(candidate, generation, expectedModeGeneration, source)) return false;
+
+  if (mode !== "off" && processable) {
+    if (!(await initWebGPU()) || !videoSelectionCurrent(candidate, generation, expectedModeGeneration, source)) return false;
+    if (mode === "upscale") {
+      await loadModels();
+      if (!videoSelectionCurrent(candidate, generation, expectedModeGeneration, source)) return false;
+      if (engine === "neural") {
+        const neuralSelection = engineSelectionGeneration;
+        try {
+          await ensureNeural(neuralSelection);
+        } catch (error) {
+          if (!videoSelectionCurrent(candidate, generation, expectedModeGeneration, source)) return false;
+          if (neuralSelection === engineSelectionGeneration && engine === "neural") {
+            warn("neural activation failed; using FSRCNNX:", error.message);
+            engineSelectionGeneration++;
+            engine = "fsrcnnx";
+            resumeInterpolationAfterNeural();
+            await loadModels();
+          }
+        }
+      }
+    }
+    if (!videoSelectionCurrent(candidate, generation, expectedModeGeneration, source)) return false;
+    attach();
+    scheduleMainLoop();
+    if (optAllVideos) syncMultiTargets();
+  } else if (mode !== "off") {
+    cancelMainLoop();
+    detach();
+  } else if (optInterpolate && engine !== "neural" && processable) {
+    // Standalone interpolation still needs exact media-resource ownership. The
+    // controller does not schedule main-renderer frames while mode is off, but
+    // its source-boundary listener synchronously relinquishes a stale takeover.
+    attach();
+  } else if (primaryController) {
+    detach();
+  }
+
+  if ((changed || !interpolator?.running || interpolator.video !== candidate) &&
+      processable && optInterpolate && engine !== "neural" &&
+      !interpolationQuarantineMatches(candidate, source)) {
+    await restartInterpolationForVideoSelection(generation);
+  }
+  if (!videoSelectionCurrent(candidate, generation, expectedModeGeneration, source)) return false;
+  if (!processable && candidate) notifyProtected();
+  else notifyState();
+  return true;
+}
+
+export function suspendDocument() {
+  if (pageSuspended) return { ok: true, suspended: true, changed: false };
+  pageSuspended = true;
+  cancelDeviceRecovery();
+  adoptionGeneration++;
+  modeSelectionGeneration++;
+  videoSelectionGeneration++;
+  interpolationSelectionGeneration++;
+  imagesSelectionGeneration++;
+  imageUpscalerInitGeneration++;
+  cancelMainLoop();
+  try { neuralEng?.stop?.(); } catch {}
+  try { interpolator?.stop?.(); } catch {}
+  try { imageUpscaler?.stop?.(); } catch {}
+  clearMultiTargets();
+  chainTap(false);
+  chainInverted = false;
+  _texSource = null;
+  videoMonitor?.stop?.();
+  videoMonitor = null;
+  detach();
+  if (canvas) { canvas.style.display = "none"; canvas.style.opacity = "1"; }
+  notifyState();
+  return { ok: true, suspended: true, changed: true };
+}
+
+export async function resumeDocument() {
+  if (!pageSuspended) {
+    updateVideoMonitor();
+    return { ok: true, suspended: false, changed: false };
+  }
+  pageSuspended = false;
+  const modeGeneration = ++modeSelectionGeneration;
+  updateVideoMonitor();
+  if (optImages) {
+    const imageGeneration = ++imagesSelectionGeneration;
+    try {
+      const upscaler = await ensureImageUpscaler();
+      if (!pageSuspended && optImages && imageGeneration === imagesSelectionGeneration) upscaler?.start?.();
+    } catch (error) {
+      warn("image upscaler resume failed:", error.message);
+    }
+  }
+  if (pageSuspended || modeGeneration !== modeSelectionGeneration) {
+    return { ok: false, suspended: pageSuspended, reason: "superseded" };
+  }
+  const candidate = findVideo();
+  await queueVideoSelection(candidate, { force: true });
+  return { ok: true, suspended: false, active: !!primaryController?.active };
 }
 
 // A video can be unprocessable for two distinct reasons, both of which make
@@ -1873,97 +2471,53 @@ function safeImportExternal() {
   try {
     return device.importExternalTexture({ source: video });
   } catch (e) {
-    const reason = (e && /tainted|cross-origin/i.test(e.message)) ? "tainted" : "drm";
-    warn(`importExternalTexture failed (${reason}); disabling.`, e.message);
-    protectedSource = true; protectedReason = reason;
-    deactivateRendering({ persist: false, protectedFailure: true });
+    const probed = probeVideo(video);
+    const reason = probed !== "ok"
+      ? probed
+      : ((e && /tainted|cross-origin/i.test(e.message)) ? "tainted" : "drm");
+    if (renderTargetOwner) {
+      renderTargetOwner.failedReason = reason;
+      if (renderTargetOwner.canvas) renderTargetOwner.canvas.style.display = "none";
+      warn(`secondary importExternalTexture failed (${reason}); quarantining target.`, e.message);
+      return null;
+    }
+    warn(`importExternalTexture failed (${reason}); suspending selected source.`, e.message);
+    suspendSelectedVideo(reason);
     return null;
   }
 }
 
-export async function setMode(next, autoEnableToken = null) {
+export async function setMode(next, restoreToken = null) {
   if (!["off", "passthrough", "upscale"].includes(next)) return { ok: false, reason: "invalid mode" };
-  if (autoEnableToken == null) cancelAutoEnable();
-  else if (autoEnableToken !== autoEnableGeneration) return { ok: false, reason: "superseded" };
+  if (restoreToken == null) cancelPreferenceRestore();
+  else if (restoreToken !== preferenceRestoreGeneration) return { ok: false, reason: "superseded" };
   const selectionGeneration = ++modeSelectionGeneration;
-  if (next === mode && (mode === "off" || device)) {
-    // A second enable request can arrive while the first is awaiting neural
-    // session creation. The newer request owns the lifecycle, so wait for (or
-    // retry) that initialization instead of returning with a permanently
-    // unready neural engine.
-    if (mode === "upscale" && engine === "neural" && !neuralEng?.ready?.()) {
-      const neuralSelection = engineSelectionGeneration;
-      try { await ensureNeural(neuralSelection); }
-      catch (error) {
-        if (selectionGeneration !== modeSelectionGeneration) return { ok: false, reason: "superseded" };
-        if (neuralSelection === engineSelectionGeneration && engine === "neural") {
-          warn("neural activation failed; using FSRCNNX:", error.message);
-          engineSelectionGeneration++;
-          engine = "fsrcnnx";
-          resumeInterpolationAfterNeural();
-          await loadModels();
-        }
-      }
-    }
-    if (selectionGeneration !== modeSelectionGeneration) return { ok: false, reason: "superseded" };
-    if (mode !== "off") { attach(); scheduleMainLoop(); }
-    return { ok: true };
-  }
-  // If interpolation is running, the chain decision (interpolate upscaled frames vs
-  // raw video) is made at interp start — restart it after the mode change so either
-  // enable order works.
-  const restartInterp = async () => {
-    if (optInterpolate && interpolator && engine !== "neural") {
-      try { interpolator.stop(); await interpolator.start(); log("interp: restarted for upscale-mode change (chain re-evaluated)"); }
-      catch (e) { warn("interp restart failed:", e.message); }
-    }
-  };
   if (next === "off") {
     deactivateRendering({ persist: true });
-    await restartInterp();
     return { ok: true };
   }
-  protectedSource = false; protectedReason = null;
-  const nextVideo = findVideo();
-  if (!nextVideo) return { ok: false, reason: "no video" };
-  const probe = probeVideo(nextVideo);
-  if (probe !== "ok") {
-    protectedSource = true;
-    protectedReason = probe;
-    warn(`source unprocessable (${probe === "drm" ? "DRM/encrypted" : "cross-origin without CORS"}); not enabling.`);
-    return { ok: false, reason: probe };
-  }
-  if (!(await initWebGPU())) return { ok: false, reason: "WebGPU init failed" };
-  if (selectionGeneration !== modeSelectionGeneration) return { ok: false, reason: "superseded" };
-  if (next === "upscale") await loadModels();
-  if (selectionGeneration !== modeSelectionGeneration) return { ok: false, reason: "superseded" };
+
+  // `mode` is the durable requested mode. The active renderer is represented by
+  // primaryController; navigation may temporarily leave the request suspended
+  // without silently overwriting the saved preference.
   cancelMainLoop();
-  if (video !== nextVideo) detach();
-  video = nextVideo;
+  try { interpolator?.stop?.(); } catch {}
   mode = next;
-  if (next === "upscale" && engine === "neural") {
-    const neuralSelection = engineSelectionGeneration;
-    try {
-      await ensureNeural(neuralSelection);
-    } catch (error) {
-      if (selectionGeneration !== modeSelectionGeneration) return { ok: false, reason: "superseded" };
-      if (neuralSelection === engineSelectionGeneration && engine === "neural") {
-        warn("neural activation failed; using FSRCNNX:", error.message);
-        engineSelectionGeneration++;
-        engine = "fsrcnnx";
-        resumeInterpolationAfterNeural();
-        await loadModels();
-      }
-    }
-  }
-  if (selectionGeneration !== modeSelectionGeneration) return { ok: false, reason: "superseded" };
-  canvas.style.display = "block";
-  attach();
-  scheduleMainLoop();
+  protectedSource = false; protectedReason = null;
+  resetScaleSelection();
   saveSitePrefs();
-  notifyState();
-  await restartInterp();
-  return { ok: true };
+  updateVideoMonitor();
+  const candidate = findVideo();
+  const reconciled = await queueVideoSelection(candidate, { force: true });
+  if (selectionGeneration !== modeSelectionGeneration || mode !== next) {
+    return { ok: false, reason: "superseded" };
+  }
+  if (!candidate) return { ok: false, reason: "no video", pending: true };
+  if (protectedSource) return { ok: false, reason: protectedReason || "protected", pending: true };
+  if (!reconciled || !primaryController?.active || primaryController.video !== candidate) {
+    return { ok: false, reason: "renderer unavailable", pending: true };
+  }
+  return { ok: true, mode };
 }
 
 export function setEngine(e) {
@@ -1971,10 +2525,14 @@ export function setEngine(e) {
   const wasNeural = engine === "neural";
   engine = e === "artcnn" ? "artcnn" : e === "fsrcnnx-hi" ? "fsrcnnx-hi" : e === "neural" ? "neural" : "fsrcnnx";
   resetScaleSelection();
-  if (engine === "neural") {
+  clearMultiTargets();
+  const activateNeural = engine === "neural" && mode === "upscale" && !pageSuspended &&
+    primaryController?.active && primaryController.video === video;
+  if (activateNeural) {
     ensureNeural(selectionGeneration).catch((er) => {
       if (selectionGeneration !== engineSelectionGeneration || engine !== "neural") return;
-      if (mode === "off" && /initialization cancelled/i.test(er.message)) return;
+      if (pageSuspended || mode !== "upscale" ||
+          /initialization cancelled|activation superseded/i.test(er.message)) return;
       warn("neural init failed:", er.message);
       engineSelectionGeneration++;
       engine = "fsrcnnx";
@@ -1999,6 +2557,7 @@ export function setArtVariant(v) {
   if (ART_FILES.includes(v)) {
     artVariant = v;
     resetScaleSelection();
+    clearMultiTargets();
   }
   artDiagLogged = false;
   if (engine === "artcnn" && device) ensureArtStages(artVariant, chainDepth).catch((er) => warn("ArtCNN preload failed:", er.message));
@@ -2039,11 +2598,13 @@ export function setDebandStrength(v) {
 class MultiTarget {
   constructor(vid) {
     this.video = vid;
+    this.device = device;
     this.canvas = document.createElement("canvas");
     this.canvas.className = "fsrcnnx-overlay-multi";
     Object.assign(this.canvas.style, { position: "absolute", top: "0", left: "0", pointerEvents: "none", zIndex: "10", transition: "opacity 0.18s ease" });
     this.lumaTexture = null; this.lumaW = 0; this.lumaH = 0;
     this.hiRGB = null; this.hiRGBW = 0; this.hiRGBH = 0;
+    this.dispRGB = null; this.dispRGBW = 0; this.dispRGBH = 0;
     this.debandInterTex = null; this.debandInterW = 0; this.debandInterH = 0;
     this.ssimds = new SsimDownscaler(device);
     this.sharpenPipeline = null; this.sharpenStrengthBuilt = null;
@@ -2056,31 +2617,45 @@ class MultiTarget {
     // already-fetched manifest+wgsl (construction is cheap; the per-size textures
     // must exist per video anyway). Populated lazily by ensureTargetModels().
     this.models = []; this.hiStages = []; this.artStages = {};
-    this.rvfc = null; this.hoverHidden = false; this.neuralBypassLogged = false;
-    this.attachHover();
+    this.activeModel = null;
+    this.chainedHi = null; this.chainedArt = null;
+    this.lastSSimDS = false;
+    this.scaleHeld = undefined; this.scalePending = null; this.scalePendingSince = 0;
+    this.scaleHeldSrcW = 0; this.scaleHeldSrcH = 0; this.scaleLockLogged = false;
+    this.hoverHidden = false; this.neuralBypassLogged = false;
+    this.failedReason = null;
+    this.controller = new VideoController(vid, {
+      onFrame: (owner) => {
+        if (owner !== this.controller || multiTargets.get(this.video) !== this ||
+            mode === "off" || !optAllVideos || pageSuspended) return;
+        if (!adopting) renderMultiOne(this.video);
+        if (multiTargets.get(this.video) === this && mode !== "off" && optAllVideos &&
+            !adopting && !pageSuspended) owner.scheduleFrame();
+      },
+      onLayout: (owner) => {
+        if (owner === this.controller && multiTargets.get(this.video) === this) {
+          if (!videoPageVisible(this.video)) {
+            this.canvas.style.display = "none";
+            videoMonitor?.request?.();
+            return;
+          }
+          positionVideoCanvas(this.video, this.canvas, owner, this.canvas.width, this.canvas.height);
+        }
+      },
+      onHoverChange: (hidden, owner) => {
+        if (owner === this.controller) this.hoverHidden = !!hidden && optHoverReveal;
+      },
+      onSourceChange: (owner) => handleSecondarySourceBoundary(this, owner),
+      resolveHoverRegion: hoverRegionFor,
+    });
   }
-  attachHover() {
-    const region = inShadowDom(this.video)
-      ? ((this.video.getRootNode() instanceof ShadowRoot ? this.video.getRootNode().host : null) || this.video.parentElement)
-      : (this.video.parentElement || this.video);
-    if (!region) return;
-    this._region = region;
-    this._enter = () => { if (optHoverReveal) this.hoverHidden = true; };
-    this._leave = () => { this.hoverHidden = false; };
-    region.addEventListener("pointerenter", this._enter, { passive: true });
-    region.addEventListener("pointermove", this._enter, { passive: true });
-    region.addEventListener("pointerleave", this._leave, { passive: true });
+  start() {
+    this.controller.start();
+    this.controller.scheduleFrame();
+    return this;
   }
   destroy() {
-    if (this.rvfc != null && typeof this.video.cancelVideoFrameCallback === "function") {
-      try { this.video.cancelVideoFrameCallback(this.rvfc); } catch {}
-      this.rvfc = null;
-    }
-    if (this._region) {
-      this._region.removeEventListener("pointerenter", this._enter);
-      this._region.removeEventListener("pointermove", this._enter);
-      this._region.removeEventListener("pointerleave", this._leave);
-    }
+    try { this.controller?.destroy?.(); } catch {}
     const ownedModels = new Set([
       ...this.models,
       ...this.hiStages,
@@ -2088,7 +2663,7 @@ class MultiTarget {
     ]);
     for (const model of ownedModels) { try { model?.destroy?.(); } catch {} }
     this.models = []; this.hiStages = []; this.artStages = {};
-    this.lumaTexture?.destroy?.(); this.hiRGB?.destroy?.();
+    this.lumaTexture?.destroy?.(); this.hiRGB?.destroy?.(); this.dispRGB?.destroy?.();
     this.debandInterTex?.destroy?.(); this.ssimds?.destroy?.();
     try { this.context?.unconfigure?.(); } catch {}
     this.canvas.remove();
@@ -2096,8 +2671,21 @@ class MultiTarget {
 }
 let multiTargets = new Map(); // video element -> MultiTarget
 
+function handleSecondarySourceBoundary(target, owner) {
+  if (!target || owner !== target.controller || multiTargets.get(target.video) !== target) return false;
+  target.failedReason = "source-changed";
+  if (target.canvas) target.canvas.style.display = "none";
+  try { target.destroy(); } catch {}
+  multiTargets.delete(target.video);
+  // Reconciliation is intentionally deferred until the media event finishes;
+  // loadstart often fires before currentSrc/dimensions describe the new source.
+  if (!pageSuspended && optAllVideos && mode !== "off" && !adopting) videoMonitor?.request?.();
+  return true;
+}
+
 // Build per-target model instances from cached sources (lazy, cheap).
 function ensureTargetModels(t) {
+  if (!t || t.device !== device || lostDevices.has(device)) return false;
   if (engine === "neural") return false; // one ORT session/queue currently serves only the primary video
   if (engine === "fsrcnnx") {
     if (t.models.length) return true;
@@ -2124,26 +2712,55 @@ function ensureTargetModels(t) {
 
 // Swap a MultiTarget's state into the globals (returns a restore function).
 function withTarget(t, fn) {
-  ensureTargetModels(t);
-  const saved = { video, canvas, context, lumaTexture, lumaW, lumaH, hiRGB, hiRGBW, hiRGBH, debandInterTex, debandInterW, debandInterH, ssimds, sharpenPipeline, sharpenStrengthBuilt, hoverHidden, models, hiStages, artStages };
+  if (!ensureTargetModels(t)) {
+    const error = new Error("secondary target resources are unavailable for the current device/engine");
+    error.code = "SECONDARY_TARGET_UNAVAILABLE";
+    throw error;
+  }
+  const saved = {
+    video, canvas, context, layoutController, renderTargetOwner,
+    lumaTexture, lumaW, lumaH, hiRGB, hiRGBW, hiRGBH,
+    dispRGB, dispRGBW, dispRGBH,
+    debandInterTex, debandInterW, debandInterH,
+    ssimds, sharpenPipeline, sharpenStrengthBuilt, hoverHidden,
+    models, hiStages, artStages, activeModel, chainedHi, chainedArt, lastSSimDS,
+    _scaleHeld, _scalePending, _scalePendingSince, _scaleHeldSrcW, _scaleHeldSrcH, _scaleLockLogged,
+    chainTapOn, _texSource,
+  };
   video = t.video; canvas = t.canvas; context = t.context;
+  layoutController = t.controller; renderTargetOwner = t;
   lumaTexture = t.lumaTexture; lumaW = t.lumaW; lumaH = t.lumaH;
   hiRGB = t.hiRGB; hiRGBW = t.hiRGBW; hiRGBH = t.hiRGBH;
+  dispRGB = t.dispRGB; dispRGBW = t.dispRGBW; dispRGBH = t.dispRGBH;
   debandInterTex = t.debandInterTex; debandInterW = t.debandInterW; debandInterH = t.debandInterH;
   ssimds = t.ssimds; sharpenPipeline = t.sharpenPipeline; sharpenStrengthBuilt = t.sharpenStrengthBuilt;
   hoverHidden = t.hoverHidden;
-  models = t.models; hiStages = t.hiStages; artStages = t.artStages;
-  // chained wrappers are rebuilt per-target inside the render branch (cheap)
-  chainedHi = null; chainedArt = null;
-  try { fn(); }
+  models = t.models; hiStages = t.hiStages; artStages = t.artStages; activeModel = t.activeModel;
+  chainedHi = t.chainedHi; chainedArt = t.chainedArt; lastSSimDS = t.lastSSimDS;
+  _scaleHeld = t.scaleHeld; _scalePending = t.scalePending; _scalePendingSince = t.scalePendingSince;
+  _scaleHeldSrcW = t.scaleHeldSrcW; _scaleHeldSrcH = t.scaleHeldSrcH; _scaleLockLogged = t.scaleLockLogged;
+  chainTapOn = false; _texSource = null;
+  try { return fn(); }
   finally {
     // persist any lazily-created resources back onto the target
     t.lumaTexture = lumaTexture; t.lumaW = lumaW; t.lumaH = lumaH;
     t.hiRGB = hiRGB; t.hiRGBW = hiRGBW; t.hiRGBH = hiRGBH;
+    t.dispRGB = dispRGB; t.dispRGBW = dispRGBW; t.dispRGBH = dispRGBH;
     t.debandInterTex = debandInterTex; t.debandInterW = debandInterW; t.debandInterH = debandInterH;
     t.sharpenPipeline = sharpenPipeline; t.sharpenStrengthBuilt = sharpenStrengthBuilt;
-    ({ video, canvas, context, lumaTexture, lumaW, lumaH, hiRGB, hiRGBW, hiRGBH, debandInterTex, debandInterW, debandInterH, ssimds, sharpenPipeline, sharpenStrengthBuilt, hoverHidden, models, hiStages, artStages } = saved);
-    chainedHi = null; chainedArt = null;
+    t.activeModel = activeModel; t.chainedHi = chainedHi; t.chainedArt = chainedArt; t.lastSSimDS = lastSSimDS;
+    t.scaleHeld = _scaleHeld; t.scalePending = _scalePending; t.scalePendingSince = _scalePendingSince;
+    t.scaleHeldSrcW = _scaleHeldSrcW; t.scaleHeldSrcH = _scaleHeldSrcH; t.scaleLockLogged = _scaleLockLogged;
+    ({
+      video, canvas, context, layoutController, renderTargetOwner,
+      lumaTexture, lumaW, lumaH, hiRGB, hiRGBW, hiRGBH,
+      dispRGB, dispRGBW, dispRGBH,
+      debandInterTex, debandInterW, debandInterH,
+      ssimds, sharpenPipeline, sharpenStrengthBuilt, hoverHidden,
+      models, hiStages, artStages, activeModel, chainedHi, chainedArt, lastSSimDS,
+      _scaleHeld, _scalePending, _scalePendingSince, _scaleHeldSrcW, _scaleHeldSrcH, _scaleLockLogged,
+      chainTapOn, _texSource,
+    } = saved);
   }
 }
 
@@ -2154,16 +2771,32 @@ function findAllVideos() {
     .filter((v) => {
       const r = v.getBoundingClientRect();
       const visible = r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0 &&
-        r.top < (window.innerHeight || 1e9) && r.left < (window.innerWidth || 1e9);
+        r.top < (window.innerHeight || 1e9) && r.left < (window.innerWidth || 1e9) &&
+        videoPageVisible(v);
       return visible && r.width * r.height > 64 * 64 && !isTaintedVideo(v);
     });
 }
 
+const MAX_SECONDARY_TARGETS = 2;
+const MAX_SECONDARY_SOURCE_PIXELS = 1920 * 1080 * 2;
+
 // Reconcile multiTargets with the current set of on-screen videos.
 function syncMultiTargets() {
-  if (!optAllVideos || mode === "off") { clearMultiTargets(); return; }
-  const present = new Set(findAllVideos());
-  present.delete(video); // primary handled by the main path
+  if (!optAllVideos || mode === "off" || adopting || pageSuspended) { clearMultiTargets(); return; }
+  const candidates = findAllVideos()
+    .filter((candidate) => candidate !== video)
+    .sort((left, right) => {
+      const lr = left.getBoundingClientRect(), rr = right.getBoundingClientRect();
+      return rr.width * rr.height - lr.width * lr.height;
+    });
+  const present = new Set();
+  let admittedPixels = 0;
+  for (const candidate of candidates) {
+    const pixels = Math.max(1, candidate.videoWidth * candidate.videoHeight);
+    if (present.size >= MAX_SECONDARY_TARGETS || admittedPixels + pixels > MAX_SECONDARY_SOURCE_PIXELS) continue;
+    present.add(candidate);
+    admittedPixels += pixels;
+  }
   // remove targets whose video is gone/offscreen
   for (const [vid, t] of multiTargets) {
     if (!present.has(vid)) { t.destroy(); multiTargets.delete(vid); }
@@ -2171,12 +2804,14 @@ function syncMultiTargets() {
   // add new ones
   for (const vid of present) {
     if (!multiTargets.has(vid)) {
-      const t = new MultiTarget(vid);
-      multiTargets.set(vid, t);
-      t.canvas.style.display = "block";
-      t.rvfc = "requestVideoFrameCallback" in HTMLVideoElement.prototype
-        ? vid.requestVideoFrameCallback(function step(){ renderMultiOne(vid); if (multiTargets.has(vid) && mode!=="off") multiTargets.get(vid).rvfc = vid.requestVideoFrameCallback(step); })
-        : null;
+      try {
+        const t = new MultiTarget(vid);
+        multiTargets.set(vid, t);
+        t.canvas.style.display = "none";
+        t.start();
+      } catch (error) {
+        warn("secondary target initialization failed:", error.message);
+      }
     }
   }
 }
@@ -2187,9 +2822,9 @@ function clearMultiTargets() {
 
 // Render one secondary video (called from its own rVFC loop).
 function renderMultiOne(vid) {
-  if (mode === "off" || !optAllVideos) return;
+  if (mode === "off" || !optAllVideos || adopting || pageSuspended) return;
   const t = multiTargets.get(vid);
-  if (!t || !vid.videoWidth) return;
+  if (!t || t.device !== device || !vid.videoWidth) return;
   try {
     withTarget(t, () => {
       if (mode === "upscale" && engine === "neural") {
@@ -2202,7 +2837,14 @@ function renderMultiOne(vid) {
       else renderPassthrough();
       if (t.canvas) t.canvas.style.opacity = (optHoverReveal && t.hoverHidden) ? "0" : "1";
     });
-  } catch (e) { warn("multi render error:", e.message); }
+  } catch (e) {
+    t.failedReason ||= e.code || e.message || "render failure";
+    warn("multi render error; quarantining target:", e.message);
+  }
+  if (t.failedReason && multiTargets.get(vid) === t) {
+    t.destroy();
+    multiTargets.delete(vid);
+  }
 }
 
 export function setSharpen(on) {
@@ -2225,6 +2867,7 @@ export function setSSimDS(on) {
 export function setPolicy(p) {
   upscalePolicy = p;
   resetScaleSelection();
+  clearMultiTargets();
   // For 2x-only engines (ArtCNN / FSRCNNX high) the policy encodes the scale via
   // chain depth: force2 -> 1, force4 -> 2, force8 -> 3.
   chainDepth = (engine === "artcnn" || engine === "fsrcnnx-hi") ? policyToDepth(p) : 1;
@@ -2244,21 +2887,13 @@ export function setPolicy(p) {
 // mode IS the per-site memory — "off" stays off, "upscale"/"passthrough"
 // re-activates once a playable video is present. No separate toggle.
 export async function restoreSitePrefs() {
-  const restoreToken = autoEnableGeneration;
+  const restoreToken = preferenceRestoreGeneration;
   const p = await loadSitePrefs();
   if (!p) return { ok: true, restored: false };
-  if (restoreToken !== autoEnableGeneration) return { ok: false, restored: false, reason: "superseded" };
-  const selectionGeneration = ++engineSelectionGeneration;
+  if (restoreToken !== preferenceRestoreGeneration) return { ok: false, restored: false, reason: "superseded" };
+  engineSelectionGeneration++;
   if (p.engine) engine = p.engine === "artcnn" ? "artcnn" : p.engine === "fsrcnnx-hi" ? "fsrcnnx-hi" : p.engine === "neural" ? "neural" : "fsrcnnx";
   if (typeof p.neuralModel === "string") neuralModelKey = p.neuralModel;
-  if (engine === "neural") ensureNeural(selectionGeneration).catch((er) => {
-    if (selectionGeneration !== engineSelectionGeneration || engine !== "neural") return;
-    if (mode === "off" && /initialization cancelled/i.test(er.message)) return;
-    warn("neural restore failed:", er.message);
-    engineSelectionGeneration++;
-    engine = "fsrcnnx";
-    resumeInterpolationAfterNeural();
-  });
   if (p.artVariant && ART_FILES.includes(p.artVariant)) artVariant = p.artVariant;
   if (typeof p.policy === "string") upscalePolicy = p.policy;
   if (typeof p.ssimds === "boolean") ssimdsEnabled = p.ssimds;
@@ -2273,61 +2908,38 @@ export async function restoreSitePrefs() {
     debandStrength = Math.max(0.3, Math.min(3.0, p.debandStrength));
   }
   chainDepth = (engine === "artcnn" || engine === "fsrcnnx-hi") ? policyToDepth(upscalePolicy) : 1;
+  resetScaleSelection();
 
-  // image upscaling is independent of the video mode; restore + activate it
-  if (typeof p.images === "boolean" && p.images) {
-    setImages(true).catch(() => {});
-  }
-
-  // interpolation settings: engine/target restore immediately; on/off auto-enables
-  // once a video is ready (after the upscale auto-enable, so the chain engages).
+  // Interpolation configuration is applied before its lifecycle setting. The
+  // renderer mode is activated first so an enabled interpolator makes the right
+  // chained-versus-standalone decision on its first start.
   if (typeof p.interpEngine === "string" && p.interpEngine) pendingEngine = p.interpEngine;
   if (p.interpTargetFps != null) pendingTargetFps = p.interpTargetFps;
   if (typeof p.interpAutoFallback === "boolean") interpAutoFallbackPref = p.interpAutoFallback;
   if (typeof p.interpLadder === "boolean") interpLadderPref = p.interpLadder;
   if (typeof p.interpInvert === "boolean") interpInvertPref = p.interpInvert;
   const wantInterp = p.interpolate === true;
+  const savedMode = ["passthrough", "upscale"].includes(p.mode) ? p.mode : "off";
+  const wantImages = p.images === true;
 
-  const wasEnabled = p.mode && p.mode !== "off";
-  if (wasEnabled) scheduleAutoEnable(p.mode, wantInterp);
-  else if (wantInterp) scheduleAutoEnable(null, true);
-  return { ok: true, restored: true, wasEnabled, savedMode: p.mode || "off" };
+  await setMode(savedMode, restoreToken);
+  if (restoreToken !== preferenceRestoreGeneration) return { ok: false, restored: false, reason: "superseded" };
+  await setImages(wantImages);
+  if (restoreToken !== preferenceRestoreGeneration) return { ok: false, restored: false, reason: "superseded" };
+  await setInterpolate(wantInterp, restoreToken);
+  if (restoreToken !== preferenceRestoreGeneration) return { ok: false, restored: false, reason: "superseded" };
+  return { ok: true, restored: true, wasEnabled: savedMode !== "off", savedMode };
 }
 
-// Wait (with backoff) for a playable, non-protected video, then enter `targetMode`.
-// Pages often load the player after the content script runs, so we poll briefly.
-let autoEnableTimer = null, autoEnableGeneration = 0;
-function cancelAutoEnable() {
-  autoEnableGeneration++;
-  if (autoEnableTimer != null) clearTimeout(autoEnableTimer);
-  autoEnableTimer = null;
-}
-function scheduleAutoEnable(targetMode, alsoInterp = false) {
-  if (autoEnableTimer != null) clearTimeout(autoEnableTimer);
-  const generation = ++autoEnableGeneration;
-  let attempts = 0;
-  const tryEnable = async () => {
-    if (generation !== autoEnableGeneration) return;
-    if (targetMode && mode !== "off") return; // user already acted
-    attempts++;
-    const v = findVideo();
-    if (v && probeVideo(v) === "ok") {
-      log(`auto-enabling (${targetMode || "interp-only"}${alsoInterp && targetMode ? "+interp" : ""}) for ${siteHost()}`);
-      if (targetMode) await setMode(targetMode, generation);
-      if (generation !== autoEnableGeneration) return;
-      if (alsoInterp && !optInterpolate) {
-        // upscaling (if any) is on first, so the interp start makes the chain decision
-        try { await setInterpolate(true, generation); } catch (e) { warn("interp auto-enable failed:", e.message); }
-      }
-      return;
-    }
-    if (attempts < 40 && generation === autoEnableGeneration) autoEnableTimer = setTimeout(tryEnable, 500); // up to ~20s
-  };
-  autoEnableTimer = setTimeout(tryEnable, 600);
+function cancelPreferenceRestore() {
+  preferenceRestoreGeneration++;
 }
 
 export function getStatus() {
-  return { mode, hasVideo: !!findVideo(), webgpu: "gpu" in navigator, frameCount,
+  const activeMode = mode !== "off" && primaryController?.active && primaryController.video === video
+    ? mode
+    : "off";
+  return { mode, activeMode, hasVideo: !!findVideo(), webgpu: "gpu" in navigator, frameCount,
            model: activeModel?.manifest?.name || null, scale: activeModel?.scale || null,
            policy: upscalePolicy, ssimds: ssimdsEnabled,
            sharpen: sharpenEnabled, sharpenStrength,
@@ -2339,10 +2951,17 @@ export function getStatus() {
            deband: debandEnabled, debandStrength,
            images: optImages, imageCount: imageUpscaledCount,
            interpolate: optInterpolate, interpPausedByNeural,
+           interpQuarantined: interpolationQuarantineMatches(video),
+           interpFailure: interpolationQuarantineMatches(video)
+             ? { stage: interpolationTerminalQuarantine.stage, detail: interpolationTerminalQuarantine.detail }
+             : null,
            interpStats: interpolator ? interpolator.getStats() : null,
            interpAutoFallback: interpAutoFallbackPref,
            interpLadder: interpLadderPref, interpInvert: interpInvertPref,
            multiCount: multiTargets.size,
+           videoSuspended: mode !== "off" && activeMode === "off",
+           documentSuspended: pageSuspended,
+           selectedVideoConnected: !!video?.isConnected,
            gpuRecovering: !!(deviceRecoveryPromise || deviceRecoveryTimer) };
 }
 
@@ -2437,6 +3056,7 @@ export async function setImages(on) {
   optImages = !!on;
   saveSitePrefs();
   if (optImages) {
+    if (pageSuspended) return { ok: true, images: true, pending: true, suspended: true };
     let up;
     try { up = await ensureImageUpscaler(); }
     catch (error) {
@@ -2462,9 +3082,8 @@ export async function setImages(on) {
 }
 
 // ---- frame interpolation (experimental, staged) ---------------------------
-// Stage 1 is passthrough only (capture -> present -> sync test), no RIFE. This
-// is gated, off by default, and NOT persisted per-site yet — it's an opt-in
-// experiment while we validate feasibility.
+// Interpolation remains off by default. When enabled, its lifecycle follows the
+// exact selected video and its per-site preference is restored transactionally.
 let interpolator = null, interpolatorInitPromise = null;
 let interpolationSelectionGeneration = 0, interpolationConfigGeneration = 0;
 let optInterpolate = false;
@@ -2480,7 +3099,8 @@ function configureInterpolator(instance) {
 
 function scheduleInterpolatorGpuRestart() {
   const instance = interpolator;
-  if (!instance?.running || !optInterpolate || engine === "neural") return;
+  if (pageSuspended || !instance?.running || !optInterpolate || engine === "neural" ||
+      interpolationQuarantineMatches(video)) return;
   const selectionGeneration = interpolationSelectionGeneration;
   try { instance.stop(); }
   catch (error) { warn("interpolation GPU-error stop failed:", error.message); return; }
@@ -2488,8 +3108,18 @@ function scheduleInterpolatorGpuRestart() {
     // A delayed recovery must never override a newer user toggle, engine switch,
     // or replacement instance. The current selection owns whether it may start.
     if (selectionGeneration !== interpolationSelectionGeneration ||
-        instance !== interpolator || !optInterpolate || engine === "neural") return;
-    instance.start().catch((error) => warn("interpolation GPU-error restart failed:", error.message));
+        pageSuspended || instance !== interpolator || !optInterpolate || engine === "neural" ||
+        interpolationQuarantineMatches(video)) return;
+    const selectedVideo = video;
+    const selectedSource = captureVideoSource(selectedVideo);
+    const configKey = interpolationRuntimeConfigKey();
+    instance.start(selectedVideo).then((result) => {
+      if (instance !== interpolator || !optInterpolate || engine === "neural" ||
+          video !== selectedVideo || configKey !== interpolationRuntimeConfigKey() ||
+          !sameVideoSource(selectedSource, captureVideoSource(selectedVideo))) return;
+      if (result?.ok) interpolationStartFailureStreak = null;
+      else recordInterpolationStartFailure(selectedVideo, selectedSource, result);
+    }).catch((error) => warn("interpolation GPU-error restart failed:", error.message));
   }, 50);
 }
 
@@ -2499,7 +3129,10 @@ async function ensureInterpolatorInstance() {
   const promise = import(chrome.runtime.getURL("fsrcnnx-interpolate.js")).then((mod) => {
     if (!interpolator) {
       interpolator = new mod.Interpolator({ findVideo, log, warn,
-        chain: { tap: chainTap, info: chainInfo, available: chainAvailable, device: chainDevice, adopt: adoptChainDevice, targetDims: chainTargetDims,
+        onTerminalFailure: handleInterpolationTerminalFailure,
+        sourceVideo: chainSourceVideo,
+        chain: { tap: chainTap, info: chainInfo, available: chainAvailable, canInvert: chainCanInvert,
+                 source: chainSourceVideo, device: chainDevice, adopt: adoptChainDevice, targetDims: chainTargetDims,
                  upscaleTex: chainUpscaleTex, setInverted: setChainInverted, invert: () => interpInvertPref,
                  ladder: () => interpLadderPref } });
     }
@@ -2511,14 +3144,22 @@ async function ensureInterpolatorInstance() {
   return promise;
 }
 
-export async function setInterpolate(on, autoEnableToken = null) {
-  if (autoEnableToken == null) cancelAutoEnable();
-  else if (autoEnableToken !== autoEnableGeneration) {
+export async function setInterpolate(on, restoreToken = null) {
+  if (restoreToken == null) {
+    cancelPreferenceRestore();
+    clearInterpolationTerminalQuarantine();
+  }
+  else if (restoreToken !== preferenceRestoreGeneration) {
     return { ok: false, interpolate: optInterpolate, reason: "superseded" };
   }
   const selectionGeneration = ++interpolationSelectionGeneration;
   optInterpolate = !!on;
+  updateVideoMonitor();
   if (optInterpolate) {
+    if (pageSuspended) {
+      saveSitePrefs();
+      return { ok: true, interpolate: true, running: false, pending: true, suspended: true };
+    }
     if (engine === "neural") {
       pauseInterpolationForNeural();
       saveSitePrefs();
@@ -2536,13 +3177,41 @@ export async function setInterpolate(on, autoEnableToken = null) {
       return { ok: true, interpolate: true, running: false, paused: "neural" };
     }
     configureInterpolator(instance);
-    const r = await instance.start();
+    const candidate = findVideo();
+    if (!candidate) {
+      await queueVideoSelection(null, { force: true });
+      saveSitePrefs();
+      notifyState();
+      return { ok: false, interpolate: true, running: false, reason: "no video", pending: true };
+    }
+    const reason = probeVideo(candidate);
+    if (reason !== "ok") {
+      await queueVideoSelection(candidate, { force: true });
+      saveSitePrefs();
+      return { ok: false, interpolate: true, running: false, reason, pending: true };
+    }
+    const reconciled = await queueVideoSelection(candidate, { force: true });
     if (selectionGeneration !== interpolationSelectionGeneration || !optInterpolate || engine === "neural") {
       if (!optInterpolate || engine === "neural") instance.stop();
       if (engine === "neural" && optInterpolate) interpPausedByNeural = true;
       return { ok: false, interpolate: optInterpolate, reason: "superseded" };
     }
-    if (!r.ok) { optInterpolate = false; interpPausedByNeural = false; warn("interpolation start failed:", r.reason); }
+    if (!reconciled) {
+      // A video/document/device generation superseded this handoff. The
+      // ownership monitor or recovery coordinator will retry current intent.
+      saveSitePrefs();
+      notifyState();
+      return { ok: false, interpolate: true, running: false,
+        reason: "lifecycle-pending", pending: true };
+    }
+    const r = instance.running
+      ? { ok: true, interpolate: true, running: true }
+      : { ok: false, interpolate: true, running: false, reason: "interpolation start failed" };
+    if (!r.ok) {
+      interpPausedByNeural = false;
+      updateVideoMonitor();
+      warn("interpolation start failed:", r.reason);
+    }
     saveSitePrefs();
     return r;
   } else if (interpolator) {
@@ -2551,6 +3220,7 @@ export async function setInterpolate(on, autoEnableToken = null) {
   } else {
     interpPausedByNeural = false;
   }
+  updateVideoMonitor();
   saveSitePrefs();
   return { ok: true, interpolate: optInterpolate };
 }
@@ -2558,21 +3228,31 @@ export function getInterpolateStats() {
   return interpolator ? interpolator.getStats() : { running: false };
 }
 export function setInterpolateRes(mode) {
+  const { retry } = reviseInterpolationConfiguration();
   if (interpolator) interpolator.setResMode(mode);
+  if (retry) void requestInterpolationRetry("resolution change");
   return { ok: true, resMode: mode };
 }
 export function setInterpolateAvOffset(ms) {
-  if (interpolator) return { ok: true, avOffsetMs: interpolator.setAvOffset(ms) };
+  const { retry } = reviseInterpolationConfiguration();
+  if (interpolator) {
+    const result = { ok: true, avOffsetMs: interpolator.setAvOffset(ms) };
+    if (retry) void requestInterpolationRetry("A/V offset change");
+    return result;
+  }
   return { ok: false };
 }
 export async function setInterpolateModel(key) {
   // Model changes are configuration revisions, not lifecycle selections. In
   // particular, they must not cancel an enable that is awaiting the shared
   // module import; configureInterpolator() will apply the newest pending key.
-  const configGeneration = ++interpolationConfigGeneration;
+  const { generation: configGeneration, retry } = reviseInterpolationConfiguration();
   pendingEngine = key; // remember for a future interpolator instance
   saveSitePrefs();
-  if (!interpolator) return { ok: true, model: key, pending: true };
+  if (!interpolator) {
+    if (retry) void requestInterpolationRetry("model change");
+    return { ok: true, model: key, pending: true };
+  }
   // Apply the engine choice through the proper start path (standalone-blend vs RIFE,
   // chain decision, model init) by restarting a RUNNING interpolator. Mid-run flag
   // flips can't switch pipelines (e.g. RIFE session → standalone blend), which is
@@ -2581,20 +3261,32 @@ export async function setInterpolateModel(key) {
   if (wasRunning) interpolator.stop();
   if (interpolator.setInterpEngine) interpolator.setInterpEngine(key);
   if (wasRunning) {
-    const r = await interpolator.start();
-    if (configGeneration !== interpolationConfigGeneration || !optInterpolate || engine === "neural") {
+    const selectedVideo = video;
+    const selectedSource = captureVideoSource(selectedVideo);
+    const r = await interpolator.start(selectedVideo);
+    if (configGeneration !== interpolationConfigGeneration || !optInterpolate || engine === "neural" ||
+        video !== selectedVideo || !sameVideoSource(selectedSource, captureVideoSource(selectedVideo))) {
       if (!optInterpolate || engine === "neural") interpolator.stop();
       return { ok: false, model: key, reason: "superseded" };
     }
+    if (!r?.ok) recordInterpolationStartFailure(selectedVideo, selectedSource, r);
+    else interpolationStartFailureStreak = null;
     return { ok: r.ok, model: key, restarted: true };
   }
+  if (retry) void requestInterpolationRetry("model change");
   return { ok: true, model: key, ready: true };
 }
 export function setInterpolateTargetFps(v) {
   pendingTargetFps = v;
+  const { retry } = reviseInterpolationConfiguration();
   saveSitePrefs();
-  if (!interpolator || !interpolator.setTargetFps) return { ok: true, target: v, pending: true };
-  return { ok: true, target: interpolator.setTargetFps(v) };
+  if (!interpolator || !interpolator.setTargetFps) {
+    if (retry) void requestInterpolationRetry("target FPS change");
+    return { ok: true, target: v, pending: true };
+  }
+  const result = { ok: true, target: interpolator.setTargetFps(v) };
+  if (retry) void requestInterpolationRetry("target FPS change");
+  return result;
 }
 export function listInterpolateModels() {
   if (interpolator && interpolator._rifeMod && interpolator._rifeMod.listModels) {
@@ -2615,41 +3307,64 @@ export function chainUpscaleTex(tex, w, h) {
   // existing pass chain (FSRCNNX/ArtCNN, SSimDS, sharpen, deband) through the
   // tex-ingest pipeline twins. Synchronous encode+submit, like a normal frame.
   if (!device || mode !== "upscale" || !tex) return false;
+  const presentationBefore = primaryPresentationGeneration;
   try {
     if (!ensureTexPipelines()) return false;
     _texSource = { tex, w: w || tex._w, h: h || tex._h };
     renderUpscale();
-    return true;
+    // renderUpscale intentionally has several safe early exits. Only report
+    // success when this call actually submitted and exposed a primary frame;
+    // the interpolator uses true as permission to hide the original video.
+    return primaryPresentationGeneration !== presentationBefore;
   }
   catch (e) { _texSource = null; warn("chainUpscaleTex failed:", e.message); return false; }
 }
 export async function setInterpolateInvert(on) {
   interpInvertPref = !!on;
+  const { generation: configGeneration, retry } = reviseInterpolationConfiguration();
   saveSitePrefs();
-  if (!interpolator) return { ok: true, invert: interpInvertPref, pending: true };
+  if (!interpolator) {
+    if (retry) void requestInterpolationRetry("chain inversion change");
+    return { ok: true, invert: interpInvertPref, pending: true };
+  }
   // Mode selection happens at interpolator start (capture path, pin dims, present
   // sink) — mirror the model-change restart so the flip takes effect cleanly.
   const wasRunning = !!interpolator.running;
   if (wasRunning) interpolator.stop();
   if (wasRunning) {
-    const r = await interpolator.start();
+    const selectedVideo = video;
+    const selectedSource = captureVideoSource(selectedVideo);
+    const r = await interpolator.start(selectedVideo);
+    if (configGeneration !== interpolationConfigGeneration || !optInterpolate || engine === "neural" ||
+        video !== selectedVideo || !sameVideoSource(selectedSource, captureVideoSource(selectedVideo))) {
+      if (!optInterpolate || engine === "neural") interpolator.stop();
+      return { ok: false, invert: interpInvertPref, reason: "superseded" };
+    }
+    if (!r?.ok) recordInterpolationStartFailure(selectedVideo, selectedSource, r);
+    else interpolationStartFailureStreak = null;
     return { ok: r.ok, invert: interpInvertPref, restarted: true };
   }
+  if (retry) void requestInterpolationRetry("chain inversion change");
   return { ok: true, invert: interpInvertPref, ready: true };
 }
 export function setInterpolateAutoFallback(on) {
   interpAutoFallbackPref = !!on;
+  const { retry } = reviseInterpolationConfiguration();
   saveSitePrefs();
   if (interpolator && interpolator.setAutoFallback) interpolator.setAutoFallback(interpAutoFallbackPref);
+  if (retry) void requestInterpolationRetry("fallback change");
   return { ok: true, autoFallback: interpAutoFallbackPref };
 }
 export function setInterpolateLadder(on) {
   interpLadderPref = !!on;
+  const { retry } = reviseInterpolationConfiguration();
   saveSitePrefs();
   if (interpolator && interpolator.setLadder) interpolator.setLadder(interpLadderPref);
+  if (retry) void requestInterpolationRetry("ladder change");
   return { ok: true, ladder: interpLadderPref };
 }
 export function setInterpolateDiag(on) {
+  const { retry } = reviseInterpolationConfiguration();
   // controls the static-region passthrough (jitter fix). Sets both the CPU-path
   // flag (rife module) and the interpolator flag (used by the GPU composite shader).
   let ok = false;
@@ -2657,6 +3372,7 @@ export function setInterpolateDiag(on) {
     interpolator._rifeMod.setStaticPassthrough(on); ok = true;
   }
   if (interpolator) { interpolator._staticOn = !!on; ok = true; }
+  if (retry) void requestInterpolationRetry("diagnostic change");
   return { ok, staticPassthrough: !!on };
 }
 

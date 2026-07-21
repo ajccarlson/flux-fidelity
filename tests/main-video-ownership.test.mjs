@@ -1,0 +1,981 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+
+const mainUrl = new URL("../fsrcnnx-main.js", import.meta.url);
+let revision = 0;
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+}
+
+function section(source, startMarker, endMarker) {
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start);
+  assert.notEqual(start, -1, `missing start marker: ${startMarker}`);
+  assert.notEqual(end, -1, `missing end marker: ${endMarker}`);
+  return source.slice(start, end);
+}
+
+async function loadSelectionCoordinator(deps) {
+  const source = await readFile(mainUrl, "utf8");
+  const sourceIdentity = section(
+    source,
+    "function captureVideoSource(target)",
+    "function ensureCanvas()",
+  );
+  const production = section(
+    source,
+    "function videoMonitoringNeeded()",
+    "export function suspendDocument()",
+  );
+  const harness = `
+    const deps = globalThis.__videoOwnershipDeps;
+    let mode = deps.mode || "upscale";
+    let optInterpolate = deps.optInterpolate !== false;
+    let pageSuspended = false;
+    let video = deps.initialVideo || null;
+    let primaryController = video ? { active: true, video } : null;
+    let videoMonitor = null, layoutController = primaryController;
+    let videoSelectionGeneration = 0, videoSwitchTail = Promise.resolve();
+    let videoSelectionPendingGeneration = 0;
+    let videoSelectionPendingRequest = null;
+    let selectedVideoSource = null;
+    let modeSelectionGeneration = 0;
+    let interpolationSelectionGeneration = 0, interpolationConfigGeneration = 0;
+    let interpolationTerminalQuarantine = null, interpolationStartFailureStreak = null;
+    let pendingEngine = null, pendingTargetFps = null;
+    let interpAutoFallbackPref = true, interpLadderPref = false, interpInvertPref = true;
+    let engineSelectionGeneration = 0;
+    let engine = deps.engine || "fsrcnnx";
+    let interpolator = deps.interpolator || null;
+    let optAllVideos = false;
+    let protectedSource = false, protectedReason = null;
+    let chainInverted = false, _texSource = null, activeModel = null;
+    let frameTimes = [];
+    let canvas = { style: {} };
+    let neuralEng = { stop: () => deps.events.push(["neural-stop", video]) };
+    class VideoSelectionMonitor {}
+    const findVideo = () => deps.selected;
+    const log = (...args) => deps.events.push(["log", ...args]);
+    const warn = (...args) => deps.events.push(["warn", ...args]);
+    const configureInterpolator = () => {};
+    const cancelMainLoop = () => deps.events.push(["cancel", primaryController?.video || null]);
+    const detach = () => {
+      deps.events.push(["detach", primaryController?.video || null]);
+      primaryController = null;
+      layoutController = null;
+    };
+    const clearMultiTargets = () => deps.events.push(["clear-multi"]);
+    const chainTap = (on) => deps.events.push(["chain-tap", on]);
+    const resetScaleSelection = () => deps.events.push(["reset-scale"]);
+    const probeVideo = (candidate) => deps.probe(candidate);
+    const notifyProtected = () => deps.events.push(["notify-protected", protectedReason]);
+    const notifyState = () => deps.events.push(["notify-state", mode, !!primaryController]);
+    const initWebGPU = () => deps.initWebGPU();
+    const loadModels = () => deps.loadModels();
+    const ensureNeural = async () => {};
+    const resumeInterpolationAfterNeural = () => {};
+    const attach = () => {
+      primaryController = { active: true, video };
+      layoutController = primaryController;
+      deps.events.push(["attach", video]);
+    };
+    const scheduleMainLoop = () => deps.events.push(["schedule", video]);
+    const syncMultiTargets = () => {};
+    ${sourceIdentity}
+    selectedVideoSource = captureVideoSource(video);
+    ${production}
+    export function reconcile(candidate, force = true, sourceBoundary = false) {
+      return queueVideoSelection(candidate, { force, sourceBoundary });
+    }
+    export function invalidateSelection() { videoSelectionGeneration++; }
+    export function terminalFailure(failure) { return handleInterpolationTerminalFailure(failure); }
+    export function quarantined(candidate = video) { return interpolationQuarantineMatches(candidate); }
+    export function state() {
+      return { mode, video, primaryController, protectedSource, protectedReason,
+        videoSelectionGeneration, optInterpolate,
+        interpolationQuarantined: interpolationQuarantineMatches(video) };
+    }
+  `;
+  globalThis.__videoOwnershipDeps = deps;
+  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+}
+
+async function loadPresentationBoundary() {
+  const source = await readFile(mainUrl, "utf8");
+  const targetDimensions = section(source, "export function chainTargetDims()", "let lumaTexture");
+  const presentation = section(source, "function showPresentedCanvas()", "function positionCanvas");
+  const harness = `
+    let canvas = null, video = null, primaryController = null, renderTargetOwner = null;
+    let presentedCanvasVideo = null, presentedSourceW = 0, presentedSourceH = 0;
+    let primaryPresentationGeneration = 0;
+    let reconcileRequests = 0;
+    const videoPageVisible = (candidate) => candidate?.pageVisible !== false;
+    const videoMonitor = { request() { reconcileRequests++; } };
+    ${targetDimensions}
+    ${presentation}
+    export function setPrimary(nextVideo, nextCanvas, active = true) {
+      video = nextVideo; canvas = nextCanvas;
+      primaryController = { active, video: nextVideo };
+      renderTargetOwner = null;
+    }
+    export function presentPrimary() { showPresentedCanvas(); }
+    export function presentSecondary(nextVideo, nextCanvas) {
+      const saved = { video, canvas, renderTargetOwner };
+      video = nextVideo; canvas = nextCanvas; renderTargetOwner = {};
+      showPresentedCanvas();
+      ({ video, canvas, renderTargetOwner } = saved);
+    }
+    export function generation() { return primaryPresentationGeneration; }
+    export function requests() { return reconcileRequests; }
+  `;
+  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+}
+
+async function loadPositionBoundary() {
+  const source = await readFile(mainUrl, "utf8");
+  const production = section(source, "function inShadowDom(node)", "function showPresentedCanvas()");
+  const harness = `
+    class ShadowRoot {
+      constructor(host) { this.host = host; this.fullscreenElement = null; }
+      appendChild(node) { node.parentNode = this; }
+    }
+    const document = {
+      body: { appendChild(node) { node.parentNode = this; } },
+      fullscreenElement: null,
+    };
+    const textureSizeAllowed = () => true;
+    ${production}
+    export { ShadowRoot, document, positionVideoCanvas };
+  `;
+  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+}
+
+async function loadEngineSelection(deps) {
+  const source = await readFile(mainUrl, "utf8");
+  const production = section(source, "export function setEngine", "export function setArtVariant");
+  const harness = `
+    const deps = globalThis.__videoOwnershipDeps;
+    let engine = "fsrcnnx", engineSelectionGeneration = 0, device = null;
+    let mode = deps.mode, pageSuspended = !!deps.pageSuspended;
+    const video = {};
+    let primaryController = deps.active ? { active: true, video } : null;
+    let interpPausedByNeural = false, neuralEng = null, chainDepth = 1;
+    let upscalePolicy = "display", artDiagLogged = false, artVariant = "ArtCNN_C4F32";
+    const resetScaleSelection = () => deps.events.push("reset");
+    const clearMultiTargets = () => deps.events.push("clear-multi");
+    const ensureNeural = (selection) => deps.ensureNeural(selection);
+    const resumeInterpolationAfterNeural = () => deps.events.push("resume-interp");
+    const policyToDepth = () => 1;
+    const ensureArtStages = async () => {};
+    const ensureHiStages = async () => {};
+    const saveSitePrefs = () => deps.events.push("save");
+    const warn = (...args) => deps.events.push(["warn", ...args]);
+    ${production}
+    export function setSuspended(value) { pageSuspended = value; }
+    export function state() { return { engine, engineSelectionGeneration }; }
+  `;
+  globalThis.__videoOwnershipDeps = deps;
+  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+}
+
+async function loadNeuralModelSelection(deps) {
+  const source = await readFile(mainUrl, "utf8");
+  const production = section(source, "export async function setNeuralModel", "// Shared present tail");
+  const harness = `
+    const deps = globalThis.__videoOwnershipDeps;
+    let neuralModelKey = "", engine = "neural", engineSelectionGeneration = 2;
+    let mode = deps.mode, pageSuspended = !!deps.pageSuspended;
+    const video = {};
+    let primaryController = deps.active ? { active: true, video } : null;
+    const resetScaleSelection = () => {};
+    const ensureNeural = (selection, options) => deps.ensureNeural(selection, options);
+    const saveSitePrefs = () => deps.events.push("save");
+    const warn = (...args) => deps.events.push(["warn", ...args]);
+    ${production}
+    export function state() { return { neuralModelKey, engineSelectionGeneration }; }
+  `;
+  globalThis.__videoOwnershipDeps = deps;
+  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+}
+
+async function loadPreferenceRestore(deps) {
+  const source = await readFile(mainUrl, "utf8");
+  const production = section(source, "export async function restoreSitePrefs()", "function cancelPreferenceRestore()");
+  const harness = `
+    const deps = globalThis.__videoOwnershipDeps;
+    const ART_FILES = ["ArtCNN_C4F32"];
+    let preferenceRestoreGeneration = 0, engineSelectionGeneration = 0;
+    let engine = "fsrcnnx", neuralModelKey = "", artVariant = "ArtCNN_C4F32";
+    let upscalePolicy = "display", ssimdsEnabled = true, sharpenEnabled = false, sharpenStrength = 1;
+    let optHoverReveal = false, optAllVideos = false, debandEnabled = false, debandStrength = 1;
+    let chainDepth = 1, pendingEngine = null, pendingTargetFps = null;
+    let interpAutoFallbackPref = true, interpLadderPref = false, interpInvertPref = true;
+    const loadSitePrefs = async () => deps.prefs;
+    const policyToDepth = () => 1;
+    const resetScaleSelection = () => {};
+    const ensureNeural = async () => { deps.neuralCalls++; };
+    const setMode = async (value) => { deps.events.push(["mode", value, deps.pageSuspended]); return { ok: true }; };
+    const setImages = async (value) => { deps.events.push(["images", value]); return { ok: true }; };
+    const setInterpolate = async (value) => { deps.events.push(["interpolate", value]); return { ok: true }; };
+    ${production}
+    export function state() { return { engine, neuralModelKey, engineSelectionGeneration }; }
+  `;
+  globalThis.__videoOwnershipDeps = deps;
+  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+}
+
+async function loadNeuralPresentation(deps) {
+  const source = await readFile(mainUrl, "utf8");
+  const sourceIdentity = section(source, "function captureVideoSource(target)", "function ensureCanvas()");
+  const production = section(source, "function renderNeuralFrame()", "function ensureDebandInter");
+  const harness = `
+    const deps = globalThis.__videoOwnershipDeps;
+    let device = {}, mode = "upscale", engine = "neural", adopting = false;
+    let neuralBusy = false, neuralFail = 0, videoSelectionGeneration = 3;
+    let engineSelectionGeneration = 0;
+    const video = { videoWidth: 640, videoHeight: 360, currentSrc: "a", src: "a" };
+    const primaryController = { active: true, video };
+    const neuralEng = {
+      ready: () => true,
+      device: () => device,
+      activeEntry: () => ({ scale: 2, padMultiple: 1 }),
+      run: () => deps.run.promise,
+      bumpSkip() {},
+      stop() {},
+    };
+    const textureSizeAllowed = () => true;
+    const storageBufferSizeAllowed = () => true;
+    const safeImportExternal = () => ({});
+    const renderPassthrough = () => {};
+    const adoptChainDevice = async () => true;
+    const warn = (...args) => deps.events.push(["warn", ...args]);
+    const resumeInterpolationAfterNeural = () => {};
+    const presentHiRGBTexture = (...args) => { deps.events.push(["present", ...args]); return true; };
+    ${sourceIdentity}
+    ${production}
+    export function render() { renderNeuralFrame(); }
+    export function setAdopting(value) { adopting = value; }
+    export function changeSource(value) { video.currentSrc = value; video.src = value; }
+  `;
+  globalThis.__videoOwnershipDeps = deps;
+  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+}
+
+async function loadRuntimeNotifications(deps) {
+  const source = await readFile(mainUrl, "utf8");
+  const production = section(source, "function sendRuntimeMessage", "const srcCache");
+  const harness = `
+    const deps = globalThis.__videoOwnershipDeps;
+    const chrome = { runtime: { sendMessage(message) { deps.messages.push(message); return deps.pending(); } } };
+    const siteHost = () => "example.test";
+    let protectedSource = false, mode = "upscale";
+    const video = {};
+    const primaryController = { active: true, video };
+    ${production}
+    export { notifyProtected, notifyState };
+  `;
+  globalThis.__videoOwnershipDeps = deps;
+  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+}
+
+async function loadSecondarySourceBoundary(deps) {
+  const source = await readFile(mainUrl, "utf8");
+  const production = section(
+    source,
+    "function handleSecondarySourceBoundary(target, owner)",
+    "// Build per-target model instances",
+  );
+  const harness = `
+    const deps = globalThis.__videoOwnershipDeps;
+    let pageSuspended = false, optAllVideos = true, mode = "upscale", adopting = false;
+    let multiTargets = new Map();
+    const videoMonitor = { request: () => deps.events.push("request") };
+    ${production}
+    export function register(target) { multiTargets.set(target.video, target); }
+    export { handleSecondarySourceBoundary };
+  `;
+  globalThis.__videoOwnershipDeps = deps;
+  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+}
+
+async function loadVideoSelectors(deps) {
+  const source = await readFile(mainUrl, "utf8");
+  const primary = section(source, "function findVideo()", "function captureVideoSource(target)");
+  const secondary = section(source, "function findAllVideos()", "const MAX_SECONDARY_TARGETS");
+  const harness = `
+    const deps = globalThis.__videoOwnershipDeps;
+    const window = { innerWidth: 1920, innerHeight: 1080 };
+    const deepQueryVideos = () => deps.videos;
+    const getComputedStyle = (target) => target.computedStyle || {
+      display: "block", visibility: "visible", opacity: "1",
+    };
+    const isTaintedVideo = () => false;
+    ${primary}
+    ${secondary}
+    export { findVideo, findAllVideos };
+  `;
+  globalThis.__videoOwnershipDeps = deps;
+  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+}
+
+function setup({
+  initialVideo = { id: "A" },
+  optInterpolate = true,
+  engine = "fsrcnnx",
+  startResults = [],
+} = {}) {
+  const events = [];
+  const interpolator = {
+    running: optInterpolate,
+    video: optInterpolate ? initialVideo : null,
+    stop() {
+      events.push(["interp-stop", this.video]);
+      this.running = false;
+      this.video = null;
+    },
+    async start(candidate) {
+      events.push(["interp-start", candidate]);
+      const result = startResults.length ? startResults.shift() : { ok: true };
+      this.video = result.ok ? candidate : null;
+      this.running = !!result.ok;
+      return result;
+    },
+  };
+  return {
+    initialVideo,
+    selected: initialVideo,
+    optInterpolate,
+    engine,
+    interpolator,
+    events,
+    probe: () => "ok",
+    initWebGPU: async () => true,
+    loadModels: async () => {},
+  };
+}
+
+test("SPA replacement transfers renderer and interpolation ownership to one exact video", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  const deps = setup();
+  const next = { id: "B" };
+  const coordinator = await loadSelectionCoordinator(deps);
+
+  assert.equal(await coordinator.reconcile(next), true);
+  const state = coordinator.state();
+  assert.equal(state.video, next);
+  assert.equal(state.primaryController.video, next);
+  assert.equal(deps.interpolator.video, next);
+  assert.deepEqual(
+    deps.events.filter(([type]) => ["detach", "attach", "interp-start"].includes(type)),
+    [["detach", deps.initialVideo], ["attach", next], ["interp-start", next]],
+  );
+});
+
+test("rapid A to B to C replacement cannot commit deferred B activation", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  const deps = setup({ optInterpolate: false });
+  const initStarted = deferred();
+  const releaseInit = deferred();
+  let initCalls = 0;
+  deps.initWebGPU = async () => {
+    initCalls++;
+    if (initCalls === 1) {
+      initStarted.resolve();
+      await releaseInit.promise;
+    }
+    return true;
+  };
+  const coordinator = await loadSelectionCoordinator(deps);
+  const middle = { id: "B" };
+  const latest = { id: "C" };
+
+  const stale = coordinator.reconcile(middle);
+  await initStarted.promise;
+  const current = coordinator.reconcile(latest);
+  releaseInit.resolve();
+
+  assert.equal(await stale, false);
+  assert.equal(await current, true);
+  assert.equal(coordinator.state().video, latest);
+  assert.deepEqual(
+    deps.events.filter(([type]) => type === "attach").map(([, candidate]) => candidate),
+    [latest],
+  );
+});
+
+test("identical selector scans share one deferred video handoff", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  const deps = setup({ optInterpolate: false });
+  const initStarted = deferred();
+  const releaseInit = deferred();
+  let initCalls = 0;
+  deps.initWebGPU = async () => {
+    initCalls++;
+    initStarted.resolve();
+    await releaseInit.promise;
+    return true;
+  };
+  const coordinator = await loadSelectionCoordinator(deps);
+  const next = {
+    id: "B", currentSrc: "b", src: "b", videoWidth: 1280, videoHeight: 720,
+  };
+
+  const handoff = coordinator.reconcile(next, false);
+  await initStarted.promise;
+  const repeatedScans = Array.from({ length: 8 }, () => coordinator.reconcile(next, false));
+
+  assert.ok(repeatedScans.every((operation) => operation === handoff),
+    "an exact in-flight candidate and source must reuse its ownership operation");
+  assert.equal(coordinator.state().videoSelectionGeneration, 1,
+    "identical scans must not invalidate the generation they are awaiting");
+
+  releaseInit.resolve();
+  assert.deepEqual(await Promise.all([handoff, ...repeatedScans]), Array(9).fill(true));
+  assert.equal(initCalls, 1);
+  assert.equal(coordinator.state().video, next);
+  assert.deepEqual(
+    deps.events.filter(([type]) => type === "attach").map(([, candidate]) => candidate),
+    [next],
+  );
+});
+
+test("an invalidated deferred handoff is never reused by an identical scan", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  const deps = setup({ optInterpolate: false });
+  const initStarted = deferred();
+  const releaseInit = deferred();
+  let initCalls = 0;
+  deps.initWebGPU = async () => {
+    initCalls++;
+    initStarted.resolve();
+    await releaseInit.promise;
+    return true;
+  };
+  const coordinator = await loadSelectionCoordinator(deps);
+  const next = {
+    id: "B", currentSrc: "b", src: "b", videoWidth: 1280, videoHeight: 720,
+  };
+
+  const stale = coordinator.reconcile(next, false);
+  await initStarted.promise;
+  coordinator.invalidateSelection();
+  const current = coordinator.reconcile(next, false);
+
+  assert.notEqual(current, stale,
+    "a scan after device/lifecycle invalidation must enqueue fresh ownership work");
+  assert.equal(coordinator.state().videoSelectionGeneration, 3);
+
+  releaseInit.resolve();
+  assert.equal(await stale, false);
+  assert.equal(await current, true);
+  assert.equal(initCalls, 2,
+    "the fresh operation must perform its own initialization attempt");
+  assert.equal(coordinator.state().video, next);
+});
+
+test("an immediate queued B to A correction keeps A as the latest owner", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  const original = {
+    id: "A", currentSrc: "a", src: "a", videoWidth: 640, videoHeight: 360,
+  };
+  const middle = {
+    id: "B", currentSrc: "b", src: "b", videoWidth: 640, videoHeight: 360,
+  };
+  const deps = setup({ initialVideo: original, optInterpolate: false });
+  const coordinator = await loadSelectionCoordinator(deps);
+
+  const stale = coordinator.reconcile(middle);
+  const latest = coordinator.reconcile(original);
+
+  assert.equal(await stale, false);
+  assert.equal(await latest, true);
+  assert.equal(coordinator.state().video, original);
+  assert.equal(coordinator.state().primaryController.video, original);
+  assert.deepEqual(
+    deps.events.filter(([type]) => type === "attach").map(([, candidate]) => candidate),
+    [original],
+  );
+});
+
+test("missing and protected videos suspend without forgetting the requested mode, then recover", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  const deps = setup({ optInterpolate: false });
+  const coordinator = await loadSelectionCoordinator(deps);
+
+  assert.equal(await coordinator.reconcile(null), true);
+  assert.equal(coordinator.state().mode, "upscale");
+  assert.equal(coordinator.state().primaryController, null);
+
+  const protectedVideo = { id: "protected" };
+  deps.probe = () => "drm";
+  assert.equal(await coordinator.reconcile(protectedVideo), true);
+  assert.equal(coordinator.state().mode, "upscale");
+  assert.equal(coordinator.state().protectedReason, "drm");
+  assert.equal(coordinator.state().primaryController, null);
+
+  deps.probe = () => "ok";
+  assert.equal(await coordinator.reconcile(protectedVideo), true);
+  assert.equal(coordinator.state().protectedSource, false);
+  assert.equal(coordinator.state().primaryController.video, protectedVideo);
+});
+
+test("a reused video element creates a fresh ownership generation when its media source changes", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  const reused = {
+    id: "A", currentSrc: "https://example.test/a.mp4", src: "https://example.test/a.mp4",
+    videoWidth: 640, videoHeight: 360,
+  };
+  const deps = setup({ initialVideo: reused, optInterpolate: false });
+  const coordinator = await loadSelectionCoordinator(deps);
+
+  reused.currentSrc = "https://example.test/b.mp4";
+  reused.src = reused.currentSrc;
+  reused.videoWidth = 1280;
+  reused.videoHeight = 720;
+
+  assert.equal(await coordinator.reconcile(reused, false), true);
+  assert.equal(coordinator.state().video, reused);
+  assert.equal(coordinator.state().videoSelectionGeneration, 1);
+  assert.deepEqual(
+    deps.events.filter(([type]) => ["detach", "attach"].includes(type)),
+    [["detach", reused], ["attach", reused]],
+  );
+});
+
+test("terminal interpolation quarantine suppresses monitor restarts but releases on source change", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  const reused = {
+    id: "A", currentSrc: "https://example.test/a.mp4", src: "https://example.test/a.mp4",
+    videoWidth: 640, videoHeight: 360,
+  };
+  const deps = setup({ initialVideo: reused, optInterpolate: true });
+  const coordinator = await loadSelectionCoordinator(deps);
+
+  assert.equal(coordinator.terminalFailure({
+    video: reused,
+    stage: "capture",
+    detail: "deterministic decoder failure",
+    source: {
+      video: reused,
+      currentSrc: reused.currentSrc,
+      src: reused.src,
+      srcObject: null,
+    },
+  }), true);
+  deps.interpolator.stop();
+  const startsBeforeReconcile = deps.events.filter(([type]) => type === "interp-start").length;
+
+  assert.equal(await coordinator.reconcile(reused, false), undefined,
+    "the normal monitor pass treats the exact quarantined tuple as settled");
+  assert.equal(deps.events.filter(([type]) => type === "interp-start").length, startsBeforeReconcile);
+  assert.equal(coordinator.state().optInterpolate, true, "runtime failure preserves requested intent");
+  assert.equal(coordinator.state().interpolationQuarantined, true);
+  assert.equal(await coordinator.reconcile(reused, true), true);
+  assert.equal(deps.events.filter(([type]) => type === "interp-start").length, startsBeforeReconcile,
+    "forced ownership reconciliation also honors the exact quarantine");
+
+  reused.currentSrc = "https://example.test/b.mp4";
+  reused.src = reused.currentSrc;
+  reused.videoWidth = 1280;
+  reused.videoHeight = 720;
+  assert.equal(await coordinator.reconcile(reused, false), true);
+  assert.equal(deps.events.filter(([type]) => type === "interp-start").length, startsBeforeReconcile + 1);
+  assert.equal(deps.interpolator.video, reused);
+  assert.equal(coordinator.state().interpolationQuarantined, false);
+  assert.equal(coordinator.terminalFailure({
+    video: reused,
+    stage: "capture",
+    source: {
+      video: reused,
+      currentSrc: "https://example.test/a.mp4",
+      src: "https://example.test/a.mp4",
+      srcObject: null,
+    },
+  }), false, "a stale same-element callback cannot quarantine the replacement source");
+  assert.equal(coordinator.state().interpolationQuarantined, false);
+});
+
+test("deterministic interpolation start failure is quarantined without clearing intent", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  const selected = {
+    id: "A", currentSrc: "https://example.test/a.mp4", src: "https://example.test/a.mp4",
+    videoWidth: 640, videoHeight: 360,
+  };
+  const deps = setup({
+    initialVideo: selected,
+    startResults: [{ ok: false, reason: "unsupported" }],
+  });
+  const coordinator = await loadSelectionCoordinator(deps);
+  deps.interpolator.stop();
+
+  assert.equal(await coordinator.reconcile(selected, true), true);
+  const starts = deps.events.filter(([type]) => type === "interp-start").length;
+  assert.equal(starts, 1);
+  assert.equal(coordinator.state().interpolationQuarantined, true);
+  assert.equal(coordinator.state().optInterpolate, true);
+  await coordinator.reconcile(selected, false);
+  assert.equal(deps.events.filter(([type]) => type === "interp-start").length, starts);
+});
+
+test("superseded interpolation start results remain retryable", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  for (const reason of ["cancelled", "superseded", "no video", "source-active"]) {
+    const selected = {
+      id: reason, currentSrc: `https://example.test/${encodeURIComponent(reason)}.mp4`,
+      src: `https://example.test/${encodeURIComponent(reason)}.mp4`,
+      videoWidth: 640, videoHeight: 360,
+    };
+    const deps = setup({
+      initialVideo: selected,
+      startResults: [{ ok: false, reason }, { ok: true }],
+    });
+    const coordinator = await loadSelectionCoordinator(deps);
+    deps.interpolator.stop();
+
+    assert.equal(await coordinator.reconcile(selected, true), true, reason);
+    assert.equal(coordinator.state().interpolationQuarantined, false, reason);
+    assert.equal(await coordinator.reconcile(selected, false), true, reason);
+    assert.equal(deps.events.filter(([type]) => type === "interp-start").length, 2, reason);
+    assert.equal(deps.interpolator.running, true, reason);
+  }
+});
+
+test("standalone interpolation retains a direct source-boundary owner", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  const candidate = {
+    id: "standalone", currentSrc: "a", src: "a", videoWidth: 640, videoHeight: 360,
+  };
+  const deps = setup({ initialVideo: null, optInterpolate: true });
+  deps.mode = "off";
+  const coordinator = await loadSelectionCoordinator(deps);
+
+  assert.equal(await coordinator.reconcile(candidate), true);
+  assert.equal(coordinator.state().mode, "off");
+  assert.equal(coordinator.state().primaryController.video, candidate,
+    "the non-rendering controller owns loadstart/emptied/loadedmetadata events");
+  assert.equal(deps.interpolator.video, candidate);
+
+  candidate.currentSrc = "b";
+  candidate.src = "b";
+  assert.equal(await coordinator.reconcile(candidate, true, true), true);
+  assert.equal(deps.interpolator.video, candidate);
+  assert.ok(deps.events.filter(([type]) => type === "interp-stop").length >= 2);
+});
+
+test("a secondary source boundary retires the exact target before deferred reconciliation", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  const deps = { events: [] };
+  const boundary = await loadSecondarySourceBoundary(deps);
+  const video = {};
+  const owner = {};
+  const target = {
+    video,
+    controller: owner,
+    canvas: { style: { display: "block" } },
+    destroy() { deps.events.push("destroy"); },
+  };
+  boundary.register(target);
+
+  assert.equal(boundary.handleSecondarySourceBoundary(target, {}), false);
+  assert.equal(boundary.handleSecondarySourceBoundary(target, owner), true);
+  assert.equal(target.failedReason, "source-changed");
+  assert.equal(target.canvas.style.display, "none");
+  assert.deepEqual(deps.events, ["destroy", "request"]);
+  assert.equal(boundary.handleSecondarySourceBoundary(target, owner), false,
+    "a retired target cannot process a second stale source callback");
+});
+
+test("primary and secondary selectors exclude CSS-hidden media despite positive geometry", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  const makeVideo = (id, area, computedStyle = {}) => ({
+    id,
+    videoWidth: 1280,
+    videoHeight: 720,
+    paused: false,
+    ended: false,
+    readyState: 4,
+    computedStyle: { display: "block", visibility: "visible", opacity: "1", ...computedStyle },
+    getBoundingClientRect: () => ({ left: 0, top: 0, right: area, bottom: area, width: area, height: area }),
+    closest: () => null,
+  });
+  const hiddenLarge = makeVideo("hidden-large", 900, { visibility: "hidden" });
+  const transparent = makeVideo("transparent", 800, { opacity: "0" });
+  const hiddenByApi = makeVideo("check-hidden", 700);
+  hiddenByApi.checkVisibility = () => false;
+  const visible = makeVideo("visible", 300);
+  const deps = { videos: [hiddenLarge, transparent, hiddenByApi, visible] };
+  const selectors = await loadVideoSelectors(deps);
+
+  assert.equal(selectors.findVideo(), visible);
+  assert.deepEqual(selectors.findAllVideos(), [visible]);
+});
+
+test("neural configuration stays lazy while rendering is off or document-suspended", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  for (const scenario of [
+    { mode: "off", pageSuspended: false, active: false },
+    { mode: "upscale", pageSuspended: true, active: true },
+  ]) {
+    let calls = 0;
+    const deps = {
+      ...scenario,
+      events: [],
+      ensureNeural: async () => { calls++; },
+    };
+    const selection = await loadEngineSelection(deps);
+    assert.deepEqual(selection.setEngine("neural"), { ok: true, engine: "neural" });
+    await Promise.resolve();
+    assert.equal(calls, 0, `neural initialized eagerly for ${JSON.stringify(scenario)}`);
+
+    const model = await loadNeuralModelSelection(deps);
+    assert.deepEqual(await model.setNeuralModel("span"), { ok: true, model: "span" });
+    assert.equal(calls, 0, "selecting a model records intent without starting an inactive engine");
+  }
+});
+
+test("overlapping neural model switches use distinct generations and preserve the newest intent", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  const pending = [];
+  const deps = {
+    mode: "upscale",
+    active: true,
+    events: [],
+    ensureNeural(selection, options) {
+      const operation = deferred();
+      pending.push({ selection, options, operation });
+      return operation.promise;
+    },
+  };
+  const model = await loadNeuralModelSelection(deps);
+  const first = model.setNeuralModel("span-a");
+  const second = model.setNeuralModel("span-b");
+
+  assert.deepEqual(pending.map(({ selection, options }) => [selection, options.modelKey]), [
+    [3, "span-a"],
+    [4, "span-b"],
+  ]);
+  const superseded = new Error("neural activation superseded");
+  superseded.code = "NEURAL_SUPERSEDED";
+  pending[0].operation.reject(superseded);
+  pending[1].operation.resolve({ key: "span-b" });
+
+  assert.deepEqual(await first, { ok: true, model: "span-b", pending: true });
+  assert.deepEqual(await second, { ok: true, model: "span-b" });
+  assert.deepEqual(model.state(), { neuralModelKey: "span-b", engineSelectionGeneration: 4 });
+});
+
+test("active neural initialization cancellation on page suspension preserves engine intent", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  const init = deferred();
+  const deps = {
+    mode: "upscale",
+    active: true,
+    events: [],
+    ensureNeural: () => init.promise,
+  };
+  const selection = await loadEngineSelection(deps);
+  selection.setEngine("neural");
+  selection.setSuspended(true);
+  init.resolve(Promise.reject(new Error("neural initialization cancelled by stop")));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(selection.state().engine, "neural");
+});
+
+test("restoring saved neural preferences while off or hidden does not initialize or downgrade them", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  for (const [mode, pageSuspended] of [["off", false], ["upscale", true]]) {
+    const deps = {
+      pageSuspended,
+      neuralCalls: 0,
+      events: [],
+      prefs: { engine: "neural", neuralModel: "span", mode, images: false, interpolate: false },
+    };
+    const restore = await loadPreferenceRestore(deps);
+    assert.equal((await restore.restoreSitePrefs()).ok, true);
+    assert.equal(deps.neuralCalls, 0);
+    assert.equal(restore.state().engine, "neural");
+    assert.equal(restore.state().neuralModelKey, "span");
+  }
+});
+
+test("neural completion cannot present across adoption or same-element source replacement", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+
+  for (const invalidate of [
+    (renderer) => renderer.setAdopting(true),
+    (renderer) => renderer.changeSource("b"),
+  ]) {
+    const run = deferred();
+    const deps = { run, events: [] };
+    const renderer = await loadNeuralPresentation(deps);
+    renderer.render();
+    invalidate(renderer);
+    run.resolve({ tex: {}, outW: 1280, outH: 720 });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(deps.events.some(([type]) => type === "present"), false);
+  }
+});
+
+test("renderer runtime notifications observe rejected extension-message promises", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  let observed = 0;
+  const deps = {
+    messages: [],
+    pending: () => ({ catch(handler) { observed++; handler(new Error("context closed")); } }),
+  };
+  const notifications = await loadRuntimeNotifications(deps);
+
+  assert.doesNotThrow(() => notifications.notifyState());
+  assert.doesNotThrow(() => notifications.notifyProtected());
+  assert.equal(observed, 2);
+  assert.deepEqual(deps.messages.map(({ type }) => type), ["FSRCNNX_STATE", "FSRCNNX_PROTECTED"]);
+});
+
+test("main source keeps secondary mutable state and neural completion target-scoped", async () => {
+  const source = await readFile(mainUrl, "utf8");
+  const targetSwap = section(source, "function withTarget(t, fn)", "// Find all qualifying videos");
+  for (const fragment of [
+    "layoutController = t.controller",
+    "renderTargetOwner = t",
+    "activeModel = t.activeModel",
+    "dispRGB = t.dispRGB",
+    "chainedHi = t.chainedHi",
+    "_scaleHeld = t.scaleHeld",
+    "t.activeModel = activeModel",
+    "t.scaleHeld = _scaleHeld",
+  ]) {
+    assert.match(targetSwap, new RegExp(fragment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  const neural = section(source, "function renderNeuralFrame()", "function ensureDebandInter");
+  assert.match(neural, /video === runVideo/);
+  assert.match(neural, /primaryController === runController/);
+  assert.match(neural, /runVideoGeneration === videoSelectionGeneration/);
+  assert.match(source, /const MAX_SECONDARY_TARGETS = 2/);
+  assert.doesNotMatch(source, /\.rvfc\b/);
+  for (const [startMarker, endMarker] of [
+    ["export function setEngine", "export function setArtVariant"],
+    ["export function setArtVariant", "export function setHoverReveal"],
+    ["export function setPolicy", "// Restore saved preferences"],
+  ]) {
+    assert.match(section(source, startMarker, endMarker), /clearMultiTargets\(\)/,
+      `${startMarker} must retire secondary target-local model selection state`);
+  }
+});
+
+test("interpolation dimensions require a successful frame from the current primary source", async () => {
+  const boundary = await loadPresentationBoundary();
+  const primaryVideo = { videoWidth: 640, videoHeight: 360 };
+  const primaryCanvas = { width: 1280, height: 720, style: { display: "none" } };
+  boundary.setPrimary(primaryVideo, primaryCanvas);
+
+  assert.equal(boundary.chainTargetDims(), null, "a default or hidden canvas is not a presentation");
+  boundary.presentPrimary();
+  assert.deepEqual(boundary.chainTargetDims(), { w: 1280, h: 720 });
+  const primaryGeneration = boundary.generation();
+
+  boundary.presentSecondary(
+    { videoWidth: 320, videoHeight: 180 },
+    { width: 640, height: 360, style: { display: "none" } },
+  );
+  assert.equal(boundary.generation(), primaryGeneration,
+    "secondary presentation cannot replace primary presentation identity");
+  assert.deepEqual(boundary.chainTargetDims(), { w: 1280, h: 720 });
+
+  primaryVideo.videoWidth = 1920;
+  primaryVideo.videoHeight = 1080;
+  assert.equal(boundary.chainTargetDims(), null,
+    "same-element source geometry changes invalidate stale dimensions");
+  primaryCanvas.width = 3840;
+  primaryCanvas.height = 2160;
+  boundary.presentPrimary();
+  assert.deepEqual(boundary.chainTargetDims(), { w: 3840, h: 2160 });
+
+  primaryVideo.pageVisible = false;
+  boundary.presentPrimary();
+  assert.equal(primaryCanvas.style.display, "none");
+  assert.equal(boundary.chainTargetDims(), null);
+  assert.equal(boundary.requests(), 1);
+
+  const hiddenSecondary = {
+    videoWidth: 320, videoHeight: 180, pageVisible: false,
+  };
+  const hiddenSecondaryCanvas = { width: 640, height: 360, style: { display: "block" } };
+  boundary.presentSecondary(hiddenSecondary, hiddenSecondaryCanvas);
+  assert.equal(hiddenSecondaryCanvas.style.display, "none",
+    "a secondary canvas cannot publish over page-hidden media");
+  assert.equal(boundary.requests(), 2);
+});
+
+test("main canvas mounting respects direct and container fullscreen inside shadow DOM", async () => {
+  const boundary = await loadPositionBoundary();
+  const host = {};
+  const root = new boundary.ShadowRoot(host);
+  const parent = {
+    appendChild(node) { node.parentNode = this; },
+    getBoundingClientRect: () => ({ left: 0, top: 0 }),
+  };
+  const video = {
+    parentElement: parent,
+    getRootNode: () => root,
+    getBoundingClientRect: () => ({ left: 10, top: 20, width: 300, height: 200 }),
+  };
+  const canvas = { style: { display: "block" }, width: 0, height: 0, parentNode: null };
+  boundary.document.fullscreenElement = host;
+
+  root.fullscreenElement = video;
+  assert.equal(boundary.positionVideoCanvas(video, canvas, null, 600, 400), false);
+  assert.equal(canvas.style.display, "none");
+
+  const player = {
+    contains: (candidate) => candidate === video,
+    appendChild(node) { node.parentNode = this; },
+  };
+  root.fullscreenElement = player;
+  assert.equal(boundary.positionVideoCanvas(video, canvas, null, 600, 400), true);
+  assert.equal(canvas.parentNode, player);
+
+  root.fullscreenElement = null;
+  assert.equal(boundary.positionVideoCanvas(video, canvas, null, 600, 400), true);
+  assert.equal(canvas.parentNode, root,
+    "a retargeted fullscreen shadow host mounts into the rendered shadow root");
+});
+
+test("site preferences use per-host writes and restore lifecycle false values authoritatively", async () => {
+  const source = await readFile(mainUrl, "utf8");
+  const save = section(source, "async function saveSitePrefs()", "function notifyProtected()");
+  assert.match(save, /const host = siteHost\(\)/);
+  assert.match(save, /chrome\.storage\.local\.set\(\{ \[key\]: value \}\)/);
+  assert.doesNotMatch(save, /chrome\.storage\.local\.get/,
+    "per-host writes must not use a cross-tab read-modify-write map");
+
+  const restore = section(source, "export async function restoreSitePrefs()", "function cancelPreferenceRestore()");
+  assert.match(restore, /await setMode\(savedMode, restoreToken\)/);
+  assert.match(restore, /await setImages\(wantImages\)/);
+  assert.match(restore, /await setInterpolate\(wantInterp, restoreToken\)/);
+  assert.doesNotMatch(restore, /scheduleAutoEnable\(/,
+    "restored intent should remain monitored beyond the old polling window");
+});
