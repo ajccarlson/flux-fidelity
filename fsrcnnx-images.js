@@ -8,7 +8,7 @@
 // meaningfully larger than natural size) and that are a sensible size to process.
 // Lazy: IntersectionObserver processes images as they near the viewport; a
 // MutationObserver picks up images added later (feeds). One-shot per image (no
-// per-frame loop) — the result is drawn to an overlay canvas covering the img.
+// per-frame loop) — the result replaces the image source and is restored on stop.
 
 const LUMA_FROM_TEX = `
 @group(0) @binding(0) var samp : sampler;
@@ -59,17 +59,44 @@ struct VsOut { @builtin(position) pos:vec4f, @location(0) uv:vec2f };
   return textureSampleLevel(src, samp, uv, 0.0);
 }`;
 
+const MIN_SOURCE_EDGE = 64;
+const MIN_SOURCE_PIXELS = 96 * 96;
+const MAX_PROCESSING_PIXELS = 7680 * 4320;
+const MAX_PENDING = 32;
+const MAX_DEFERRED = 128;
+const IMAGE_LOAD_TIMEOUT_MS = 15000;
+const FAILURE_LOG_INTERVAL_MS = 30000;
+
+class ImageSkipError extends Error {
+  constructor(code, message) { super(message); this.name = "ImageSkipError"; this.code = code; }
+}
+
 export class ImageUpscaler {
-  constructor({ device, format, sampler, fsrcnnxSource, FsrcnnxModel, SsimDownscaler, onCount }) {
+  constructor({ device, format, sampler, fsrcnnxSource, FsrcnnxModel, SsimDownscaler, onCount, onError, warn }) {
     this.device = device;
     this.format = format;
     this.sampler = sampler;
     this.onCount = onCount || (() => {});
+    this.onError = onError || (() => {});
+    this.warn = warn || ((...args) => console.warn("[FSRCNNX images]", ...args));
     this.count = 0;
     this.running = false;
     this.processed = new WeakSet(); // imgs we've handled (success or skip)
     this.replaced = new Set();      // imgs whose src we replaced (for restore)
-    this._writing = new WeakSet();  // imgs we're writing src to (ignore our own mutations)
+    this._writing = new WeakMap();  // img -> nested writes; suppress our mutations
+    this._revisions = new WeakMap();
+    this._jobs = new WeakMap();
+    this._queue = [];
+    this._active = null;
+    this._deferred = new Set();
+    this._runGeneration = 0;
+    this._pendingLoads = new Set();
+    this._loadCancelByImage = new WeakMap();
+    this._observedImages = new Map();
+    this._mutationObservers = new Set();
+    this._observedRoots = new WeakSet();
+    this._failures = new Map();
+    this._destroyed = false;
 
     // dedicated FSRCNNX model instance (own texture cache)
     this.model = fsrcnnxSource ? new FsrcnnxModel(device, fsrcnnxSource.manifest, fsrcnnxSource.wgsl) : null;
@@ -100,235 +127,558 @@ export class ImageUpscaler {
   isCandidate(img) {
     if (this.processed.has(img)) return false;
     if (img.dataset && img.dataset.fsrcnnxDone) return false; // already replaced by us
+    if (!this.model || ("isConnected" in img && !img.isConnected)) return false;
     const nw = img.naturalWidth, nh = img.naturalHeight;
     if (!nw || !nh) return false;                 // not loaded / not raster
     const src = img.currentSrc || img.src || "";
     if (src.startsWith("data:")) return false;     // inline data URI
     if (src.startsWith("blob:")) return false;      // our own (or page's) blob
     if (/\.svg(\?|$)/i.test(src)) return false;     // vector, no benefit
-    // Process images whose native resolution is below the display (screen)
-    // resolution — i.e. there's headroom to add real detail up toward what the
-    // monitor can show. screen.width/height are in CSS px; multiply by DPR for
-    // the actual device-pixel resolution of the panel.
-    const dpr = window.devicePixelRatio || 1;
-    const screenW = (window.screen?.width || 1920) * dpr;
-    const screenH = (window.screen?.height || 1080) * dpr;
-    if (nw >= screenW || nh >= screenH) return false; // already >= display res
-    // NOTE: small-image exclusions (icons/avatars, tiny natural sizes) are
-    // intentionally NOT applied here yet — we're testing whether processing
-    // them is worthwhile. The only upper bound is the screen-resolution check
-    // above. Re-add size floors here if tiny images prove not worth it.
+    if (nw < MIN_SOURCE_EDGE || nh < MIN_SOURCE_EDGE || nw * nh < MIN_SOURCE_PIXELS) return false;
+    const target = this._targetDimensions(img, nw, nh);
+    if (!target) return false;
+    // Only process pixels the page is actually stretching. This avoids spending
+    // the shared GPU queue on thumbnails, avatars, and already-downscaled photos.
+    if (target.w <= nw * 1.05 && target.h <= nh * 1.05) return false;
+    if (!this._dimensionsAllowed(nw, nh, target.w, target.h, true)) return false;
     return true;
+  }
+
+  _targetDimensions(img, nw, nh) {
+    let rect;
+    try { rect = img.getBoundingClientRect(); } catch { return null; }
+    const dpr = window.devicePixelRatio || 1;
+    const boxW = Math.max(0, rect.width * dpr);
+    const boxH = Math.max(0, rect.height * dpr);
+    if (!boxW || !boxH || !this.model) return null;
+    const scale = Number(this.model.scale);
+    if (!Number.isFinite(scale) || scale < 1) return null;
+    const aspect = nw / nh;
+    let w, h;
+    if (boxW / boxH > aspect) {
+      h = Math.round(Math.min(boxH, nh * scale));
+      w = Math.round(h * aspect);
+    } else {
+      w = Math.round(Math.min(boxW, nw * scale));
+      h = Math.round(w / aspect);
+    }
+    return { w: Math.max(1, w), h: Math.max(1, h) };
+  }
+
+  _dimensionsAllowed(nw, nh, finalW, finalH, report) {
+    const scale = Number(this.model?.scale);
+    const outW = nw * scale, outH = nh * scale;
+    const limit = Math.max(1, Number(this.device?.limits?.maxTextureDimension2D) || 8192);
+    const values = [nw, nh, outW, outH, finalW, finalH];
+    const valid = values.every((v) => Number.isSafeInteger(v) && v > 0 && v <= limit) &&
+      outW * outH <= Math.min(MAX_PROCESSING_PIXELS, limit * limit) &&
+      finalW * finalH <= Math.min(MAX_PROCESSING_PIXELS, limit * limit);
+    if (!valid && report) {
+      this._reportFailure("limits", `Skipped dimensions ${nw}x${nh} -> ${outW}x${outH}; adapter limit is ${limit}px per edge and ${Math.min(MAX_PROCESSING_PIXELS, limit * limit)} pixels.`);
+    }
+    return valid;
   }
 
   // --- lifecycle ------------------------------------------------------------
   start() {
     if (this.running) return;
+    if (this._destroyed) { this._reportFailure("destroyed", "Cannot restart a destroyed image upscaler."); return; }
     this.running = true;
-    this.io = new IntersectionObserver((entries) => {
-      for (const e of entries) {
-        if (e.isIntersecting) this.tryProcess(e.target);
-      }
-    }, { rootMargin: "200px" }); // start a bit before they enter view
-    // observe existing imgs
+    this._runGeneration++;
+    this.processed = new WeakSet();
+    this._revisions = new WeakMap();
+    this._jobs = new WeakMap();
+    this._queue = [];
+    this._deferred.clear();
+    // Do not clear `_active`: a job from the stopped generation may still be
+    // unwinding submitted GPU work. The new generation deliberately waits for
+    // that continuation before reusing the model and SSimDownscaler caches.
+    if (typeof IntersectionObserver === "function") {
+      this.io = new IntersectionObserver((entries) => {
+        for (const e of entries) if (e.isIntersecting) this.tryProcess(e.target);
+      }, { rootMargin: "200px" });
+    } else {
+      this.io = null;
+    }
+    this._observedRoots = new WeakSet();
+    this._observeMutationRoot(document.body || document.documentElement);
     this.scan();
-    // watch for new imgs (feeds, lazy DOM). Ignore our own src writes.
-    this.mo = new MutationObserver((muts) => {
-      for (const m of muts) {
-        for (const n of m.addedNodes) {
-          if (n.nodeType !== 1) continue;
-          if (n.tagName === "IMG") this.observe(n);
-          else n.querySelectorAll && n.querySelectorAll("img").forEach((im) => this.observe(im));
-        }
-      }
-    });
-    this.mo.observe(document.body, { childList: true, subtree: true });
   }
 
   stop() {
     this.running = false;
-    this.io?.disconnect(); this.mo?.disconnect();
+    this._runGeneration++;
+    this.io?.disconnect(); this.io = null;
+    for (const mo of this._mutationObservers) mo.disconnect();
+    this._mutationObservers.clear(); this.mo = null;
+    for (const cancel of [...this._pendingLoads]) cancel();
+    this._clearQueuedJobs();
+    this._deferred.clear();
+    for (const [img, handler] of this._observedImages) {
+      try { img.removeEventListener("load", handler); } catch {}
+    }
+    this._observedImages.clear();
     // restore every image we replaced
-    for (const img of this.replaced) this.restore(img);
+    for (const img of [...this.replaced]) this.restore(img, false);
     this.replaced.clear();
-    this.count = 0; this.onCount(0);
+    this.processed = new WeakSet();
+    this._revisions = new WeakMap();
+    this._jobs = new WeakMap();
+    this._setCount(0);
+  }
+
+  // Re-run eligible images after a setting/source-policy change. Passing an
+  // image limits invalidation to that element; no argument resets the full run.
+  invalidate(img = null) {
+    if (img) {
+      this._cancelImageWork(img);
+      if (this.replaced.has(img)) this.restore(img);
+      this.processed.delete(img);
+      if (this.running) this.observe(img, true);
+      return;
+    }
+    this._runGeneration++;
+    for (const cancel of [...this._pendingLoads]) cancel();
+    this._clearQueuedJobs();
+    this._deferred.clear();
+    for (const node of [...this.replaced]) this.restore(node, false);
+    this.replaced.clear();
+    this.processed = new WeakSet();
+    this._revisions = new WeakMap();
+    this._jobs = new WeakMap();
+    this._setCount(0);
+    if (this.running) {
+      for (const imgNode of this._observedImages.keys()) this.observe(imgNode, true);
+      this.scan();
+    }
+  }
+
+  destroy() {
+    this.stop();
+    try { this.model?.destroy?.(); } catch {}
+    try { this.ssimds?.destroy?.(); } catch {}
+    this._destroyed = true;
   }
 
   // Put the original src/srcset back.
-  restore(img) {
+  restore(img, adjustCount = true) {
     if (!img || !img.dataset) return;
     if (img.dataset.fsrcnnxOrig != null) {
-      this._writing.add(img);
-      img.src = img.dataset.fsrcnnxOrig;
-      if (img.dataset.fsrcnnxOrigSrcset) img.srcset = img.dataset.fsrcnnxOrigSrcset;
-      delete img.dataset.fsrcnnxOrig;
-      delete img.dataset.fsrcnnxOrigSrcset;
-      delete img.dataset.fsrcnnxDone;
-      queueMicrotask(() => this._writing.delete(img));
+      this._ownWrite(img, () => {
+        this._restoreAttribute(img, "src", "fsrcnnxOrig", "fsrcnnxOrigHadSrc");
+        this._restoreAttribute(img, "srcset", "fsrcnnxOrigSrcset", "fsrcnnxOrigHadSrcset");
+        this._clearReplacementMetadata(img);
+      });
     }
     if (img._fsrcnnxURL) { URL.revokeObjectURL(img._fsrcnnxURL); img._fsrcnnxURL = null; }
+    const removed = this.replaced.delete(img);
+    if (removed && adjustCount) this._setCount(Math.max(0, this.count - 1));
   }
 
-  scan() { document.querySelectorAll("img").forEach((im) => this.observe(im)); }
-  observe(img) { try { this.io.observe(img); } catch {} }
+  scan(root = document) {
+    if (!this.running || !root) return;
+    this._scanRoot(root);
+  }
+
+  _scanRoot(root) {
+    if (!root) return;
+    if (root.shadowRoot) {
+      this._observeMutationRoot(root.shadowRoot);
+      this._scanRoot(root.shadowRoot);
+    }
+    if (root.nodeType === 1 && root.tagName === "IMG") this.observe(root);
+    try { root.querySelectorAll?.("img").forEach((img) => this.observe(img)); } catch {}
+    try {
+      root.querySelectorAll?.("*").forEach((el) => {
+        if (el.shadowRoot) {
+          this._observeMutationRoot(el.shadowRoot);
+          this._scanRoot(el.shadowRoot);
+        }
+      });
+    } catch {}
+  }
+
+  observe(img, refresh = false) {
+    if (!this.running || !img || img.tagName !== "IMG") return;
+    if (!this._observedImages.has(img)) {
+      const onLoad = () => {
+        if (!this.running || this._isWriting(img) || this._isOwnReplacement(img)) return;
+        this._cancelImageWork(img);
+        this.processed.delete(img);
+        this.observe(img, true);
+      };
+      this._observedImages.set(img, onLoad);
+      try { img.addEventListener("load", onLoad, { passive: true }); } catch {}
+    }
+    if (this.io) {
+      try { if (refresh) this.io.unobserve(img); this.io.observe(img); } catch {}
+    } else {
+      this.tryProcess(img);
+    }
+  }
+
+  _observeMutationRoot(root) {
+    if (!this.running || !root || this._observedRoots.has(root) || typeof MutationObserver !== "function") return;
+    this._observedRoots.add(root);
+    const mo = new MutationObserver((records) => this._handleMutations(records));
+    try {
+      mo.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "srcset", "sizes"] });
+      this._mutationObservers.add(mo);
+      if (!this.mo) this.mo = mo;
+    } catch { mo.disconnect(); }
+  }
+
+  _handleMutations(records) {
+    if (!this.running) return;
+    for (const record of records) {
+      if (record.type === "attributes" && record.target?.tagName === "IMG") {
+        const img = record.target;
+        if (this._isOwnMutation(img, record.attributeName)) continue;
+        this._discardReplacementForExternalChange(img, record.attributeName);
+        this._cancelImageWork(img);
+        this.processed.delete(img);
+        this.observe(img, true);
+        continue;
+      }
+      for (const node of record.removedNodes || []) this._unobserveTree(node);
+      for (const node of record.addedNodes || []) this._scanRoot(node);
+    }
+  }
+
+  _unobserveTree(root) {
+    const images = [];
+    if (root?.nodeType === 1 && root.tagName === "IMG") images.push(root);
+    try { root?.querySelectorAll?.("img").forEach((img) => images.push(img)); } catch {}
+    if (root?.shadowRoot) this._unobserveTree(root.shadowRoot);
+    try { root?.querySelectorAll?.("*").forEach((el) => { if (el.shadowRoot) this._unobserveTree(el.shadowRoot); }); } catch {}
+    for (const img of images) {
+      this._cancelImageWork(img);
+      this._deferred.delete(img);
+      try { this.io?.unobserve(img); } catch {}
+      const handler = this._observedImages.get(img);
+      if (handler) { try { img.removeEventListener("load", handler); } catch {} this._observedImages.delete(img); }
+      if (this.replaced.has(img)) this.restore(img);
+      this.processed.delete(img);
+    }
+  }
 
   // --- processing -----------------------------------------------------------
-  async tryProcess(img) {
-    if (!this.running || this.processed.has(img)) return;
-    if (!this.isCandidate(img)) return;
-    this.processed.add(img); // mark up front so we don't double-process
-    try {
-      const bitmap = await this.loadReadable(img);
-      if (!bitmap) return; // cross-origin without CORS, or load failed -> skip
-      await this.upscaleAndReplace(img, bitmap);
-      bitmap.close && bitmap.close();
-      this.count++; this.onCount(this.count);
-    } catch (e) {
-      // leave the original image untouched on any failure
+  tryProcess(img) {
+    if (!this.running || !img || this._isWriting(img) || this._isOwnReplacement(img)) return Promise.resolve(false);
+    const revision = this._revision(img);
+    const existing = this._jobs.get(img);
+    if (existing && existing.generation === this._runGeneration && existing.revision === revision) return existing.promise;
+    if (this.processed.has(img) || !this.isCandidate(img)) return Promise.resolve(false);
+    if (this._queue.length >= MAX_PENDING) {
+      if (this._deferred.size < MAX_DEFERRED) this._deferred.add(img);
+      this._reportFailure("queue-full", `Image queue reached ${MAX_PENDING}; additional visible images are deferred.`);
+      return Promise.resolve(false);
     }
+    this.processed.add(img); // mark before enqueue so IO/scan callbacks cannot duplicate it
+    try { this.io?.unobserve(img); } catch {}
+    let resolve;
+    const promise = new Promise((done) => { resolve = done; });
+    const job = { img, source: this._source(img), generation: this._runGeneration, revision, promise, resolve, settled: false };
+    this._jobs.set(img, job);
+    this._queue.push(job);
+    this._drainQueue();
+    return promise;
+  }
+
+  async _processJob(job) {
+    let bitmap = null;
+    try {
+      bitmap = await this.loadReadable(job.img, job);
+      if (!bitmap) {
+        if (this._jobCurrent(job)) this._reportFailure("unreadable", "Image could not be read; cross-origin sources must provide CORS access.");
+        return false;
+      }
+      if (!this._jobCurrent(job)) return false;
+      const replaced = await this.upscaleAndReplace(job.img, bitmap, job);
+      if (replaced && this._jobRunCurrent(job)) this._setCount(this.count + 1);
+      return !!(replaced && this._jobRunCurrent(job));
+    } catch (e) {
+      if (this._jobCurrent(job)) {
+        const code = e instanceof ImageSkipError ? e.code : "processing";
+        this._reportFailure(code, e?.message || "Image processing failed.");
+      }
+      return false;
+    } finally {
+      try { bitmap?.close?.(); } catch {}
+    }
+  }
+
+  _drainQueue() {
+    if (!this.running || this._active) return;
+    let job;
+    while ((job = this._queue.shift())) {
+      if (this._jobCurrent(job)) break;
+      this._finishJob(job, false);
+      job = null;
+    }
+    if (!job) { this._drainDeferred(); return; }
+    this._active = job;
+    this._processJob(job).then((ok) => this._finishJob(job, ok)).finally(() => {
+      if (this._active === job) this._active = null;
+      this._drainDeferred();
+      this._drainQueue();
+    });
+  }
+
+  _finishJob(job, result) {
+    if (job.settled) return;
+    job.settled = true;
+    if (this._jobs.get(job.img) === job) this._jobs.delete(job.img);
+    job.resolve(!!result);
+  }
+
+  _drainDeferred() {
+    if (!this.running || this._queue.length >= MAX_PENDING || !this._deferred.size) return;
+    const [img] = this._deferred;
+    this._deferred.delete(img);
+    this.tryProcess(img);
+  }
+
+  _clearQueuedJobs() {
+    for (const job of this._queue.splice(0)) this._finishJob(job, false);
+    this._jobs = new WeakMap();
+  }
+
+  _jobCurrent(job) {
+    return this._jobRunCurrent(job) && this._source(job.img) === job.source;
+  }
+
+  _jobRunCurrent(job) {
+    return !!job && this.running && job.generation === this._runGeneration &&
+      job.revision === this._revision(job.img) &&
+      (!("isConnected" in job.img) || job.img.isConnected);
+  }
+
+  _revision(img) { return this._revisions.get(img) || 0; }
+
+  _cancelImageWork(img) {
+    this._revisions.set(img, this._revision(img) + 1);
+    const cancel = this._loadCancelByImage.get(img);
+    if (cancel) cancel();
+    this._queue = this._queue.filter((job) => {
+      if (job.img !== img) return true;
+      this._finishJob(job, false);
+      return false;
+    });
+    const current = this._jobs.get(img);
+    if (current && current !== this._active) this._jobs.delete(img);
   }
 
   // Obtain a non-tainted ImageBitmap for the image. Same-origin loads directly;
   // cross-origin requires CORS — we re-request with crossOrigin=anonymous, which
   // succeeds only if the server sends Access-Control-Allow-Origin.
-  loadReadable(img) {
+  loadReadable(img, job = null) {
     return new Promise((resolve) => {
-      const src = img.currentSrc || img.src;
+      const src = job?.source || this._source(img);
+      if (!src) { resolve(null); return; }
       const probe = new Image();
+      let settled = false, timer = null;
+      const finish = (bitmap) => {
+        if (settled) { try { bitmap?.close?.(); } catch {} return; }
+        settled = true;
+        if (timer != null) clearTimeout(timer);
+        probe.onload = probe.onerror = null;
+        this._pendingLoads.delete(cancel);
+        if (this._loadCancelByImage.get(img) === cancel) this._loadCancelByImage.delete(img);
+        resolve(bitmap);
+      };
+      const cancel = () => {
+        if (settled) return;
+        probe.onload = probe.onerror = null;
+        try { probe.src = ""; } catch {}
+        finish(null);
+      };
+      this._pendingLoads.add(cancel);
+      this._loadCancelByImage.set(img, cancel);
       probe.crossOrigin = "anonymous";
       probe.onload = async () => {
-        try { resolve(await createImageBitmap(probe)); }
-        catch { resolve(null); }
+        try { finish(await createImageBitmap(probe)); }
+        catch { finish(null); }
       };
-      probe.onerror = () => resolve(null); // CORS denied or load error -> skip
+      probe.onerror = () => finish(null); // CORS denied or load error -> skip
+      timer = setTimeout(cancel, IMAGE_LOAD_TIMEOUT_MS);
       probe.src = src;
     });
   }
 
-  async upscaleAndReplace(img, bitmap) {
+  async upscaleAndReplace(img, bitmap, job = null) {
     const device = this.device;
     const nw = bitmap.width, nh = bitmap.height;
-    const rect = img.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    // The replacement blob must keep the image's NATIVE aspect ratio, otherwise
-    // object-fit (contain/cover/letterboxing) renders differently than the
-    // original. So size the output to the native aspect ratio, scaled so its
-    // larger dimension matches what the box would show at most (box size * DPR).
-    // This way object-fit: contain still letterboxes our blob identically.
-    const boxW = Math.max(1, rect.width * dpr);
-    const boxH = Math.max(1, rect.height * dpr);
-    const aspect = nw / nh;
-    // fit native-aspect box inside the displayed box (contain), capped so we
-    // never store more than ~native*scale pixels
-    let dispW, dispH;
-    if (boxW / boxH > aspect) {
-      // box is wider than the image -> image height is the limiting dim
-      dispH = Math.round(Math.min(boxH, nh * this.model.scale));
-      dispW = Math.round(dispH * aspect);
-    } else {
-      dispW = Math.round(Math.min(boxW, nw * this.model.scale));
-      dispH = Math.round(dispW / aspect);
+    const target = this._targetDimensions(img, nw, nh);
+    if (!target || !this._dimensionsAllowed(nw, nh, target.w, target.h, false)) {
+      throw new ImageSkipError("limits", "Image dimensions changed outside safe GPU limits before processing.");
     }
-    dispW = Math.max(1, dispW); dispH = Math.max(1, dispH);
-
-    // source RGB texture from the image
-    const srcTex = device.createTexture({
-      size: { width: nw, height: nh }, format: "rgba8unorm",
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
-    });
-    device.queue.copyExternalImageToTexture({ source: bitmap }, { texture: srcTex }, { width: nw, height: nh });
-
-    // luma texture (rgba16float) at native size
-    const lumaTex = device.createTexture({
-      size: { width: nw, height: nh }, format: "rgba16float",
-      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-    });
-
-    const enc = device.createCommandEncoder();
-    // 1. extract luma
-    {
-      const bg = device.createBindGroup({
-        layout: this.extractPipe.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: this.sampler },
-          { binding: 1, resource: srcTex.createView() },
-          { binding: 2, resource: lumaTex.createView() },
-        ],
-      });
-      const cp = enc.beginComputePass();
-      cp.setPipeline(this.extractPipe); cp.setBindGroup(0, bg);
-      cp.dispatchWorkgroups(Math.ceil(nw / 8), Math.ceil(nh / 8));
-      cp.end();
-    }
-    // 2. FSRCNNX -> hi-res luma
-    this.model.allocate(nw, nh, lumaTex);
-    const hiLuma = this.model.run(enc, lumaTex);
+    if (job && !this._jobCurrent(job)) return false;
+    const dispW = target.w, dispH = target.h;
     const outW = nw * this.model.scale, outH = nh * this.model.scale;
-
-    // 3. recombine hi luma + bilinear chroma -> hi-res RGB (rgba16float)
-    const hiRGB = device.createTexture({
-      size: { width: outW, height: outH }, format: "rgba16float",
-      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-    });
-    {
-      const bg = device.createBindGroup({
-        layout: this.recombinePipe.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: this.sampler },
-          { binding: 1, resource: srcTex.createView() },
+    let srcTex = null, lumaTex = null, hiRGB = null, ctx = null, url = null, adoptedURL = false;
+    try {
+      srcTex = device.createTexture({
+        size: { width: nw, height: nh }, format: "rgba8unorm",
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+      device.queue.copyExternalImageToTexture({ source: bitmap }, { texture: srcTex }, { width: nw, height: nh });
+      lumaTex = device.createTexture({
+        size: { width: nw, height: nh }, format: "rgba16float",
+        usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      });
+      const enc = device.createCommandEncoder();
+      {
+        const bg = device.createBindGroup({ layout: this.extractPipe.getBindGroupLayout(0), entries: [
+          { binding: 0, resource: this.sampler }, { binding: 1, resource: srcTex.createView() },
+          { binding: 2, resource: lumaTex.createView() },
+        ] });
+        const cp = enc.beginComputePass();
+        cp.setPipeline(this.extractPipe); cp.setBindGroup(0, bg);
+        cp.dispatchWorkgroups(Math.ceil(nw / 8), Math.ceil(nh / 8)); cp.end();
+      }
+      this.model.allocate(nw, nh, lumaTex);
+      const hiLuma = this.model.run(enc, lumaTex);
+      hiRGB = device.createTexture({
+        size: { width: outW, height: outH }, format: "rgba16float",
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+      });
+      {
+        const bg = device.createBindGroup({ layout: this.recombinePipe.getBindGroupLayout(0), entries: [
+          { binding: 0, resource: this.sampler }, { binding: 1, resource: srcTex.createView() },
           { binding: 2, resource: hiLuma.createView() },
-        ],
+        ] });
+        const rp = enc.beginRenderPass({ colorAttachments: [{ view: hiRGB.createView(), loadOp: "clear", clearValue: {r:0,g:0,b:0,a:1}, storeOp: "store" }] });
+        rp.setPipeline(this.recombinePipe); rp.setBindGroup(0, bg); rp.draw(3); rp.end();
+      }
+      let finalTex = hiRGB, finalW = outW, finalH = outH;
+      if (outW > dispW * 1.05) {
+        this.ssimds.prepare(outW, outH, dispW, dispH, hiRGB);
+        finalTex = this.ssimds.run(enc, hiRGB); finalW = dispW; finalH = dispH;
+      }
+      const off = new OffscreenCanvas(finalW, finalH);
+      ctx = off.getContext("webgpu");
+      if (!ctx) throw new Error("OffscreenCanvas WebGPU context unavailable");
+      ctx.configure({ device, format: this.format, alphaMode: "premultiplied" });
+      {
+        const bg = device.createBindGroup({ layout: this.blitPipe.getBindGroupLayout(0), entries: [
+          { binding: 0, resource: this.sampler }, { binding: 1, resource: finalTex.createView() },
+        ] });
+        const rp = enc.beginRenderPass({ colorAttachments: [{ view: ctx.getCurrentTexture().createView(), loadOp: "clear", clearValue: {r:0,g:0,b:0,a:0}, storeOp: "store" }] });
+        rp.setPipeline(this.blitPipe); rp.setBindGroup(0, bg); rp.draw(3); rp.end();
+      }
+      device.queue.submit([enc.finish()]);
+      await device.queue.onSubmittedWorkDone();
+      if (job && !this._jobCurrent(job)) return false;
+      const blob = await off.convertToBlob({ type: "image/png" });
+      if (job && !this._jobCurrent(job)) return false;
+      url = URL.createObjectURL(blob);
+      if (job && !this._jobCurrent(job)) return false;
+      this._captureOriginal(img);
+      if (img._fsrcnnxURL) URL.revokeObjectURL(img._fsrcnnxURL);
+      img._fsrcnnxURL = url;
+      this._ownWrite(img, () => {
+        img.setAttribute("srcset", "");
+        img.setAttribute("src", url);
+        img.dataset.fsrcnnxDone = "1";
       });
-      const rp = enc.beginRenderPass({ colorAttachments: [{ view: hiRGB.createView(), loadOp: "clear", clearValue: {r:0,g:0,b:0,a:1}, storeOp: "store" }] });
-      rp.setPipeline(this.recombinePipe); rp.setBindGroup(0, bg); rp.draw(3); rp.end();
+      this.replaced.add(img);
+      adoptedURL = true;
+      return true;
+    } finally {
+      try { ctx?.unconfigure?.(); } catch {}
+      for (const tex of [srcTex, lumaTex, hiRGB]) { try { tex?.destroy?.(); } catch {} }
+      if (url && !adoptedURL) { try { URL.revokeObjectURL(url); } catch {} }
     }
+  }
 
-    // 4. SSimDownscaler from hi-res down to the target display size (sharp downscale)
-    let finalTex = hiRGB, finalW = outW, finalH = outH;
-    if (outW > dispW * 1.05) {
-      this.ssimds.prepare(outW, outH, dispW, dispH, hiRGB);
-      finalTex = this.ssimds.run(enc, hiRGB);
-      finalW = dispW; finalH = dispH;
+  _source(img) { return img.currentSrc || img.src || ""; }
+  _isWriting(img) { return (this._writing.get(img) || 0) > 0; }
+  _isOwnReplacement(img) {
+    const url = img?._fsrcnnxURL;
+    return !!(url && img.dataset?.fsrcnnxDone &&
+      (img.getAttribute?.("src") === url || img.src === url || img.currentSrc === url));
+  }
+
+  _isOwnMutation(img, attribute) {
+    if (this._isWriting(img)) return true;
+    const url = img?._fsrcnnxURL;
+    if (!url || !img.dataset?.fsrcnnxDone) return false;
+    if (attribute === "src") return img.getAttribute("src") === url;
+    if (attribute === "srcset") return img.getAttribute("src") === url && (img.getAttribute("srcset") || "") === "";
+    return false;
+  }
+
+  _ownWrite(img, fn) {
+    this._writing.set(img, (this._writing.get(img) || 0) + 1);
+    try { fn(); }
+    finally {
+      setTimeout(() => {
+        const remaining = (this._writing.get(img) || 1) - 1;
+        if (remaining > 0) this._writing.set(img, remaining); else this._writing.delete(img);
+      }, 0);
     }
+  }
 
-    // 5. render to an offscreen canvas and read back to a blob
-    const off = new OffscreenCanvas(finalW, finalH);
-    const ctx = off.getContext("webgpu");
-    ctx.configure({ device, format: this.format, alphaMode: "premultiplied" });
-    {
-      const bg = device.createBindGroup({
-        layout: this.blitPipe.getBindGroupLayout(0),
-        entries: [{ binding: 0, resource: this.sampler }, { binding: 1, resource: finalTex.createView() }],
-      });
-      const rp = enc.beginRenderPass({ colorAttachments: [{ view: ctx.getCurrentTexture().createView(), loadOp: "clear", clearValue: {r:0,g:0,b:0,a:0}, storeOp: "store" }] });
-      rp.setPipeline(this.blitPipe); rp.setBindGroup(0, bg); rp.draw(3); rp.end();
+  _captureOriginal(img) {
+    if (img.dataset.fsrcnnxOrig != null) return;
+    const hasSrc = img.hasAttribute("src"), hasSrcset = img.hasAttribute("srcset");
+    img.dataset.fsrcnnxOrig = hasSrc ? (img.getAttribute("src") || "") : "";
+    img.dataset.fsrcnnxOrigHadSrc = hasSrc ? "1" : "0";
+    img.dataset.fsrcnnxOrigSrcset = hasSrcset ? (img.getAttribute("srcset") || "") : "";
+    img.dataset.fsrcnnxOrigHadSrcset = hasSrcset ? "1" : "0";
+  }
+
+  _restoreAttribute(img, attr, valueKey, hadKey) {
+    const had = img.dataset[hadKey];
+    if (had === "0") img.removeAttribute(attr);
+    else if (img.dataset[valueKey] != null) img.setAttribute(attr, img.dataset[valueKey]);
+    else if (attr === "srcset") img.removeAttribute(attr); // compatibility with pre-lifecycle metadata
+  }
+
+  _clearReplacementMetadata(img) {
+    for (const key of ["fsrcnnxOrig", "fsrcnnxOrigHadSrc", "fsrcnnxOrigSrcset", "fsrcnnxOrigHadSrcset", "fsrcnnxDone"]) delete img.dataset[key];
+  }
+
+  _discardReplacementForExternalChange(img, changedAttribute) {
+    if (!this.replaced.has(img) && !img.dataset?.fsrcnnxDone) return;
+    const url = img._fsrcnnxURL;
+    this._ownWrite(img, () => {
+      // Preserve the attribute the page just changed; restore only attributes we
+      // still own so a responsive-image update is not overwritten.
+      if (changedAttribute !== "src" && img.getAttribute("src") === url) this._restoreAttribute(img, "src", "fsrcnnxOrig", "fsrcnnxOrigHadSrc");
+      if (changedAttribute !== "srcset") this._restoreAttribute(img, "srcset", "fsrcnnxOrigSrcset", "fsrcnnxOrigHadSrcset");
+      this._clearReplacementMetadata(img);
+    });
+    if (url) { try { URL.revokeObjectURL(url); } catch {} img._fsrcnnxURL = null; }
+    if (this.replaced.delete(img)) this._setCount(Math.max(0, this.count - 1));
+  }
+
+  _setCount(value) {
+    this.count = value;
+    try { this.onCount(value); } catch (e) { this._reportFailure("callback", e?.message || "Image count callback failed."); }
+  }
+
+  _reportFailure(code, message) {
+    const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+    const state = this._failures.get(code) || { total: 0, lastLog: -Infinity, suppressed: 0 };
+    state.total++;
+    try { this.onError({ code, message, count: state.total }); } catch {}
+    if (now - state.lastLog >= FAILURE_LOG_INTERVAL_MS) {
+      const suffix = state.suppressed ? ` (${state.suppressed} similar events suppressed)` : "";
+      try { this.warn(`${message}${suffix}`); } catch {}
+      state.lastLog = now; state.suppressed = 0;
+    } else {
+      state.suppressed++;
     }
-    device.queue.submit([enc.finish()]);
-    await device.queue.onSubmittedWorkDone();
+    this._failures.set(code, state);
+  }
 
-    // 6. blob -> object URL, replace the <img>'s pixels IN PLACE. The element is
-    //    unchanged, so it keeps the page's layout, object-fit, hover/lightbox
-    //    behavior, stacking and clipping — no overlay to track or escape.
-    const blob = await off.convertToBlob({ type: "image/png" });
-    const url = URL.createObjectURL(blob);
-
-    // save originals for restore; clear srcset so it can't override our src on resize
-    if (img.dataset.fsrcnnxOrig == null) {
-      img.dataset.fsrcnnxOrig = img.getAttribute("src") || (img.currentSrc || "");
-      if (img.srcset) { img.dataset.fsrcnnxOrigSrcset = img.srcset; }
-    }
-    if (img._fsrcnnxURL) URL.revokeObjectURL(img._fsrcnnxURL);
-    img._fsrcnnxURL = url;
-
-    this._writing.add(img);
-    img.srcset = "";          // prevent responsive selection from replacing our src
-    img.src = url;
-    img.dataset.fsrcnnxDone = "1";
-    queueMicrotask(() => this._writing.delete(img));
-
-    this.replaced.add(img);
-
-    // cleanup transient textures (model/ssimds keep their own caches)
-    srcTex.destroy(); lumaTex.destroy(); hiRGB.destroy();
+  getStats() {
+    return {
+      running: this.running, processed: this.count,
+      queued: this._queue.length + (this._active ? 1 : 0), deferred: this._deferred.size,
+      failures: Object.fromEntries([...this._failures].map(([code, state]) => [code, state.total])),
+    };
   }
 }
