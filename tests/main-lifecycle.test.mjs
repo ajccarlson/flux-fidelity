@@ -71,7 +71,7 @@ async function loadAdoptionCoordinator(deps) {
     "let adopting = false, adoptionPromise = null, adoptionTarget = null;",
     "async function adoptChainDeviceInternal",
   );
-  const internalCall = "adoptChainDeviceInternal(extDevice, isRequestCurrent)";
+  const internalCall = "adoptChainDeviceInternal(extDevice, isRequestCurrent, { preserveModeOnFailure })";
   const injected = production.replace(
     internalCall,
     "globalThis.__mainLifecycleTestDeps.adoptChainDeviceInternal(extDevice, isRequestCurrent)",
@@ -81,6 +81,80 @@ async function loadAdoptionCoordinator(deps) {
   const harness = `
     let device = null;
     ${injected}
+  `;
+  globalThis.__mainLifecycleTestDeps = deps;
+  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++moduleRevision}`);
+}
+
+async function loadScaleSelection() {
+  const original = await readFile(mainUrl, "utf8");
+  const production = section(
+    original,
+    "let _scaleHeld, _scalePending = null, _scalePendingSince = 0;",
+    "let sharpenEnabled = false",
+  );
+  const harness = `
+    ${production}
+    export { resetScaleSelection };
+    export function seed() {
+      _scaleHeld = { scale: 4 }; _scalePending = { scale: 2 }; _scalePendingSince = 99;
+      _scaleHeldSrcW = 1920; _scaleHeldSrcH = 1080; _scaleLockLogged = true;
+    }
+    export function state() {
+      return { _scaleHeld, _scalePending, _scalePendingSince,
+        _scaleHeldSrcW, _scaleHeldSrcH, _scaleLockLogged };
+    }
+  `;
+  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++moduleRevision}`);
+}
+
+async function loadChainUpscaleBoundary(deps) {
+  const original = await readFile(mainUrl, "utf8");
+  const production = section(original, "export function chainUpscaleTex", "export async function setInterpolateInvert");
+  const harness = `
+    const deps = globalThis.__mainLifecycleTestDeps;
+    let device = {}, mode = "upscale", _texSource = null;
+    const ensureTexPipelines = () => deps.ensureTexPipelines();
+    const renderUpscale = () => deps.renderUpscale();
+    const warn = (...args) => deps.warnings.push(args);
+    ${production}
+    export function source() { return _texSource; }
+  `;
+  globalThis.__mainLifecycleTestDeps = deps;
+  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++moduleRevision}`);
+}
+
+async function loadAdoptionInternal(deps) {
+  const original = await readFile(mainUrl, "utf8");
+  const production = section(original, "async function adoptChainDeviceInternal", "function ensureLumaTexture");
+  const harness = `
+    const deps = globalThis.__mainLifecycleTestDeps;
+    const warn = (...args) => deps.warnings.push(args);
+    const log = (...args) => deps.logs.push(args);
+    let device = deps.oldDevice || null, deviceOwnedByMain = !!deps.oldOwned;
+    let adoptionGeneration = 1, adopting = false;
+    let optImages = false, mode = "upscale", engine = "fsrcnnx", chainDepth = 1;
+    let artVariant = "ArtCNN_C4F32", interpInvertPref = true, chainInverted = false;
+    let _gpuErrWinStart = 0, _gpuErrCount = 0, _invRestarts = 0, _invRestartLast = 0;
+    let canvas = { style: {} }, ro = {};
+    const saveSitePrefs = () => {};
+    const scheduleInterpolatorGpuRestart = () => {};
+    const invalidateMainDeviceResources = () => { deps.invalidations++; };
+    const watchDeviceLoss = (owner) => deps.watchDeviceLoss(owner, {
+      replace(next) { adoptionGeneration++; device = next; },
+    });
+    const buildCore = () => deps.buildCore();
+    const loadModels = async () => {};
+    const ensureArtStages = async () => {};
+    const ensureHiStages = async () => {};
+    const ensureImageUpscaler = async () => null;
+    const attach = () => {};
+    const deactivateRendering = () => { deps.deactivations++; mode = "off"; };
+    ${production}
+    export function adopt(extDevice, options) {
+      return adoptChainDeviceInternal(extDevice, null, options);
+    }
+    export function state() { return { device, mode, adopting, adoptionGeneration }; }
   `;
   globalThis.__mainLifecycleTestDeps = deps;
   return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++moduleRevision}`);
@@ -125,6 +199,37 @@ async function loadAutoEnableLifecycle(deps) {
     const siteHost = () => "test.invalid";
     ${production}
     export { scheduleAutoEnable, cancelAutoEnable };
+  `;
+  globalThis.__mainLifecycleTestDeps = deps;
+  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++moduleRevision}`);
+}
+
+async function loadRendererResourceHelpers(deps) {
+  const original = await readFile(mainUrl, "utf8");
+  const production = [
+    section(original, "function ensureLumaTexture", "// Lazily build the texture-ingest twins"),
+    section(original, "function ensureTexPipelines", "function renderUpscale"),
+    section(original, "function ensureDebandInter", "function ensureDebandPipelines"),
+    section(original, "function ensureHiRGB", "function ensureChainTapTexture"),
+    section(original, "function ensureChainTapTexture", "const PASSTHROUGH_WGSL"),
+  ].join("\n");
+  const harness = `
+    let device = globalThis.__mainLifecycleTestDeps.device;
+    const textureSizeAllowed = () => true;
+    const LUMA_EXTRACT_WGSL = "texture_external textureSampleBaseClampToEdge(s, t)";
+    const RECOMBINE_WGSL = "texture_external textureSampleBaseClampToEdge(s, t)";
+    const GPUTextureUsage = { STORAGE_BINDING:1, TEXTURE_BINDING:2, RENDER_ATTACHMENT:4, COPY_SRC:8, COPY_DST:16 };
+    let format = "rgba8unorm";
+    let lumaTexture = null, lumaW = 0, lumaH = 0;
+    let hiRGB = null, hiRGBW = 0, hiRGBH = 0;
+    let debandInterTex = null, debandInterW = 0, debandInterH = 0;
+    let chainTapTex = null;
+    let extractPipelineTex = null, recombinePipelineTex = null, recombine16PipelineTex = null;
+    ${production}
+    export { ensureLumaTexture, ensureHiRGB, ensureDebandInter, ensureChainTapTexture, ensureTexPipelines };
+    export function state() { return { lumaTexture, lumaW, lumaH, hiRGB, hiRGBW, hiRGBH,
+      debandInterTex, debandInterW, debandInterH, chainTapTex,
+      extractPipelineTex, recombinePipelineTex, recombine16PipelineTex }; }
   `;
   globalThis.__mainLifecycleTestDeps = deps;
   return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++moduleRevision}`);
@@ -425,4 +530,171 @@ test("a chained-model source load cannot commit stages after its device changes"
   const current = await lifecycle.ensureHiStages(2);
   assert.equal(current.length, 2);
   assert.ok(current.every((model) => model.device === deviceB));
+});
+
+test("renderer texture helpers preserve their old generation when replacement allocation fails", async (t) => {
+  const previousDeps = globalThis.__mainLifecycleTestDeps;
+  t.after(() => { globalThis.__mainLifecycleTestDeps = previousDeps; });
+  const events = { textures: 0, failTextureAt: -1 };
+  const device = {
+    createTexture(description) {
+      events.textures++;
+      if (events.textures === events.failTextureAt) throw new Error("injected texture failure");
+      const size = Array.isArray(description.size) ? description.size : [description.size.width, description.size.height];
+      return { width: size[0], height: size[1], destroyed: 0, destroy() { this.destroyed++; } };
+    },
+    createShaderModule() { return {}; },
+    createComputePipeline() { return {}; },
+    createRenderPipeline() { return {}; },
+  };
+  const helpers = await loadRendererResourceHelpers({ device });
+  const specs = [
+    { fn: helpers.ensureLumaTexture, key: "lumaTexture", dims: ["lumaW", "lumaH"] },
+    { fn: helpers.ensureHiRGB, key: "hiRGB", dims: ["hiRGBW", "hiRGBH"] },
+    { fn: helpers.ensureDebandInter, key: "debandInterTex", dims: ["debandInterW", "debandInterH"] },
+  ];
+  for (const spec of specs) {
+    assert.equal(spec.fn(16, 12), true);
+    const old = helpers.state()[spec.key];
+    events.failTextureAt = events.textures + 1;
+    assert.throws(() => spec.fn(20, 14), /injected texture failure/);
+    const failed = helpers.state();
+    assert.equal(failed[spec.key], old);
+    assert.deepEqual(spec.dims.map((key) => failed[key]), [16, 12]);
+    assert.equal(old.destroyed, 0);
+    events.failTextureAt = -1;
+    assert.equal(spec.fn(20, 14), true);
+    assert.equal(old.destroyed, 1);
+  }
+
+  const oldTap = helpers.ensureChainTapTexture(16, 12);
+  events.failTextureAt = events.textures + 1;
+  assert.throws(() => helpers.ensureChainTapTexture(20, 14), /injected texture failure/);
+  assert.equal(helpers.state().chainTapTex, oldTap);
+  assert.equal(oldTap.destroyed, 0);
+  events.failTextureAt = -1;
+  assert.equal(helpers.ensureChainTapTexture(20, 14).width, 20);
+  assert.equal(oldTap.destroyed, 1);
+});
+
+test("texture-ingest pipelines publish only as a complete retryable generation", async (t) => {
+  const previousDeps = globalThis.__mainLifecycleTestDeps;
+  t.after(() => { globalThis.__mainLifecycleTestDeps = previousDeps; });
+  let pipelines = 0;
+  let failAt = 2;
+  const device = {
+    createTexture() { throw new Error("unused"); },
+    createShaderModule() { return {}; },
+    createComputePipeline() {
+      pipelines++;
+      if (pipelines === failAt) throw new Error("injected pipeline failure");
+      return { kind: "compute" };
+    },
+    createRenderPipeline() {
+      pipelines++;
+      if (pipelines === failAt) throw new Error("injected pipeline failure");
+      return { kind: "render" };
+    },
+  };
+  const helpers = await loadRendererResourceHelpers({ device });
+  assert.throws(() => helpers.ensureTexPipelines(), /injected pipeline failure/);
+  assert.deepEqual(
+    [helpers.state().extractPipelineTex, helpers.state().recombinePipelineTex, helpers.state().recombine16PipelineTex],
+    [null, null, null],
+  );
+  failAt = -1;
+  assert.equal(helpers.ensureTexPipelines(), true);
+  assert.ok(helpers.state().extractPipelineTex);
+  assert.ok(helpers.state().recombinePipelineTex);
+  assert.ok(helpers.state().recombine16PipelineTex);
+});
+
+test("scale selection reset clears held models across configuration changes", async () => {
+  const selection = await loadScaleSelection();
+  selection.seed();
+  selection.resetScaleSelection();
+  assert.deepEqual(selection.state(), {
+    _scaleHeld: undefined,
+    _scalePending: null,
+    _scalePendingSince: 0,
+    _scaleHeldSrcW: 0,
+    _scaleHeldSrcH: 0,
+    _scaleLockLogged: false,
+  });
+
+  const source = await readFile(mainUrl, "utf8");
+  for (const [startMarker, endMarker] of [
+    ["export function setEngine", "export function setArtVariant"],
+    ["export function setArtVariant", "export function setHoverReveal"],
+    ["export function setPolicy", "// Restore saved preferences"],
+  ]) {
+    assert.match(section(source, startMarker, endMarker), /resetScaleSelection\(\)/);
+  }
+  const renderSelection = section(source, "// Model-owned intermediates", "if (!activeModel) {");
+  assert.equal(
+    [...renderSelection.matchAll(/modelFitsProcessingBudget\(/g)].length >= 2,
+    true,
+    "the final hysteresis-selected model must receive a second budget preflight",
+  );
+});
+
+test("chain texture presentation catches pipeline construction failures and retries", async (t) => {
+  const previousDeps = globalThis.__mainLifecycleTestDeps;
+  t.after(() => { globalThis.__mainLifecycleTestDeps = previousDeps; });
+  let attempts = 0;
+  let renders = 0;
+  const deps = {
+    warnings: [],
+    ensureTexPipelines() {
+      attempts++;
+      if (attempts === 1) throw new Error("transient compile failure");
+      return true;
+    },
+    renderUpscale() { renders++; },
+  };
+  const boundary = await loadChainUpscaleBoundary(deps);
+  const texture = { _w: 16, _h: 9 };
+
+  assert.equal(boundary.chainUpscaleTex(texture), false);
+  assert.equal(boundary.source(), null);
+  assert.equal(deps.warnings.length, 1);
+  assert.equal(boundary.chainUpscaleTex(texture), true);
+  assert.equal(renders, 1);
+});
+
+test("recovery-owned adoption failure preserves mode for the retry coordinator", async (t) => {
+  const previousDeps = globalThis.__mainLifecycleTestDeps;
+  t.after(() => { globalThis.__mainLifecycleTestDeps = previousDeps; });
+  const deps = {
+    warnings: [], logs: [], invalidations: 0, deactivations: 0,
+    buildCore() { throw new Error("transient pipeline build failure"); },
+    watchDeviceLoss() {},
+  };
+  const adoption = await loadAdoptionInternal(deps);
+  const external = { addEventListener() {} };
+
+  assert.equal(await adoption.adopt(external, { preserveModeOnFailure: true }), false);
+  assert.equal(adoption.state().mode, "upscale");
+  assert.equal(adoption.state().device, null);
+  assert.equal(deps.deactivations, 0);
+});
+
+test("loss during adoption cannot roll a replacement device back to stale state", async (t) => {
+  const previousDeps = globalThis.__mainLifecycleTestDeps;
+  t.after(() => { globalThis.__mainLifecycleTestDeps = previousDeps; });
+  const replacement = { name: "replacement" };
+  const deps = {
+    warnings: [], logs: [], invalidations: 0, deactivations: 0,
+    buildCore() {},
+    watchDeviceLoss(_owner, coordinator) {
+      Promise.resolve().then(() => coordinator.replace(replacement));
+    },
+  };
+  const adoption = await loadAdoptionInternal(deps);
+  const external = { addEventListener() {} };
+
+  assert.equal(await adoption.adopt(external, { preserveModeOnFailure: true }), false);
+  assert.equal(adoption.state().device, replacement);
+  assert.equal(adoption.state().mode, "upscale");
+  assert.equal(deps.deactivations, 0);
 });

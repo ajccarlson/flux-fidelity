@@ -20,6 +20,43 @@
 
 import { createOrtSession, ensureOrt, getOrtSessionDevice } from "./fsrcnnx-rife.js";
 
+const NEURAL_KEY = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const NEURAL_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]*\.onnx$/;
+const TENSOR_NAME = /^[A-Za-z_][A-Za-z0-9_.-]{0,127}$/;
+
+export function validateNeuralManifest(value) {
+  const raw = Array.isArray(value) ? value : value?.models;
+  if (!Array.isArray(raw)) throw new Error("neural manifest must be an array or {models: array}");
+  if (!raw.length) throw new Error("neural manifest contains no models");
+  const keys = new Set();
+  const files = new Set();
+  return raw.map((entry, index) => {
+    const at = `neural manifest entry ${index}`;
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error(`${at} must be an object`);
+    if (typeof entry.key !== "string" || !NEURAL_KEY.test(entry.key)) throw new Error(`${at} has an invalid key`);
+    if (keys.has(entry.key)) throw new Error(`${at} duplicates key '${entry.key}'`);
+    if (typeof entry.file !== "string" || !NEURAL_FILE.test(entry.file)) throw new Error(`${at} has an invalid model filename`);
+    if (files.has(entry.file)) throw new Error(`${at} duplicates model file '${entry.file}'`);
+    if (!Number.isInteger(entry.scale) || entry.scale < 1 || entry.scale > 16) throw new Error(`${at} has an invalid scale`);
+    if (entry.padMultiple != null &&
+        (!Number.isInteger(entry.padMultiple) || entry.padMultiple < 1 || entry.padMultiple > 256)) {
+      throw new Error(`${at} has an invalid padMultiple`);
+    }
+    if (entry.label != null && (typeof entry.label !== "string" || !entry.label.trim() || entry.label.length > 160)) {
+      throw new Error(`${at} has an invalid label`);
+    }
+    for (const field of ["input", "output"]) {
+      if (entry[field] != null && (typeof entry[field] !== "string" || !TENSOR_NAME.test(entry[field]))) {
+        throw new Error(`${at} has an invalid ${field} tensor name`);
+      }
+    }
+    if (entry.fp16 != null && typeof entry.fp16 !== "boolean") throw new Error(`${at} has an invalid fp16 flag`);
+    keys.add(entry.key);
+    files.add(entry.file);
+    return Object.freeze({ ...entry });
+  });
+}
+
 const PACK_EXT_WGSL = `
 struct P { padW:u32, padH:u32, w:u32, h:u32 }
 @group(0) @binding(0) var samp: sampler;
@@ -80,6 +117,9 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
   let runBusy = false;
   let deferredSessionReleases = [];
   const retirements = new Set();
+  const watchedDevices = new WeakSet();
+  const lostDevices = new WeakSet();
+  let deviceInvalidationTail = Promise.resolve();
 
   // GPU resources (allocated on ORT's device)
   let sampler = null;
@@ -142,22 +182,26 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     }
   }
 
+  function watchDevice(ownerDevice) {
+    if (!ownerDevice || watchedDevices.has(ownerDevice) || !ownerDevice.lost?.then) return;
+    watchedDevices.add(ownerDevice);
+    ownerDevice.lost.then((info) => {
+      lostDevices.add(ownerDevice);
+      if (device !== ownerDevice) return;
+      warn(`neural: GPU device lost: ${info?.message || info?.reason || "unknown reason"}`);
+      invalidateDevice(ownerDevice).catch((error) =>
+        warn("neural: device-loss cleanup failed:", error.message));
+    }).catch(() => {});
+  }
+
   async function loadManifest() {
     if (manifest) return manifest;
     try {
       const r = await fetch(chrome.runtime.getURL("model/neural/manifest.json"));
       if (!r.ok) throw new Error("HTTP " + r.status);
-      const j = await r.json();
-      const raw = Array.isArray(j) ? j : (j.models || []);
-      manifest = raw.filter((entry) => {
-        const valid = entry && typeof entry.key === "string" && typeof entry.file === "string" &&
-          !entry.file.includes("..") && Number.isInteger(entry.scale) && entry.scale > 0 &&
-          entry.scale <= 16 && (entry.padMultiple == null ||
-            (Number.isInteger(entry.padMultiple) && entry.padMultiple > 0 && entry.padMultiple <= 256));
-        if (!valid) warn(`neural: ignoring invalid manifest entry '${entry?.key || "unknown"}'`);
-        return valid;
-      });
+      manifest = validateNeuralManifest(await r.json());
     } catch (e) {
+      warn("neural manifest rejected:", e.message);
       manifest = [];
     }
     return manifest;
@@ -166,38 +210,92 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
   function ensurePipelines() {
     if (packExtPipe) return;
     const mk = (code) => device.createShaderModule({ code });
-    packExtPipe = device.createComputePipeline({ layout: "auto", compute: { module: mk(PACK_EXT_WGSL), entryPoint: "main" } });
-    packTexPipe = device.createComputePipeline({ layout: "auto", compute: { module: mk(PACK_TEX_WGSL), entryPoint: "main" } });
-    compPipe = device.createComputePipeline({ layout: "auto", compute: { module: mk(COMPOSITE_WGSL), entryPoint: "main" } });
-    sampler = device.createSampler({ magFilter: "linear", minFilter: "linear" });
-    packU = device.createBuffer({ label: "neural-packU", size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    compU = device.createBuffer({ label: "neural-compU", size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    let nextPackU = null, nextCompU = null;
+    try {
+      const nextPackExtPipe = device.createComputePipeline({ layout: "auto", compute: { module: mk(PACK_EXT_WGSL), entryPoint: "main" } });
+      const nextPackTexPipe = device.createComputePipeline({ layout: "auto", compute: { module: mk(PACK_TEX_WGSL), entryPoint: "main" } });
+      const nextCompPipe = device.createComputePipeline({ layout: "auto", compute: { module: mk(COMPOSITE_WGSL), entryPoint: "main" } });
+      const nextSampler = device.createSampler({ magFilter: "linear", minFilter: "linear" });
+      nextPackU = device.createBuffer({ label: "neural-packU", size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+      nextCompU = device.createBuffer({ label: "neural-compU", size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+      packExtPipe = nextPackExtPipe; packTexPipe = nextPackTexPipe; compPipe = nextCompPipe;
+      sampler = nextSampler; packU = nextPackU; compU = nextCompU;
+    } catch (error) {
+      try { nextPackU?.destroy?.(); } catch {}
+      try { nextCompU?.destroy?.(); } catch {}
+      throw error;
+    }
   }
 
   function ensureInBuf(padW, padH) {
     const need = padW * padH * 3 * 4;
     if (inBuf && inBufSize === need) return;
     const old = inBuf;
-    inBufSize = need;
-    inBuf = device.createBuffer({
+    const candidate = device.createBuffer({
       label: `neural-in-${padW}x${padH}`,
       size: need,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
+    inBuf = candidate;
+    inBufSize = need;
     if (old) retireGpuObjects([old]);
   }
 
   function ensureOutTex(w, h) {
     if (outTex && outTexW === w && outTexH === h) return;
     const old = outTex;
-    outTexW = w; outTexH = h;
-    outTex = device.createTexture({
+    const candidate = device.createTexture({
       label: `neural-out-${w}x${h}`,
       size: { width: w, height: h },
       format: "rgba16float",
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
     });
+    outTex = candidate;
+    outTexW = w; outTexH = h;
     if (old) retireGpuObjects([old]);
+  }
+
+  function checkedProduct(label, ...values) {
+    let product = 1;
+    for (const value of values) {
+      if (!Number.isSafeInteger(value) || value <= 0 || product > Number.MAX_SAFE_INTEGER / value) {
+        const error = new Error(`${label} exceeds the safe integer range`);
+        error.code = "NEURAL_LIMIT";
+        throw error;
+      }
+      product *= value;
+    }
+    return product;
+  }
+
+  function validateAllocationLimits(padW, padH, outW, outH, scale) {
+    const maxDimension = Math.max(1, Number(device?.limits?.maxTextureDimension2D) || 8192);
+    const maxBuffer = Math.max(1, Math.min(
+      Number(device?.limits?.maxBufferSize) || 256 * 1024 * 1024,
+      Number(device?.limits?.maxStorageBufferBindingSize) || 128 * 1024 * 1024,
+    ));
+    const maxGroups = Math.max(1, Number(device?.limits?.maxComputeWorkgroupsPerDimension) || 65535);
+    const paddedOutW = checkedProduct("neural padded output width", padW, scale);
+    const paddedOutH = checkedProduct("neural padded output height", padH, scale);
+    const dimensions = [padW, padH, outW, outH, paddedOutW, paddedOutH];
+    if (dimensions.some((value) => !Number.isSafeInteger(value) || value < 1 || value > maxDimension)) {
+      const error = new Error(`neural dimensions exceed the device texture limit ${maxDimension}`);
+      error.code = "NEURAL_LIMIT";
+      throw error;
+    }
+    if (Math.ceil(padW / 8) > maxGroups || Math.ceil(padH / 8) > maxGroups ||
+        Math.ceil(outW / 8) > maxGroups || Math.ceil(outH / 8) > maxGroups) {
+      const error = new Error(`neural dispatch exceeds the device workgroup limit ${maxGroups}`);
+      error.code = "NEURAL_LIMIT";
+      throw error;
+    }
+    const inputBytes = checkedProduct("neural input buffer", padW, padH, 3, 4);
+    const outputBytes = checkedProduct("neural output buffer", paddedOutW, paddedOutH, 3, 4);
+    if (inputBytes > maxBuffer || outputBytes > maxBuffer) {
+      const error = new Error(`neural tensor buffer exceeds the device binding limit ${maxBuffer}`);
+      error.code = "NEURAL_LIMIT";
+      throw error;
+    }
   }
 
   async function initOne(key, generation) {
@@ -245,6 +343,19 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
       try { await next?.release?.(); } catch {}
       throw new Error("ORT device unavailable after neural session create");
     }
+    // Subscribe before publication and yield once. A device can be returned with
+    // an already-settled `lost` promise; accepting that session would let init()
+    // report success just before the watcher clears it on the next turn.
+    watchDevice(nextDevice);
+    await Promise.resolve();
+    if (generation !== initGeneration) {
+      try { await next?.release?.(); } catch {}
+      return null;
+    }
+    if (lostDevices.has(nextDevice)) {
+      try { await next?.release?.(); } catch {}
+      throw new Error("ORT device was lost during neural session initialization");
+    }
 
     // Do not swap or release the old session while run() is using its names,
     // buffers, output tensor, or device. New runs cannot begin during this task's
@@ -275,6 +386,14 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     outputName = entry.output || (next.outputNames && next.outputNames[0]) || "output";
     fp16Model = /fp16/i.test(entry.file) || entry.fp16 === true;
     sessionGeneration++;
+    // Re-check after synchronous publication as well. This closes the narrow
+    // window between the pre-commit yield and assigning the public session.
+    await Promise.resolve();
+    const initializationCancelled = generation !== initGeneration;
+    if (lostDevices.has(nextDevice) || device !== nextDevice || session !== next) {
+      await invalidateDevice(nextDevice);
+      throw new Error("ORT device was lost during neural session initialization");
+    }
     if (oldSession) {
       if (oldDevice === nextDevice) {
         // The new session retains the same shared device, so the old reference can
@@ -287,6 +406,8 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
         deferredSessionReleases.push(oldSession);
       }
     }
+
+    if (initializationCancelled) return null;
 
     log(`neural: session ready — ${entry.label || entry.key} (${entry.scale}x, ${fp16Model ? "fp16" : "fp32"} weights, ${executionFp16 ? "FP16" : "FP32"} execution, dynamic dims)`);
     return entry;
@@ -324,6 +445,38 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
       for (const resource of resources) { try { resource?.destroy?.(); } catch {} }
     });
     return trackRetirement(cleanup);
+  }
+
+  function invalidateDevice(lostDevice) {
+    if (!lostDevice) return Promise.resolve(false);
+    const operation = deviceInvalidationTail.catch(() => {}).then(async () => {
+      if (device !== lostDevice) return false;
+      const oldSession = session;
+      const lostDeferred = deferredSessionReleases.filter(
+        (candidate) => getOrtSessionDevice(candidate) === lostDevice,
+      );
+      deferredSessionReleases = deferredSessionReleases.filter(
+        (candidate) => getOrtSessionDevice(candidate) !== lostDevice,
+      );
+
+      // Publish the invalid state before awaiting active inference so init() can
+      // never return the dead session as a reusable ready engine.
+      ++initGeneration;
+      ++lifecycleGeneration;
+      ++sessionGeneration;
+      session = null;
+      device = null;
+      runBusy = false;
+      const cleanup = destroyGpuResources(lostDevice);
+      await cleanup;
+      for (const candidate of lostDeferred) {
+        try { await candidate?.release?.(); } catch {}
+      }
+      try { await oldSession?.release?.(); } catch {}
+      return true;
+    });
+    deviceInvalidationTail = operation.then(() => undefined, () => undefined);
+    return operation;
   }
 
   // src: external texture (default) or { tex } for the texture_2d twin.
@@ -371,6 +524,7 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     const padH = Math.ceil(srcH / mult) * mult;
     const scale = runEntry.scale;
     const outW = srcW * scale, outH = srcH * scale;
+    validateAllocationLimits(padW, padH, outW, outH, scale);
     const t0 = performance.now();
     runBusy = true;
     activeRuns++;
@@ -474,6 +628,7 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     init,
     run,
     stop,
+    invalidateDevice,
     ready: () => !!(session && device),
     activeEntry: () => active,
     device: () => device,

@@ -1,4 +1,28 @@
-export const EXPECTED_PACKAGE_FILE_COUNT = 54;
+export const EXPECTED_PACKAGE_FILE_COUNT = 55;
+
+// These assets are selected indirectly from runtime model catalogs, so static
+// import/getURL scanning cannot prove their exact package membership. Keep this
+// list independent of PACKAGE_FILES so an accidental allowlist omission fails
+// validation instead of degrading only the affected model at runtime.
+export const REQUIRED_RUNTIME_MODEL_FILES = Object.freeze([
+  "model/ArtCNN_C4F32.artcnn.json",
+  "model/ArtCNN_C4F32.artcnn.wgsl",
+  "model/ArtCNN_C4F32_DN.artcnn.json",
+  "model/ArtCNN_C4F32_DN.artcnn.wgsl",
+  "model/ArtCNN_C4F32_DS.artcnn.json",
+  "model/ArtCNN_C4F32_DS.artcnn.wgsl",
+  "model/FSRCNNX_x2_16-0-4-1.passes.json",
+  "model/FSRCNNX_x2_16-0-4-1.wgsl",
+  "model/FSRCNNX_x2_56-16-4-1.passes.json",
+  "model/FSRCNNX_x2_56-16-4-1.wgsl",
+  "model/FSRCNNX_x3_16-0-4-1.passes.json",
+  "model/FSRCNNX_x3_16-0-4-1.wgsl",
+  "model/FSRCNNX_x4_16-0-4-1.passes.json",
+  "model/FSRCNNX_x4_16-0-4-1.wgsl",
+  "model/rife.onnx",
+  "model/rife_v4.26.onnx",
+  "model/rife_v4.26_fp16.onnx",
+]);
 
 // This list is the package boundary. Additions and removals must be deliberate:
 // package creation and package reference validation both consume this exact set.
@@ -15,6 +39,7 @@ export const PACKAGE_FILES = Object.freeze([
   "fsrcnnx-images.js",
   "fsrcnnx-interpolate.js",
   "fsrcnnx-main.js",
+  "fsrcnnx-model-bundle.js",
   "fsrcnnx-neural.js",
   "fsrcnnx-rife-gpu.js",
   "fsrcnnx-rife.js",
@@ -74,6 +99,16 @@ function assertPackageBoundary() {
   const sorted = [...PACKAGE_FILES].sort();
   if (PACKAGE_FILES.some((file, index) => file !== sorted[index])) {
     throw new Error("Package allowlist must remain sorted");
+  }
+  const sortedRuntimeModels = [...REQUIRED_RUNTIME_MODEL_FILES].sort();
+  if (new Set(REQUIRED_RUNTIME_MODEL_FILES).size !== REQUIRED_RUNTIME_MODEL_FILES.length ||
+      REQUIRED_RUNTIME_MODEL_FILES.some((file, index) => file !== sortedRuntimeModels[index])) {
+    throw new Error("Required runtime model files must be unique and sorted");
+  }
+  for (const file of REQUIRED_RUNTIME_MODEL_FILES) {
+    if (!PACKAGE_FILES.includes(file)) {
+      throw new Error(`Package allowlist is missing required runtime model asset ${file}`);
+    }
   }
 }
 

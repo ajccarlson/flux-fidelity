@@ -22,6 +22,14 @@ export class Interpolator {
     this._lifecycleGen = 0;      // invalidates asynchronous work after stop/restart
     this._startPromise = null;
     this._dimsRestarting = false;
+    this._deviceRestarting = false;
+    this._deviceRecoveryDevice = null;
+    this._pendingDeviceLoss = null;
+    this._gpuResourceStopQueued = false;
+    this._deviceLossUnsubscribe = null;
+    this._cpuGrabInit = null;
+    this._cpuGrabRecovery = null;
+    this._cpuGrabRecoveryDelays = [0, 100, 500];
     this.video = null;
     this.overlay = null;
     this.processor = null;
@@ -556,6 +564,64 @@ export class Interpolator {
     return true;
   }
 
+  _handleGpuCaptureFailure(generation) {
+    const error = this._rifeMod?.gpuLastCaptureError?.();
+    if (error?.code !== "GPU_RESOURCE_LIMIT") return false;
+    // A prior generation may still be behind a queue fence, or checked-out
+    // presentation textures may be released shortly. Drop this source tick and
+    // retry without advancing curTex; only a request that cannot ever fit is
+    // terminal for the current interpolation lifecycle.
+    if (error.details?.transient) return false;
+    if (this._gpuResourceStopQueued) return true;
+    this._gpuResourceStopQueued = true;
+    this.warn(`interp: GPU resource limit reached; restoring original video (${error.message})`);
+    Promise.resolve().then(() => {
+      if (this._isCurrent(generation)) this.stop();
+    }).finally(() => {
+      this._gpuResourceStopQueued = false;
+    });
+    return true;
+  }
+
+  _handleRifeDeviceLoss(lostDevice, info) {
+    if (!this.running) return false;
+    if (this._deviceRestarting) {
+      // RIFE identity-guards duplicate notifications for one device.  A different
+      // device here is the replacement created by the in-flight restart; dropping
+      // it would leave that new dead generation published with no later recovery.
+      if (lostDevice === this._deviceRecoveryDevice ||
+          lostDevice === this._pendingDeviceLoss?.lostDevice) return false;
+      this._pendingDeviceLoss = { lostDevice, info, generation: this._lifecycleGen };
+      return true;
+    }
+    const generation = this._lifecycleGen;
+    this._deviceRestarting = true;
+    this._deviceRecoveryDevice = lostDevice;
+    const detail = info?.message || info?.reason || "unknown reason";
+    this.warn(`interp: GPU device lost (${detail}); rebuilding interpolation`);
+    Promise.resolve().then(async () => {
+      // A user stop/model change after the loss owns the newer lifecycle and must
+      // not be undone by this queued automatic restart.
+      if (!this._isCurrent(generation)) return;
+      this.stop({ preservePendingDeviceLoss: true });
+      const result = await this.start();
+      if (!result?.ok && this.running) {
+        this.warn(`interp: device-loss restart failed: ${result?.reason || "unknown"}`);
+      }
+    }).catch((error) => {
+      this.warn("interp: device-loss restart failed:", error.message);
+    }).finally(() => {
+      const pending = this._pendingDeviceLoss;
+      this._pendingDeviceLoss = null;
+      this._deviceRestarting = false;
+      this._deviceRecoveryDevice = null;
+      if (pending && this.running && this._isCurrent(pending.generation)) {
+        this._handleRifeDeviceLoss(pending.lostDevice, pending.info);
+      }
+    });
+    return true;
+  }
+
   _commitCpuTweenBitmap(generation, cur, tweenBitmap, timestamp, stats) {
     if (!this._isCurrent(generation)) {
       // The tween bitmap and both copies of the current frame still belong to the
@@ -614,28 +680,86 @@ export class Interpolator {
     return promise;
   }
 
-  async _ensureCpuGrabber(generation) {
-    if (!this._isCurrent(generation) || this._gpuGrab) return !!this._gpuGrab;
-    try {
-      const gm = await import(chrome.runtime.getURL("fsrcnnx-grab.js"));
-      if (!this._isCurrent(generation)) return false;
-      const grabber = new gm.WebGPUGrabber({ log: this.log, warn: this.warn });
-      const ok = await grabber.init();
-      if (!this._isCurrent(generation)) {
-        try { grabber.destroy(); } catch {}
-        return false;
-      }
-      if (ok) {
+  _ensureCpuGrabber(generation) {
+    if (!this._isCurrent(generation)) return Promise.resolve(false);
+    if (this._gpuGrab?.ready) return Promise.resolve(true);
+    if (this._gpuGrab) {
+      const unavailable = this._gpuGrab;
+      this._gpuGrab = null;
+      try { void unavailable.destroy?.(); } catch {}
+    }
+    if (this._cpuGrabInit?.generation === generation) return this._cpuGrabInit.promise;
+
+    const attempt = { generation, grabber: null, promise: null };
+    const promise = (async () => {
+      try {
+        const gm = await import(chrome.runtime.getURL("fsrcnnx-grab.js"));
+        if (!this._isCurrent(generation)) return false;
+        let grabber = null;
+        grabber = new gm.WebGPUGrabber({
+          log: this.log,
+          warn: this.warn,
+          onDeviceLost: (_lostDevice, info) =>
+            this._handleCpuGrabberDeviceLoss(grabber, generation, info),
+        });
+        attempt.grabber = grabber;
+        const ok = await grabber.init();
+        // Device.lost may settle between init() publishing its device and this
+        // continuation. Never publish that already-invalid grabber as ready.
+        if (!this._isCurrent(generation) || !ok || !grabber.ready) {
+          try { await grabber.destroy(); } catch {}
+          if (this._isCurrent(generation) && !ok) {
+            this.warn("interp: WebGPU grab unavailable, using 2D fallback (may show waves)");
+          }
+          return false;
+        }
         this._gpuGrab = grabber;
         this.log("interp: WebGPU clean CPU-path grab active");
         return true;
+      } catch (e) {
+        if (this._isCurrent(generation)) this.warn("interp: grab module load failed:", e.message);
+        return false;
       }
-      try { grabber.destroy(); } catch {}
-      this.warn("interp: WebGPU grab unavailable, using 2D fallback (may show waves)");
-    } catch (e) {
-      if (this._isCurrent(generation)) this.warn("interp: grab module load failed:", e.message);
-    }
-    return false;
+    })().finally(() => {
+      if (this._cpuGrabInit === attempt) this._cpuGrabInit = null;
+    });
+    attempt.promise = promise;
+    this._cpuGrabInit = attempt;
+    return promise;
+  }
+
+  _handleCpuGrabberDeviceLoss(grabber, generation, info) {
+    const pending = this._cpuGrabInit;
+    const ownsPublished = this._gpuGrab === grabber;
+    const ownsPending = pending?.generation === generation && pending.grabber === grabber;
+    if ((!ownsPublished && !ownsPending) || !this._isCurrent(generation)) return false;
+    if (ownsPublished) this._gpuGrab = null;
+    const detail = info?.message || info?.reason || "unknown reason";
+    this.warn(`interp: CPU grab device lost (${detail}); rebuilding clean grab path`);
+    if (!this._gpuPresent) void this._scheduleCpuGrabberRecovery(generation);
+    return true;
+  }
+
+  _scheduleCpuGrabberRecovery(generation) {
+    if (!this._isCurrent(generation) || this._gpuPresent) return Promise.resolve(false);
+    if (this._cpuGrabRecovery?.generation === generation) return this._cpuGrabRecovery.promise;
+    const recovery = { generation, promise: null };
+    const promise = (async () => {
+      for (const delay of this._cpuGrabRecoveryDelays) {
+        if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+        if (!this._isCurrent(generation) || this._gpuPresent) return false;
+        if (await this._ensureCpuGrabber(generation)) return true;
+      }
+      if (this._isCurrent(generation) && !this._gpuPresent) {
+        this.warn("interp: clean GPU grab recovery exhausted; continuing with 2D fallback");
+      }
+      return false;
+    })().finally(() => {
+      if (this._cpuGrabRecovery === recovery) this._cpuGrabRecovery = null;
+    });
+    recovery.promise = promise;
+    this._cpuGrabRecovery = recovery;
+    return promise;
   }
 
   async _startInternal(generation) {
@@ -690,6 +814,10 @@ export class Interpolator {
       if (!this._isCurrent(generation)) return false;
       rife = m;
       this._rifeMod = m; // expose for getStats (timing breakdown)
+      if (!this._deviceLossUnsubscribe && m.addDeviceLossListener) {
+        this._deviceLossUnsubscribe = m.addDeviceLossListener((lostDevice, info) =>
+          this._handleRifeDeviceLoss(lostDevice, info));
+      }
       if (this._rifeModelKey && m.setModel && !m.setModel(this._rifeModelKey)) {
         this.warn(`interp: unknown RIFE model '${this._rifeModelKey}', using module default`);
         this._rifeModelKey = null;
@@ -1014,7 +1142,15 @@ export class Interpolator {
               } else {
                 realTex = this._rifeMod.gpuCapture(video);
               }
-              if (!this._rifeMod.gpuHasPrev()) { this._rifeMod.gpuAdvance(); if (realTex) this._enqueueTex(realTex, ts); this._prevTs = ts; stats.framesIn++; }
+              // A failed capture did not update curTex. Advancing or counting it
+              // would pair a stale/blank texture with the next frame. Resource
+              // limits are terminal for this resolution: stop once so the hidden
+              // source video is restored instead of leaving a black overlay.
+              if (!realTex) {
+                this._handleGpuCaptureFailure(generation);
+                return;
+              }
+              if (!this._rifeMod.gpuHasPrev()) { this._rifeMod.gpuAdvance(); this._enqueueTex(realTex, ts); this._prevTs = ts; stats.framesIn++; }
               else {
                 const t0 = performance.now();
                 const p0 = this._prevTs != null ? this._prevTs : ts - 33000;
@@ -1187,13 +1323,17 @@ export class Interpolator {
     });
   }
 
-  stop() {
+  stop({ preservePendingDeviceLoss = false } = {}) {
     // A queued inverted-dimension callback belongs to the lifecycle being stopped.
     // Reset even for an already-idle instance so it can never suppress a later run.
     this._dimsRestarting = false;
+    this._gpuResourceStopQueued = false;
     const active = this._state !== "idle" || this.running || this.video || this.overlay || this.queue;
     if (!active) return { ok: true, stopped: false };
     ++this._lifecycleGen; // invalidate module imports, inference continuations, and rvfc
+    // An explicit stop/model change owns the newer lifecycle.  It must also cancel
+    // a replacement-device loss queued behind an older automatic restart.
+    if (!preservePendingDeviceLoss) this._pendingDeviceLoss = null;
     this.running = false;
     this._state = "idle";
     this._stopped = true; // ends the requestVideoFrameCallback grab loop

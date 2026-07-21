@@ -5,7 +5,11 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { buildPackage } from "../tools/build-package.mjs";
 import { validatePackage } from "../tools/check-package.mjs";
-import { EXPECTED_PACKAGE_FILE_COUNT, PACKAGE_FILES } from "../tools/package-files.mjs";
+import {
+  EXPECTED_PACKAGE_FILE_COUNT,
+  PACKAGE_FILES,
+  REQUIRED_RUNTIME_MODEL_FILES,
+} from "../tools/package-files.mjs";
 
 function writeFixture(root, file, contents = file) {
   const path = join(root, file);
@@ -23,9 +27,9 @@ function walk(root, prefix = "") {
   return files.sort();
 }
 
-test("the package boundary is an exact, sorted 54-file allowlist", () => {
+test("the package boundary is an exact, sorted 55-file allowlist", () => {
   assert.equal(PACKAGE_FILES.length, EXPECTED_PACKAGE_FILE_COUNT);
-  assert.equal(EXPECTED_PACKAGE_FILE_COUNT, 54);
+  assert.equal(EXPECTED_PACKAGE_FILE_COUNT, 55);
   assert.equal(new Set(PACKAGE_FILES).size, PACKAGE_FILES.length);
   assert.deepEqual(PACKAGE_FILES, [...PACKAGE_FILES].sort());
   assert.equal(PACKAGE_FILES.includes("fsrcnnx-development-only.js"), false);
@@ -39,11 +43,26 @@ test("package creation never discovers an extra runtime-looking local file", () 
 
     const result = buildPackage({ rootDir: fixture, distDir: join(fixture, "output") });
 
-    assert.equal(result.fileCount, 54);
+    assert.equal(result.fileCount, 55);
     assert.deepEqual(walk(result.stage), PACKAGE_FILES);
     assert.equal(existsSync(join(result.stage, "fsrcnnx-development-only.js")), false);
   } finally {
     rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("every runtime-selected FSRCNNX, ArtCNN, and RIFE asset is required exactly", () => {
+  assert.deepEqual(REQUIRED_RUNTIME_MODEL_FILES, [...REQUIRED_RUNTIME_MODEL_FILES].sort());
+  assert.equal(new Set(REQUIRED_RUNTIME_MODEL_FILES).size, REQUIRED_RUNTIME_MODEL_FILES.length);
+
+  for (const omitted of REQUIRED_RUNTIME_MODEL_FILES) {
+    const errors = validatePackage({
+      packageFiles: PACKAGE_FILES.filter((file) => file !== omitted),
+    });
+    assert.ok(
+      errors.includes(`runtime model assets: missing ${omitted} from package`),
+      `${omitted} omission was not rejected:\n${errors.join("\n")}`,
+    );
   }
 });
 

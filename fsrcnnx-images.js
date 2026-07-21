@@ -99,7 +99,10 @@ export class ImageUpscaler {
     this._destroyed = false;
 
     // dedicated FSRCNNX model instance (own texture cache)
-    this.model = fsrcnnxSource ? new FsrcnnxModel(device, fsrcnnxSource.manifest, fsrcnnxSource.wgsl) : null;
+    this.model = fsrcnnxSource
+      ? new FsrcnnxModel(device, fsrcnnxSource.manifest, fsrcnnxSource.wgsl,
+        { expectedName: fsrcnnxSource.name })
+      : null;
     this.ssimds = new SsimDownscaler(device);
 
     // pipelines
@@ -173,10 +176,20 @@ export class ImageUpscaler {
     const valid = values.every((v) => Number.isSafeInteger(v) && v > 0 && v <= limit) &&
       outW * outH <= Math.min(MAX_PROCESSING_PIXELS, limit * limit) &&
       finalW * finalH <= Math.min(MAX_PROCESSING_PIXELS, limit * limit);
+    let modelValid = valid;
+    if (modelValid && typeof this.model?.preflight === "function") {
+      try { this.model.preflight(nw, nh); }
+      catch (error) {
+        if (!/^MODEL_/.test(error?.code || "")) throw error;
+        modelValid = false;
+        if (report) this._reportFailure("limits", `Skipped ${nw}x${nh}: ${error.message}`);
+      }
+    }
+    if (!modelValid && valid && report) return false;
     if (!valid && report) {
       this._reportFailure("limits", `Skipped dimensions ${nw}x${nh} -> ${outW}x${outH}; adapter limit is ${limit}px per edge and ${Math.min(MAX_PROCESSING_PIXELS, limit * limit)} pixels.`);
     }
-    return valid;
+    return modelValid;
   }
 
   // --- lifecycle ------------------------------------------------------------
