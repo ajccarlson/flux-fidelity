@@ -14,6 +14,7 @@ import {
   validateNeuralManifest,
 } from "./fsrcnnx-neural.js";
 import { LUMA_EXTRACT_WGSL, RECOMBINE_WGSL } from "./fsrcnnx-color.js";
+import { probeVideoColorSupport, SRGB_COLOR_SPACE } from "./fsrcnnx-color-support.js";
 import { SsimDownscaler } from "./fsrcnnx-ssimds-runtime.js";
 import { buildSharpenShader } from "./fsrcnnx-sharpen.js";
 import { ArtCnnModel } from "./fsrcnnx-artcnn-runtime.js";
@@ -197,8 +198,22 @@ let pageSuspended = false;
 let renderTargetOwner = null;
 let frameCount = 0, lastLog = 0;
 let upscalePolicy = "display"; // default: upscale whenever source < display (good for 4K)
-let protectedSource = false; // last setMode/recheck found DRM
-let protectedReason = null;  // "drm" | "tainted" | null
+let protectedSource = false; // selected video must remain on its native renderer
+let protectedReason = null;  // unreadable/unsupported source reason, or null
+// The selection monitor already reconciles every two seconds. Expiring both
+// accepted and rejected classifications on that cadence detects adaptive-stream
+// color changes even when the page reuses one element, URL, and resolution.
+const COLOR_REPROBE_INTERVAL_MS = 2000;
+let videoColorSupportCache = new WeakMap();
+function uncheckedColorSupport(detail = "No decoded video frame has been checked.") {
+  return Object.freeze({
+    supported: false,
+    code: "color-not-checked",
+    detail,
+    colorSpace: Object.freeze({ primaries: null, transfer: null, matrix: null, fullRange: null }),
+  });
+}
+let selectedColorSupport = uncheckedColorSupport();
 
 function boundedRuntimeDetail(error, fallback = "Unknown runtime failure") {
   const detail = error?.message || (typeof error === "string" ? error : fallback);
@@ -1378,7 +1393,13 @@ function buildCore() {
   context = canvas.getContext("webgpu");
   format = navigator.gpu.getPreferredCanvasFormat();
   // COPY_SRC lets the interpolation chain tap copy the finished upscaled frame.
-  context.configure({ device, format, alphaMode: "premultiplied", usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
+  context.configure({
+    device,
+    format,
+    colorSpace: SRGB_COLOR_SPACE,
+    alphaMode: "premultiplied",
+    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+  });
   sampler = device.createSampler({ magFilter: "linear", minFilter: "linear" });
   extractPipeline = device.createComputePipeline({
     layout: "auto",
@@ -2401,6 +2422,7 @@ function handlePrimarySourceBoundary(owner, event = null) {
   chainTap(false);
   chainInverted = false;
   _texSource = null;
+  invalidateVideoColorSupport(owner.video);
   if (canvas) { canvas.style.display = "none"; canvas.style.opacity = "1"; }
   detach();
   notifyState();
@@ -2461,13 +2483,15 @@ function suspendSelectedVideo(reason) {
 
 function loop(owner) {
   if (pageSuspended || owner !== primaryController || owner?.video !== video || mode === "off" || !video) return;
-  // Mid-playback protection guard: a source can start unprotected then switch to
-  // DRM (e.g. navigating to protected content in an SPA). Re-check occasionally.
+  // A source can switch protection or decoded color metadata without replacing
+  // its element (DRM transitions and adaptive streams both do this). Re-check
+  // infrequently and fail back to the native video before another overlay frame.
   if (mode !== "off" && frameCount > 0 && frameCount % 300 === 0) {
-    if (isTaintedVideo(video)) {
-      warn("source became DRM-protected mid-playback; disabling.");
+    const reason = probeVideo(video, { forceColor: true });
+    if (reason !== "ok") {
+      warn(`source became unavailable for color-safe processing (${reason}); preserving native video.`);
       protectedSource = true;
-      protectedReason = probeVideo(video);
+      protectedReason = reason;
       suspendSelectedVideo(protectedReason);
       return;
     }
@@ -2677,7 +2701,15 @@ function queueVideoSelection(candidate, {
   return operation;
 }
 
-function scheduleVideoSelection(candidate, _previous, _changed) {
+function scheduleVideoSelection(candidate, _previous, changed) {
+  // A ready ownership tuple would otherwise take queueVideoSelection's fast
+  // path forever. Probe its expiring cache before that early return so standalone
+  // interpolation (which has no main render loop) also notices color transitions.
+  if (!changed && candidate && candidate === video && !pageSuspended &&
+      (mode !== "off" || optInterpolate)) {
+    const reason = probeVideo(candidate);
+    if (reason !== "ok") return queueVideoSelection(candidate, { force: true });
+  }
   return queueVideoSelection(candidate);
 }
 
@@ -2694,6 +2726,13 @@ async function restartInterpolationForVideoSelection(generation) {
   try { instance.stop(); } catch {}
   if (generation !== videoSelectionGeneration || !optInterpolate || engine === "neural" || !video ||
       interpolationQuarantineMatches(video)) return false;
+  const sourceReason = probeVideo(video);
+  if (sourceReason !== "ok") {
+    protectedSource = true;
+    protectedReason = sourceReason;
+    notifyProtected();
+    return false;
+  }
   const selectionGeneration = interpolationSelectionGeneration;
   const selectedVideo = video;
   const selectedSource = captureVideoSource(selectedVideo);
@@ -2776,12 +2815,13 @@ async function applyVideoSelection(
     videoMonitor?.setCurrent?.(candidate);
     protectedSource = false;
     protectedReason = null;
+    selectedColorSupport = uncheckedColorSupport("The selected video source has not been checked yet.");
     if (canvas) { canvas.style.display = "none"; canvas.style.opacity = "1"; }
   }
 
   let processable = !!candidate;
   if ((mode !== "off" || optInterpolate) && candidate) {
-    const reason = probeVideo(candidate);
+    const reason = probeVideo(candidate, { forceColor: changed || !!sourceBoundary });
     processable = reason === "ok";
     if (!processable) {
       protectedSource = true;
@@ -2794,8 +2834,15 @@ async function applyVideoSelection(
   } else if (!candidate) {
     protectedSource = false;
     protectedReason = null;
+    selectedColorSupport = uncheckedColorSupport("No decoded video is selected.");
   }
   if (!videoSelectionCurrent(candidate, generation, expectedModeGeneration, source)) return false;
+  if (!processable) {
+    // A monitor-driven metadata transition can keep the same element and source
+    // identity, so the earlier `changed` teardown does not run. Stop any direct
+    // interpolation takeover before revealing the native video.
+    try { interpolator?.stop?.(); } catch {}
+  }
 
   if (mode !== "off" && processable) {
     if (!(await initWebGPU()) || !videoSelectionCurrent(candidate, generation, expectedModeGeneration, source)) return false;
@@ -2864,6 +2911,8 @@ export function suspendDocument() {
   chainTap(false);
   chainInverted = false;
   _texSource = null;
+  videoColorSupportCache = new WeakMap();
+  selectedColorSupport = uncheckedColorSupport("Color support will be checked again when the document resumes.");
   videoMonitor?.stop?.();
   videoMonitor = null;
   detach();
@@ -2897,15 +2946,16 @@ export async function resumeDocument() {
   return { ok: true, suspended: false, active: !!primaryController?.active };
 }
 
-// A video can be unprocessable for two distinct reasons, both of which make
+// A video can be unreadable for two distinct reasons, both of which make
 // importExternalTexture throw or yield nothing:
 //   1. DRM/EME  — video.mediaKeys is attached (Netflix, Disney+, …).
 //   2. Cross-origin taint — the <video> was loaded from another origin without
 //      CORS (e.g. Reddit's v.redd.it). importExternalTexture refuses tainted
 //      video just like a 2D canvas does; we can't add crossOrigin after load.
-// We can't always tell these apart cheaply, so probeVideo() returns a reason:
-//   "ok" | "drm" | "tainted"
-function probeVideo(v) {
+// Readability is checked before constructing a VideoFrame so protected content
+// never reaches the metadata probe. A readable source must then prove that its
+// decoded frame is inside the validated BT.709 SDR boundary.
+function probeVideoAccess(v) {
   try {
     if (v && "mediaKeys" in v && v.mediaKeys) return "drm";
   } catch {}
@@ -2914,21 +2964,58 @@ function probeVideo(v) {
   try {
     const c = document.createElement("canvas");
     c.width = 4; c.height = 4;
-    const cx = c.getContext("2d", { willReadFrequently: true });
+    const cx = c.getContext("2d", {
+      colorSpace: SRGB_COLOR_SPACE,
+      willReadFrequently: true,
+    });
     cx.drawImage(v, 0, 0, 4, 4);
     cx.getImageData(0, 0, 4, 4); // throws if tainted (cross-origin without CORS)
     return "ok";
-  } catch {
-    return "tainted";
+  } catch (error) {
+    return error?.name === "SecurityError" ? "tainted" : "color-metadata-unavailable";
   }
 }
+
+function invalidateVideoColorSupport(target) {
+  if (target) videoColorSupportCache.delete(target);
+  if (target === video) {
+    selectedColorSupport = uncheckedColorSupport("The video source changed and must be checked again.");
+  }
+}
+
+function colorSupportFor(target, { force = false } = {}) {
+  const source = captureVideoSource(target);
+  const cached = videoColorSupportCache.get(target);
+  const now = Date.now();
+  const age = cached ? now - cached.checkedAt : Infinity;
+  if (!force && cached && sameVideoSource(cached.source, source) &&
+      age >= 0 && age < COLOR_REPROBE_INTERVAL_MS) return cached.result;
+  const result = probeVideoColorSupport(target);
+  videoColorSupportCache.set(target, { source, result, checkedAt: now });
+  return result;
+}
+
+function probeVideo(target, { forceColor = false, publish = true } = {}) {
+  const accessReason = probeVideoAccess(target);
+  if (accessReason !== "ok") {
+    if (publish && target === video) {
+      selectedColorSupport = uncheckedColorSupport(
+        "Decoded color metadata was not checked because the video pixels are unreadable.",
+      );
+    }
+    return accessReason;
+  }
+  const support = colorSupportFor(target, { force: forceColor });
+  if (publish && target === video) selectedColorSupport = support;
+  return support.supported ? "ok" : support.code;
+}
+
 function isProtectedVideo(v) { return probeVideo(v) !== "ok"; }
-function isTaintedVideo(v) { return probeVideo(v) !== "ok"; }
+function isTaintedVideo(v) { return probeVideoAccess(v) !== "ok"; }
 
 // Guarded importExternalTexture. A tainted/DRM video throws here; rather than let
-// that error escape into the render loop every frame, catch it, mark the source
-// unprocessable, disable, and surface the reason to the popup. Returns null on
-// failure (callers must bail).
+// that error escape into the render loop every frame, catch it, restore the native
+// presentation, and surface the reason to the popup. Returns null on failure.
 function safeImportExternal() {
   // TRANSIENT, not DRM: an interp restart destroys the previously-adopted device
   // (ORT creates a fresh one per session) before re-adoption lands. A null device
@@ -2936,9 +3023,9 @@ function safeImportExternal() {
   // black screen (null deref classified as "drm" → mode off + canvas hidden).
   if (!device) return null;
   try {
-    return device.importExternalTexture({ source: video });
+    return device.importExternalTexture({ source: video, colorSpace: SRGB_COLOR_SPACE });
   } catch (e) {
-    const probed = probeVideo(video);
+    const probed = probeVideo(video, { publish: !renderTargetOwner });
     const reason = probed !== "ok"
       ? probed
       : ((e && /tainted|cross-origin/i.test(e.message)) ? "tainted" : "drm");
@@ -3094,7 +3181,7 @@ class MultiTarget {
     this.sharpenPipeline = null; this.sharpenStrengthBuilt = null;
     // Each canvas needs its OWN GPUCanvasContext configured for the device.
     this.context = this.canvas.getContext("webgpu");
-    this.context.configure({ device, format, alphaMode: "premultiplied" });
+    this.context.configure({ device, format, colorSpace: SRGB_COLOR_SPACE, alphaMode: "premultiplied" });
     // Per-target model instances. Models cache GPU textures keyed to one input
     // size, so sharing the global model across differently-sized videos would
     // thrash (realloc every frame). Each target owns its models, built from the
@@ -3107,11 +3194,23 @@ class MultiTarget {
     this.scaleHeld = undefined; this.scalePending = null; this.scalePendingSince = 0;
     this.scaleHeldSrcW = 0; this.scaleHeldSrcH = 0; this.scaleLockLogged = false;
     this.hoverHidden = false; this.neuralBypassLogged = false;
+    this.colorProbeFrames = 0;
     this.failedReason = null;
     this.controller = new VideoController(vid, {
       onFrame: (owner) => {
         if (owner !== this.controller || multiTargets.get(this.video) !== this ||
             mode === "off" || !optAllVideos || pageSuspended) return;
+        this.colorProbeFrames++;
+        if (this.colorProbeFrames % 300 === 0) {
+          const reason = probeVideo(this.video, { forceColor: true, publish: false });
+          if (reason !== "ok") {
+            this.failedReason = reason;
+            this.canvas.style.display = "none";
+            this.destroy();
+            multiTargets.delete(this.video);
+            return;
+          }
+        }
         if (!adopting) renderMultiOne(this.video);
         if (multiTargets.get(this.video) === this && mode !== "off" && optAllVideos &&
             !adopting && !pageSuspended) owner.scheduleFrame();
@@ -3157,6 +3256,7 @@ let multiTargets = new Map(); // video element -> MultiTarget
 function handleSecondarySourceBoundary(target, owner) {
   if (!target || owner !== target.controller || multiTargets.get(target.video) !== target) return false;
   target.failedReason = "source-changed";
+  invalidateVideoColorSupport(target.video);
   if (target.canvas) target.canvas.style.display = "none";
   try { target.destroy(); } catch {}
   multiTargets.delete(target.video);
@@ -3261,6 +3361,7 @@ function syncMultiTargets() {
   if (!optAllVideos || mode === "off" || adopting || pageSuspended) { clearMultiTargets(); return; }
   const candidates = findAllVideos()
     .filter((candidate) => candidate !== video)
+    .filter((candidate) => probeVideo(candidate, { publish: false }) === "ok")
     .sort((left, right) => {
       const lr = left.getBoundingClientRect(), rr = right.getBoundingClientRect();
       return rr.width * rr.height - lr.width * lr.height;
@@ -3673,6 +3774,7 @@ export function getStatus() {
   const interpolationPhase = !optInterpolate ? "off"
     : pageSuspended ? "suspended"
     : interpPausedByNeural ? "paused"
+    : protectedSource ? "blocked"
     : interpFailure ? "failed"
     : !hasVideo ? "waiting"
     : interpStats?.phase === "running" ? "active"
@@ -3711,7 +3813,9 @@ export function getStatus() {
              ready: neuralEng.ready(), ...neuralStats,
            } : null,
            neuralModels: _neuralList,
-           protected: protectedSource, protectedReason, host: siteHost(),
+           protected: protectedSource, protectedReason,
+           colorSupport: selectedColorSupport,
+           host: siteHost(),
            hoverReveal: optHoverReveal, allVideos: optAllVideos,
            images: optImages, imageCount: imageUpscaledCount,
            interpolate: optInterpolate, interpPausedByNeural,
@@ -3750,6 +3854,8 @@ export function getStatus() {
              effectiveEngine: engine,
              activeEngine: presented.engine,
              phase: rendererPhase,
+             blockedReason: protectedSource ? protectedReason : null,
+             colorSupport: selectedColorSupport,
              framesPresented: primaryPresentationGeneration,
              fallback: rendererFallback,
            },
@@ -3764,6 +3870,7 @@ export function getStatus() {
              requested: optInterpolate,
              phase: interpolationPhase,
              pauseReason: interpPausedByNeural ? "neural" : (pageSuspended ? "document" : null),
+             blockedReason: protectedSource ? protectedReason : null,
              lastFailure: interpFailure,
            },
            neuralRuntime: {

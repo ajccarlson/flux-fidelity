@@ -16,10 +16,18 @@ export const ONNX_VALIDATION_CHECKS = Object.freeze([
   Object.freeze({ id: "onnx:rife-v4.26", label: "ORT default RIFE 4.26 WebGPU inference smoke" }),
 ]);
 
+export const REFERENCE_VALIDATION_CHECKS = Object.freeze([
+  Object.freeze({ id: "color:extract-reference", label: "BT.709 luma extraction numerical reference" }),
+  Object.freeze({ id: "color:recombine-reference", label: "BT.709 chroma recombination numerical reference" }),
+  Object.freeze({ id: "filter:ssimds-reference", label: "SSimDownscaler upstream numerical reference" }),
+  Object.freeze({ id: "filter:sharpen-reference", label: "Adaptive sharpen upstream numerical reference" }),
+]);
+
 export function createValidationPlan(catalog) {
   const plan = [
     Object.freeze({ id: "webgpu", label: "WebGPU device" }),
     Object.freeze({ id: "core:pipelines", label: "Supporting color/filter pipelines" }),
+    ...REFERENCE_VALIDATION_CHECKS,
     Object.freeze({ id: "webgpu:errors", label: "GPU error channel" }),
     ...ONNX_VALIDATION_CHECKS,
   ];
@@ -27,7 +35,7 @@ export function createValidationPlan(catalog) {
     plan.push(
       Object.freeze({ id: `${spec.name}:topology`, label: `${spec.label} topology` }),
       Object.freeze({ id: `${spec.name}:pipelines`, label: `${spec.label} pipelines` }),
-      Object.freeze({ id: `${spec.name}:inference`, label: `${spec.label} inference smoke` }),
+      Object.freeze({ id: `${spec.name}:inference`, label: `${spec.label} upstream numerical reference` }),
     );
   }
   if (new Set(plan.map(({ id }) => id)).size !== plan.length) {
@@ -273,6 +281,18 @@ export function inspectRgba16Float(words, width, height, wordsPerRow = width * 4
   });
 }
 
+export function alignedBytesPerRow(width, bytesPerPixel = 8) {
+  if (!Number.isSafeInteger(width) || width <= 0) {
+    throw new RangeError("row width must be a positive safe integer");
+  }
+  if (!Number.isSafeInteger(bytesPerPixel) || bytesPerPixel <= 0) {
+    throw new RangeError("bytes per pixel must be a positive safe integer");
+  }
+  const unaligned = width * bytesPerPixel;
+  if (!Number.isSafeInteger(unaligned)) throw new RangeError("row byte length exceeds the safe integer range");
+  return Math.ceil(unaligned / 256) * 256;
+}
+
 export function buildCorePipelines(device, canvasFormat) {
   const pipelines = [];
   const render = (code, format = canvasFormat) => {
@@ -313,8 +333,8 @@ export async function runModelInference(device, model, options = {}) {
   const width = options.width ?? 32;
   const height = options.height ?? 8;
   const timeoutMs = options.timeoutMs ?? VALIDATION_TIMEOUT_MS;
-  const inputBytesPerRow = width * 8;
-  if (inputBytesPerRow % 256 !== 0) throw new Error("validation input row pitch must be 256-byte aligned");
+  const inputBytesPerRow = alignedBytesPerRow(width);
+  const inputWordsPerRow = inputBytesPerRow / 2;
 
   let inputTexture = null;
   let readBuffer = null;
@@ -326,10 +346,10 @@ export async function runModelInference(device, model, options = {}) {
       format: "rgba16float",
       usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING,
     });
-    const input = new Uint16Array(width * height * 4);
+    const input = new Uint16Array(inputWordsPerRow * height);
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
-        const offset = (y * width + x) * 4;
+        const offset = y * inputWordsPerRow + x * 4;
         const value = 0.1 + 0.8 * ((x + y) / (width + height - 2));
         input[offset] = numberToFloat16(value);
         input[offset + 1] = 0;

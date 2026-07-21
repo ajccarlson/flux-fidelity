@@ -4,11 +4,17 @@ import { validateModelBundle } from "./fsrcnnx-model-bundle.js";
 import { createOrtSession, ensureOrt, getOrtSessionDevice } from "./fsrcnnx-rife.js";
 import { FsrcnnxModel } from "./fsrcnnx-runtime.js";
 import {
+  formatReferenceMetrics,
+  loadReferenceManifest,
+  runModelReference,
+  runSupportingReference,
+} from "./fsrcnnx-reference-validation.js";
+import {
   acquireValidationDevice,
   buildCorePipelines,
   createValidationPlan,
   inspectOrtFloatTensor,
-  runModelInference,
+  REFERENCE_VALIDATION_CHECKS,
   summarizeValidation,
   VALIDATION_TIMEOUT_MS,
   withGpuErrorScopes,
@@ -91,6 +97,9 @@ function setResult(runId, resultMap, id, status, detail) {
 
 function skipGpuChecks(runId, resultMap, reason) {
   setResult(runId, resultMap, "core:pipelines", "skip", reason);
+  for (const check of REFERENCE_VALIDATION_CHECKS) {
+    setResult(runId, resultMap, check.id, "skip", reason);
+  }
   setResult(runId, resultMap, "webgpu:errors", "skip", reason);
 }
 
@@ -108,7 +117,7 @@ async function loadBundle(spec) {
   };
 }
 
-async function validateModel(runId, resultMap, spec, device) {
+async function validateModel(runId, resultMap, spec, device, referenceCases, referenceError) {
   let bundle;
   try {
     bundle = await loadBundle(spec);
@@ -158,24 +167,62 @@ async function validateModel(runId, resultMap, spec, device) {
     return;
   }
 
+  const referenceCase = referenceCases?.get(spec.name);
+  if (!referenceCase) {
+    const detail = referenceError
+      ? `reference fixture load failed: ${errorMessage(referenceError)}`
+      : `reference fixture case '${spec.name}' is missing`;
+    setResult(runId, resultMap, `${spec.name}:inference`, "fail", detail);
+    try { model.destroy(); } catch {}
+    return;
+  }
+
   try {
     const stats = await withGpuErrorScopes(
       device,
-      `${spec.label} inference`,
-      () => runModelInference(device, model),
+      `${spec.label} numerical reference`,
+      () => runModelReference(device, model, referenceCase),
     );
     setResult(
       runId,
       resultMap,
       `${spec.name}:inference`,
       "pass",
-      `${stats.width}×${stats.height} readback; ${stats.components} finite components ` +
-        `with luma [${stats.channelMin[0].toPrecision(4)}, ${stats.channelMax[0].toPrecision(4)}]`,
+      `${stats.width}×${stats.height}; ${formatReferenceMetrics(stats)}`,
     );
   } catch (error) {
     setResult(runId, resultMap, `${spec.name}:inference`, "fail", errorMessage(error));
   } finally {
     try { model.destroy(); } catch {}
+  }
+}
+
+async function validateSupportingReferences(runId, resultMap, device, referenceCases, referenceError) {
+  for (const check of REFERENCE_VALIDATION_CHECKS) {
+    const referenceCase = referenceCases?.get(check.id);
+    if (!referenceCase) {
+      const detail = referenceError
+        ? `reference fixture load failed: ${errorMessage(referenceError)}`
+        : `reference fixture case '${check.id}' is missing`;
+      setResult(runId, resultMap, check.id, "fail", detail);
+      continue;
+    }
+    try {
+      const stats = await withGpuErrorScopes(
+        device,
+        check.label,
+        () => runSupportingReference(device, referenceCase),
+      );
+      setResult(
+        runId,
+        resultMap,
+        check.id,
+        "pass",
+        `${stats.width}×${stats.height}; ${formatReferenceMetrics(stats)}`,
+      );
+    } catch (error) {
+      setResult(runId, resultMap, check.id, "fail", errorMessage(error));
+    }
   }
 }
 
@@ -404,12 +451,24 @@ async function run() {
       } catch (error) {
         setResult(runId, resultMap, "core:pipelines", "fail", errorMessage(error));
       }
+
+      let referenceCases = null;
+      let referenceError = null;
+      try {
+        ({ cases: referenceCases } = await loadReferenceManifest());
+      } catch (error) {
+        referenceError = error;
+      }
+      await validateSupportingReferences(runId, resultMap, device, referenceCases, referenceError);
+
+      for (const spec of GENERATED_MODEL_CATALOG) {
+        await validateModel(runId, resultMap, spec, device, referenceCases, referenceError);
+      }
     } else {
       skipGpuChecks(runId, resultMap, "no WebGPU device");
-    }
-
-    for (const spec of GENERATED_MODEL_CATALOG) {
-      await validateModel(runId, resultMap, spec, device);
+      for (const spec of GENERATED_MODEL_CATALOG) {
+        await validateModel(runId, resultMap, spec, device, null, null);
+      }
     }
 
     await validateOnnxModels(runId, resultMap);

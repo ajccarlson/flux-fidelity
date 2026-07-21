@@ -7,7 +7,7 @@ Public distribution is not yet cleared. Several bundled artifacts still have unr
 ## Requirements
 
 - A current Chromium-based browser with WebGPU enabled and a compatible GPU driver.
-- A readable, non-DRM HTML5 video in the top-level page. Protected video, cross-origin restrictions, iframes, and page-specific rendering can prevent capture.
+- A readable, non-DRM BT.709/sRGB SDR HTML5 video in the top-level page. HDR, wide-gamut, or unverified color metadata remains on the browser's native renderer; cross-origin restrictions, iframes, and page-specific rendering can also prevent capture.
 - Node.js 20.11 or newer only for repository validation and packaging. Runtime use has no npm dependency.
 
 The extension requests access to all sites so it can find and process eligible page videos.

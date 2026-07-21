@@ -19,6 +19,7 @@ const complianceHashes = Object.freeze({
   "LGPL_REBUILDING.md": "b23f3a64a3db81248f1fe99dc1138d4b55aace39b162cfaefaa667836240effe",
   "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl": standardSourceSha,
   "shaders/upstream/SSimDownscaler.glsl": "f46f4710a162d17058b9d82ed8610588b0c04d7be07cef6bf2a8c4077828f804",
+  "shaders/upstream/adaptive-sharpen.glsl": "827fb3d662ac9a91b4075e9117fe6e1dbc1c06d85959ba719cdb954dfb7fb8e4",
   "transpile.js": "2ad45126cd36d52ce1064e8da1e189e10b5d256d8edc28a9dec3737957f4f631",
   "vendor/ort/LICENSE": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
 });
