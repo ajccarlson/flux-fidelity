@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Validate source and generated assets
+        run: npm run check
+      - name: Build deterministic extension archive
+        run: |
+          npm run package
+          cp dist/fsrcnnx-ext.zip /tmp/fsrcnnx-ext-first.zip
+          npm run package
+          cmp /tmp/fsrcnnx-ext-first.zip dist/fsrcnnx-ext.zip
+          unzip -t dist/fsrcnnx-ext.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fsrcnnx-ext-${{ github.sha }}
+          path: |
+            dist/fsrcnnx-ext.zip
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
