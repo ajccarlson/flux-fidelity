@@ -38,58 +38,171 @@ fn fs(in: VSOut) -> @location(0) vec4<f32> {
 }
 `;
 
+export class GrabResourceLimitError extends Error {
+  constructor(message, details = {}) {
+    super(message);
+    this.name = "GrabResourceLimitError";
+    this.code = "GPU_RESOURCE_LIMIT";
+    this.details = details;
+  }
+}
+
+function positiveDeviceLimit(device, name, fallback) {
+  const value = Number(device?.limits?.[name]);
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+
 export class WebGPUGrabber {
-  constructor({ log, warn } = {}) {
+  constructor({ log, warn, onDeviceLost } = {}) {
     this.log = log || console.log;
     this.warn = warn || console.warn;
+    this.onDeviceLost = typeof onDeviceLost === "function" ? onDeviceLost : null;
     this.device = null;
     this.ready = false;
     this._w = 0; this._h = 0;
+    this._ownsDevice = false;
+    this._deviceLost = false;
+    this._mapPending = false;
+    this._grabPromise = null;
+    this._initPromise = null;
+    this._destroyRequested = false;
+    this._destroyPromise = null;
   }
 
-  async init() {
-    if (this.ready) return true;
+  init() {
+    if (this.ready) return Promise.resolve(true);
+    if (this._destroyRequested) return Promise.resolve(false);
+    if (this._initPromise) return this._initPromise;
+    const promise = this._initInternal().finally(() => {
+      if (this._initPromise === promise) this._initPromise = null;
+    });
+    this._initPromise = promise;
+    return promise;
+  }
+
+  async _initInternal() {
+    let candidateDevice = null;
     try {
       if (!("gpu" in navigator)) { this.warn("grab: no WebGPU"); return false; }
       const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
       if (!adapter) { this.warn("grab: no adapter"); return false; }
-      this.device = await adapter.requestDevice();
-      this.device.lost.then((i) => { this.warn("grab device lost:", i.message); this.ready = false; });
-      this.sampler = this.device.createSampler({ magFilter: "linear", minFilter: "linear" });
-      this.pipeline = this.device.createRenderPipeline({
+      if (this._destroyRequested) return false;
+      candidateDevice = await adapter.requestDevice();
+      if (this._destroyRequested) {
+        try { candidateDevice.destroy?.(); } catch {}
+        candidateDevice = null;
+        return false;
+      }
+      const sampler = candidateDevice.createSampler({ magFilter: "linear", minFilter: "linear" });
+      const pipeline = candidateDevice.createRenderPipeline({
         layout: "auto",
-        vertex: { module: this.device.createShaderModule({ code: PASSTHROUGH_WGSL }), entryPoint: "vs" },
+        vertex: { module: candidateDevice.createShaderModule({ code: PASSTHROUGH_WGSL }), entryPoint: "vs" },
         fragment: {
-          module: this.device.createShaderModule({ code: PASSTHROUGH_WGSL }),
+          module: candidateDevice.createShaderModule({ code: PASSTHROUGH_WGSL }),
           entryPoint: "fs",
           targets: [{ format: "rgba8unorm" }],
         },
         primitive: { topology: "triangle-list" },
       });
+      if (this._destroyRequested) {
+        try { candidateDevice.destroy?.(); } catch {}
+        candidateDevice = null;
+        return false;
+      }
+      this.device = candidateDevice;
+      this._ownsDevice = true;
+      this._deviceLost = false;
+      this.sampler = sampler;
+      this.pipeline = pipeline;
+      const watchedDevice = candidateDevice;
+      candidateDevice = null;
+      if (watchedDevice?.lost?.then) {
+        watchedDevice.lost.then(
+          (info) => this._handleDeviceLost(watchedDevice, info),
+          (error) => this._handleDeviceLost(watchedDevice, { reason: "unknown", message: error?.message || String(error) }),
+        );
+      }
       this.ready = true;
       return true;
     } catch (e) {
-      this.warn("grab init failed:", e.message);
+      try { candidateDevice?.destroy?.(); } catch {}
+      if (!this._destroyRequested) this.warn("grab init failed:", e.message);
       this.ready = false;
       return false;
     }
   }
 
+  _handleDeviceLost(lostDevice, info = {}) {
+    // destroy() resolves GPUDevice.lost too. Only a spontaneous loss of the
+    // currently-published device is actionable; stale/intentional events must not
+    // invalidate a replacement or notify the coordinator.
+    if (this.device !== lostDevice || this._destroyRequested || this._deviceLost) return;
+    this._deviceLost = true;
+    this.ready = false;
+    try { this.warn("grab device lost:", info.message || info.reason || "unknown reason"); } catch {}
+    try { this.onDeviceLost?.(lostDevice, info); }
+    catch (error) { try { this.warn("grab device-loss callback failed:", error?.message || String(error)); } catch {} }
+    void this.destroy();
+  }
+
+  _allocationPlan(w, h) {
+    if (!Number.isSafeInteger(w) || !Number.isSafeInteger(h) || w <= 0 || h <= 0) {
+      throw new GrabResourceLimitError(`grab dimensions must be positive safe integers, got ${w}x${h}`, { width: w, height: h });
+    }
+    const maxTextureDimension2D = positiveDeviceLimit(this.device, "maxTextureDimension2D", 8192);
+    if (w > maxTextureDimension2D || h > maxTextureDimension2D) {
+      throw new GrabResourceLimitError(
+        `grab dimensions ${w}x${h} exceed maxTextureDimension2D ${maxTextureDimension2D}`,
+        { width: w, height: h, limit: maxTextureDimension2D, resource: "texture" },
+      );
+    }
+    const rowBytes = w * 4;
+    const bytesPerRow = Math.ceil(rowBytes / 256) * 256;
+    const bufferBytes = bytesPerRow * h;
+    const maxBufferSize = positiveDeviceLimit(this.device, "maxBufferSize", 256 * 1024 * 1024);
+    if (!Number.isSafeInteger(rowBytes) || !Number.isSafeInteger(bytesPerRow) ||
+        !Number.isSafeInteger(bufferBytes) || bytesPerRow > 0xffffffff || bufferBytes > maxBufferSize) {
+      throw new GrabResourceLimitError(
+        `grab readback for ${w}x${h} requires ${bufferBytes} bytes; maxBufferSize is ${maxBufferSize}`,
+        { width: w, height: h, requested: bufferBytes, limit: maxBufferSize, resource: "buffer" },
+      );
+    }
+    return { bytesPerRow, bufferBytes };
+  }
+
   _alloc(w, h) {
-    if (this._w === w && this._h === h && this.tex) return;
-    this._w = w; this._h = h;
-    this.tex = this.device.createTexture({
-      size: [w, h],
-      format: "rgba8unorm",
-      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
-    });
-    this.texView = this.tex.createView();
-    // readback buffer: rows must be 256-byte aligned
-    this.bytesPerRow = Math.ceil((w * 4) / 256) * 256;
-    this.readBuf = this.device.createBuffer({
-      size: this.bytesPerRow * h,
-      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-    });
+    if (!this.device || this._destroyRequested || this._deviceLost) throw new Error("grabber device is unavailable");
+    const { bytesPerRow, bufferBytes } = this._allocationPlan(w, h);
+    if (this._w === w && this._h === h && this.tex && this.texView && this.readBuf && this.bytesPerRow === bytesPerRow) {
+      return { tex: this.tex, texView: this.texView, readBuf: this.readBuf, bytesPerRow };
+    }
+
+    let nextTex = null, nextReadBuf = null;
+    try {
+      nextTex = this.device.createTexture({
+        size: [w, h],
+        format: "rgba8unorm",
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+      });
+      const nextTexView = nextTex.createView();
+      nextReadBuf = this.device.createBuffer({
+        size: bufferBytes,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+      });
+
+      const oldTex = this.tex, oldReadBuf = this.readBuf;
+      this._w = w; this._h = h;
+      this.tex = nextTex; this.texView = nextTexView;
+      this.readBuf = nextReadBuf; this.bytesPerRow = bytesPerRow;
+      nextTex = null; nextReadBuf = null;
+      try { oldTex?.destroy?.(); } catch {}
+      try { oldReadBuf?.destroy?.(); } catch {}
+      return { tex: this.tex, texView: this.texView, readBuf: this.readBuf, bytesPerRow };
+    } catch (error) {
+      try { nextTex?.destroy?.(); } catch {}
+      try { nextReadBuf?.destroy?.(); } catch {}
+      throw error;
+    }
   }
 
   // Grab the current video frame as clean RGBA bytes. Returns an ImageData-like
@@ -101,58 +214,89 @@ export class WebGPUGrabber {
     // the frame instead (the caller treats null as "no frame this tick").
     if (this._mapPending) return null;
     this._mapPending = true;
-    try { return await this._grabInner(video); } finally { this._mapPending = false; }
+    const promise = this._grabInner(video).finally(() => {
+      this._mapPending = false;
+      if (this._grabPromise === promise) this._grabPromise = null;
+    });
+    this._grabPromise = promise;
+    return promise;
   }
   async _grabInner(video) {
     const w = video.videoWidth, h = video.videoHeight;
     if (!w || !h) return null;
+    let mapped = false;
+    let allocation = null;
     try {
-      this._alloc(w, h);
+      allocation = this._alloc(w, h);
+      const device = this.device;
       let ext;
-      try { ext = this.device.importExternalTexture({ source: video }); }
+      try { ext = device.importExternalTexture({ source: video }); }
       catch (e) { this.warn("grab importExternalTexture failed:", e.message); return null; }
 
-      const bind = this.device.createBindGroup({
+      const bind = device.createBindGroup({
         layout: this.pipeline.getBindGroupLayout(0),
         entries: [
           { binding: 0, resource: this.sampler },
           { binding: 1, resource: ext },
         ],
       });
-      const enc = this.device.createCommandEncoder();
+      const enc = device.createCommandEncoder();
       const pass = enc.beginRenderPass({
-        colorAttachments: [{ view: this.texView, loadOp: "clear", storeOp: "store", clearValue: { r: 0, g: 0, b: 0, a: 1 } }],
+        colorAttachments: [{ view: allocation.texView, loadOp: "clear", storeOp: "store", clearValue: { r: 0, g: 0, b: 0, a: 1 } }],
       });
       pass.setPipeline(this.pipeline);
       pass.setBindGroup(0, bind);
       pass.draw(3);
       pass.end();
       enc.copyTextureToBuffer(
-        { texture: this.tex },
-        { buffer: this.readBuf, bytesPerRow: this.bytesPerRow, rowsPerImage: h },
+        { texture: allocation.tex },
+        { buffer: allocation.readBuf, bytesPerRow: allocation.bytesPerRow, rowsPerImage: h },
         { width: w, height: h }
       );
-      this.device.queue.submit([enc.finish()]);
+      device.queue.submit([enc.finish()]);
 
-      await this.readBuf.mapAsync(GPUMapMode.READ);
-      const mapped = new Uint8Array(this.readBuf.getMappedRange());
+      await allocation.readBuf.mapAsync(GPUMapMode.READ);
+      mapped = true;
+      if (this._destroyRequested || this._deviceLost || this.device !== device || this.readBuf !== allocation.readBuf) return null;
+      const mappedBytes = new Uint8Array(allocation.readBuf.getMappedRange());
       // de-pad rows (bytesPerRow may exceed w*4)
       const out = new Uint8ClampedArray(w * h * 4);
       const rowBytes = w * 4;
       for (let y = 0; y < h; y++) {
-        out.set(mapped.subarray(y * this.bytesPerRow, y * this.bytesPerRow + rowBytes), y * rowBytes);
+        out.set(mappedBytes.subarray(y * allocation.bytesPerRow, y * allocation.bytesPerRow + rowBytes), y * rowBytes);
       }
-      this.readBuf.unmap();
       return { data: out, width: w, height: h };
     } catch (e) {
-      this.warn("grab failed:", e.message);
+      if (!this._destroyRequested && !this._deviceLost) this.warn("grab failed:", e.message);
       return null;
+    } finally {
+      if (mapped) {
+        try { allocation?.readBuf?.unmap?.(); } catch {}
+      }
     }
   }
 
   destroy() {
-    try { this.tex && this.tex.destroy(); } catch {}
-    try { this.readBuf && this.readBuf.destroy(); } catch {}
+    if (this._destroyPromise) return this._destroyPromise;
     this.ready = false;
+    this._destroyRequested = true;
+    const pendingInit = this._initPromise;
+    const pendingGrab = this._grabPromise;
+    this._destroyPromise = (async () => {
+      const pending = [pendingInit, pendingGrab].filter(Boolean);
+      if (pending.length) await Promise.allSettled(pending);
+
+      const device = this.device;
+      const ownsDevice = this._ownsDevice;
+      const tex = this.tex, readBuf = this.readBuf;
+      this.device = null; this._ownsDevice = false;
+      this.sampler = null; this.pipeline = null;
+      this.tex = null; this.texView = null; this.readBuf = null;
+      this._w = 0; this._h = 0; this.bytesPerRow = 0;
+      try { tex?.destroy?.(); } catch {}
+      try { readBuf?.destroy?.(); } catch {}
+      if (ownsDevice) { try { device?.destroy?.(); } catch {} }
+    })();
+    return this._destroyPromise;
   }
 }
