@@ -32,9 +32,51 @@ test("release-clearance validation detects artifact drift", () => {
       }],
     }));
 
-    const result = inspectReleaseClearance({ rootDir: fixture });
+    const result = inspectReleaseClearance({ rootDir: fixture, requiredGateIds: ["fixture-gate"] });
     assert.equal(result.errors.length, 1);
     assert.match(result.errors[0], /artifact\.bin hash is/);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("release-clearance validation rejects a deleted gate inventory", () => {
+  const fixture = mkdtempSync(join(tmpdir(), "fsrcnnx-release-clearance-empty-"));
+  try {
+    writeFileSync(join(fixture, "release-clearance.json"), JSON.stringify({
+      schemaVersion: 1,
+      scope: "test",
+      gates: [],
+    }));
+
+    const result = inspectReleaseClearance({ rootDir: fixture, requiredGateIds: ["required-gate"] });
+    assert.deepEqual(result.errors, ["release clearance: missing required gate required-gate"]);
+    assert.deepEqual(result.blocked, []);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("cleared gates require meaningful evidence references", () => {
+  const fixture = mkdtempSync(join(tmpdir(), "fsrcnnx-release-clearance-evidence-"));
+  try {
+    writeFileSync(join(fixture, "artifact.bin"), "fixture");
+    writeFileSync(join(fixture, "release-clearance.json"), JSON.stringify({
+      schemaVersion: 1,
+      scope: "test",
+      gates: [{
+        id: "required-gate",
+        status: "cleared",
+        artifacts: [{ path: "artifact.bin" }],
+        evidence: [null],
+        resolution: "Retain the evidence.",
+      }],
+    }));
+
+    const result = inspectReleaseClearance({ rootDir: fixture, requiredGateIds: ["required-gate"] });
+    assert.deepEqual(result.errors, [
+      "release clearance gate 1: evidence must contain only non-empty string references",
+    ]);
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }

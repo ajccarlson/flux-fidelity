@@ -6,6 +6,16 @@ import { fileURLToPath } from "node:url";
 const root = resolve(import.meta.dirname, "..");
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const STATUS_VALUES = new Set(["blocked", "cleared"]);
+export const REQUIRED_RELEASE_GATE_IDS = Object.freeze([
+  "unidentified-rife-model",
+  "unproven-rife-fp16-conversion",
+  "unknown-high-x2-shader-origin",
+  "missing-x3-x4-shader-sources",
+  "unreproducible-span-smoke-model",
+  "unresolved-deband-port-origin",
+  "lgpl-compliance-review",
+  "onnx-runtime-third-party-review",
+]);
 
 function safeRelativePath(path) {
   return typeof path === "string"
@@ -19,6 +29,7 @@ function safeRelativePath(path) {
 export function inspectReleaseClearance({
   rootDir = root,
   ledgerFile = "release-clearance.json",
+  requiredGateIds = REQUIRED_RELEASE_GATE_IDS,
 } = {}) {
   const errors = [];
   let ledger;
@@ -35,6 +46,10 @@ export function inspectReleaseClearance({
   if (!Array.isArray(ledger?.gates)) {
     errors.push("release clearance: gates must be an array");
     return { errors, blocked: [], ledger };
+  }
+  if (!Array.isArray(requiredGateIds) || requiredGateIds.length === 0 ||
+      requiredGateIds.some((id) => typeof id !== "string" || !id)) {
+    throw new TypeError("requiredGateIds must be a non-empty string array");
   }
 
   const ids = new Set();
@@ -99,9 +114,21 @@ export function inspectReleaseClearance({
       }
     }
 
+    if (gate.evidence !== undefined && (!Array.isArray(gate.evidence) ||
+        gate.evidence.some((reference) => typeof reference !== "string" || !reference.trim()))) {
+      errors.push(`${label}: evidence must contain only non-empty string references`);
+    }
     if (gate.status === "cleared" && (!Array.isArray(gate.evidence) || gate.evidence.length === 0)) {
       errors.push(`${label}: a cleared gate must retain at least one evidence reference`);
     }
+  }
+
+  const requiredIds = new Set(requiredGateIds);
+  for (const id of requiredIds) {
+    if (!ids.has(id)) errors.push(`release clearance: missing required gate ${id}`);
+  }
+  for (const id of ids) {
+    if (!requiredIds.has(id)) errors.push(`release clearance: unexpected gate ${id}`);
   }
 
   return {
