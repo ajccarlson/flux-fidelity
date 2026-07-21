@@ -102,7 +102,7 @@
           "path": "fsrcnnx-ssimds.js"
         }
       ],
-      "resolution": "Complete and record a public-distribution compliance review after preserving the full license, notices, corresponding source, and modification information."
+      "resolution": "The complete LGPL-3.0 and GPL-3.0 companion texts and source notices are bundled; complete and record the remaining public-distribution compliance review."
     },
     {
       "id": "onnx-runtime-third-party-review",
@@ -116,9 +116,13 @@
         },
         {
           "path": "vendor/ort/ort-wasm-simd-threaded.asyncify.wasm"
+        },
+        {
+          "path": "vendor/ort/ThirdPartyNotices.txt",
+          "sha256": "0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2"
         }
       ],
-      "resolution": "Bundle the pinned upstream third-party notices and complete a review of the notices applicable to the distributed web runtime files."
+      "resolution": "The pinned upstream notice set is bundled; complete and record which notices and obligations apply to the distributed web runtime files."
     }
   ]
 }
