@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 const root = resolve(import.meta.dirname, "..");
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const STATUS_VALUES = new Set(["blocked", "cleared"]);
+const ARTIFACT_DISPOSITIONS = new Set(["present", "removed"]);
 export const REQUIRED_RELEASE_GATE_IDS = Object.freeze([
   "unidentified-rife-model",
   "unproven-rife-fp16-conversion",
@@ -84,12 +85,41 @@ export function inspectReleaseClearance({
       if (paths.has(artifact.path)) errors.push(`${artifactLabel}: duplicate path ${artifact.path}`);
       paths.add(artifact.path);
 
+      const disposition = artifact.disposition ?? "present";
+      if (!ARTIFACT_DISPOSITIONS.has(disposition)) {
+        errors.push(`${artifactLabel}: disposition must be present or removed`);
+        continue;
+      }
+
+      if (artifact.sha256 !== undefined &&
+          (typeof artifact.sha256 !== "string" || !SHA256_PATTERN.test(artifact.sha256))) {
+        errors.push(`${artifactLabel}: sha256 must be 64 lowercase hexadecimal characters`);
+        continue;
+      }
+
       const absolute = resolve(rootDir, artifact.path);
       const escaped = relative(rootDir, absolute).split(/[\\/]/).includes("..");
       if (escaped) {
         errors.push(`${artifactLabel}: path escapes the repository`);
         continue;
       }
+
+      if (disposition === "removed") {
+        if (artifact.sha256 === undefined) {
+          errors.push(`${artifactLabel}: a removed artifact must retain its historical sha256`);
+          continue;
+        }
+        try {
+          lstatSync(absolute);
+          errors.push(`${artifactLabel}: removed artifact ${artifact.path} must remain absent`);
+        } catch (error) {
+          if (error.code !== "ENOENT") {
+            errors.push(`${artifactLabel}: cannot confirm removal of ${artifact.path} (${error.code || error.message})`);
+          }
+        }
+        continue;
+      }
+
       let metadata;
       try {
         metadata = lstatSync(absolute);
@@ -103,10 +133,6 @@ export function inspectReleaseClearance({
       }
 
       if (artifact.sha256 !== undefined) {
-        if (typeof artifact.sha256 !== "string" || !SHA256_PATTERN.test(artifact.sha256)) {
-          errors.push(`${artifactLabel}: sha256 must be 64 lowercase hexadecimal characters`);
-          continue;
-        }
         const actual = createHash("sha256").update(readFileSync(absolute)).digest("hex");
         if (actual !== artifact.sha256) {
           errors.push(`${artifactLabel}: ${artifact.path} hash is ${actual}, expected ${artifact.sha256}`);

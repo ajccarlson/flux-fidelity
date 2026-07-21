@@ -81,3 +81,43 @@ test("cleared gates require meaningful evidence references", () => {
     rmSync(fixture, { recursive: true, force: true });
   }
 });
+
+test("cleared removal records retain historical hashes and enforce absence", () => {
+  const fixture = mkdtempSync(join(tmpdir(), "fsrcnnx-release-clearance-removed-"));
+  try {
+    const ledger = {
+      schemaVersion: 1,
+      scope: "test",
+      gates: [{
+        id: "removed-gate",
+        status: "cleared",
+        artifacts: [{
+          path: "removed.bin",
+          sha256: createHash("sha256").update("historical bytes").digest("hex"),
+          disposition: "removed",
+        }],
+        evidence: ["The artifact was removed from the release boundary."],
+        resolution: "Keep the artifact absent.",
+      }],
+    };
+    writeFileSync(join(fixture, "release-clearance.json"), JSON.stringify(ledger));
+
+    const absent = inspectReleaseClearance({
+      rootDir: fixture,
+      requiredGateIds: ["removed-gate"],
+    });
+    assert.deepEqual(absent.errors, []);
+    assert.deepEqual(absent.blocked, []);
+
+    writeFileSync(join(fixture, "removed.bin"), "historical bytes");
+    const restored = inspectReleaseClearance({
+      rootDir: fixture,
+      requiredGateIds: ["removed-gate"],
+    });
+    assert.deepEqual(restored.errors, [
+      "release clearance gate 1 artifact 1: removed artifact removed.bin must remain absent",
+    ]);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
