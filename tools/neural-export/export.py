@@ -5,13 +5,12 @@ model/neural/manifest.json entry.
 
 Usage:
   python export.py --pth 4xBHI_dat2_real.pth --key dat2_real --label "DAT2 4x real-web"
-  python export.py --smoke              # random-weight SPAN 2x pipeline-proof model
 
 Any spandrel-supported architecture works (SPAN, RealPLKSR, DAT, ATD, DRCT,
 ESRGAN, Compact/MoSR, HAT, ...). The pad-multiple (window-size constraint for
 transformer archs) is auto-detected by probing awkward input dims.
 """
-import argparse, json, os, sys, tempfile
+import argparse, json, os, sys
 
 def log(*a): print("[export]", *a)
 
@@ -22,17 +21,6 @@ def load_pth(path):
         sys.exit(f"need RGB 3->3 model, got {d.input_channels}->{d.output_channels}")
     log(f"arch={d.architecture.name} scale={d.scale}x")
     return d.model.eval(), d.scale, d.architecture.name
-
-def make_smoke():
-    import torch
-    try:
-        from spandrel.architectures.SPAN import SPAN
-        m = SPAN(num_in_ch=3, num_out_ch=3, upscale=2)
-    except Exception as e:
-        log("spandrel SPAN ctor failed, trying alt import:", e)
-        from spandrel.architectures.SPAN.__arch.span import SPAN
-        m = SPAN(num_in_ch=3, num_out_ch=3, upscale=2)
-    return m.eval(), 2, "SPAN(random)"
 
 def export_onnx(model, scale, out_path, opset=17, fp16=True, dynamo=False):
     import torch
@@ -86,17 +74,12 @@ def main():
     ap.add_argument("--opset", type=int, default=17)
     ap.add_argument("--no-fp16", action="store_true")
     ap.add_argument("--dynamo", action="store_true", help="use the new dynamo ONNX exporter (default: legacy TorchScript)")
-    ap.add_argument("--smoke", action="store_true")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
-    if a.smoke:
-        model, scale, arch = make_smoke()
-        key, label = "span2x_smoke", "SPAN 2x SMOKE (random weights)"
-    else:
-        if not a.pth: sys.exit("--pth required (or --smoke)")
-        model, scale, arch = load_pth(a.pth)
-        key = a.key or os.path.splitext(os.path.basename(a.pth))[0].lower().replace("-", "_")
-        label = a.label or f"{arch} {scale}x {key}"
+    if not a.pth: sys.exit("--pth required")
+    model, scale, arch = load_pth(a.pth)
+    key = a.key or os.path.splitext(os.path.basename(a.pth))[0].lower().replace("-", "_")
+    label = a.label or f"{arch} {scale}x {key}"
     fname = f"{key}.fp16.onnx" if not a.no_fp16 else f"{key}.onnx"
     out_path = os.path.join(a.out, fname)
     export_onnx(model, scale, out_path, a.opset, fp16=not a.no_fp16, dynamo=a.dynamo)

@@ -20,6 +20,12 @@ test("current release-clearance record is structurally valid and explicitly bloc
   assert.equal(fp16Gate.status, "cleared");
   assert.match(readFileSync(join(root, "MODEL_PROVENANCE.md"), "utf8"),
     new RegExp(fp16Artifact.sha256));
+
+  for (const id of ["unidentified-rife-model", "unreproducible-span-smoke-model"]) {
+    const gate = result.ledger.gates.find((entry) => entry.id === id);
+    assert.equal(gate.status, "blocked", `${id} must continue to block private-history publication`);
+    assert.ok(gate.artifacts.every((artifact) => artifact.disposition === "removed"));
+  }
 });
 
 test("release-clearance validation detects artifact drift", () => {

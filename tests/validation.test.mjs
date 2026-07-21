@@ -40,18 +40,17 @@ test("the shared generated-model catalog is complete, immutable, and backed by f
 
 test("validation accounting is fixed before execution and treats skips as incompatible", () => {
   const plan = createValidationPlan(GENERATED_MODEL_CATALOG);
-  assert.equal(plan.length, 18);
+  assert.equal(plan.length, 17);
   assert.equal(new Set(plan.map(({ id }) => id)).size, plan.length);
   assert.equal(Object.isFrozen(ONNX_VALIDATION_CHECKS), true);
   assert.ok(ONNX_VALIDATION_CHECKS.every(Object.isFrozen));
-  assert.deepEqual(plan.slice(3, 6).map(({ id }) => id), [
-    "onnx:span2x-smoke",
+  assert.deepEqual(plan.slice(3, 5).map(({ id }) => id), [
     "onnx:rife-v4.26-fp16",
     "onnx:rife-v4.26",
   ]);
   const results = new Map();
   assert.deepEqual(summarizeValidation(plan, results), {
-    pass: 0, fail: 0, skip: 0, pending: 18, total: 18, complete: false, ok: false,
+    pass: 0, fail: 0, skip: 0, pending: 17, total: 17, complete: false, ok: false,
   });
   for (const check of plan) results.set(check.id, { status: "pass" });
   assert.equal(summarizeValidation(plan, results).ok, true);

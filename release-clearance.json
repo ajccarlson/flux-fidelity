@@ -8,10 +8,16 @@
       "artifacts": [
         {
           "path": "model/rife.onnx",
-          "sha256": "6a31074c0f588648982b5e828aee6c27e005015a712a46ea63da48c65fa9a26b"
+          "sha256": "6a31074c0f588648982b5e828aee6c27e005015a712a46ea63da48c65fa9a26b",
+          "disposition": "removed"
         }
       ],
-      "resolution": "Supply an authoritative source, immutable model revision, and license record, or remove the artifact."
+      "evidence": [
+        "fsrcnnx-rife.js",
+        "tools/package-files.mjs",
+        "MODEL_PROVENANCE.md"
+      ],
+      "resolution": "The artifact is absent from the current tree and package; purge it from private Git history before making the repository public."
     },
     {
       "id": "unproven-rife-fp16-conversion",
@@ -97,10 +103,16 @@
       "artifacts": [
         {
           "path": "model/neural/span2x_smoke.fp16.onnx",
-          "sha256": "ae7642c2b3bdd96e475dfcbf6a9180d8ec41175a1329d9f9b2a402f186c05c25"
+          "sha256": "ae7642c2b3bdd96e475dfcbf6a9180d8ec41175a1329d9f9b2a402f186c05c25",
+          "disposition": "removed"
         }
       ],
-      "resolution": "Regenerate the fixture from a pinned environment and seed with retained evidence, or remove it from public distribution."
+      "evidence": [
+        "model/neural/manifest.json",
+        "tools/package-files.mjs",
+        "MODEL_PROVENANCE.md"
+      ],
+      "resolution": "The artifact is absent from the current tree and package; purge it from private Git history before making the repository public."
     },
     {
       "id": "unresolved-deband-port-origin",

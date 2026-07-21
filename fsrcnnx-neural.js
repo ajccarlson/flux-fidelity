@@ -24,16 +24,19 @@ const NEURAL_KEY = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const NEURAL_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]*\.onnx$/;
 const TENSOR_NAME = /^[A-Za-z_][A-Za-z0-9_.-]{0,127}$/;
 
+export function isValidNeuralModelKey(value) {
+  return typeof value === "string" && NEURAL_KEY.test(value);
+}
+
 export function validateNeuralManifest(value) {
   const raw = Array.isArray(value) ? value : value?.models;
   if (!Array.isArray(raw)) throw new Error("neural manifest must be an array or {models: array}");
-  if (!raw.length) throw new Error("neural manifest contains no models");
   const keys = new Set();
   const files = new Set();
   return raw.map((entry, index) => {
     const at = `neural manifest entry ${index}`;
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error(`${at} must be an object`);
-    if (typeof entry.key !== "string" || !NEURAL_KEY.test(entry.key)) throw new Error(`${at} has an invalid key`);
+    if (!isValidNeuralModelKey(entry.key)) throw new Error(`${at} has an invalid key`);
     if (keys.has(entry.key)) throw new Error(`${at} duplicates key '${entry.key}'`);
     if (typeof entry.file !== "string" || !NEURAL_FILE.test(entry.file)) throw new Error(`${at} has an invalid model filename`);
     if (files.has(entry.file)) throw new Error(`${at} duplicates model file '${entry.file}'`);

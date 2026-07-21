@@ -40,12 +40,14 @@ function manifestGlob(pattern) {
   return new RegExp(`^${escaped}$`);
 }
 
-test("the package boundary is an exact, sorted 57-file allowlist", () => {
+test("the package boundary is an exact, sorted 55-file allowlist", () => {
   assert.equal(PACKAGE_FILES.length, EXPECTED_PACKAGE_FILE_COUNT);
-  assert.equal(EXPECTED_PACKAGE_FILE_COUNT, 57);
+  assert.equal(EXPECTED_PACKAGE_FILE_COUNT, 55);
   assert.equal(new Set(PACKAGE_FILES).size, PACKAGE_FILES.length);
   assert.deepEqual(PACKAGE_FILES, [...PACKAGE_FILES].sort());
   assert.equal(PACKAGE_FILES.includes("fsrcnnx-development-only.js"), false);
+  assert.equal(PACKAGE_FILES.includes("model/rife.onnx"), false);
+  assert.equal(PACKAGE_FILES.includes("model/neural/span2x_smoke.fp16.onnx"), false);
 });
 
 test("the package retains every legal notice and the machine-readable release gate", () => {
@@ -70,7 +72,7 @@ test("package creation never discovers an extra runtime-looking local file", () 
 
     const result = buildPackage({ rootDir: fixture, distDir: join(fixture, "output") });
 
-    assert.equal(result.fileCount, 57);
+    assert.equal(result.fileCount, 55);
     assert.deepEqual(walk(result.stage), PACKAGE_FILES);
     assert.equal(existsSync(join(result.stage, "fsrcnnx-development-only.js")), false);
   } finally {

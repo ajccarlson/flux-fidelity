@@ -13,7 +13,6 @@ import {
 export const VALIDATION_TIMEOUT_MS = 30_000;
 
 export const ONNX_VALIDATION_CHECKS = Object.freeze([
-  Object.freeze({ id: "onnx:span2x-smoke", label: "ORT SPAN 2x WASM asset/inference smoke" }),
   Object.freeze({ id: "onnx:rife-v4.26-fp16", label: "ORT RIFE 4.26 FP16 WASM asset/inference smoke" }),
   Object.freeze({ id: "onnx:rife-v4.26", label: "ORT default RIFE 4.26 WebGPU inference smoke" }),
 ]);

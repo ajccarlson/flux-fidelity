@@ -22,7 +22,6 @@ export const POLICY_OPTIONS = Object.freeze({
 const STATIC_INTERPOLATION_MODELS = Object.freeze([
   ["rife_v4.26", "RIFE 4.26 (default; may wave on bright motion)"],
   ["rife_v4.26_fp16", "RIFE 4.26 FP16 (experimental)"],
-  ["rife_orig", "RIFE original"],
   ["blend", "Blend (no AI)"],
 ]);
 
@@ -727,7 +726,14 @@ export function createPopupController({
     const engine = ["fsrcnnx", "artcnn", "neural"].includes(status.engine)
       ? status.engine
       : "fsrcnnx";
-    if (forceSync || documentRef.activeElement !== $("engine")) $("engine").value = engine;
+    const hasNeuralModels = Array.isArray(status.neuralModels) && status.neuralModels.length > 0;
+    if (forceSync || documentRef.activeElement !== $("engine")) {
+      reconcileSelectOptions(documentRef, $("engine"), [
+        ["fsrcnnx", "FSRCNNX standard"],
+        ["artcnn", "ArtCNN"],
+        { value: "neural", label: "Neural (ONNX)", disabled: !hasNeuralModels },
+      ], engine);
+    }
     setVisible($("artvariant"), engine === "artcnn");
     setVisible($("neuralrow"), engine === "neural");
     if (status.artVariant && (forceSync || documentRef.activeElement !== $("artvariant"))) {

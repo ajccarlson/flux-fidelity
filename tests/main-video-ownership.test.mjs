@@ -178,6 +178,7 @@ async function loadEngineSelection(deps) {
   const production = section(source, "export function setEngine", "export function setArtVariant");
   const harness = `
     const deps = globalThis.__videoOwnershipDeps;
+    const _neuralList = deps.neuralModels || [{ key: "span" }];
     let requestedEngine = "fsrcnnx", engine = "fsrcnnx", engineSelectionGeneration = 0, device = null;
     let mode = deps.mode, pageSuspended = !!deps.pageSuspended;
     const video = {};
@@ -266,6 +267,8 @@ async function loadPreferenceRestore(deps) {
   const harness = `
     const deps = globalThis.__videoOwnershipDeps;
     const _neuralList = deps.neuralModels || [{ key: "span" }];
+    const isValidNeuralModelKey = (value) =>
+      typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value);
     const neuralCatalogReady = Promise.resolve(_neuralList);
     const ART_FILES = ["ArtCNN_C4F32"];
     let preferenceRestoreGeneration = 0, engineSelectionGeneration = 0;
@@ -280,7 +283,10 @@ async function loadPreferenceRestore(deps) {
     const policyToDepth = () => 1;
     const resetScaleSelection = () => {};
     const clearNeuralFallback = () => {};
-    const siteSettingsStore = { health: () => ({ state: "ready", error: null }) };
+    const siteSettingsStore = {
+      health: () => ({ state: "ready", error: null }),
+      write: async (value) => { (deps.writes ||= []).push(value); },
+    };
     const validateSitePreferencePatch = () => new Set();
     const recordPreferenceValidation = () => {};
     const ensureNeural = async () => { deps.neuralCalls++; };
@@ -897,6 +903,32 @@ test("neural configuration stays lazy while rendering is off or document-suspend
   }
 });
 
+test("neural engine selection is rejected when the bundled catalog is empty", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  const deps = {
+    mode: "off",
+    active: false,
+    neuralModels: [],
+    events: [],
+    ensureNeural: async () => assert.fail("empty catalog must not initialize neural runtime"),
+  };
+  const selection = await loadEngineSelection(deps);
+  assert.deepEqual(selection.setEngine("neural"), {
+    ok: false,
+    reason: "no bundled neural models",
+    engine: "fsrcnnx",
+    activeEngine: "fsrcnnx",
+    policy: "display",
+    chainDepth: 1,
+  });
+  assert.deepEqual(selection.state(), {
+    engine: "fsrcnnx",
+    engineSelectionGeneration: 0,
+    interpPausedByNeural: false,
+  });
+});
+
 test("selecting neural while upscaling is inactive pauses standalone interpolation", async (t) => {
   const previous = globalThis.__videoOwnershipDeps;
   t.after(() => { globalThis.__videoOwnershipDeps = previous; });
@@ -1029,6 +1061,31 @@ test("restoring saved neural preferences while off or hidden does not initialize
     assert.equal(restore.state().engine, "neural");
     assert.equal(restore.state().neuralModelKey, "span");
   }
+});
+
+test("restoring neural intent with an empty catalog migrates to the standard renderer", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  const deps = {
+    pageSuspended: false,
+    neuralCalls: 0,
+    neuralModels: [],
+    events: [],
+    writes: [],
+    prefs: {
+      engine: "neural",
+      neuralModel: "span",
+      mode: "off",
+      images: false,
+      interpolate: false,
+    },
+  };
+  const restore = await loadPreferenceRestore(deps);
+  assert.equal((await restore.restoreSitePrefs()).ok, true);
+  assert.equal(deps.neuralCalls, 0);
+  assert.equal(restore.state().engine, "fsrcnnx");
+  assert.equal(restore.state().neuralModelKey, "");
+  assert.deepEqual(deps.writes, [{ engine: "fsrcnnx", neuralModel: null }]);
 });
 
 test("neural completion cannot present across adoption or same-element source replacement", async (t) => {

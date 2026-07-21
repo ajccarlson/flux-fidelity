@@ -421,18 +421,18 @@ test("model selection during the shared interpolation import does not lose the p
   const pendingEnable = lifecycle.setInterpolate(true);
   await loadStarted.promise;
   assert.deepEqual(
-    await lifecycle.setInterpolateModel("rife_orig"),
-    { ok: true, model: "rife_orig", pending: true },
+    await lifecycle.setInterpolateModel("rife_v4.26_fp16"),
+    { ok: true, model: "rife_v4.26_fp16", pending: true },
   );
   releaseModule.resolve();
 
   const enabled = await pendingEnable;
   assert.equal(enabled.ok, true);
   assert.ok(instance, "the shared import should construct an interpolator");
-  assert.equal(instance.engine, "rife_orig");
+  assert.equal(instance.engine, "rife_v4.26_fp16");
   assert.equal(instance.running, true);
   assert.equal(instance.startCalls, 1);
-  assert.deepEqual(lifecycle.getInterpolateStats(), { running: true, engine: "rife_orig" });
+  assert.deepEqual(lifecycle.getInterpolateStats(), { running: true, engine: "rife_v4.26_fp16" });
 });
 
 test("terminal interpolation failure preserves intent and retries only after explicit action or config change", async (t) => {

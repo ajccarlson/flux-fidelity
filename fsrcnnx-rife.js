@@ -2,8 +2,8 @@
 // Loads the bundled ORT runtime and one of the bundled RIFE models, and exposes
 // interpolate(frameA, frameB, t) -> ImageBitmap-able result for the tween.
 //
-// The adapters below cover the bundled six-channel midpoint model and seven-channel
-// timestep-aware v4.26 models. A missing or unsupported model falls back to blend.
+// The adapters below cover the bundled seven-channel timestep-aware v4.26 models.
+// A missing or unsupported model falls back to blend.
 // Input is a single NCHW tensor containing two RGB frames and, when supported, a
 // timestep plane. Output is NCHW RGB in the 0..1 range.
 // Padding: RIFE needs H,W divisible by a factor (usually 32). We pad to the next
@@ -78,9 +78,8 @@ function endCpuRun() {
   }
 }
 
-// Adapter describing the model's I/O. Supports both older 6-channel exports (two
-// RGB frames concatenated) and newer timestep-aware exports (7 channels: two RGB
-// frames + a timestep plane filled with t). Verified empirically: for the v4.25/
+// Adapter describing the model's I/O. The verified timestep-aware exports use
+// seven channels: two concatenated RGB frames plus a plane filled with t. For the v4.25/
 // 4.26 rife_v2 exports, channels 0-2 = frame A, 3-5 = frame B, 6 = timestep plane,
 // and t drives interpolation position (t=0→frameA, 1→frameB, 0.5→midpoint).
 const MODELS = {
@@ -88,8 +87,6 @@ const MODELS = {
                        dims: (w, h) => ({ batch: 1, height: h, width: w }) },
   "rife_v4.26_fp16": { file: "model/rife_v4.26_fp16.onnx", channels: 7, timestepPlane: true,  fp16: true, label: "4.26 FP16 (experimental)",
                        dims: (w, h) => ({ batch: 1, height: h, width: w }) },
-  "rife_orig":       { file: "model/rife.onnx",            channels: 6, timestepPlane: false, label: "original (no bright-wave artifacts)",
-                       dims: (w, h) => ({ dynamic_dim_0: 1, dynamic_dim_1: 6, dynamic_dim_2: h, dynamic_dim_3: w }) },
 };
 let currentModelKey = "rife_v4.26"; // default: verified FP32 model with broad WebGPU support
 
