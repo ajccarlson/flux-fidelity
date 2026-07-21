@@ -1,24 +1,13 @@
-export const EXPECTED_PACKAGE_FILE_COUNT = 56;
+import { GENERATED_MODEL_ASSET_PATHS } from "../fsrcnnx-model-catalog.js";
+
+export const EXPECTED_PACKAGE_FILE_COUNT = 58;
 
 // These assets are selected indirectly from runtime model catalogs, so static
 // import/getURL scanning cannot prove their exact package membership. Keep this
 // list independent of PACKAGE_FILES so an accidental allowlist omission fails
 // validation instead of degrading only the affected model at runtime.
 export const REQUIRED_RUNTIME_MODEL_FILES = Object.freeze([
-  "model/ArtCNN_C4F32.artcnn.json",
-  "model/ArtCNN_C4F32.artcnn.wgsl",
-  "model/ArtCNN_C4F32_DN.artcnn.json",
-  "model/ArtCNN_C4F32_DN.artcnn.wgsl",
-  "model/ArtCNN_C4F32_DS.artcnn.json",
-  "model/ArtCNN_C4F32_DS.artcnn.wgsl",
-  "model/FSRCNNX_x2_16-0-4-1.passes.json",
-  "model/FSRCNNX_x2_16-0-4-1.wgsl",
-  "model/FSRCNNX_x2_56-16-4-1.passes.json",
-  "model/FSRCNNX_x2_56-16-4-1.wgsl",
-  "model/FSRCNNX_x3_16-0-4-1.passes.json",
-  "model/FSRCNNX_x3_16-0-4-1.wgsl",
-  "model/FSRCNNX_x4_16-0-4-1.passes.json",
-  "model/FSRCNNX_x4_16-0-4-1.wgsl",
+  ...GENERATED_MODEL_ASSET_PATHS,
   "model/rife.onnx",
   "model/rife_v4.26.onnx",
   "model/rife_v4.26_fp16.onnx",
@@ -40,6 +29,7 @@ export const PACKAGE_FILES = Object.freeze([
   "fsrcnnx-interpolate.js",
   "fsrcnnx-main.js",
   "fsrcnnx-model-bundle.js",
+  "fsrcnnx-model-catalog.js",
   "fsrcnnx-neural.js",
   "fsrcnnx-rife-gpu.js",
   "fsrcnnx-rife.js",
@@ -47,6 +37,7 @@ export const PACKAGE_FILES = Object.freeze([
   "fsrcnnx-sharpen.js",
   "fsrcnnx-ssimds-runtime.js",
   "fsrcnnx-ssimds.js",
+  "fsrcnnx-validation.js",
   "fsrcnnx-video-controller.js",
   "icons/icon-128.png",
   "icons/icon-16.png",
