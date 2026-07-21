@@ -1,0 +1,607 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>FSRCNNX Video Upscaler</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f7f8fb;
+      --surface: #ffffff;
+      --surface-alt: #eef1f7;
+      --text: #172033;
+      --muted: #5f6879;
+      --line: #d9deea;
+      --accent: #3559d9;
+      --accent-strong: #2447c4;
+      --accent-soft: #e8edff;
+      --success: #16714c;
+      --danger: #a63434;
+      --danger-bg: #fff0f0;
+      --focus: #6d8cff;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #111522;
+        --surface: #1a2030;
+        --surface-alt: #232a3b;
+        --text: #f0f3fa;
+        --muted: #aeb7ca;
+        --line: #343d52;
+        --accent: #8ca4ff;
+        --accent-strong: #a8b9ff;
+        --accent-soft: #27345e;
+        --success: #71d6a7;
+        --danger: #ffadad;
+        --danger-bg: #451f27;
+        --focus: #a5b6ff;
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      width: 390px;
+      min-width: 390px;
+      max-height: 600px;
+      margin: 0;
+      overflow-x: hidden;
+      overflow-y: auto;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    button,
+    input,
+    select { font: inherit; }
+
+    button,
+    select,
+    input[type="range"] { accent-color: var(--accent); }
+
+    :focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 2px;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 16px 10px;
+    }
+
+    header img {
+      width: 32px;
+      height: 32px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 17px;
+      line-height: 1.15;
+      letter-spacing: -0.01em;
+    }
+
+    header p {
+      margin: 2px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    main {
+      display: grid;
+      gap: 10px;
+      padding: 0 12px 14px;
+    }
+
+    section,
+    details {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface);
+      box-shadow: 0 1px 2px rgb(0 0 0 / 5%);
+    }
+
+    section { padding: 12px; }
+
+    h2,
+    legend {
+      margin: 0 0 9px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    fieldset {
+      min-width: 0;
+      margin: 0;
+      padding: 0;
+      border: 0;
+    }
+
+    .status {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      margin: 0;
+    }
+
+    .status div { min-width: 0; }
+
+    .status dt {
+      color: var(--muted);
+      font-size: 10px;
+      white-space: nowrap;
+    }
+
+    .status dd {
+      margin: 2px 0 0;
+      overflow: hidden;
+      font-size: 12px;
+      font-weight: 650;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .v.ok { color: var(--success); }
+    .v.no { color: var(--danger); }
+
+    #drm-banner {
+      display: none;
+      margin: 0;
+      padding: 10px 12px;
+      border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+      border-radius: 9px;
+      background: var(--danger-bg);
+      color: var(--danger);
+      font-size: 12px;
+    }
+
+    .control-stack {
+      display: grid;
+      gap: 10px;
+    }
+
+    .field {
+      display: grid;
+      gap: 4px;
+    }
+
+    .field > label,
+    .field-label {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    select {
+      width: 100%;
+      min-height: 34px;
+      padding: 5px 30px 5px 9px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface-alt);
+      color: var(--text);
+    }
+
+    #artvariant,
+    #neuralrow,
+    #sharpen-row,
+    #deband-row,
+    #interp-res-row { display: none; }
+
+    #artvariant { margin-top: 6px; }
+
+    #neural-note,
+    #interp-target-hz {
+      min-height: 1em;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .switch-row {
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr) auto;
+      align-items: start;
+      gap: 8px;
+      min-height: 24px;
+      cursor: pointer;
+    }
+
+    .switch-row input {
+      width: 16px;
+      height: 16px;
+      margin: 1px 0 0;
+    }
+
+    .switch-row .copy { min-width: 0; }
+
+    .switch-row strong {
+      display: block;
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .switch-row small,
+    .help {
+      display: block;
+      margin-top: 1px;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.35;
+    }
+
+    .count,
+    .inline-status {
+      color: var(--muted);
+      font-size: 10px;
+      white-space: nowrap;
+    }
+
+    .range-row {
+      margin: -2px 0 2px 26px;
+    }
+
+    .range-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 36px;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .range-layout input { width: 100%; }
+
+    output {
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+    }
+
+    .modes {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+    }
+
+    .modes button {
+      min-height: 36px;
+      padding: 7px 5px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface-alt);
+      color: var(--text);
+      cursor: pointer;
+      font-weight: 650;
+    }
+
+    .modes button:hover { border-color: var(--accent); }
+
+    .modes button[data-active="1"] {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: var(--accent-strong);
+    }
+
+    details > summary {
+      padding: 11px 12px;
+      cursor: pointer;
+      font-weight: 650;
+      list-style-position: outside;
+    }
+
+    details > summary::marker { color: var(--muted); }
+
+    .advanced-body {
+      display: grid;
+      gap: 10px;
+      padding: 0 12px 12px;
+      border-top: 1px solid var(--line);
+      padding-top: 11px;
+    }
+
+    .subpanel {
+      display: grid;
+      gap: 9px;
+      padding-top: 10px;
+      border-top: 1px solid var(--line);
+    }
+
+    .subpanel:first-child {
+      padding-top: 0;
+      border-top: 0;
+    }
+
+    #interp-res-row {
+      margin-left: 26px;
+    }
+
+    .interp-controls {
+      display: grid;
+      gap: 10px;
+    }
+
+    #interp-stats {
+      display: block;
+      overflow-wrap: anywhere;
+      color: var(--muted);
+      font-size: 10px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .av-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .av-row label {
+      grid-column: 1 / -1;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .av-row input { width: 100%; }
+
+    @media (prefers-reduced-motion: no-preference) {
+      button { transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease; }
+    }
+  </style>
+  <script src="popup.js" defer></script>
+</head>
+<body>
+  <header>
+    <img src="icons/icon-32.png" alt="" width="32" height="32">
+    <div>
+      <h1>Video Upscaler</h1>
+      <p>Real-time WebGPU enhancement</p>
+    </div>
+  </header>
+
+  <main>
+    <section aria-labelledby="status-heading">
+      <h2 id="status-heading">Current page</h2>
+      <dl class="status" aria-live="polite">
+        <div>
+          <dt>WebGPU</dt>
+          <dd id="s-webgpu" class="v">—</dd>
+        </div>
+        <div>
+          <dt>Video</dt>
+          <dd id="s-video" class="v">—</dd>
+        </div>
+        <div>
+          <dt>Model</dt>
+          <dd id="s-model" class="v">—</dd>
+        </div>
+        <div>
+          <dt>Frames</dt>
+          <dd id="s-frames" class="v">0</dd>
+        </div>
+      </dl>
+    </section>
+
+    <p id="drm-banner" role="alert" aria-live="assertive"></p>
+
+    <section aria-labelledby="upscaler-heading">
+      <h2 id="upscaler-heading">Upscaler</h2>
+      <div class="control-stack">
+        <div class="field">
+          <label for="engine">Engine</label>
+          <select id="engine">
+            <option value="fsrcnnx">FSRCNNX standard</option>
+            <option value="fsrcnnx-hi">FSRCNNX high</option>
+            <option value="artcnn">ArtCNN</option>
+            <option value="neural">Neural (ONNX)</option>
+          </select>
+          <select id="artvariant" aria-label="ArtCNN variant">
+            <option value="ArtCNN_C4F32">C4F32 — neutral</option>
+            <option value="ArtCNN_C4F32_DS">C4F32 DS — denoise and sharpen</option>
+            <option value="ArtCNN_C4F32_DN">C4F32 DN — denoise and soften</option>
+          </select>
+        </div>
+
+        <div id="neuralrow">
+          <div class="field">
+            <label for="neural-model">Neural model</label>
+            <select id="neural-model">
+              <option value="">Loading models…</option>
+            </select>
+            <span id="neural-note" aria-live="polite"></span>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="policy">When to upscale</label>
+          <select id="policy">
+            <option value="display">Source below display (recommended)</option>
+            <option value="auto">Auto (mpv thresholds)</option>
+            <option value="force2">Always ×2</option>
+            <option value="force3">Always ×3</option>
+            <option value="force4">Always ×4</option>
+          </select>
+        </div>
+
+        <label class="switch-row" for="ssimds">
+          <input id="ssimds" type="checkbox" checked>
+          <span class="copy">
+            <strong>SSimDownscaler</strong>
+            <small>Sharp downscaling when the upscaled frame overshoots the display.</small>
+          </span>
+        </label>
+
+        <div>
+          <label class="switch-row" for="sharpen">
+            <input id="sharpen" type="checkbox">
+            <span class="copy"><strong>Adaptive sharpen</strong></span>
+          </label>
+          <div id="sharpen-row" class="range-row">
+            <div class="range-layout">
+              <input id="sharpen-str" type="range" min="0.1" max="2" step="0.1" value="1" aria-label="Sharpen strength">
+              <output id="sharpen-val" for="sharpen-str">1.0</output>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <label class="switch-row" for="deband">
+            <input id="deband" type="checkbox">
+            <span class="copy">
+              <strong>Debanding</strong>
+              <small>Smooth visible steps in gradients.</small>
+            </span>
+          </label>
+          <div id="deband-row" class="range-row">
+            <div class="range-layout">
+              <input id="deband-str" type="range" min="0.3" max="3" step="0.1" value="1" aria-label="Debanding strength">
+              <output id="deband-val" for="deband-str">1.0</output>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="mode-heading">
+      <fieldset>
+        <legend id="mode-heading">Mode</legend>
+        <div class="modes">
+          <button type="button" data-mode="off" data-active="1">Off</button>
+          <button type="button" data-mode="passthrough" data-active="0">Passthrough</button>
+          <button type="button" data-mode="upscale" data-active="0">Upscale</button>
+        </div>
+      </fieldset>
+    </section>
+
+    <details>
+      <summary>Advanced and site-specific</summary>
+      <div class="advanced-body">
+        <div class="subpanel">
+          <label class="switch-row" for="hover-reveal">
+            <input id="hover-reveal" type="checkbox">
+            <span class="copy">
+              <strong>Hover reveal</strong>
+              <small>Hide the overlay while the pointer is over the player, revealing native controls.</small>
+            </span>
+          </label>
+
+          <label class="switch-row" for="all-videos">
+            <input id="all-videos" type="checkbox">
+            <span class="copy">
+              <strong>Upscale every video</strong>
+              <small>Process all qualifying videos on this page. Uses more GPU memory.</small>
+            </span>
+            <span id="multi-count" class="count" aria-live="polite"></span>
+          </label>
+
+          <label class="switch-row" for="images">
+            <input id="images" type="checkbox">
+            <span class="copy">
+              <strong>Upscale images</strong>
+              <small>Enhance images on this site. Uses more GPU time.</small>
+            </span>
+            <span id="image-count" class="count" aria-live="polite"></span>
+          </label>
+        </div>
+
+        <div class="subpanel">
+          <label class="switch-row" for="interpolate">
+            <input id="interpolate" type="checkbox">
+            <span class="copy">
+              <strong>Frame interpolation</strong>
+              <small>Generate intermediate frames with RIFE or frame blending.</small>
+            </span>
+          </label>
+          <span id="interp-stats" aria-live="polite"></span>
+
+          <div id="interp-res-row">
+            <div class="interp-controls">
+              <div class="field">
+                <label for="interp-model">Model</label>
+                <select id="interp-model">
+                  <option value="rife_v4.26_fp16">RIFE 4.26 FP16</option>
+                  <option value="rife_v4.26">RIFE 4.26</option>
+                  <option value="rife_orig">RIFE original</option>
+                  <option value="blend">Blend (no AI)</option>
+                </select>
+              </div>
+
+              <div class="field">
+                <label for="interp-res">Inference resolution</label>
+                <select id="interp-res">
+                  <option value="auto">Auto (adapt to budget)</option>
+                  <option value="full">Full</option>
+                  <option value="half">Half</option>
+                  <option value="quarter">Quarter</option>
+                </select>
+              </div>
+
+              <div class="field">
+                <label for="interp-target">Blend target frame rate</label>
+                <select id="interp-target">
+                  <option value="auto">Auto (display refresh)</option>
+                  <option value="60">60 fps</option>
+                  <option value="120">120 fps</option>
+                  <option value="144">144 fps</option>
+                  <option value="165">165 fps</option>
+                  <option value="240">240 fps</option>
+                </select>
+                <span id="interp-target-hz" aria-live="polite"></span>
+              </div>
+
+              <div class="av-row">
+                <label for="interp-avoff">A/V sync fine trim</label>
+                <input id="interp-avoff" type="range" min="-100" max="300" step="5" value="0">
+                <output for="interp-avoff"><span id="interp-avoff-val">0</span> ms</output>
+              </div>
+
+              <label class="switch-row" for="interp-diag">
+                <input id="interp-diag" type="checkbox" checked>
+                <span class="copy">
+                  <strong>Stabilize static detail</strong>
+                  <small>Use source pixels where the scene is not moving.</small>
+                </span>
+              </label>
+
+              <label class="switch-row" for="interp-ladder">
+                <input id="interp-ladder" type="checkbox">
+                <span class="copy">
+                  <strong>Blend ladder</strong>
+                  <small>Add inexpensive blended frames between RIFE frames.</small>
+                </span>
+              </label>
+
+              <label class="switch-row" for="interp-invert">
+                <input id="interp-invert" type="checkbox" checked>
+                <span class="copy">
+                  <strong>Interpolate before upscale</strong>
+                  <small>Run RIFE at source resolution, then upscale each presented frame.</small>
+                </span>
+              </label>
+
+              <label class="switch-row" for="interp-autofallback">
+                <input id="interp-autofallback" type="checkbox" checked>
+                <span class="copy">
+                  <strong>Automatic blend fallback</strong>
+                  <small>Use blending when RIFE cannot maintain a useful frame rate.</small>
+                </span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <p class="help">Settings are remembered separately for each site. Protected video and cross-origin sources without CORS cannot be processed.</p>
+      </div>
+    </details>
+  </main>
+</body>
+</html>
