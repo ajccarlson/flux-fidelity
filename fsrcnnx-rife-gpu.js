@@ -140,20 +140,79 @@ struct VSOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
 }
 `;
 
+export class GpuResourceLimitError extends Error {
+  constructor(message, details = {}) {
+    super(message);
+    this.name = "GpuResourceLimitError";
+    this.code = "GPU_RESOURCE_LIMIT";
+    this.details = details;
+  }
+}
+
+function positiveDeviceLimit(device, name, fallback) {
+  const value = Number(device?.limits?.[name]);
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+
+function checkedProduct(values, label) {
+  let result = 1;
+  for (const value of values) {
+    if (!Number.isSafeInteger(value) || value <= 0 || result > Number.MAX_SAFE_INTEGER / value) {
+      throw new GpuResourceLimitError(`${label} exceeds the safe integer range`, { values, resource: label });
+    }
+    result *= value;
+  }
+  return result;
+}
+
+export const DEFAULT_GPU_POOL_BUDGET_BYTES = 512 * 1024 * 1024;
+export const DEFAULT_GPU_FRAME_BUDGET_BYTES = 256 * 1024 * 1024;
+export const DEFAULT_GPU_INPUT_BUDGET_BYTES = 256 * 1024 * 1024;
+
 export class GpuInterp {
-  constructor({ log, warn } = {}) {
+  constructor({
+    log,
+    warn,
+    onDeviceLost,
+    maxPoolBytes = DEFAULT_GPU_POOL_BUDGET_BYTES,
+    maxFrameBytes = DEFAULT_GPU_FRAME_BUDGET_BYTES,
+    maxInputBytes = DEFAULT_GPU_INPUT_BUDGET_BYTES,
+  } = {}) {
+    if (!Number.isSafeInteger(maxPoolBytes) || maxPoolBytes <= 0) {
+      throw new RangeError("maxPoolBytes must be a positive safe integer");
+    }
+    if (!Number.isSafeInteger(maxFrameBytes) || maxFrameBytes <= 0) {
+      throw new RangeError("maxFrameBytes must be a positive safe integer");
+    }
+    if (!Number.isSafeInteger(maxInputBytes) || maxInputBytes <= 0) {
+      throw new RangeError("maxInputBytes must be a positive safe integer");
+    }
     this.log = log || console.log; this.warn = warn || console.warn;
+    this.onDeviceLost = typeof onDeviceLost === "function" ? onDeviceLost : null;
+    this.maxPoolBytes = maxPoolBytes;
+    this.maxFrameBytes = maxFrameBytes;
+    this.maxInputBytes = maxInputBytes;
     this.ready = false; this.device = null; this.ort = null;
     this._w = 0; this._h = 0; this._padW = 0; this._padH = 0; this._ch = 0;
     this._frames = 0;
     this._pool = []; // recycled result textures for the presentation queue
     this._allPooledTextures = new Set(); // includes checked-out/in-flight textures
+    // Retired textures remain physically live until every captured operation is
+    // idle and the device queue fence resolves. Keep their bytes in the bound so
+    // rapid resolution churn cannot allocate around deferred destruction.
+    this._retiringPooledBytes = 0;
+    this._activeFrameBytes = 0;
+    this._retiringFrameBytes = 0;
+    this._activeInputBytes = 0;
+    this._retiringInputBytes = 0;
     this._activeOps = 0;
     this._idleResolvers = [];
     this._retirements = new Set();
     this._destroyRequested = false;
     this._destroyPromise = null;
     this._ownsDevice = false;
+    this._deviceLost = false;
+    this.lastCaptureError = null;
     this.canvasCtx = null;
   }
 
@@ -194,6 +253,73 @@ export class GpuInterp {
     return this._trackRetirement(retirement);
   }
 
+  _retirePooledTextures(textures, device = this.device) {
+    const live = [...new Set(textures.filter(Boolean))];
+    if (!live.length) return Promise.resolve();
+    const retiring = new Set(live);
+    let bytes = 0;
+    for (const texture of live) {
+      const textureBytes = Number(texture._gpuInterpBytes) || 0;
+      if (!Number.isSafeInteger(textureBytes) || textureBytes < 0 ||
+          bytes > Number.MAX_SAFE_INTEGER - textureBytes) {
+        throw new GpuResourceLimitError("retiring pooled texture accounting exceeds the safe integer range", {
+          resource: "texture-pool",
+        });
+      }
+      bytes += textureBytes;
+    }
+    if (this._retiringPooledBytes > Number.MAX_SAFE_INTEGER - bytes) {
+      throw new GpuResourceLimitError("retiring pooled texture accounting exceeds the safe integer range", {
+        resource: "texture-pool",
+      });
+    }
+    this._pool = this._pool.filter((texture) => !retiring.has(texture));
+    for (const texture of live) this._allPooledTextures.delete(texture);
+    this._retiringPooledBytes += bytes;
+    const retirement = (async () => {
+      await this._whenIdle();
+      try { await device?.queue?.onSubmittedWorkDone?.(); } catch {}
+      for (const resource of live) { try { resource.destroy?.(); } catch {} }
+    })().finally(() => {
+      this._retiringPooledBytes = Math.max(0, this._retiringPooledBytes - bytes);
+    });
+    return this._trackRetirement(retirement);
+  }
+
+  _retireBudgetedResources(resources, bytes, counter, device = this.device) {
+    const live = resources.filter(Boolean);
+    if (!live.length || !bytes) return Promise.resolve();
+    this[counter] += bytes;
+    const retirement = (async () => {
+      await this._whenIdle();
+      try { await device?.queue?.onSubmittedWorkDone?.(); } catch {}
+      for (const resource of live) { try { resource.destroy?.(); } catch {} }
+    })().finally(() => {
+      this[counter] = Math.max(0, this[counter] - bytes);
+    });
+    return this._trackRetirement(retirement);
+  }
+
+  _pooledBytesInUse() {
+    let bytes = this._retiringPooledBytes;
+    if (!Number.isSafeInteger(bytes) || bytes < 0) {
+      throw new GpuResourceLimitError("pooled texture accounting exceeds the safe integer range", {
+        resource: "texture-pool",
+      });
+    }
+    for (const texture of this._allPooledTextures) {
+      const textureBytes = Number(texture._gpuInterpBytes) || 0;
+      if (!Number.isSafeInteger(textureBytes) || textureBytes < 0 ||
+          bytes > Number.MAX_SAFE_INTEGER - textureBytes) {
+        throw new GpuResourceLimitError("pooled texture accounting exceeds the safe integer range", {
+          resource: "texture-pool",
+        });
+      }
+      bytes += textureBytes;
+    }
+    return bytes;
+  }
+
   _endOperation() {
     this._activeOps = Math.max(0, this._activeOps - 1);
     if (this._activeOps === 0 && this._idleResolvers.length) {
@@ -206,18 +332,37 @@ export class GpuInterp {
     return new Promise((resolve) => this._idleResolvers.push(resolve));
   }
 
+  _handleDeviceLost(lostDevice, info = {}) {
+    // An owned device's intentional destroy resolves `lost`; an adopted device can
+    // also outlive this helper. Only the currently-published, spontaneously-lost
+    // device may change state or notify the eventual lifecycle coordinator.
+    if (this.device !== lostDevice || this._destroyRequested || this._deviceLost) return;
+    this._deviceLost = true;
+    this.ready = false;
+    try { this.warn("gpu device lost:", info.message || info.reason || "unknown reason"); } catch {}
+    try { this.onDeviceLost?.(lostDevice, info); }
+    catch (error) { try { this.warn("gpu device-loss callback failed:", error?.message || String(error)); } catch {} }
+    void this.destroy();
+  }
+
   // init(device, ort): shared-device RIFE mode (device = ORT's device, ort provided).
   // init(null, null): STANDALONE blend mode — create our own device, no ORT needed;
   // RIFE inference (interpolateToPooledTex) is unavailable but blend works fully.
   async init(device, ort) {
     if (this.ready) return true;
+    if (this._destroyRequested) return false;
     try {
       if (!device) {
         // standalone: request our own device (blend-only, no model load)
         if (!navigator.gpu) { this.warn("gpu: WebGPU unavailable"); return false; }
         const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
         if (!adapter) { this.warn("gpu: no adapter"); return false; }
+        if (this._destroyRequested) return false;
         device = await adapter.requestDevice();
+        if (this._destroyRequested) {
+          try { device.destroy?.(); } catch {}
+          return false;
+        }
         this._ownsDevice = true;
         ort = null;
       } else if (!ort || !ort.Tensor || !ort.Tensor.fromGpuBuffer) {
@@ -225,6 +370,7 @@ export class GpuInterp {
         ort = null;
       }
       this.device = device; this.ort = ort;
+      this._deviceLost = false;
       this._rifeCapable = !!ort; // interpolateToPooledTex requires ORT GPU tensors
       this.sampler = device.createSampler({ magFilter: "linear", minFilter: "linear" });
       const mk = (c) => device.createShaderModule({ code: c });
@@ -255,6 +401,13 @@ export class GpuInterp {
         fragment: { module: mk(PRESENT_WGSL), entryPoint: "fs", targets: [{ format: "rgba8unorm" }] },
         primitive: { topology: "triangle-list" },
       });
+      const watchedDevice = device;
+      if (watchedDevice?.lost?.then) {
+        watchedDevice.lost.then(
+          (info) => this._handleDeviceLost(watchedDevice, info),
+          (error) => this._handleDeviceLost(watchedDevice, { reason: "unknown", message: error?.message || String(error) }),
+        );
+      }
       this.ready = true;
       return true;
     } catch (e) {
@@ -265,32 +418,164 @@ export class GpuInterp {
     }
   }
 
-  _size(w, h, padTo, ch, scale = 1) {
+  _validateFrameDimensions(w, h, device = this.device) {
+    if (!device) throw new GpuResourceLimitError("GPU device is unavailable", { resource: "device" });
+    if (!Number.isSafeInteger(w) || !Number.isSafeInteger(h) || w <= 0 || h <= 0) {
+      throw new GpuResourceLimitError(`frame dimensions must be positive safe integers, got ${w}x${h}`, { width: w, height: h, resource: "texture" });
+    }
+    const limit = positiveDeviceLimit(device, "maxTextureDimension2D", 8192);
+    if (w > limit || h > limit) {
+      throw new GpuResourceLimitError(
+        `frame dimensions ${w}x${h} exceed maxTextureDimension2D ${limit}`,
+        { width: w, height: h, requested: Math.max(w, h), limit, resource: "texture" },
+      );
+    }
+  }
+
+  _inferencePlan(w, h, padTo, ch, scale, device = this.device) {
+    this._validateFrameDimensions(w, h, device);
+    if (!Number.isSafeInteger(padTo) || padTo <= 0 || padTo > 0xffffffff ||
+        !Number.isSafeInteger(ch) || ch <= 0 || ch > 0xffffffff ||
+        !Number.isFinite(scale) || scale <= 0) {
+      throw new GpuResourceLimitError(
+        `invalid inference configuration padTo=${padTo}, channels=${ch}, scale=${scale}`,
+        { padTo, channels: ch, scale, resource: "inference" },
+      );
+    }
+    const scaledW = w * scale, scaledH = h * scale;
+    if (!Number.isSafeInteger(Math.round(scaledW)) || !Number.isSafeInteger(Math.round(scaledH))) {
+      throw new GpuResourceLimitError("scaled inference dimensions exceed the safe integer range", { width: scaledW, height: scaledH, resource: "inference" });
+    }
+    const iw = Math.max(64, Math.round(scaledW));
+    const ih = Math.max(64, Math.round(scaledH));
+    const padW = Math.ceil(iw / padTo) * padTo;
+    const padH = Math.ceil(ih / padTo) * padTo;
+    if (!Number.isSafeInteger(padW) || !Number.isSafeInteger(padH) || padW > 0xffffffff || padH > 0xffffffff) {
+      throw new GpuResourceLimitError("padded inference dimensions exceed the WebGPU u32 range", { padW, padH, resource: "inference" });
+    }
+    const maxWorkgroups = positiveDeviceLimit(device, "maxComputeWorkgroupsPerDimension", 65535);
+    const workgroupsX = Math.ceil(padW / 8), workgroupsY = Math.ceil(padH / 8);
+    if (workgroupsX > maxWorkgroups || workgroupsY > maxWorkgroups) {
+      throw new GpuResourceLimitError(
+        `inference dispatch ${workgroupsX}x${workgroupsY} exceeds maxComputeWorkgroupsPerDimension ${maxWorkgroups}`,
+        { workgroupsX, workgroupsY, limit: maxWorkgroups, resource: "dispatch" },
+      );
+    }
+    const bufferBytes = checkedProduct([ch, padH, padW, 4], "inference input buffer");
+    const maxBufferSize = positiveDeviceLimit(device, "maxBufferSize", 256 * 1024 * 1024);
+    const maxBindingSize = positiveDeviceLimit(device, "maxStorageBufferBindingSize", 128 * 1024 * 1024);
+    const bufferLimit = Math.min(maxBufferSize, maxBindingSize);
+    if (bufferBytes > bufferLimit) {
+      throw new GpuResourceLimitError(
+        `inference input requires ${bufferBytes} bytes; storage-buffer limit is ${bufferLimit}`,
+        { requested: bufferBytes, limit: bufferLimit, resource: "buffer", padW, padH, channels: ch },
+      );
+    }
+    return { iw, ih, padW, padH, bufferBytes };
+  }
+
+  _resize(w, h, padTo, ch, scale, includeInference) {
     const device = this.device;
-    this._padTo = padTo;
-    // FRAME textures: always full source resolution (capture, static-mask
-    // comparison, blends, ladder — full-res truth regardless of infer scale).
-    if (!(this._w === w && this._h === h && this._ch === ch && this.prevTex)) {
-      this._w = w; this._h = h; this._ch = ch;
-      const usage = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST;
-      this._retireResources([this.prevTex, this.curTex], device);
-      this.prevTex = device.createTexture({ label: `rife-prev-${w}x${h}`, size: [w, h], format: "rgba8unorm", usage });
-      this.curTex = device.createTexture({ label: `rife-cur-${w}x${h}`, size: [w, h], format: "rgba8unorm", usage });
+    this._validateFrameDimensions(w, h, device);
+    if (!Number.isSafeInteger(padTo) || padTo <= 0 || padTo > 0xffffffff ||
+        !Number.isSafeInteger(ch) || ch <= 0 || ch > 0xffffffff) {
+      throw new GpuResourceLimitError(`invalid frame configuration padTo=${padTo}, channels=${ch}`, { padTo, channels: ch, resource: "inference" });
+    }
+    // Validate the complete transaction before creating its first resource. This is
+    // important when a frame resize and an input-buffer resize happen together:
+    // a buffer limit failure must leave the former frame generation untouched.
+    const inference = includeInference ? this._inferencePlan(w, h, padTo, ch, scale, device) : null;
+    const frameBytes = checkedProduct([w, h, 4, 2], "frame texture pair");
+    const needsFrames = this._w !== w || this._h !== h || !this.prevTex || !this.curTex;
+    const needsInput = !!inference && (
+      this._padW !== inference.padW || this._padH !== inference.padH || this._chBuf !== ch || !this.inBuf
+    );
+    const projectedFrameBytes = needsFrames
+      ? this._activeFrameBytes + this._retiringFrameBytes + frameBytes
+      : this._activeFrameBytes + this._retiringFrameBytes;
+    if (!Number.isSafeInteger(projectedFrameBytes) || projectedFrameBytes > this.maxFrameBytes) {
+      const replaceableBytes = this._activeFrameBytes + frameBytes;
+      throw new GpuResourceLimitError(
+        `live frame textures would require ${projectedFrameBytes} bytes; frame budget is ${this.maxFrameBytes}`,
+        {
+          requested: projectedFrameBytes,
+          limit: this.maxFrameBytes,
+          resource: "frame-textures",
+          transient: Number.isSafeInteger(replaceableBytes) && replaceableBytes <= this.maxFrameBytes && this._retiringFrameBytes > 0,
+        },
+      );
+    }
+    const projectedInputBytes = needsInput
+      ? this._activeInputBytes + this._retiringInputBytes + inference.bufferBytes
+      : this._activeInputBytes + this._retiringInputBytes;
+    if (!Number.isSafeInteger(projectedInputBytes) || projectedInputBytes > this.maxInputBytes) {
+      const replaceableBytes = this._activeInputBytes + (inference?.bufferBytes || 0);
+      throw new GpuResourceLimitError(
+        `live inference input buffers would require ${projectedInputBytes} bytes; input budget is ${this.maxInputBytes}`,
+        {
+          requested: projectedInputBytes,
+          limit: this.maxInputBytes,
+          resource: "inference-inputs",
+          transient: Number.isSafeInteger(replaceableBytes) && replaceableBytes <= this.maxInputBytes && this._retiringInputBytes > 0,
+        },
+      );
+    }
+    let nextPrev = null, nextCur = null, nextInBuf = null;
+    try {
+      if (needsFrames) {
+        const usage = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST;
+        nextPrev = device.createTexture({ label: `rife-prev-${w}x${h}`, size: [w, h], format: "rgba8unorm", usage });
+        nextCur = device.createTexture({ label: `rife-cur-${w}x${h}`, size: [w, h], format: "rgba8unorm", usage });
+      }
+      if (needsInput) {
+        nextInBuf = device.createBuffer({
+          label: `rife-inBuf-${inference.padW}x${inference.padH}`,
+          size: inference.bufferBytes,
+          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+        });
+      }
+    } catch (error) {
+      for (const resource of [nextPrev, nextCur, nextInBuf]) { try { resource?.destroy?.(); } catch {} }
+      throw error;
+    }
+
+    const retiredFrames = [];
+    const retiredInputs = [];
+    if (needsFrames) {
+      const oldFrameBytes = this._activeFrameBytes;
+      retiredFrames.push(this.prevTex, this.curTex);
+      this.prevTex = nextPrev; this.curTex = nextCur;
+      this._activeFrameBytes = frameBytes;
+      this._w = w; this._h = h;
       this._frames = 0; // stale prev after a resize; need 2 fresh captures again
+      if (retiredFrames.some(Boolean)) {
+        this._retireBudgetedResources(retiredFrames, oldFrameBytes, "_retiringFrameBytes", device);
+      }
     }
-    // INFERENCE dims: scaled. REAL resolution scaling (v0.48.5): the pack pass
-    // SAMPLES the full-res frames at scaled dispatch (free downscale); composite
-    // bilinear-upsamples the model output. Until now the @% knob only reached
-    // the legacy CPU path — GPU inference was always full-res.
-    const iw = Math.max(64, Math.round(w * scale)), ih = Math.max(64, Math.round(h * scale));
-    const padW = Math.ceil(iw / padTo) * padTo, padH = Math.ceil(ih / padTo) * padTo;
-    if (this._padW !== padW || this._padH !== padH || this._chBuf !== ch || !this.inBuf) {
-      this._padW = padW; this._padH = padH; this._chBuf = ch;
-      this._retireResources([this.inBuf], device);
-      this.inBuf = device.createBuffer({ label: `rife-inBuf-${padW}x${padH}`, size: ch * padH * padW * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+    this._padTo = padTo;
+    this._ch = ch;
+    if (inference) {
+      if (needsInput) {
+        const oldInputBytes = this._activeInputBytes;
+        retiredInputs.push(this.inBuf);
+        this.inBuf = nextInBuf;
+        this._activeInputBytes = inference.bufferBytes;
+        if (retiredInputs.some(Boolean)) {
+          this._retireBudgetedResources(retiredInputs, oldInputBytes, "_retiringInputBytes", device);
+        }
+      }
+      this._iw = inference.iw; this._ih = inference.ih;
+      this._padW = inference.padW; this._padH = inference.padH; this._chBuf = ch;
     }
-    this._iw = iw; this._ih = ih;
-    return { padW, padH };
+    return inference ? { padW: inference.padW, padH: inference.padH } : { padW: this._padW || 0, padH: this._padH || 0 };
+  }
+
+  _ensureFrameSize(w, h, padTo, ch) {
+    return this._resize(w, h, padTo, ch, 1, false);
+  }
+
+  _size(w, h, padTo, ch, scale = 1) {
+    return this._resize(w, h, padTo, ch, scale, true);
   }
 
   hasPrev() { return this._frames >= 2; }
@@ -311,26 +596,59 @@ export class GpuInterp {
   }
 
   _acquireTex(w = this._w, h = this._h, device = this.device) {
+    this._validateFrameDimensions(w, h, device);
     // Recycle a pooled texture sized to this operation's captured frame. An
     // inference can finish after capture has resized the instance, so consulting
     // mutable this._w/_h after session.run() would produce the wrong result size.
-    const t = this._pool.pop();
-    if (t && t._w === w && t._h === h && (!t._gpuInterpDevice || t._gpuInterpDevice === device)) {
-      t._refs = 1;
-      return t;
+    let matchingIndex = -1;
+    for (let index = this._pool.length - 1; index >= 0; index--) {
+      const texture = this._pool[index];
+      if (texture._w === w && texture._h === h &&
+          (!texture._gpuInterpDevice || texture._gpuInterpDevice === device)) {
+        matchingIndex = index;
+        break;
+      }
     }
-    if (t) {
-      this._allPooledTextures.delete(t);
-      this._retireResources([t], t._gpuInterpDevice || device);
+    if (matchingIndex >= 0) {
+      const [matching] = this._pool.splice(matchingIndex, 1);
+      matching._refs = 1;
+      return matching;
     }
-    const tex = device.createTexture({
-      label: `rife-pool-${w}x${h}`,
-      size: [w, h], format: "rgba8unorm",
-      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC,
-    });
+    const requestedBytes = checkedProduct([w, h, 4], "pooled texture");
+    // No exact reusable texture exists. Every free entry is stale for this
+    // request, so evict the whole zero-reference generation. Its bytes remain in
+    // accounting until the retirement fence completes.
+    if (this._pool.length) {
+      const stale = [...this._pool];
+      this._retirePooledTextures(stale, stale[0]?._gpuInterpDevice || device);
+    }
+    const currentBytes = this._pooledBytesInUse();
+    const projectedBytes = currentBytes + requestedBytes;
+    if (!Number.isSafeInteger(projectedBytes) || projectedBytes > this.maxPoolBytes) {
+      throw new GpuResourceLimitError(
+        `pooled textures would require ${projectedBytes} bytes; pool budget is ${this.maxPoolBytes}`,
+        {
+          requested: projectedBytes,
+          limit: this.maxPoolBytes,
+          resource: "texture-pool",
+          transient: requestedBytes <= this.maxPoolBytes && currentBytes > 0,
+        },
+      );
+    }
+    let tex;
+    try {
+      tex = device.createTexture({
+        label: `rife-pool-${w}x${h}`,
+        size: [w, h], format: "rgba8unorm",
+        usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC,
+      });
+    } catch (error) {
+      throw error;
+    }
     tex._w = w; tex._h = h; tex._refs = 1;
     tex._gpuInterpOwner = this;
     tex._gpuInterpDevice = device;
+    tex._gpuInterpBytes = requestedBytes;
     this._allPooledTextures.add(tex);
     return tex;
   }
@@ -347,8 +665,7 @@ export class GpuInterp {
     if (this._destroyRequested) return;
     if (this._pool.length < 64) this._pool.push(tex);
     else {
-      this._allPooledTextures.delete(tex);
-      this._retireResources([tex], tex._gpuInterpDevice || this.device);
+      this._retirePooledTextures([tex], tex._gpuInterpDevice || this.device);
     }
   }
 
@@ -359,11 +676,12 @@ export class GpuInterp {
   padDims() { return { padW: this._padW || 0, padH: this._padH || 0 }; }
 
   captureToPooled(video, padTo, ch) {
+    this.lastCaptureError = null;
     if (!this.ready) return null;
     let pooled = null;
     try {
       const w = video.videoWidth, h = video.videoHeight;
-      this._size(w, h, padTo || 8, ch || 7, this._scale || 1);
+      this._ensureFrameSize(w, h, padTo || 8, ch || 7);
       pooled = this._acquireTex();
       const ext = this.device.importExternalTexture({ source: video });
       const bind = this.device.createBindGroup({
@@ -379,6 +697,7 @@ export class GpuInterp {
       this._frames = (this._frames || 0) + 1;
       return pooled;
     } catch (e) {
+      this.lastCaptureError = e;
       if (pooled) this.releaseTex(pooled);
       this.warn("gpu captureToPooled failed:", e.message);
       return null;
@@ -389,11 +708,12 @@ export class GpuInterp {
   // (the upscaler's tap) instead of the raw <video>. Samples via blit2dPipe (handles
   // any canvas format → rgba8unorm) and mirrors into curTex for tweening.
   captureTexToPooled(srcTex, padTo, ch) {
+    this.lastCaptureError = null;
     if (!this.ready || !srcTex) return null;
     let pooled = null;
     try {
       const w = srcTex.width, h = srcTex.height;
-      this._size(w, h, padTo || 8, ch || 7, this._scale || 1);
+      this._ensureFrameSize(w, h, padTo || 8, ch || 7);
       pooled = this._acquireTex();
       const bind = this.device.createBindGroup({
         layout: this.blit2dPipe.getBindGroupLayout(0),
@@ -407,6 +727,7 @@ export class GpuInterp {
       this._frames = (this._frames || 0) + 1;
       return pooled;
     } catch (e) {
+      this.lastCaptureError = e;
       if (pooled) this.releaseTex(pooled);
       this.warn("gpu captureTexToPooled failed:", e.message);
       return null;
@@ -420,7 +741,7 @@ export class GpuInterp {
   // using them here packed/composited a mis-sized region (zoomed-corner tweens
   // alternating with full-size real frames — Aaron's shrink/expand jitter).
   async interpolateToPooledTex(session, MODEL_IO, _wIgnored, _hIgnored, t, useStatic, pairPrev = null, pairCur = null, scale = 1) {
-    if (!this.ready || this._destroyRequested) return null;
+    if (!this.ready || this._destroyRequested || !this._rifeCapable) return null;
     this._activeOps++;
     let inputTensor = null, outT = null, resultTex = null, tensorsRetired = false, op = null;
     try {
@@ -650,11 +971,15 @@ export class GpuInterp {
       for (const texture of this._allPooledTextures) { try { texture.destroy(); } catch {} }
       this._allPooledTextures.clear();
       this._pool = [];
+      this._retiringPooledBytes = 0;
       for (const texture of [this.prevTex, this.curTex]) { try { texture?.destroy?.(); } catch {} }
       for (const buffer of [this.inBuf, this.packParams, this.compParams, this.blendParams]) { try { buffer?.destroy?.(); } catch {} }
       this.prevTex = null; this.curTex = null; this.inBuf = null;
       this.packParams = null; this.compParams = null; this.blendParams = null;
-      this.canvasCtx = null; this.device = null; this.ort = null;
+      this.canvasCtx = null; this.device = null; this.ort = null; this._rifeCapable = false;
+      this._w = 0; this._h = 0; this._padW = 0; this._padH = 0; this._frames = 0;
+      this._activeFrameBytes = 0; this._retiringFrameBytes = 0;
+      this._activeInputBytes = 0; this._retiringInputBytes = 0;
       // Standalone blend mode requests its own GPUDevice. Shared ORT/chain
       // devices remain owned by their provider and must not be destroyed here.
       try { ownedDevice?.destroy?.(); } catch {}

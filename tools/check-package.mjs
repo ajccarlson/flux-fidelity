@@ -1,7 +1,7 @@
 import { lstatSync, readFileSync } from "node:fs";
 import { dirname, normalize, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PACKAGE_FILES } from "./package-files.mjs";
+import { PACKAGE_FILES, REQUIRED_RUNTIME_MODEL_FILES } from "./package-files.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 
@@ -65,6 +65,10 @@ export function validatePackage({ rootDir = root, packageFiles = PACKAGE_FILES }
     if (!prefix || !packageFiles.some((file) => file.startsWith(prefix))) {
       errors.push(`${source}: package contains no file matching ${prefix || "<dynamic path>"}`);
     }
+  }
+
+  for (const file of REQUIRED_RUNTIME_MODEL_FILES) {
+    requireFile(file, "runtime model assets");
   }
 
   const manifest = fileSet.has("manifest.json") ? parseJson(rootDir, "manifest.json", errors) : null;

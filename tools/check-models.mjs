@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import { basename, isAbsolute, relative, resolve } from "node:path";
+import { validateModelBundle } from "../fsrcnnx-model-bundle.js";
+import { validateNeuralManifest } from "../fsrcnnx-neural.js";
+import { PACKAGE_FILES } from "./package-files.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const modelDir = resolve(root, "model");
@@ -36,9 +39,9 @@ const pinnedArtifacts = {
   "model/ArtCNN_C4F32_DN.artcnn.json": "b5911c707c83462c79dcf954bcaf422efd2d6b42efd4d08228361ab8ea52fe79",
   "model/ArtCNN_C4F32_DS.artcnn.wgsl": "f6de86466a0ae261c178f53d72d2cb79032ade94b8ec452f51fa1315b93be3c5",
   "model/ArtCNN_C4F32_DS.artcnn.json": "f98bbd5e834cbfb2ed66ba07865889f76466279e356bfbd62c33df73e95b30cb",
-  "fsrcnnx-ssimds.js": "3674dca07245f02025e00e9aabf1e37eae67566f673e29fa5edd637c444f0da1",
-  "fsrcnnx-sharpen.js": "a00868c13ec291c116e52a1d1fe9a069eb7a7ba037e665abc202710d72ac1ab7",
-  "fsrcnnx-deband.js": "05495befe6af578baa3fb84b69983a0dddc943d60b249411cc81c7eca1bbbbaf",
+  "fsrcnnx-ssimds.js": "09a07f30ac718600ea529005d5056d2e54ff6a868b9ddb988683a16057673cbf",
+  "fsrcnnx-sharpen.js": "9b47a6aa2e5cc6294bb7e747d6d54b141aee1cf2a03c95d079e1fa9aeec23f9d",
+  "fsrcnnx-deband.js": "56155c7bd5a15b5524ec1b44baeb4b5cb368e57f9adaf5ff8635bd1a2dba3f84",
 };
 
 for (const [path, expected] of Object.entries(pinnedArtifacts)) {
@@ -51,46 +54,45 @@ for (const [path, expected] of Object.entries(pinnedArtifacts)) {
 }
 
 for (const name of readdirSync(modelDir).filter((file) => /\.(?:passes|artcnn)\.json$/.test(file)).sort()) {
-  const manifest = JSON.parse(readFileSync(resolve(modelDir, name), "utf8"));
-  if (!Array.isArray(manifest.passes) || manifest.passes.length === 0) {
-    errors.push(`${name}: missing passes`);
-    continue;
-  }
-
-  const available = new Set(["LUMA"]);
-  manifest.passes.forEach((pass, index) => {
-    if (pass.index !== index) errors.push(`${name}: pass ${index} has index ${pass.index}`);
-    if (!Array.isArray(pass.binds) || pass.binds.length === 0) errors.push(`${name}: pass ${index} has no inputs`);
-    for (const bind of pass.binds || []) {
-      if (!available.has(bind)) errors.push(`${name}: pass ${index} binds unavailable ${bind}`);
-    }
-    if (pass.save) {
-      // FSRCNNX intentionally reuses logical names across mapping bands. A later
-      // pass replaces the prior texture in the runtime's logical resource map.
-      available.add(pass.save);
-    }
-  });
-
-  const wgslName = name.replace(/\.passes\.json$/, ".wgsl").replace(/\.artcnn\.json$/, ".artcnn.wgsl");
-  const wgsl = readFileSync(resolve(modelDir, wgslName), "utf8");
-  const entries = [...wgsl.matchAll(/@compute\s+@workgroup_size[\s\S]{0,180}?fn\s+(\w+)/g)];
-  if (entries.length !== manifest.passes.length) {
-    errors.push(`${name}: ${manifest.passes.length} passes but ${entries.length} WGSL compute entries`);
+  try {
+    const manifest = JSON.parse(readFileSync(resolve(modelDir, name), "utf8"));
+    const artcnn = name.endsWith(".artcnn.json");
+    const wgslName = name.replace(/\.passes\.json$/, ".wgsl").replace(/\.artcnn\.json$/, ".artcnn.wgsl");
+    const wgsl = readFileSync(resolve(modelDir, wgslName), "utf8");
+    const expectedName = name.replace(/\.passes\.json$/, "").replace(/\.artcnn\.json$/, "");
+    validateModelBundle(artcnn ? "artcnn" : "fsrcnnx", manifest, wgsl, { expectedName });
+  } catch (error) {
+    errors.push(`${name}: ${error.message}`);
   }
 }
 
-const neuralManifest = JSON.parse(readFileSync(resolve(modelDir, "neural", "manifest.json"), "utf8"));
-const neuralKeys = new Set();
-for (const entry of neuralManifest) {
-  if (!entry.key || neuralKeys.has(entry.key)) errors.push(`neural manifest: invalid/duplicate key ${entry.key}`);
-  neuralKeys.add(entry.key);
-  if (!Number.isInteger(entry.scale) || entry.scale < 1) errors.push(`neural manifest: invalid scale for ${entry.key}`);
-  const file = resolve(modelDir, "neural", entry.file || "");
-  try {
-    if (!statSync(file).isFile()) throw new Error();
-  } catch {
-    errors.push(`neural manifest: missing model ${entry.file}`);
+const neuralDir = resolve(modelDir, "neural");
+try {
+  const neuralManifest = validateNeuralManifest(
+    JSON.parse(readFileSync(resolve(neuralDir, "manifest.json"), "utf8")),
+  );
+  for (const entry of neuralManifest) {
+    const file = resolve(neuralDir, entry.file);
+    const localPath = relative(neuralDir, file);
+    if (!localPath || isAbsolute(localPath) || localPath === ".." || localPath.startsWith("../")) {
+      errors.push(`neural manifest: model path escapes neural directory (${entry.file})`);
+      continue;
+    }
+    const packagePath = `model/neural/${entry.file}`;
+    if (!PACKAGE_FILES.includes(packagePath)) {
+      errors.push(`neural manifest: ${packagePath} is outside the package boundary`);
+    }
+    if (!Object.hasOwn(pinnedArtifacts, packagePath)) {
+      errors.push(`neural manifest: ${packagePath} has no pinned SHA-256`);
+    }
+    try {
+      if (!statSync(file).isFile()) throw new Error();
+    } catch {
+      errors.push(`neural manifest: missing model ${entry.file}`);
+    }
   }
+} catch (error) {
+  errors.push(`neural manifest: ${error.message}`);
 }
 
 if (errors.length) {
