@@ -25,7 +25,7 @@
 <body>
   <main>
     <h1>FSRCNNX-EXT validation</h1>
-    <p class="muted">Builds supporting color/filter pipelines and every generated model's production compute chain, then runs a deterministic inference smoke test and readback. No page or video data leaves the browser.</p>
+    <p class="muted">Builds the production color, filter, and generated-model pipelines, then compares deterministic GPU output with pinned upstream and CPU references. No page or video data leaves the browser.</p>
     <button id="run" type="button">Run validation</button>
     <div id="summary" role="status" aria-live="polite"></div>
     <table>

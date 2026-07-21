@@ -10,6 +10,8 @@
 // MutationObserver picks up images added later (feeds). One-shot per image (no
 // per-frame loop) — the result replaces the image source and is restored on stop.
 
+import { SRGB_COLOR_SPACE } from "./fsrcnnx-color-support.js";
+
 const LUMA_FROM_TEX = `
 @group(0) @binding(0) var samp : sampler;
 @group(0) @binding(1) var src : texture_2d<f32>;
@@ -535,7 +537,11 @@ export class ImageUpscaler {
         size: { width: nw, height: nh }, format: "rgba8unorm",
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
       });
-      device.queue.copyExternalImageToTexture({ source: bitmap }, { texture: srcTex }, { width: nw, height: nh });
+      device.queue.copyExternalImageToTexture(
+        { source: bitmap },
+        { texture: srcTex, colorSpace: SRGB_COLOR_SPACE, premultipliedAlpha: false },
+        { width: nw, height: nh },
+      );
       lumaTex = device.createTexture({
         size: { width: nw, height: nh }, format: "rgba16float",
         usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
@@ -572,7 +578,12 @@ export class ImageUpscaler {
       const off = new OffscreenCanvas(finalW, finalH);
       ctx = off.getContext("webgpu");
       if (!ctx) throw new Error("OffscreenCanvas WebGPU context unavailable");
-      ctx.configure({ device, format: this.format, alphaMode: "premultiplied" });
+      ctx.configure({
+        device,
+        format: this.format,
+        colorSpace: SRGB_COLOR_SPACE,
+        alphaMode: "premultiplied",
+      });
       {
         const bg = device.createBindGroup({ layout: this.blitPipe.getBindGroupLayout(0), entries: [
           { binding: 0, resource: this.sampler }, { binding: 1, resource: finalTex.createView() },

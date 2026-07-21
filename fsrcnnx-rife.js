@@ -9,6 +9,8 @@
 // Padding: RIFE needs H,W divisible by a factor (usually 32). We pad to the next
 // multiple and crop the result back.
 
+import { SRGB_COLOR_SPACE } from "./fsrcnnx-color-support.js";
+
 let ort = null;             // the ORT module
 let session = null;         // InferenceSession
 let modelLoadTried = false;
@@ -807,9 +809,9 @@ async function interpolateSerial(frameA, frameB, w, h, t, scale, generation) {
     if (_bufW !== padW || _bufH !== padH) {
       _ca = new OffscreenCanvas(padW, padH); _cb = new OffscreenCanvas(padW, padH);
       _cout = new OffscreenCanvas(padW, padH);
-      _ctxA = _ca.getContext("2d", { willReadFrequently: true });
-      _ctxB = _cb.getContext("2d", { willReadFrequently: true });
-      _octx = _cout.getContext("2d");
+      _ctxA = _ca.getContext("2d", { colorSpace: SRGB_COLOR_SPACE, willReadFrequently: true });
+      _ctxB = _cb.getContext("2d", { colorSpace: SRGB_COLOR_SPACE, willReadFrequently: true });
+      _octx = _cout.getContext("2d", { colorSpace: SRGB_COLOR_SPACE });
       const plane = padW * padH;
       const ch = runIO.channels; // 6 (frames only) or 7 (+ timestep plane)
       _inBuf = new Float32Array(ch * plane);

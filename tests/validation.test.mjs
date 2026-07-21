@@ -10,6 +10,7 @@ import {
 } from "../fsrcnnx-model-catalog.js";
 import {
   acquireValidationDevice,
+  alignedBytesPerRow,
   buildCorePipelines,
   createValidationPlan,
   float16ToNumber,
@@ -17,6 +18,7 @@ import {
   inspectOrtFloatTensor,
   numberToFloat16,
   ONNX_VALIDATION_CHECKS,
+  REFERENCE_VALIDATION_CHECKS,
   summarizeValidation,
   withGpuErrorScopes,
   withTimeout,
@@ -40,17 +42,25 @@ test("the shared generated-model catalog is complete, immutable, and backed by f
 
 test("validation accounting is fixed before execution and treats skips as incompatible", () => {
   const plan = createValidationPlan(GENERATED_MODEL_CATALOG);
-  assert.equal(plan.length, 17);
+  assert.equal(plan.length, 21);
   assert.equal(new Set(plan.map(({ id }) => id)).size, plan.length);
   assert.equal(Object.isFrozen(ONNX_VALIDATION_CHECKS), true);
   assert.ok(ONNX_VALIDATION_CHECKS.every(Object.isFrozen));
-  assert.deepEqual(plan.slice(3, 5).map(({ id }) => id), [
+  assert.equal(Object.isFrozen(REFERENCE_VALIDATION_CHECKS), true);
+  assert.ok(REFERENCE_VALIDATION_CHECKS.every(Object.isFrozen));
+  assert.deepEqual(plan.slice(2, 6).map(({ id }) => id), [
+    "color:extract-reference",
+    "color:recombine-reference",
+    "filter:ssimds-reference",
+    "filter:sharpen-reference",
+  ]);
+  assert.deepEqual(plan.slice(7, 9).map(({ id }) => id), [
     "onnx:rife-v4.26-fp16",
     "onnx:rife-v4.26",
   ]);
   const results = new Map();
   assert.deepEqual(summarizeValidation(plan, results), {
-    pass: 0, fail: 0, skip: 0, pending: 17, total: 17, complete: false, ok: false,
+    pass: 0, fail: 0, skip: 0, pending: 21, total: 21, complete: false, ok: false,
   });
   for (const check of plan) results.set(check.id, { status: "pass" });
   assert.equal(summarizeValidation(plan, results).ok, true);
@@ -206,6 +216,12 @@ test("GPU scope diagnostics are retained alongside an operation failure", async 
 });
 
 test("rgba16float conversion and padded readback inspection reject non-finite output", () => {
+  assert.equal(alignedBytesPerRow(32), 256);
+  assert.equal(alignedBytesPerRow(37), 512);
+  assert.equal(alignedBytesPerRow(74), 768);
+  assert.throws(() => alignedBytesPerRow(0), /positive safe integer/);
+  assert.throws(() => alignedBytesPerRow(1, 0), /bytes per pixel/);
+
   for (const value of [-65504, -1, -0, 0, 0.1, 1, 65504]) {
     const decoded = float16ToNumber(numberToFloat16(value));
     const tolerance = Math.max(1e-7, Math.abs(value) * 0.001);

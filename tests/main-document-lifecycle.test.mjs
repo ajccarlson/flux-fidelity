@@ -15,7 +15,7 @@ function section(source, startMarker, endMarker) {
 
 async function loadLifecycle(deps) {
   const source = await readFile(mainUrl, "utf8");
-  const production = section(source, "export function suspendDocument()", "// A video can be unprocessable");
+  const production = section(source, "export function suspendDocument()", "// A video can be unreadable");
   const harness = `
     const deps = globalThis.__documentLifecycleDeps;
     let pageSuspended = false;
@@ -29,6 +29,10 @@ async function loadLifecycle(deps) {
     let neuralEng = { stop: () => deps.events.push("neural-stop") };
     let interpolator = { stop: () => deps.events.push("interp-stop") };
     let imageUpscaler = { stop: () => deps.events.push("image-stop") };
+    const initialColorCache = new WeakMap();
+    let videoColorSupportCache = initialColorCache;
+    const uncheckedColorSupport = (detail) => ({ supported: false, code: "color-not-checked", detail });
+    let selectedColorSupport = { supported: true, code: "color-supported" };
     const cancelDeviceRecovery = () => deps.events.push("recovery-cancel");
     const cancelMainLoop = () => deps.events.push("loop-cancel");
     const clearMultiTargets = () => deps.events.push("multi-clear");
@@ -50,7 +54,9 @@ async function loadLifecycle(deps) {
       return { pageSuspended, mode, optInterpolate, optImages, adoptionGeneration,
         modeSelectionGeneration, videoSelectionGeneration, interpolationSelectionGeneration,
         imagesSelectionGeneration, imageUpscalerInitGeneration, primaryController,
-        display: canvas.style.display, opacity: canvas.style.opacity };
+        display: canvas.style.display, opacity: canvas.style.opacity,
+        colorCacheReplaced: videoColorSupportCache !== initialColorCache,
+        colorSupport: selectedColorSupport };
     }
   `;
   globalThis.__documentLifecycleDeps = deps;
@@ -81,6 +87,8 @@ test("document suspension is idempotent and invalidates every asynchronous produ
   assert.equal(state.primaryController, null);
   assert.equal(state.display, "none");
   assert.equal(state.opacity, "1");
+  assert.equal(state.colorCacheReplaced, true, "suspension drops every cached frame classification");
+  assert.equal(state.colorSupport.code, "color-not-checked");
   for (const event of ["loop-cancel", "neural-stop", "interp-stop", "image-stop", "multi-clear", "monitor-stop", "detach"]) {
     assert.ok(deps.events.includes(event), `missing teardown event ${event}`);
   }

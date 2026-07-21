@@ -70,7 +70,7 @@ The package includes the exact FSRCNNX and SSim upstream sources, complete offic
 
 ## Adaptive Sharpen redistribution notice
 
-`fsrcnnx-sharpen.js` is a WebGPU port of bacondither's adaptive-sharpen shader, version 2021-10-17, from gist revision `572f59099cd0e3eb5e321a6da0a3d90a7382e2dc`.
+`fsrcnnx-sharpen.js` is a WebGPU port of bacondither's adaptive-sharpen shader, version 2021-10-17, from gist revision `572f59099cd0e3eb5e321a6da0a3d90a7382e2dc`. The package retains the exact upstream source as `shaders/upstream/adaptive-sharpen.glsl`, SHA-256 `827fb3d662ac9a91b4075e9117fe6e1dbc1c06d85959ba719cdb954dfb7fb8e4`.
 
 Copyright (c) 2015-2021, bacondither. All rights reserved.
 
