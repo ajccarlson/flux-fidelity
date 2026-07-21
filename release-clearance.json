@@ -135,36 +135,80 @@
       "status": "blocked",
       "artifacts": [
         {
-          "path": "model/FSRCNNX_x2_16-0-4-1.wgsl"
+          "path": "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl",
+          "sha256": "d5a24a271e5d9a3f7f7a053b150c460a44c25b3cf7f770857d57cc3a2e1c9965"
         },
         {
-          "path": "model/FSRCNNX_x2_16-0-4-1.passes.json"
+          "path": "model/FSRCNNX_x2_16-0-4-1.wgsl",
+          "sha256": "2b005b9c4e60c59445708b2f503c9afb01fd70ee9efb1615782274e7b7707f26"
         },
         {
-          "path": "fsrcnnx-ssimds.js"
+          "path": "model/FSRCNNX_x2_16-0-4-1.passes.json",
+          "sha256": "1378fc336deb2588f75ddf8b9ed6ec70109256f2c3fa0477ca742adf830fb3e0"
+        },
+        {
+          "path": "shaders/upstream/SSimDownscaler.glsl",
+          "sha256": "f46f4710a162d17058b9d82ed8610588b0c04d7be07cef6bf2a8c4077828f804"
+        },
+        {
+          "path": "fsrcnnx-ssimds.js",
+          "sha256": "0f55f8f2b49bea3cb8ee2e4c801a663f21d4dfabb88efaf2de23b709c6ade3c6"
+        },
+        {
+          "path": "transpile.js",
+          "sha256": "2ad45126cd36d52ce1064e8da1e189e10b5d256d8edc28a9dec3737957f4f631"
+        },
+        {
+          "path": "LGPL_REBUILDING.md",
+          "sha256": "b23f3a64a3db81248f1fe99dc1138d4b55aace39b162cfaefaa667836240effe"
+        },
+        {
+          "path": "LICENSE",
+          "sha256": "29018b491588ba5338f7cceb3eec504a7958985ed69bf1a91c03daac4c2e3fbf"
         }
       ],
-      "resolution": "The complete LGPL-3.0 and GPL-3.0 companion texts and source notices are bundled; complete and record the remaining public-distribution compliance review."
+      "evidence": [
+        "GPL-3.0.txt",
+        "LGPL-3.0.txt",
+        "LGPL_REBUILDING.md",
+        "LICENSE",
+        "MODEL_PROVENANCE.md",
+        "THIRD_PARTY_NOTICES.md"
+      ],
+      "resolution": "Exact source, transformation tooling, rebuilding and Load unpacked substitution instructions, license texts, notices, and artifact hashes are bundled; obtain and record qualified legal review confirming that the distribution plan satisfies every applicable LGPL obligation before clearing."
     },
     {
       "id": "onnx-runtime-third-party-review",
       "status": "blocked",
       "artifacts": [
         {
-          "path": "vendor/ort/ort.webgpu.min.mjs"
+          "path": "vendor/ort/ort.webgpu.min.mjs",
+          "sha256": "46988a5a025f49449850f39f95eb0d21e40e67b3beb13a0b54efd3ab5d83f60e"
         },
         {
-          "path": "vendor/ort/ort-wasm-simd-threaded.asyncify.mjs"
+          "path": "vendor/ort/ort-wasm-simd-threaded.asyncify.mjs",
+          "sha256": "7236653b8565da4046e459cd0e274123419a1d9f1f8f18fd36c28058346ca655"
         },
         {
-          "path": "vendor/ort/ort-wasm-simd-threaded.asyncify.wasm"
+          "path": "vendor/ort/ort-wasm-simd-threaded.asyncify.wasm",
+          "sha256": "7e83cd6cee77e478bc96a7e91b198144fb5e4126287daf1f9b54bb195ebcd55a"
+        },
+        {
+          "path": "vendor/ort/LICENSE",
+          "sha256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c"
         },
         {
           "path": "vendor/ort/ThirdPartyNotices.txt",
           "sha256": "0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2"
         }
       ],
-      "resolution": "The pinned upstream notice set is bundled; complete and record which notices and obligations apply to the distributed web runtime files."
+      "evidence": [
+        "MODEL_PROVENANCE.md",
+        "THIRD_PARTY_NOTICES.md",
+        "vendor/ort/LICENSE",
+        "vendor/ort/ThirdPartyNotices.txt"
+      ],
+      "resolution": "The exact upstream MIT license and third-party notice set are bundled and byte-pinned; complete and record qualified review of which third-party notices and obligations apply to the distributed Web runtime files before clearing."
     }
   ]
 }

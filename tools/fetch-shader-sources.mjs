@@ -11,6 +11,11 @@ const sources = [
     sha256: "d5a24a271e5d9a3f7f7a053b150c460a44c25b3cf7f770857d57cc3a2e1c9965",
   },
   {
+    name: "SSimDownscaler.glsl",
+    url: "https://gist.githubusercontent.com/igv/36508af3ffc84410fe39761d6969be10/raw/38992bce7f9ff844f800820df0908692b65bb74a/SSimDownscaler.glsl",
+    sha256: "f46f4710a162d17058b9d82ed8610588b0c04d7be07cef6bf2a8c4077828f804",
+  },
+  {
     name: "ArtCNN_C4F32.glsl",
     url: "https://raw.githubusercontent.com/Artoriuz/ArtCNN/a20445ca420ed9f0c2a807e2d0c186a991115da0/GLSL/ArtCNN_C4F32.glsl",
     sha256: "f773bce6cf5fe7e5e5d599a695edd40df5cd7a20c3d08c4d164d07591d5bead3",
