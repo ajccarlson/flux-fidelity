@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import test from "node:test";
 import { buildPackage } from "../tools/build-package.mjs";
 import { validatePackage } from "../tools/check-package.mjs";
@@ -41,9 +41,9 @@ function manifestGlob(pattern) {
   return new RegExp(`^${escaped}$`);
 }
 
-test("the package boundary is an exact, sorted 76-file allowlist", () => {
+test("the package boundary is an exact, sorted 77-file allowlist", () => {
   assert.equal(PACKAGE_FILES.length, EXPECTED_PACKAGE_FILE_COUNT);
-  assert.equal(EXPECTED_PACKAGE_FILE_COUNT, 76);
+  assert.equal(EXPECTED_PACKAGE_FILE_COUNT, 77);
   assert.equal(new Set(PACKAGE_FILES).size, PACKAGE_FILES.length);
   assert.deepEqual(PACKAGE_FILES, [...PACKAGE_FILES].sort());
   assert.equal(PACKAGE_FILES.includes("fsrcnnx-development-only.js"), false);
@@ -58,6 +58,7 @@ test("the package retains every legal notice and the machine-readable release ga
     "LGPL_REBUILDING.md",
     "LICENSE",
     "MODEL_PROVENANCE.md",
+    "PRIVACY.md",
     "THIRD_PARTY_NOTICES.md",
     "release-clearance.json",
     "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl",
@@ -83,13 +84,44 @@ test("package creation never discovers an extra runtime-looking local file", () 
   const fixture = mkdtempSync(join(tmpdir(), "fsrcnnx-package-build-"));
   try {
     for (const file of PACKAGE_FILES) writeFixture(fixture, file);
+    writeFixture(fixture, "package.json", JSON.stringify({ version: "1.2.3" }));
+    writeFixture(fixture, "manifest.json", JSON.stringify({ version: "1.2.3" }));
     writeFixture(fixture, "fsrcnnx-development-only.js", "sensitive local experiment");
 
     const result = buildPackage({ rootDir: fixture, distDir: join(fixture, "output") });
 
-    assert.equal(result.fileCount, 76);
+    assert.equal(result.fileCount, 77);
+    assert.equal(basename(result.archive), "fsrcnnx-ext-1.2.3.zip");
+    assert.equal(
+      readFileSync(result.checksums, "utf8"),
+      `${result.digest}  fsrcnnx-ext-1.2.3.zip\n`,
+    );
     assert.deepEqual(walk(result.stage), PACKAGE_FILES);
     assert.equal(existsSync(join(result.stage, "fsrcnnx-development-only.js")), false);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("package creation rejects invalid or divergent release versions", () => {
+  const fixture = mkdtempSync(join(tmpdir(), "fsrcnnx-package-version-"));
+  try {
+    for (const file of PACKAGE_FILES) writeFixture(fixture, file);
+    for (const version of ["0.0.0", "01.2.3", "1.65536.0", "1.2.3.4.5"]) {
+      writeFixture(fixture, "package.json", JSON.stringify({ version }));
+      writeFixture(fixture, "manifest.json", JSON.stringify({ version }));
+      assert.throws(
+        () => buildPackage({ rootDir: fixture, distDir: join(fixture, "output") }),
+        /not a valid Chromium extension version/,
+        version,
+      );
+    }
+    writeFixture(fixture, "package.json", JSON.stringify({ version: "1.2.3" }));
+    writeFixture(fixture, "manifest.json", JSON.stringify({ version: "1.2.4" }));
+    assert.throws(
+      () => buildPackage({ rootDir: fixture, distDir: join(fixture, "output") }),
+      /Manifest version 1\.2\.4 differs from package 1\.2\.3/,
+    );
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }
