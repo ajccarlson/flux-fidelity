@@ -128,8 +128,8 @@ const COMMAND_CASES = [
   },
   {
     type: "FSRCNNX_SETENGINE", method: "setEngine", field: "engine",
-    valid: ["fsrcnnx", "artcnn", "neural"],
-    invalid: ["", "FSRCNNX", "fsrcnnx-hi", "unknown", null],
+    valid: ["fsrcnnx", "fsrcnnx-hi", "artcnn", "neural"],
+    invalid: ["", "FSRCNNX", "unknown", null],
   },
   {
     type: "FSRCNNX_SETNEURALMODEL", method: "setNeuralModel", field: "model",

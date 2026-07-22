@@ -47,7 +47,8 @@ async function loadRetirementHarness(deps) {
     let adoptionGeneration = 2, adopting = false, imageUpscalerInitGeneration = 3;
     let webGpuInitPromise = null, adoptionPromise = null;
     let primaryAllocationRetirementPromise = null;
-    let modelLoadPromise = null, fsrcnnxStageBuildPromise = null, artStageBuildPromise = null;
+    let modelLoadPromise = null, fsrcnnxStageBuildPromise = null;
+    let highStageBuildPromise = null, artStageBuildPromise = null;
     let imageUpscalerInitPromise = null, interpolatorInitPromise = null;
     const deviceRecoveryRequested = () => deps.demand;
     const boundedRuntimeDetail = (error, fallback = "cleanup failed") =>
@@ -167,13 +168,14 @@ async function loadPrimaryRetirementHarness(deps) {
     let primaryAllocationRetirementPromise = null;
     const sharedStage = { resetAllocation: () => deps.events.push("stage-reset") };
     let models = [sharedStage];
+    let highStages = [sharedStage, { resetAllocation: () => deps.events.push("high-reset") }];
     let artStages = { current: [sharedStage, { resetAllocation: () => deps.events.push("art-reset") }] };
     let chainTapTex = deps.texture("chain"), chainTapFrame = 8;
     let lumaTexture = deps.texture("luma"), lumaW = 10, lumaH = 6;
     let hiRGB = deps.texture("hi"), hiRGBW = 20, hiRGBH = 12;
     let dispRGB = deps.texture("display"), dispRGBW = 20, dispRGBH = 12;
     let ssimds = { destroy: () => deps.events.push("ssim-reset") };
-    let activeModel = sharedStage, chainedFsrcnnx = {}, chainedArt = {}, _texSource = {};
+    let activeModel = sharedStage, chainedFsrcnnx = {}, chainedHigh = {}, chainedArt = {}, _texSource = {};
     let gpuResourceReason = null;
     const resetScaleSelection = () => deps.events.push("scale-reset");
     const resetPresentedRuntime = () => deps.events.push("presentation-reset");
@@ -181,7 +183,7 @@ async function loadPrimaryRetirementHarness(deps) {
     export function retire(reason) { return retirePrimaryGpuAllocations(reason); }
     export function state() {
       return { chainTapTex, lumaTexture, hiRGB, dispRGB, activeModel, chainedFsrcnnx,
-        chainedArt, texSource: _texSource, gpuResourceReason,
+        chainedHigh, chainedArt, texSource: _texSource, gpuResourceReason,
         pending: !!primaryAllocationRetirementPromise };
     }
   `;

@@ -135,6 +135,7 @@ test("all shipped model bundles pass the shared strict validator", () => {
 test("working-set estimates describe the runtime's physical texture allocation", () => {
   const expectedBytesPerPixel = new Map([
     ["FSRCNNX_x2_16-0-4-1", 168],
+    ["FSRCNNX_x2_56-16-4-1", 392],
     ["ArtCNN_C4F32", 424],
     ["ArtCNN_C4F32_DN", 424],
     ["ArtCNN_C4F32_DS", 424],
@@ -161,10 +162,15 @@ test("ArtCNN packed-feature boundary is checked before allocation", () => {
     () => preflightModelDimensions("artcnn", bundle.manifest, 2049, 1, options),
     (error) => error.code === "MODEL_DIMENSION_LIMIT" && /conv2d texture 8196x2/.test(error.message),
   );
+  const defaultPlan = preflightModelDimensions("artcnn", bundle.manifest, 1920, 1080);
+  assert.equal(defaultPlan.workingSetBytes, 424 * 1920 * 1080);
+  assert.equal(defaultPlan.maxWorkingSetBytes, DEFAULT_MODEL_WORKING_SET_BYTES);
   assert.throws(
-    () => preflightModelDimensions("artcnn", bundle.manifest, 1920, 1080),
+    () => preflightModelDimensions("artcnn", bundle.manifest, 1920, 1080, {
+      maxWorkingSetBytes: 512 * 1024 * 1024,
+    }),
     (error) => error.code === "MODEL_WORKING_SET_LIMIT" &&
-      error.message.includes(String(DEFAULT_MODEL_WORKING_SET_BYTES)),
+      error.message.includes(String(512 * 1024 * 1024)),
   );
 });
 

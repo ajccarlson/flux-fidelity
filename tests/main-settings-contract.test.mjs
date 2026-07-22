@@ -57,6 +57,7 @@ async function loadPolicyHarness({
     const clearNeuralFallback = () => {};
     const activateNeuralFallback = () => { engine = "fsrcnnx"; };
     const ensureFsrcnnxStages = async () => {};
+    const ensureHighStages = async () => {};
     const ensureArtStages = async () => {};
     const cancelPreferenceRestore = () => deps.events.push("fence");
     const saveSitePrefs = () => deps.events.push("save");
@@ -261,6 +262,19 @@ async function loadStatusHarness(storeHealth = {
     let gpuResourcePhase = deps.runtime.resourcePhase || "idle";
     let gpuResourceReason = deps.runtime.resourceReason || null;
     let rendererFallback = null, neuralLastFailure = null, neuralFail = 0;
+    const playbackPerformance = { snapshot: () => ({
+      triggered: null,
+      lastWindow: null,
+      frameIntervalMs: null,
+      consecutiveDegradedWindows: 0,
+      consecutiveBacklogs: 0,
+    }) };
+    const primaryPresentationBoundary = {
+      pictureInPicture: false,
+      directFullscreen: false,
+      fullscreenElsewhere: false,
+      nativeRequired: false,
+    };
     let imageUpscaler = null, imageUpscalerInitPromise = null, imageLastFailure = null;
     let preferenceValidationFailure = null, preferenceApplicationFailure = null;
     const multiTargets = new Map();
@@ -344,8 +358,17 @@ test("engine and policy setters reject invalid values and normalize incompatible
     policy: "force3", chainDepth: 1,
   });
   assert.deepEqual(settings.state(), before, "an invalid engine must not mutate any state");
-  assert.equal(settings.setEngine("fsrcnnx-hi").ok, false,
-    "the removed high engine is accepted only by stored-preference migration");
+  const high = await loadPolicyHarness({ engine: "fsrcnnx", policy: "force3" });
+  assert.deepEqual(high.setEngine("fsrcnnx-hi"), {
+    ok: true, engine: "fsrcnnx-hi", activeEngine: "fsrcnnx-hi",
+    policy: "display", chainDepth: 1, pending: false,
+  });
+  assert.deepEqual(high.setPolicy("force3"), {
+    ok: false, reason: "invalid policy", policy: "display", chainDepth: 1,
+  });
+  assert.deepEqual(high.setPolicy("force8"), {
+    ok: true, policy: "force8", chainDepth: 3,
+  });
 
   const noNeuralModels = await loadPolicyHarness({ neuralModels: [] });
   const noNeuralBefore = noNeuralModels.state();
@@ -442,24 +465,24 @@ test("site persistence records requested intent and writes only selected fields"
     "an effective fallback must not replace durable requested-engine intent");
 });
 
-test("preference restore normalizes valid legacy values and rejects corrupt storage fields", async () => {
-  const legacyHigh = await loadRestoreHarness({
+test("preference restore preserves High selections, migrates legacy values, and rejects corrupt fields", async () => {
+  const high = await loadRestoreHarness({
     engine: "fsrcnnx-hi", artVariant: "ArtCNN_C4F32", policy: "force4",
   });
-  assert.equal((await legacyHigh.restoreSitePrefs()).ok, true);
-  assert.equal(legacyHigh.state().engine, "fsrcnnx");
-  assert.equal(legacyHigh.state().policy, "force4");
-  assert.equal(legacyHigh.state().chainDepth, 2);
-  assert.equal(legacyHigh.state().preferenceValidationFailure, null);
-  assert.deepEqual(legacyHigh.migrationWrites(), [{ engine: "fsrcnnx" }]);
+  assert.equal((await high.restoreSitePrefs()).ok, true);
+  assert.equal(high.state().engine, "fsrcnnx-hi");
+  assert.equal(high.state().policy, "force4");
+  assert.equal(high.state().chainDepth, 2);
+  assert.equal(high.state().preferenceValidationFailure, null);
+  assert.deepEqual(high.migrationWrites(), []);
 
-  const legacyForce8 = await loadRestoreHarness({ engine: "fsrcnnx-hi", policy: "force8" });
-  assert.equal((await legacyForce8.restoreSitePrefs()).ok, true);
-  assert.equal(legacyForce8.state().engine, "fsrcnnx");
-  assert.equal(legacyForce8.state().policy, "force4");
-  assert.equal(legacyForce8.state().chainDepth, 2);
-  assert.equal(legacyForce8.state().preferenceValidationFailure, null);
-  assert.deepEqual(legacyForce8.migrationWrites(), [{ engine: "fsrcnnx", policy: "force4" }]);
+  const highForce8 = await loadRestoreHarness({ engine: "fsrcnnx-hi", policy: "force8" });
+  assert.equal((await highForce8.restoreSitePrefs()).ok, true);
+  assert.equal(highForce8.state().engine, "fsrcnnx-hi");
+  assert.equal(highForce8.state().policy, "force8");
+  assert.equal(highForce8.state().chainDepth, 3);
+  assert.equal(highForce8.state().preferenceValidationFailure, null);
+  assert.deepEqual(highForce8.migrationWrites(), []);
 
   const legacyInterpolation = await loadRestoreHarness({ interpEngine: "rife_orig" });
   assert.equal((await legacyInterpolation.restoreSitePrefs()).ok, true);
@@ -703,6 +726,12 @@ test("status exposes configured interpolation and neural values without live run
   });
   assert.equal(status.renderer.requestedEngine, "neural");
   assert.equal(status.renderer.effectiveEngine, "neural");
+  assert.deepEqual(status.renderer.nativePresentation, {
+    pictureInPicture: false,
+    directFullscreen: false,
+    fullscreenElsewhere: false,
+    nativeRequired: false,
+  });
   assert.strictEqual(status.renderer.colorSupport, status.colorSupport);
   assert.equal(status.colorSupport.code, "color-not-checked");
   assert.deepEqual({

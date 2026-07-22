@@ -125,6 +125,26 @@ export const REFERENCE_CASES = deepFreeze([
     tolerances: { rmse: 0.006, p99: 0.015, max: 0.03 },
   },
   {
+    id: "FSRCNNX_x2_56-16-4-1",
+    label: "FSRCNNX High x2 numerical reference",
+    source: {
+      path: "shaders/FSRCNNX_x2_56-16-4-1.glsl",
+      sha256: "34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6",
+    },
+    inputs: [{ role: "source", id: "model" }],
+    output: {
+      kind: "fixture",
+      path: "validation/references/FSRCNNX_x2_56-16-4-1.rgb16le",
+      width: 74,
+      height: 46,
+      format: "rgb16le",
+      comparison: "red",
+      sha256: "491301777449cb9310e19db4687a74900785b3f91867bead371458229d0fe6c9",
+    },
+    oracle: { kind: "mpv-libplacebo-upstream", presentationClamp: true },
+    tolerances: { rmse: 0.006, p99: 0.015, max: 0.03 },
+  },
+  {
     id: "ArtCNN_C4F32",
     label: "ArtCNN C4F32 numerical reference",
     source: {

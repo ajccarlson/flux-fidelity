@@ -90,6 +90,54 @@
       }
     },
     {
+      "id": "FSRCNNX_x2_56-16-4-1",
+      "label": "FSRCNNX High x2 numerical reference",
+      "source": {
+        "path": "shaders/FSRCNNX_x2_56-16-4-1.glsl",
+        "sha256": "34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6"
+      },
+      "inputs": [
+        {
+          "role": "source",
+          "id": "model",
+          "width": 37,
+          "height": 23,
+          "channels": 1,
+          "encoding": "gray16",
+          "formula": "structured-gray-v1",
+          "portableAnymapByteLength": 1717,
+          "portableAnymapSha256": "878afcde3ce98c4e121fc0a33a4bd4cc508683d3cfc8a168bc66f2355fec9177"
+        }
+      ],
+      "output": {
+        "kind": "fixture",
+        "path": "validation/references/FSRCNNX_x2_56-16-4-1.rgb16le",
+        "width": 74,
+        "height": 46,
+        "format": "rgb16le",
+        "comparison": "red",
+        "channels": 3,
+        "byteLength": 20424,
+        "sha256": "491301777449cb9310e19db4687a74900785b3f91867bead371458229d0fe6c9",
+        "channelDiagnostics": {
+          "mismatchCount": 17,
+          "maxChannelDelta": 1
+        }
+      },
+      "oracle": {
+        "kind": "mpv-libplacebo-upstream",
+        "presentationClamp": true,
+        "capture": "window",
+        "options": [],
+        "command": "xvfb-run -a mpv --no-config --vo=gpu-next --gpu-api=opengl --gpu-context=x11 --gpu-sw=yes --hwdec=no --force-window=immediate --keep-open=yes --image-display-duration=10 --frames=1 --osc=no --osd-level=0 --border=no --keepaspect-window=no --dither=no --screenshot-format=png --screenshot-high-bit-depth=yes --geometry=74x46 \"--script=<temporary-directory>/reference-capture.lua\" \"--script-opts=reference-output=<temporary-directory>/FSRCNNX_x2_56-16-4-1.png,reference-delay=0.35\" \"--glsl-shader=<repository>/shaders/FSRCNNX_x2_56-16-4-1.glsl\" \"<input:model>\""
+      },
+      "tolerances": {
+        "rmse": 0.006,
+        "p99": 0.015,
+        "max": 0.03
+      }
+    },
+    {
       "id": "ArtCNN_C4F32",
       "label": "ArtCNN C4F32 numerical reference",
       "source": {

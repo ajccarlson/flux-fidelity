@@ -10,6 +10,13 @@ export const POLICY_OPTIONS = Object.freeze({
     ["force3", "Always ×3"],
     ["force4", "Always ×4"],
   ]),
+  "fsrcnnx-hi": Object.freeze([
+    ["display", "Source below display (recommended)"],
+    ["auto", "Auto (mpv thresholds)"],
+    ["force2", "Always ×2"],
+    ["force4", "Always ×4"],
+    ["force8", "Always ×8"],
+  ]),
   artcnn: Object.freeze([
     ["display", "Source below display (recommended)"],
     ["auto", "Auto (mpv thresholds)"],
@@ -368,6 +375,7 @@ function effectiveEngine(status) {
 function engineLabel(engine) {
   return ({
     fsrcnnx: "FSRCNNX standard",
+    "fsrcnnx-hi": "FSRCNNX high",
     artcnn: "ArtCNN",
     neural: "Neural",
   })[engine] || "Renderer";
@@ -740,13 +748,14 @@ export function createPopupController({
     setText($("drm-banner"), protectedMessage);
     setVisible($("drm-banner"), !!protectedMessage);
 
-    const engine = ["fsrcnnx", "artcnn", "neural"].includes(status.engine)
+    const engine = ["fsrcnnx", "fsrcnnx-hi", "artcnn", "neural"].includes(status.engine)
       ? status.engine
       : "fsrcnnx";
     const hasNeuralModels = Array.isArray(status.neuralModels) && status.neuralModels.length > 0;
     if (forceSync || documentRef.activeElement !== $("engine")) {
       reconcileSelectOptions(documentRef, $("engine"), [
         ["fsrcnnx", "FSRCNNX standard"],
+        ["fsrcnnx-hi", "FSRCNNX high"],
         ["artcnn", "ArtCNN"],
         { value: "neural", label: "Neural (ONNX)", disabled: !hasNeuralModels },
       ], engine);

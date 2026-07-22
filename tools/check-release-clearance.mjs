@@ -17,6 +17,21 @@ export const REQUIRED_RELEASE_GATE_IDS = Object.freeze([
   "lgpl-compliance-review",
   "onnx-runtime-third-party-review",
 ]);
+const HIGH_X2_GATE_ID = "unknown-high-x2-shader-origin";
+const HIGH_X2_ARTIFACTS = Object.freeze(new Map([
+  [
+    "shaders/FSRCNNX_x2_56-16-4-1.glsl",
+    "34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6",
+  ],
+  [
+    "model/FSRCNNX_x2_56-16-4-1.wgsl",
+    "267ba203867483a467c535fd03c36c62ff9428116111d4d258dc5c295ef8e0d7",
+  ],
+  [
+    "model/FSRCNNX_x2_56-16-4-1.passes.json",
+    "57395ac668b4cbebea69938a9089c9bea0029ce785f7cc6dad239c4be31d43e7",
+  ],
+]));
 
 function safeRelativePath(path) {
   return typeof path === "string"
@@ -187,6 +202,36 @@ export function inspectReleaseClearance({
   }
   for (const id of ids) {
     if (!requiredIds.has(id)) errors.push(`release clearance: unexpected gate ${id}`);
+  }
+
+  // The restored high x2 model is intentionally a current-boundary blocker.
+  // Keep this invariant explicit so a missing disposition, hash drift, or an
+  // accidental status flip cannot silently turn byte identity into a license
+  // claim. Once authoritative origin and permission are established, updating
+  // this guard must be part of the deliberate gate-clearance change.
+  if (requiredIds.has(HIGH_X2_GATE_ID)) {
+    const highGate = ledger.gates.find((gate) => gate?.id === HIGH_X2_GATE_ID);
+    if (highGate?.status !== "blocked") {
+      errors.push(`release clearance: ${HIGH_X2_GATE_ID} must remain blocked pending authoritative origin and license evidence`);
+    }
+
+    const highArtifacts = Array.isArray(highGate?.artifacts) ? highGate.artifacts : [];
+    if (highArtifacts.length !== HIGH_X2_ARTIFACTS.size) {
+      errors.push(`release clearance: ${HIGH_X2_GATE_ID} must inventory exactly ${HIGH_X2_ARTIFACTS.size} artifacts`);
+    }
+    for (const [path, sha256] of HIGH_X2_ARTIFACTS) {
+      const artifact = highArtifacts.find((entry) => entry?.path === path);
+      if (!artifact) {
+        errors.push(`release clearance: ${HIGH_X2_GATE_ID} is missing ${path}`);
+        continue;
+      }
+      if (artifact.disposition !== "present") {
+        errors.push(`release clearance: ${HIGH_X2_GATE_ID} artifact ${path} must be explicitly present`);
+      }
+      if (artifact.sha256 !== sha256) {
+        errors.push(`release clearance: ${HIGH_X2_GATE_ID} artifact ${path} must retain SHA-256 ${sha256}`);
+      }
+    }
   }
 
   const fp16Gate = ledger.gates.find((gate) => gate?.id === "unproven-rife-fp16-conversion");

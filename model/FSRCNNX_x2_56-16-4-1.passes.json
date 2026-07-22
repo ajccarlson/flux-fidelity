@@ -1,0 +1,933 @@
+{
+  "name": "FSRCNNX_x2_56-16-4-1",
+  "whenThreshold": 1.4,
+  "passes": [
+    {
+      "index": 0,
+      "desc": "feature map 1",
+      "binds": [
+        "LUMA"
+      ],
+      "save": "FEATURE1",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 25
+    },
+    {
+      "index": 1,
+      "desc": "feature map 2",
+      "binds": [
+        "LUMA"
+      ],
+      "save": "FEATURE2",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 25
+    },
+    {
+      "index": 2,
+      "desc": "feature map 3",
+      "binds": [
+        "LUMA"
+      ],
+      "save": "FEATURE3",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 25
+    },
+    {
+      "index": 3,
+      "desc": "feature map 4",
+      "binds": [
+        "LUMA"
+      ],
+      "save": "FEATURE4",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 25
+    },
+    {
+      "index": 4,
+      "desc": "feature map 5",
+      "binds": [
+        "LUMA"
+      ],
+      "save": "FEATURE5",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 25
+    },
+    {
+      "index": 5,
+      "desc": "feature map 6",
+      "binds": [
+        "LUMA"
+      ],
+      "save": "FEATURE6",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 25
+    },
+    {
+      "index": 6,
+      "desc": "feature map 7",
+      "binds": [
+        "LUMA"
+      ],
+      "save": "FEATURE7",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 25
+    },
+    {
+      "index": 7,
+      "desc": "feature map 8",
+      "binds": [
+        "LUMA"
+      ],
+      "save": "FEATURE8",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 25
+    },
+    {
+      "index": 8,
+      "desc": "feature map 9",
+      "binds": [
+        "LUMA"
+      ],
+      "save": "FEATURE9",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 25
+    },
+    {
+      "index": 9,
+      "desc": "feature map 10",
+      "binds": [
+        "LUMA"
+      ],
+      "save": "FEATURE10",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 25
+    },
+    {
+      "index": 10,
+      "desc": "feature map 11",
+      "binds": [
+        "LUMA"
+      ],
+      "save": "FEATURE11",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 25
+    },
+    {
+      "index": 11,
+      "desc": "feature map 12",
+      "binds": [
+        "LUMA"
+      ],
+      "save": "FEATURE12",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 25
+    },
+    {
+      "index": 12,
+      "desc": "feature map 13",
+      "binds": [
+        "LUMA"
+      ],
+      "save": "FEATURE13",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 25
+    },
+    {
+      "index": 13,
+      "desc": "feature map 14",
+      "binds": [
+        "LUMA"
+      ],
+      "save": "FEATURE14",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 25
+    },
+    {
+      "index": 14,
+      "desc": "shrinking 1",
+      "binds": [
+        "FEATURE1",
+        "FEATURE2",
+        "FEATURE3",
+        "FEATURE4",
+        "FEATURE5",
+        "FEATURE6",
+        "FEATURE7",
+        "FEATURE8",
+        "FEATURE9",
+        "FEATURE10",
+        "FEATURE11",
+        "FEATURE12",
+        "FEATURE13",
+        "FEATURE14"
+      ],
+      "save": "SHRINKED1",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "none",
+      "termCount": 14
+    },
+    {
+      "index": 15,
+      "desc": "shrinking 2",
+      "binds": [
+        "FEATURE1",
+        "FEATURE2",
+        "FEATURE3",
+        "FEATURE4",
+        "FEATURE5",
+        "FEATURE6",
+        "FEATURE7",
+        "FEATURE8",
+        "FEATURE9",
+        "FEATURE10",
+        "FEATURE11",
+        "FEATURE12",
+        "FEATURE13",
+        "FEATURE14"
+      ],
+      "save": "SHRINKED2",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "none",
+      "termCount": 14
+    },
+    {
+      "index": 16,
+      "desc": "shrinking 3",
+      "binds": [
+        "FEATURE1",
+        "FEATURE2",
+        "FEATURE3",
+        "FEATURE4",
+        "FEATURE5",
+        "FEATURE6",
+        "FEATURE7",
+        "FEATURE8",
+        "FEATURE9",
+        "FEATURE10",
+        "FEATURE11",
+        "FEATURE12",
+        "FEATURE13",
+        "FEATURE14"
+      ],
+      "save": "SHRINKED3",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "none",
+      "termCount": 14
+    },
+    {
+      "index": 17,
+      "desc": "shrinking 4",
+      "binds": [
+        "FEATURE1",
+        "FEATURE2",
+        "FEATURE3",
+        "FEATURE4",
+        "FEATURE5",
+        "FEATURE6",
+        "FEATURE7",
+        "FEATURE8",
+        "FEATURE9",
+        "FEATURE10",
+        "FEATURE11",
+        "FEATURE12",
+        "FEATURE13",
+        "FEATURE14"
+      ],
+      "save": "SHRINKED4",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "none",
+      "termCount": 14
+    },
+    {
+      "index": 18,
+      "desc": "mapping 1_1",
+      "binds": [
+        "SHRINKED1",
+        "SHRINKED2",
+        "SHRINKED3",
+        "SHRINKED4"
+      ],
+      "save": "MODEL21",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 36
+    },
+    {
+      "index": 19,
+      "desc": "mapping 1_2",
+      "binds": [
+        "SHRINKED1",
+        "SHRINKED2",
+        "SHRINKED3",
+        "SHRINKED4"
+      ],
+      "save": "MODEL22",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 36
+    },
+    {
+      "index": 20,
+      "desc": "mapping 1_3",
+      "binds": [
+        "SHRINKED1",
+        "SHRINKED2",
+        "SHRINKED3",
+        "SHRINKED4"
+      ],
+      "save": "MODEL23",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 36
+    },
+    {
+      "index": 21,
+      "desc": "mapping 1_4",
+      "binds": [
+        "SHRINKED1",
+        "SHRINKED2",
+        "SHRINKED3",
+        "SHRINKED4"
+      ],
+      "save": "MODEL24",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 36
+    },
+    {
+      "index": 22,
+      "desc": "mapping 2_1",
+      "binds": [
+        "MODEL21",
+        "MODEL22",
+        "MODEL23",
+        "MODEL24"
+      ],
+      "save": "MODEL1",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 36
+    },
+    {
+      "index": 23,
+      "desc": "mapping 2_2",
+      "binds": [
+        "MODEL21",
+        "MODEL22",
+        "MODEL23",
+        "MODEL24"
+      ],
+      "save": "MODEL2",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 36
+    },
+    {
+      "index": 24,
+      "desc": "mapping 2_3",
+      "binds": [
+        "MODEL21",
+        "MODEL22",
+        "MODEL23",
+        "MODEL24"
+      ],
+      "save": "MODEL3",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 36
+    },
+    {
+      "index": 25,
+      "desc": "mapping 2_4",
+      "binds": [
+        "MODEL21",
+        "MODEL22",
+        "MODEL23",
+        "MODEL24"
+      ],
+      "save": "MODEL4",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 36
+    },
+    {
+      "index": 26,
+      "desc": "mapping 3_1",
+      "binds": [
+        "MODEL1",
+        "MODEL2",
+        "MODEL3",
+        "MODEL4"
+      ],
+      "save": "MODEL21",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 36
+    },
+    {
+      "index": 27,
+      "desc": "mapping 3_2",
+      "binds": [
+        "MODEL1",
+        "MODEL2",
+        "MODEL3",
+        "MODEL4"
+      ],
+      "save": "MODEL22",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 36
+    },
+    {
+      "index": 28,
+      "desc": "mapping 3_3",
+      "binds": [
+        "MODEL1",
+        "MODEL2",
+        "MODEL3",
+        "MODEL4"
+      ],
+      "save": "MODEL23",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 36
+    },
+    {
+      "index": 29,
+      "desc": "mapping 3_4",
+      "binds": [
+        "MODEL1",
+        "MODEL2",
+        "MODEL3",
+        "MODEL4"
+      ],
+      "save": "MODEL24",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 36
+    },
+    {
+      "index": 30,
+      "desc": "mapping 4_1",
+      "binds": [
+        "MODEL21",
+        "MODEL22",
+        "MODEL23",
+        "MODEL24"
+      ],
+      "save": "MODEL1",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 36
+    },
+    {
+      "index": 31,
+      "desc": "mapping 4_2",
+      "binds": [
+        "MODEL21",
+        "MODEL22",
+        "MODEL23",
+        "MODEL24"
+      ],
+      "save": "MODEL2",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 36
+    },
+    {
+      "index": 32,
+      "desc": "mapping 4_3",
+      "binds": [
+        "MODEL21",
+        "MODEL22",
+        "MODEL23",
+        "MODEL24"
+      ],
+      "save": "MODEL3",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 36
+    },
+    {
+      "index": 33,
+      "desc": "mapping 4_4",
+      "binds": [
+        "MODEL21",
+        "MODEL22",
+        "MODEL23",
+        "MODEL24"
+      ],
+      "save": "MODEL4",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 36
+    },
+    {
+      "index": 34,
+      "desc": "sub-band residuals 1",
+      "binds": [
+        "MODEL1",
+        "MODEL2",
+        "MODEL3",
+        "MODEL4",
+        "SHRINKED1"
+      ],
+      "save": "RES1",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 5
+    },
+    {
+      "index": 35,
+      "desc": "sub-band residuals 2",
+      "binds": [
+        "MODEL1",
+        "MODEL2",
+        "MODEL3",
+        "MODEL4",
+        "SHRINKED2"
+      ],
+      "save": "RES2",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 5
+    },
+    {
+      "index": 36,
+      "desc": "sub-band residuals 3",
+      "binds": [
+        "MODEL1",
+        "MODEL2",
+        "MODEL3",
+        "MODEL4",
+        "SHRINKED3"
+      ],
+      "save": "RES3",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 5
+    },
+    {
+      "index": 37,
+      "desc": "sub-band residuals 4",
+      "binds": [
+        "MODEL1",
+        "MODEL2",
+        "MODEL3",
+        "MODEL4",
+        "SHRINKED4"
+      ],
+      "save": "RES4",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 5
+    },
+    {
+      "index": 38,
+      "desc": "expanding 1",
+      "binds": [
+        "RES1",
+        "RES2",
+        "RES3",
+        "RES4"
+      ],
+      "save": "EXPANDED1",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 4
+    },
+    {
+      "index": 39,
+      "desc": "expanding 2",
+      "binds": [
+        "RES1",
+        "RES2",
+        "RES3",
+        "RES4"
+      ],
+      "save": "EXPANDED2",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 4
+    },
+    {
+      "index": 40,
+      "desc": "expanding 3",
+      "binds": [
+        "RES1",
+        "RES2",
+        "RES3",
+        "RES4"
+      ],
+      "save": "EXPANDED3",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 4
+    },
+    {
+      "index": 41,
+      "desc": "expanding 4",
+      "binds": [
+        "RES1",
+        "RES2",
+        "RES3",
+        "RES4"
+      ],
+      "save": "EXPANDED4",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 4
+    },
+    {
+      "index": 42,
+      "desc": "expanding 5",
+      "binds": [
+        "RES1",
+        "RES2",
+        "RES3",
+        "RES4"
+      ],
+      "save": "EXPANDED5",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 4
+    },
+    {
+      "index": 43,
+      "desc": "expanding 6",
+      "binds": [
+        "RES1",
+        "RES2",
+        "RES3",
+        "RES4"
+      ],
+      "save": "EXPANDED6",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 4
+    },
+    {
+      "index": 44,
+      "desc": "expanding 7",
+      "binds": [
+        "RES1",
+        "RES2",
+        "RES3",
+        "RES4"
+      ],
+      "save": "EXPANDED7",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 4
+    },
+    {
+      "index": 45,
+      "desc": "expanding 8",
+      "binds": [
+        "RES1",
+        "RES2",
+        "RES3",
+        "RES4"
+      ],
+      "save": "EXPANDED8",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 4
+    },
+    {
+      "index": 46,
+      "desc": "expanding 9",
+      "binds": [
+        "RES1",
+        "RES2",
+        "RES3",
+        "RES4"
+      ],
+      "save": "EXPANDED9",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 4
+    },
+    {
+      "index": 47,
+      "desc": "expanding 10",
+      "binds": [
+        "RES1",
+        "RES2",
+        "RES3",
+        "RES4"
+      ],
+      "save": "EXPANDED10",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 4
+    },
+    {
+      "index": 48,
+      "desc": "expanding 11",
+      "binds": [
+        "RES1",
+        "RES2",
+        "RES3",
+        "RES4"
+      ],
+      "save": "EXPANDED11",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 4
+    },
+    {
+      "index": 49,
+      "desc": "expanding 12",
+      "binds": [
+        "RES1",
+        "RES2",
+        "RES3",
+        "RES4"
+      ],
+      "save": "EXPANDED12",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 4
+    },
+    {
+      "index": 50,
+      "desc": "expanding 13",
+      "binds": [
+        "RES1",
+        "RES2",
+        "RES3",
+        "RES4"
+      ],
+      "save": "EXPANDED13",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 4
+    },
+    {
+      "index": 51,
+      "desc": "expanding 14",
+      "binds": [
+        "RES1",
+        "RES2",
+        "RES3",
+        "RES4"
+      ],
+      "save": "EXPANDED14",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "prelu",
+      "termCount": 4
+    },
+    {
+      "index": 52,
+      "desc": "sub-pixel convolution 1",
+      "binds": [
+        "EXPANDED1",
+        "EXPANDED2",
+        "EXPANDED3",
+        "EXPANDED4",
+        "EXPANDED5",
+        "EXPANDED6",
+        "EXPANDED7",
+        "EXPANDED8",
+        "EXPANDED9",
+        "EXPANDED10",
+        "EXPANDED11",
+        "EXPANDED12",
+        "EXPANDED13",
+        "EXPANDED14"
+      ],
+      "save": "SUBCONV1",
+      "components": 4,
+      "widthMul": 1,
+      "heightMul": 1,
+      "kind": "conv",
+      "activation": "none",
+      "termCount": 126
+    },
+    {
+      "index": 53,
+      "desc": "aggregation",
+      "binds": [
+        "SUBCONV1"
+      ],
+      "save": null,
+      "components": 1,
+      "widthMul": 2,
+      "heightMul": 2,
+      "kind": "shuffle",
+      "activation": null,
+      "termCount": 0
+    }
+  ]
+}
