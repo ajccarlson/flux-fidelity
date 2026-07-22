@@ -19,7 +19,11 @@ import { probeVideoColorSupport, SRGB_COLOR_SPACE } from "./fsrcnnx-color-suppor
 import { SsimDownscaler } from "./fsrcnnx-ssimds-runtime.js";
 import { buildSharpenShader } from "./fsrcnnx-sharpen.js";
 import { ArtCnnModel } from "./fsrcnnx-artcnn-runtime.js";
-import { VideoController, VideoSelectionMonitor } from "./fsrcnnx-video-controller.js";
+import {
+  VideoController,
+  VideoSelectionMonitor,
+  videoPresentationState,
+} from "./fsrcnnx-video-controller.js";
 import { createSettingsStore, DEFAULT_SETTING_FIELDS } from "./fsrcnnx-settings-store.js";
 import { PlaybackPerformanceGuard } from "./fsrcnnx-performance.js";
 
@@ -292,6 +296,7 @@ function resetPresentedRuntime() {
 let optHoverReveal = false;   // fade overlay out while cursor is over the player
 let optAllVideos = false;     // upscale every qualifying video, not just the main one
 let hoverHidden = false;      // current hover-reveal state for the primary overlay
+let primaryPresentationBoundary = videoPresentationState(null);
 
 // ---- per-site persistence (chrome.storage.local) -------------------------
 function siteHost() { try { return location.hostname || "_"; } catch { return "_"; } }
@@ -1137,6 +1142,11 @@ function ensureCanvas() {
   Object.assign(canvas.style, { position: "absolute", top: "0", left: "0", display: "none", pointerEvents: "none", zIndex: "10", transition: "opacity 0.18s ease" });
 }
 
+function applyOverlayReveal(targetCanvas, revealNative, chainOwnsPresentation = false) {
+  if (!targetCanvas) return;
+  targetCanvas.style.opacity = chainOwnsPresentation || (optHoverReveal && revealNative) ? "0" : "1";
+}
+
 // True if the node lives inside a shadow tree (its root node is a ShadowRoot).
 function inShadowDom(node) {
   const root = node?.getRootNode?.();
@@ -1145,6 +1155,10 @@ function inShadowDom(node) {
 
 function positionVideoCanvas(targetVideo, targetCanvas, owner, outW, outH) {
   if (!targetCanvas || !targetVideo) return false;
+  if (videoPresentationState(targetVideo, targetVideo.ownerDocument || document).nativeRequired) {
+    targetCanvas.style.display = "none";
+    return false;
+  }
   if (outW && outH && !textureSizeAllowed(outW, outH, "canvas output")) {
     targetCanvas.style.display = "none"; // expose the original video instead of a stale frame
     return false;
@@ -1215,6 +1229,10 @@ function presentationStage(stage, includeStrength = false) {
 
 function showPresentedCanvas(runtimeMode, runtimeEngine = null, diagnostics = null) {
   if (!canvas) return;
+  if (videoPresentationState(video, video?.ownerDocument || document).nativeRequired) {
+    canvas.style.display = "none";
+    return false;
+  }
   if (!videoPageVisible(video)) {
     canvas.style.display = "none";
     videoMonitor?.request?.();
@@ -3210,6 +3228,10 @@ function suspendSelectedVideo(reason) {
 
 function loop(owner, frameNow = null, frameMetadata = null) {
   if (pageSuspended || owner !== primaryController || owner?.video !== video || mode === "off" || !video) return;
+  if (primaryPresentationBoundary.nativeRequired) {
+    scheduleMainLoop();
+    return;
+  }
   // A source can switch protection or decoded color metadata without replacing
   // its element (DRM transitions and adaptive streams both do this). Re-check
   // infrequently and fail back to the native video before another overlay frame.
@@ -3259,7 +3281,7 @@ function loop(owner, frameNow = null, frameMetadata = null) {
     }
     // hover-reveal: fade overlay out while cursor is over the player. While the
     // interpolation chain is tapped, the interp overlay IS the output — hide ours.
-    if (canvas) canvas.style.opacity = chainTapOn ? "0" : ((optHoverReveal && hoverHidden) ? "0" : "1");
+    applyOverlayReveal(canvas, hoverHidden, chainTapOn);
     // multi-video: reconcile the set of secondary videos periodically (cheap,
     // every ~30 frames) since feed videos appear/disappear as you scroll.
     if (optAllVideos && frameCount % 30 === 0) syncMultiTargets();
@@ -3308,12 +3330,40 @@ function attach() {
           videoMonitor?.request?.();
           return;
         }
-        positionVideoCanvas(current.video, canvas, current, canvas?.width, canvas?.height);
+        const positioned = positionVideoCanvas(
+          current.video,
+          canvas,
+          current,
+          canvas?.width,
+          canvas?.height,
+        );
+        if (positioned && presentedPresentation?.committed) {
+          canvas.style.display = "block";
+          applyOverlayReveal(canvas, hoverHidden, chainTapOn);
+        }
         interpolator?.refreshLayout?.();
       }
     },
     onHoverChange: (hidden, current) => {
-      if (current === primaryController) hoverHidden = !!hidden && optHoverReveal;
+      if (current === primaryController) {
+        hoverHidden = !!hidden;
+        applyOverlayReveal(canvas, hoverHidden, chainTapOn);
+      }
+    },
+    onPresentationChange: (state, current) => {
+      if (current !== primaryController || current.video !== video || !canvas) return;
+      primaryPresentationBoundary = state;
+      if (state.nativeRequired) {
+        canvas.style.display = "none";
+        notifyState();
+        return;
+      }
+      const positioned = positionVideoCanvas(video, canvas, current, canvas.width, canvas.height);
+      if (positioned && presentedPresentation?.committed) {
+        canvas.style.display = "block";
+        applyOverlayReveal(canvas, hoverHidden, chainTapOn);
+      }
+      notifyState();
     },
     onSourceChange: handlePrimarySourceBoundary,
     resolveHoverRegion: hoverRegionFor,
@@ -3341,6 +3391,7 @@ function detach() {
   if (layoutController === owner) layoutController = null;
   try { owner?.destroy?.(); } catch {}
   hoverHidden = false;
+  primaryPresentationBoundary = videoPresentationState(null);
   resetPresentedRuntime();
   // A detached canvas must not remain over an SPA-replaced source.
   try { canvas?.remove?.(); } catch {}
@@ -3918,7 +3969,12 @@ export function setArtVariant(v, { persist = true } = {}) {
 export function setHoverReveal(on, { persist = true } = {}) {
   if (persist) cancelPreferenceRestore();
   optHoverReveal = !!on;
-  if (!optHoverReveal) hoverHidden = false;
+  hoverHidden = !!primaryController?.revealActive;
+  applyOverlayReveal(canvas, hoverHidden, chainTapOn);
+  for (const target of multiTargets.values()) {
+    target.hoverHidden = !!target.controller?.revealActive;
+    applyOverlayReveal(target.canvas, target.hoverHidden);
+  }
   if (persist) saveSitePrefs(["hoverReveal"]);
   return { ok: true, hoverReveal: optHoverReveal };
 }
@@ -4008,6 +4064,7 @@ class MultiTarget {
     this.scaleHeld = undefined; this.scalePending = null; this.scalePendingSince = 0;
     this.scaleHeldSrcW = 0; this.scaleHeldSrcH = 0; this.scaleLockLogged = false;
     this.hoverHidden = false; this.neuralBypassLogged = false;
+    this.presentationBoundary = videoPresentationState(null);
     this.colorProbeFrames = 0;
     this.failedReason = null;
     this.controller = null;
@@ -4037,7 +4094,7 @@ class MultiTarget {
             return;
           }
         }
-        if (!adopting) renderMultiOne(this.video);
+        if (!adopting && !this.presentationBoundary.nativeRequired) renderMultiOne(this.video);
         if (multiTargets.get(this.video) === this && mode !== "off" && optAllVideos &&
             !adopting && !pageSuspended) owner.scheduleFrame();
       },
@@ -4048,11 +4105,43 @@ class MultiTarget {
             videoMonitor?.request?.();
             return;
           }
-          positionVideoCanvas(this.video, this.canvas, owner, this.canvas.width, this.canvas.height);
+          const positioned = positionVideoCanvas(
+            this.video,
+            this.canvas,
+            owner,
+            this.canvas.width,
+            this.canvas.height,
+          );
+          if (positioned && this.canvas.width && this.canvas.height) {
+            this.canvas.style.display = "block";
+            applyOverlayReveal(this.canvas, this.hoverHidden);
+          }
         }
       },
       onHoverChange: (hidden, owner) => {
-        if (owner === this.controller) this.hoverHidden = !!hidden && optHoverReveal;
+        if (owner === this.controller) {
+          this.hoverHidden = !!hidden;
+          applyOverlayReveal(this.canvas, this.hoverHidden);
+        }
+      },
+      onPresentationChange: (state, owner) => {
+        if (owner !== this.controller || !this.canvas) return;
+        this.presentationBoundary = state;
+        if (state.nativeRequired) {
+          this.canvas.style.display = "none";
+          return;
+        }
+        const positioned = positionVideoCanvas(
+          this.video,
+          this.canvas,
+          owner,
+          this.canvas.width,
+          this.canvas.height,
+        );
+        if (positioned && this.canvas.width && this.canvas.height) {
+          this.canvas.style.display = "block";
+          applyOverlayReveal(this.canvas, this.hoverHidden);
+        }
       },
       onSourceChange: (owner) => handleSecondarySourceBoundary(this, owner),
       resolveHoverRegion: hoverRegionFor,
@@ -4357,7 +4446,7 @@ function renderMultiOne(vid) {
         renderPassthrough();
       } else if (mode === "upscale") renderUpscale();
       else renderPassthrough();
-      if (t.canvas) t.canvas.style.opacity = (optHoverReveal && t.hoverHidden) ? "0" : "1";
+      applyOverlayReveal(t.canvas, t.hoverHidden);
     });
   } catch (e) {
     t.failedReason ||= e.code || e.message || "render failure";
@@ -4820,6 +4909,7 @@ export function getStatus() {
              presentation,
              fallback: rendererFallback,
              performance: playbackPerformance.snapshot(),
+             nativePresentation: primaryPresentationBoundary,
            },
            imagesRuntime: {
              requested: optImages,

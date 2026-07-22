@@ -30,6 +30,91 @@ function boundedDelay(value, fallback, maximum) {
   return Math.min(maximum, Math.max(0, numeric));
 }
 
+function readBoundaryElement(owner, property) {
+  try { return owner?.[property] || null; } catch { return null; }
+}
+
+function rootNodeOf(node) {
+  try { return node?.getRootNode?.() || null; } catch { return null; }
+}
+
+// Node.contains() intentionally does not cross every shadow boundary. Walk the
+// composed ancestry as a fallback so a fullscreen shadow host is still
+// recognized as a container for its video.
+function composedContains(container, node) {
+  if (!container || !node) return false;
+  if (container === node) return true;
+  try { if (container.contains?.(node)) return true; } catch {}
+  // A shadow host may be the document's retargeted fullscreen element even
+  // when an intermediate test/page wrapper does not expose getRootNode().
+  const nodeRoot = rootNodeOf(node);
+  let rootHost = null;
+  try { rootHost = nodeRoot?.host || null; } catch {}
+  if (rootHost) {
+    if (container === rootHost) return true;
+    try { if (container.contains?.(rootHost)) return true; } catch {}
+  }
+  const visited = new Set();
+  let current = node;
+  while (current && !visited.has(current)) {
+    visited.add(current);
+    let parent = null;
+    try { parent = current.parentNode || current.parentElement || null; } catch {}
+    if (!parent) {
+      const root = rootNodeOf(current);
+      if (root && root !== current) {
+        try { parent = root.host || null; } catch {}
+      }
+    }
+    if (parent === container) return true;
+    current = parent;
+  }
+  return false;
+}
+
+const EMPTY_PRESENTATION_STATE = Object.freeze({
+  pictureInPicture: false,
+  directFullscreen: false,
+  fullscreenElsewhere: false,
+  nativeRequired: false,
+});
+
+// Normalize browser presentation boundaries for one video. ShadowRoot exposes
+// its own fullscreenElement while the owner document may expose only the host,
+// so both scopes must be inspected. Container fullscreen remains eligible for
+// an enhanced overlay; direct-video and unrelated fullscreen cannot host it.
+export function videoPresentationState(
+  video,
+  ownerDocument = video?.ownerDocument || globalThis.document,
+) {
+  if (!video) return EMPTY_PRESENTATION_STATE;
+  const document = ownerDocument || video.ownerDocument || null;
+  const root = rootNodeOf(video);
+  const scopes = root && root !== document ? [document, root] : [document];
+  const pictureInPictureElements = [];
+  const fullscreenElements = [];
+  for (const scope of scopes) {
+    const pictureInPicture = readBoundaryElement(scope, "pictureInPictureElement");
+    if (pictureInPicture && !pictureInPictureElements.includes(pictureInPicture)) {
+      pictureInPictureElements.push(pictureInPicture);
+    }
+    const fullscreen = readBoundaryElement(scope, "fullscreenElement");
+    if (fullscreen && !fullscreenElements.includes(fullscreen)) fullscreenElements.push(fullscreen);
+  }
+
+  const pictureInPicture = pictureInPictureElements.some((element) => element === video);
+  const directFullscreen = fullscreenElements.some((element) => element === video);
+  const fullscreenElsewhere = fullscreenElements.some((element) => (
+    element !== video && !composedContains(element, video)
+  ));
+  return Object.freeze({
+    pictureInPicture,
+    directFullscreen,
+    fullscreenElsewhere,
+    nativeRequired: pictureInPicture || directFullscreen || fullscreenElsewhere,
+  });
+}
+
 // Multiple video owners can legitimately render into the same player
 // container. Keep the temporary positioning change until the final owner lets
 // go, and only restore it if the page has not replaced our value meanwhile.
@@ -74,6 +159,7 @@ export class VideoController {
     onFrame,
     onLayout,
     onHoverChange,
+    onPresentationChange,
     onSourceChange,
     resolveHoverRegion,
     window: ownerWindow = globalThis.window,
@@ -91,6 +177,7 @@ export class VideoController {
     this.onFrame = callable(onFrame, () => {});
     this.onLayout = callable(onLayout, () => {});
     this.onHoverChange = callable(onHoverChange, () => {});
+    this.onPresentationChange = callable(onPresentationChange, () => {});
     this.onSourceChange = callable(onSourceChange, () => {});
     this.resolveHoverRegion = callable(resolveHoverRegion, (element) => element.parentElement || element);
     this.window = ownerWindow || null;
@@ -112,6 +199,8 @@ export class VideoController {
     this._hoverRegion = null;
     this._hoverEnter = null;
     this._hoverLeave = null;
+    this._pointerReveal = false;
+    this._keyboardReveal = false;
     this._positionPatch = null;
     this._positioningRequested = false;
     this._positionTarget = null;
@@ -122,8 +211,16 @@ export class VideoController {
       this._refreshHoverRegion();
       this.onLayout(this);
     };
+    this._emitPresentationState = () => {
+      if (!this.active) return;
+      try { this.onPresentationChange(videoPresentationState(this.video, this.document), this); }
+      catch {}
+    };
     this._fullscreenCallback = () => {
       if (!this.active) return;
+      // Restore the native video synchronously for direct fullscreen; geometry
+      // reconciliation remains delayed until the browser settles the top layer.
+      this._emitPresentationState();
       if (this._fullscreenTimer != null) {
         try { this.clearTimer(this._fullscreenTimer.id); } catch {}
       }
@@ -145,6 +242,20 @@ export class VideoController {
       if (!this.active) return;
       try { this.onSourceChange(this, event); } catch {}
     };
+    this._pictureInPictureCallback = () => {
+      if (!this.active) return;
+      this._emitPresentationState();
+      this._layoutCallback();
+    };
+    this._keyCallback = (event) => {
+      if (!this.active || event?.key !== "Shift") return;
+      this._setKeyboardReveal(event.type === "keydown");
+    };
+    this._keyboardResetCallback = () => this._setKeyboardReveal(false);
+  }
+
+  get revealActive() {
+    return this._pointerReveal || this._keyboardReveal;
   }
 
   start() {
@@ -153,11 +264,17 @@ export class VideoController {
     this._rebindParent();
     this.window?.addEventListener?.("resize", this._layoutCallback, { passive: true });
     this.window?.addEventListener?.("scroll", this._layoutCallback, { passive: true, capture: true });
+    this.window?.addEventListener?.("blur", this._keyboardResetCallback);
     this.document?.addEventListener?.("fullscreenchange", this._fullscreenCallback);
+    this.document?.addEventListener?.("keydown", this._keyCallback, { capture: true });
+    this.document?.addEventListener?.("keyup", this._keyCallback, { capture: true });
+    this.video.addEventListener?.("enterpictureinpicture", this._pictureInPictureCallback);
+    this.video.addEventListener?.("leavepictureinpicture", this._pictureInPictureCallback);
     for (const type of ["loadstart", "emptied", "loadedmetadata"]) {
       this.video.addEventListener?.(type, this._sourceCallback);
     }
     this._refreshHoverRegion();
+    this._emitPresentationState();
     this._layoutCallback();
     return this;
   }
@@ -275,16 +392,8 @@ export class VideoController {
     this._detachHoverRegion();
     if (!next?.addEventListener) return;
     this._hoverRegion = next;
-    this._hoverEnter = () => {
-      if (this.active) {
-        try { this.onHoverChange(true, this); } catch {}
-      }
-    };
-    this._hoverLeave = () => {
-      if (this.active) {
-        try { this.onHoverChange(false, this); } catch {}
-      }
-    };
+    this._hoverEnter = () => this._setPointerReveal(true);
+    this._hoverLeave = () => this._setPointerReveal(false);
     next.addEventListener("pointerenter", this._hoverEnter, { passive: true });
     next.addEventListener("pointermove", this._hoverEnter, { passive: true });
     next.addEventListener("pointerleave", this._hoverLeave, { passive: true });
@@ -302,7 +411,32 @@ export class VideoController {
     this._hoverRegion = null;
     this._hoverEnter = null;
     this._hoverLeave = null;
-    try { this.onHoverChange(false, this); } catch {}
+    this._setPointerReveal(false);
+  }
+
+  _emitRevealChange(previous) {
+    const active = this.revealActive;
+    if (active === previous) return;
+    try {
+      this.onHoverChange(active, this, Object.freeze({
+        pointer: this._pointerReveal,
+        keyboard: this._keyboardReveal,
+      }));
+    } catch {}
+  }
+
+  _setPointerReveal(value) {
+    if (!this.active && value) return;
+    const previous = this.revealActive;
+    this._pointerReveal = !!value;
+    this._emitRevealChange(previous);
+  }
+
+  _setKeyboardReveal(value) {
+    if (!this.active && value) return;
+    const previous = this.revealActive;
+    this._keyboardReveal = !!value;
+    this._emitRevealChange(previous);
   }
 
   destroy() {
@@ -317,7 +451,12 @@ export class VideoController {
     this._mutationObserver = null;
     this.window?.removeEventListener?.("resize", this._layoutCallback);
     this.window?.removeEventListener?.("scroll", this._layoutCallback, { capture: true });
+    this.window?.removeEventListener?.("blur", this._keyboardResetCallback);
     this.document?.removeEventListener?.("fullscreenchange", this._fullscreenCallback);
+    this.document?.removeEventListener?.("keydown", this._keyCallback, { capture: true });
+    this.document?.removeEventListener?.("keyup", this._keyCallback, { capture: true });
+    this.video.removeEventListener?.("enterpictureinpicture", this._pictureInPictureCallback);
+    this.video.removeEventListener?.("leavepictureinpicture", this._pictureInPictureCallback);
     for (const type of ["loadstart", "emptied", "loadedmetadata"]) {
       this.video.removeEventListener?.(type, this._sourceCallback);
     }
@@ -326,6 +465,7 @@ export class VideoController {
       this._fullscreenTimer = null;
     }
     this._detachHoverRegion();
+    this._setKeyboardReveal(false);
     this._releasePositionedParent();
     this._positioningRequested = false;
     this._positionTarget = null;

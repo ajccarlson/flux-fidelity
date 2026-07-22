@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { VideoController, VideoSelectionMonitor } from "../fsrcnnx-video-controller.js";
+import {
+  VideoController,
+  VideoSelectionMonitor,
+  videoPresentationState,
+} from "../fsrcnnx-video-controller.js";
 
 function eventTarget() {
   const listeners = new Map();
@@ -94,6 +98,114 @@ test("VideoController gives each video exclusive ownership of its scheduled call
   assert.deepEqual(frames, [videoB]);
   assert.equal(second._frame, null);
   second.destroy();
+});
+
+test("presentation state distinguishes native-only and overlay-eligible fullscreen", () => {
+  const document = { fullscreenElement: null, pictureInPictureElement: null };
+  const parent = { contains: (candidate) => candidate === video };
+  const video = {
+    ownerDocument: document,
+    parentElement: parent,
+    getRootNode: () => document,
+  };
+
+  assert.equal(videoPresentationState(video, document).nativeRequired, false);
+  document.pictureInPictureElement = video;
+  assert.deepEqual(videoPresentationState(video, document), {
+    pictureInPicture: true,
+    directFullscreen: false,
+    fullscreenElsewhere: false,
+    nativeRequired: true,
+  });
+  document.pictureInPictureElement = null;
+  document.fullscreenElement = video;
+  assert.equal(videoPresentationState(video, document).directFullscreen, true);
+  document.fullscreenElement = parent;
+  assert.equal(videoPresentationState(video, document).nativeRequired, false,
+    "a fullscreen player container may host the enhanced canvas");
+  document.fullscreenElement = { contains: () => false };
+  assert.equal(videoPresentationState(video, document).fullscreenElsewhere, true);
+
+  const host = {};
+  const root = { host, fullscreenElement: parent };
+  video.getRootNode = () => root;
+  document.fullscreenElement = host;
+  assert.equal(videoPresentationState(video, document).nativeRequired, false,
+    "a retargeted shadow host still contains its video");
+  root.fullscreenElement = video;
+  assert.equal(videoPresentationState(video, document).directFullscreen, true);
+});
+
+test("pointer and Shift reveal state is immediate, composable, and teardown-safe", () => {
+  const ownerWindow = eventTarget();
+  const ownerDocument = eventTarget();
+  const parent = styledParent();
+  const video = videoElement(parent);
+  const states = [];
+  const controller = new VideoController(video, {
+    window: ownerWindow,
+    document: ownerDocument,
+    ResizeObserver: null,
+    MutationObserver: null,
+    onHoverChange: (active, owner, source) => states.push({ active, owner, source }),
+  }).start();
+
+  ownerDocument.emit("keydown", { type: "keydown", key: "Shift" });
+  assert.equal(controller.revealActive, true);
+  assert.deepEqual(states.at(-1).source, { pointer: false, keyboard: true });
+  ownerDocument.emit("keydown", { type: "keydown", key: "Shift" });
+  assert.equal(states.length, 1, "key repeat does not duplicate reveal transitions");
+  parent.emit("pointerenter");
+  parent.emit("pointerleave");
+  assert.equal(controller.revealActive, true, "Shift holds reveal after the pointer leaves");
+  ownerDocument.emit("keyup", { type: "keyup", key: "Shift" });
+  assert.equal(controller.revealActive, false);
+
+  parent.emit("pointerenter");
+  assert.equal(controller.revealActive, true);
+  ownerWindow.emit("blur");
+  assert.equal(controller.revealActive, true, "window blur only clears keyboard ownership");
+  parent.emit("pointerleave");
+  assert.equal(controller.revealActive, false);
+  controller.destroy();
+  assert.equal(ownerDocument.listeners.get("keydown")?.size || 0, 0);
+  assert.equal(ownerDocument.listeners.get("keyup")?.size || 0, 0);
+  assert.equal(ownerWindow.listeners.get("blur")?.size || 0, 0);
+});
+
+test("PiP and fullscreen boundaries notify even when video frames are paused", () => {
+  const ownerWindow = eventTarget();
+  const ownerDocument = { ...eventTarget(), fullscreenElement: null, pictureInPictureElement: null };
+  const video = videoElement(styledParent());
+  video.ownerDocument = ownerDocument;
+  video.getRootNode = () => ownerDocument;
+  const states = [];
+  let layouts = 0;
+  const controller = new VideoController(video, {
+    window: ownerWindow,
+    document: ownerDocument,
+    ResizeObserver: null,
+    MutationObserver: null,
+    onLayout: () => { layouts++; },
+    onPresentationChange: (state) => states.push(state),
+  }).start();
+  const initialLayouts = layouts;
+
+  ownerDocument.pictureInPictureElement = video;
+  video.emit("enterpictureinpicture");
+  assert.equal(states.at(-1).pictureInPicture, true);
+  assert.ok(layouts > initialLayouts, "PiP reconciles layout without waiting for rVFC");
+  ownerDocument.pictureInPictureElement = null;
+  video.emit("leavepictureinpicture");
+  assert.equal(states.at(-1).nativeRequired, false);
+
+  ownerDocument.fullscreenElement = video;
+  ownerDocument.emit("fullscreenchange");
+  assert.equal(states.at(-1).directFullscreen, true,
+    "native fallback notification precedes the delayed fullscreen layout");
+  controller.destroy();
+  assert.equal(video.listeners.get("enterpictureinpicture")?.size || 0, 0);
+  assert.equal(video.listeners.get("leavepictureinpicture")?.size || 0, 0);
 });
 
 test("VideoController cleans observers, hover listeners, timers, and parent style patches", () => {

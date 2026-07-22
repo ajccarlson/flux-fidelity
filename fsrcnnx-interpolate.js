@@ -12,6 +12,7 @@
 // → buffered strict-cadence scheduler draws to our canvas → audio delayed to match.
 
 import { SRGB_COLOR_SPACE } from "./fsrcnnx-color-support.js";
+import { videoPresentationState } from "./fsrcnnx-video-controller.js";
 
 function interpolationDimensions(width, height) {
   return Number.isSafeInteger(width) && width > 0 && Number.isSafeInteger(height) && height > 0
@@ -1743,7 +1744,7 @@ export class Interpolator {
   }
 
   _overlayMountTarget() {
-    if (globalThis.document?.pictureInPictureElement === this.video) return null;
+    if (videoPresentationState(this.video, globalThis.document).nativeRequired) return null;
     const fullscreen = globalThis.document?.fullscreenElement || null;
     if (!fullscreen) return globalThis.document?.body || null;
     const sourceRoot = this.video?.getRootNode?.();
@@ -1784,11 +1785,15 @@ export class Interpolator {
       try { window.removeEventListener("scroll", this._onScroll, { capture: true }); } catch {}
       try { window.removeEventListener("resize", this._onScroll); } catch {}
     }
-    if (this._onFullscreen) {
-      try { document.removeEventListener("fullscreenchange", this._onFullscreen); } catch {}
+    if (this._onPresentationBoundary) {
+      try { document.removeEventListener("fullscreenchange", this._onPresentationBoundary); } catch {}
+      try { this.video?.removeEventListener?.("enterpictureinpicture", this._onPresentationBoundary); }
+      catch {}
+      try { this.video?.removeEventListener?.("leavepictureinpicture", this._onPresentationBoundary); }
+      catch {}
     }
     this._onScroll = null;
-    this._onFullscreen = null;
+    this._onPresentationBoundary = null;
   }
 
   _installMediaBoundaryListeners(video, generation) {
@@ -2004,13 +2009,14 @@ export class Interpolator {
           return false;
         }
         this._onScroll = () => this.position();
-        this._onFullscreen = () => {
-          if (!this._isCurrent(generation) || this._chainInverted) return;
+        this._onPresentationBoundary = () => {
+          if (!this._isCurrent(generation)) return;
           const mount = this._overlayMountTarget();
           if (!mount) {
             this._relinquishPresentation();
             return;
           }
+          if (this._chainInverted) return;
           try {
             if (!this.overlay?.isConnected || this.overlay.parentNode !== mount) mount.appendChild(this.overlay);
             this.position();
@@ -2018,7 +2024,9 @@ export class Interpolator {
         };
         window.addEventListener("scroll", this._onScroll, { passive: true, capture: true });
         window.addEventListener("resize", this._onScroll, { passive: true });
-        document.addEventListener("fullscreenchange", this._onFullscreen);
+        document.addEventListener("fullscreenchange", this._onPresentationBoundary);
+        this.video.addEventListener?.("enterpictureinpicture", this._onPresentationBoundary);
+        this.video.addEventListener?.("leavepictureinpicture", this._onPresentationBoundary);
         this._takeoverActive = true;
       }
       return true;
@@ -3101,7 +3109,8 @@ export class Interpolator {
     this.processor = null;
     this.abort = null;
     this.video = null;
-    this._onScroll = null; this._onFullscreen = null; this._onSeeking = null; this._onPlay = null;
+    this._onScroll = null; this._onPresentationBoundary = null;
+    this._onSeeking = null; this._onPlay = null;
     this.log("interpolation stopped");
     return { ok: true, stopped: true };
   }
