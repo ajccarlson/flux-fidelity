@@ -13,6 +13,12 @@
 
 import { SRGB_COLOR_SPACE } from "./fsrcnnx-color-support.js";
 
+function interpolationDimensions(width, height) {
+  return Number.isSafeInteger(width) && width > 0 && Number.isSafeInteger(height) && height > 0
+    ? Object.freeze({ width, height })
+    : null;
+}
+
 // Chromium installs native loadedmetadata/ended listeners for the lifetime of an
 // element every time captureStream() is called. Cache the first successful stream
 // per element so toggles, model restarts, and source replacements cannot accumulate
@@ -124,6 +130,8 @@ export class Interpolator {
     this.video = null;
     this.overlay = null;
     this._takeoverActive = false;
+    this._committedPresentation = null;
+    this._presentationGeneration = 0;
     this._chainPresentationSuspended = false;
     this._mediaBoundaryVideo = null;
     this._mediaBoundaryHandlers = null;
@@ -546,6 +554,11 @@ export class Interpolator {
             const dueWall = anchorWall + (item.ts / 1000 - anchorSrc);
             if (now >= dueWall) {
               q.shift();
+              const presentationCandidate = {
+                gpu: !!item.tex,
+                width: item.tex?._w ?? item.bmp?.width,
+                height: item.tex?._h ?? item.bmp?.height,
+              };
               let itemReleased = false;
               const releaseItem = () => {
                 if (itemReleased) return;
@@ -620,6 +633,7 @@ export class Interpolator {
               }
               this._recordPipelineSuccess("presentation");
               if (!this._activateTakeover(generation, takeover)) continue;
+              this._recordCommittedPresentation(presentationCandidate);
               this._lastPresentAt = now;
               this._lastPresentedTs = item.ts;
               const dwell = now - item.enq;
@@ -1673,6 +1687,17 @@ export class Interpolator {
     if (this._pipelineFailureStopQueued) return true;
     this._pipelineFailureStopQueued = true;
     const detail = error?.message || String(error || "unknown failure");
+    // Restore the native presentation synchronously. The terminal callback can
+    // immediately expose diagnostics to the popup, while the full asynchronous
+    // stop below retires the remaining capture and GPU resources.
+    try {
+      this._relinquishPresentation({ preserveAudioContext: true });
+    } catch (cleanupError) {
+      this._takeoverActive = false;
+      this._committedPresentation = null;
+      try { this.overlay?.remove?.(); } catch {}
+      this.warn("interp: immediate presentation cleanup failed:", cleanupError.message);
+    }
     this._notifyTerminalFailure(generation, stage, error);
     this.warn(`interp: ${stage} failed ${terminal ? "terminally" : `${count} consecutive times`}; restoring original video (${detail})`);
     Promise.resolve().then(() => {
@@ -1826,6 +1851,7 @@ export class Interpolator {
     }
     try { this.overlay?.remove?.(); } catch {}
     this._takeoverActive = false;
+    this._committedPresentation = null;
   }
 
   _productionEligible() {
@@ -1987,10 +2013,41 @@ export class Interpolator {
       this._removeTakeoverListeners();
       this._teardownAudioDelay({ retireCapture: true });
       this._takeoverActive = false;
+      this._committedPresentation = null;
       try { this.overlay.remove(); } catch {}
       this._handlePipelineFailure(generation, error, "display takeover", { terminal: true });
       return false;
     }
+  }
+
+  _recordCommittedPresentation(candidate) {
+    // Called only after the output sink submitted successfully and the takeover
+    // transaction committed. Keep this distinct from queued/generated frames.
+    const source = interpolationDimensions(candidate?.width, candidate?.height) ||
+      interpolationDimensions(this.video?.videoWidth, this.video?.videoHeight);
+    let output = null;
+    const sink = this._chainInverted ? "renderer" : "overlay";
+    if (this._chainInverted) {
+      try {
+        const dimensions = this.chain?.targetDims?.();
+        output = interpolationDimensions(dimensions?.w, dimensions?.h);
+      } catch {}
+    } else {
+      output = interpolationDimensions(this.overlay?.width, this.overlay?.height);
+    }
+    const generation = ++this._presentationGeneration;
+    this.stats.framesPresented = generation;
+    this._committedPresentation = Object.freeze({
+      committed: true,
+      generation,
+      gpu: candidate?.gpu === true,
+      sink,
+      source,
+      output,
+      framesIn: this.stats.framesIn || 0,
+      framesOut: this.stats.framesOut || 0,
+    });
+    return this._committedPresentation;
   }
 
   refreshLayout() {
@@ -2242,6 +2299,8 @@ export class Interpolator {
     if (!video) return { ok: false, reason: "no video" };
     this.video = video;
     this._takeoverActive = false;
+    this._committedPresentation = null;
+    this._presentationGeneration = 0;
     this._chainPresentationSuspended = false;
     this._clearAudioBlocks();
     this._productionWasEligible = true;
@@ -2805,6 +2864,7 @@ export class Interpolator {
     this._discontinuity = true; // snap latency on the first measurement
     this._videoLatencyMs = null;
     this.overlay = document.createElement("canvas");
+    this.overlay.setAttribute?.("data-fsrcnnx-overlay", "interpolation");
     Object.assign(this.overlay.style, {
       position: "fixed", pointerEvents: "none", zIndex: "2147483646", background: "#000",
     });
@@ -2880,7 +2940,13 @@ export class Interpolator {
     this._gpuResourceStopQueued = false;
     this._pipelineFailureStopQueued = false;
     const active = this._state !== "idle" || this.running || this.video || this.overlay || this.queue;
-    if (!active) return { ok: true, stopped: false };
+    if (!active) {
+      this._takeoverActive = false;
+      this._committedPresentation = null;
+      this._presentationGeneration = 0;
+      this.stats.framesPresented = 0;
+      return { ok: true, stopped: false };
+    }
     ++this._lifecycleGen; // invalidate module imports, inference continuations, and rvfc
     // An explicit stop/model change owns the newer lifecycle.  It must also cancel
     // a replacement-device loss queued behind an older automatic restart.
@@ -2901,6 +2967,9 @@ export class Interpolator {
     this._teardownAudioDelay({ retireCapture: true });
     this._clearAudioBlocks();
     this._takeoverActive = false;
+    this._committedPresentation = null;
+    this._presentationGeneration = 0;
+    this.stats.framesPresented = 0;
     try { this._gpuGrab && this._gpuGrab.destroy(); } catch {}
     this._gpuGrab = null;
     // drain queued frames (release textures / close bitmaps) BEFORE freeing the GPU
@@ -2918,7 +2987,9 @@ export class Interpolator {
     try { this._rifeMod && this._rifeMod.destroyGpuInterp && this._rifeMod.destroyGpuInterp(); } catch {}
     if (this._chainActive && this.chain && this.chain.tap) { try { this.chain.tap(false); } catch {} }
     if (this._chainInverted) {
-      try { this.chain && this.chain.setInverted && this.chain.setInverted(false); } catch {}
+      if (!this._chainPresentationSuspended) {
+        try { this.chain && this.chain.setInverted && this.chain.setInverted(false); } catch {}
+      }
       this._chainInverted = false;
       this._chainPresentationSuspended = false;
       if (this.overlay) this.overlay.style.display = "";
@@ -2948,6 +3019,7 @@ export class Interpolator {
       phase: this._state,
       framesIn: s.framesIn,
       framesOut: s.framesOut,
+      framesPresented: s.framesPresented || 0,
       fpsIn: elapsed ? +(s.framesIn / elapsed).toFixed(1) : 0,
       fpsOut: elapsed ? +(s.framesOut / elapsed).toFixed(1) : 0,
       maxGapMs: Math.round(s.maxGapMs),
@@ -2966,6 +3038,8 @@ export class Interpolator {
       capture: (this._rifeMod && this._rifeMod.graphCaptureActive) ? this._rifeMod.graphCaptureActive() : false,
       jspi: (this._rifeMod && this._rifeMod.usingJspi) ? this._rifeMod.usingJspi() : false,
       inverted: !!this._chainInverted,
+      takeoverActive: !!this._takeoverActive,
+      presentation: this._takeoverActive ? this._committedPresentation : null,
       gpuPath: !!this._gpuInterpActive,
       chain: !!this._chainActive,
       skippedTweens: s.skippedTweens || 0,

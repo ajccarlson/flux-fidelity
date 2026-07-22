@@ -133,6 +133,54 @@ test("inverted chaining requires explicit capability for the exact source", () =
   assert.equal(interpolator._chainCanInvert(source), false, "renderer/source mismatch disables inversion");
 });
 
+test("committed interpolation diagnostics report the real sink and reset with takeover lifecycle", () => {
+  const interpolator = makeInterpolator();
+  interpolator.running = true;
+  interpolator._state = "running";
+  interpolator._stopped = false;
+  interpolator.video = { videoWidth: 640, videoHeight: 360 };
+  interpolator.overlay = { width: 1280, height: 720, style: {}, remove() {} };
+  interpolator.queue = [];
+  interpolator._takeoverActive = true;
+  interpolator.stats = { framesIn: 8, framesOut: 14, started: 0 };
+
+  interpolator._recordCommittedPresentation({ gpu: true, width: 1280, height: 720 });
+  assert.deepEqual(interpolator.getStats().presentation, {
+    committed: true,
+    generation: 1,
+    gpu: true,
+    sink: "overlay",
+    source: { width: 1280, height: 720 },
+    output: { width: 1280, height: 720 },
+    framesIn: 8,
+    framesOut: 14,
+  });
+  assert.equal(interpolator.getStats().takeoverActive, true);
+  assert.equal(interpolator.getStats().framesPresented, 1);
+  assert.doesNotThrow(() => JSON.stringify(interpolator.getStats().presentation));
+
+  interpolator.chain = { targetDims: () => ({ w: 2560, h: 1440 }) };
+  interpolator._chainInverted = true;
+  interpolator._recordCommittedPresentation({ gpu: true, width: 640, height: 360 });
+  assert.deepEqual(interpolator.getStats().presentation, {
+    committed: true,
+    generation: 2,
+    gpu: true,
+    sink: "renderer",
+    source: { width: 640, height: 360 },
+    output: { width: 2560, height: 1440 },
+    framesIn: 8,
+    framesOut: 14,
+  });
+
+  interpolator._relinquishPresentation();
+  assert.equal(interpolator.getStats().takeoverActive, false);
+  assert.equal(interpolator.getStats().presentation, null);
+  interpolator.stop();
+  assert.equal(interpolator.getStats().framesPresented, 0,
+    "source handoff, suspension, and off all stop the lifecycle and reset its counter");
+});
+
 test("loss of inverted capability never hides the source behind a rejected upscale", async () => {
   let nextFrame = null;
   let released = 0;
@@ -1220,6 +1268,14 @@ test("consecutive pipeline failures stop once, while success resets the breaker"
   interpolator.running = true;
   interpolator._state = "running";
   interpolator._stopped = false;
+  let overlayRemoved = 0;
+  interpolator.overlay = { remove() { overlayRemoved++; } };
+  interpolator._takeoverActive = true;
+  interpolator._committedPresentation = { committed: true, generation: 3 };
+  let failureSnapshot = null;
+  interpolator.onTerminalFailure = () => {
+    failureSnapshot = interpolator.getStats();
+  };
   const generation = interpolator._lifecycleGen;
   let stops = 0;
   interpolator.stop = () => {
@@ -1237,6 +1293,12 @@ test("consecutive pipeline failures stop once, while success resets the breaker"
   }
   assert.equal(stops, 0);
   assert.equal(interpolator._handlePipelineFailure(generation, new Error("tainted"), "capture"), true);
+  assert.equal(overlayRemoved, 1, "terminal failure restores the native presentation synchronously");
+  assert.equal(interpolator.getStats().takeoverActive, false);
+  assert.equal(interpolator.getStats().presentation, null);
+  assert.equal(failureSnapshot.takeoverActive, false,
+    "terminal diagnostics are emitted only after stale takeover state is cleared");
+  assert.equal(failureSnapshot.presentation, null);
   assert.equal(interpolator._handlePipelineFailure(generation, new Error("duplicate"), "capture"), true);
   await Promise.resolve();
   assert.equal(stops, 1);
