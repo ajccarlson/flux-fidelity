@@ -31,7 +31,7 @@ function plain(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-async function loadBridge(importModule, { prerendering = false } = {}) {
+async function loadBridge(importModule, { prerendering = false, visibilityState = "visible" } = {}) {
   const original = await readFile(contentUrl, "utf8");
   const source = original.replace(
     "api = await import(url);",
@@ -42,6 +42,7 @@ async function loadBridge(importModule, { prerendering = false } = {}) {
   const window = new FakeEventTarget();
   const document = new FakeEventTarget();
   document.prerendering = prerendering;
+  document.visibilityState = visibilityState;
   const sentMessages = [];
   let messageListener = null;
   const logs = [];
@@ -859,4 +860,30 @@ test("prerendered documents stay suspended until browser activation", async () =
   assert.deepEqual(calls, ["suspend", "restore", "resume"]);
   assert.deepEqual(plain(bridge.sentMessages.map(({ state, generation }) => [state, generation])),
     [["hidden", 1], ["active", 2], ["active", 2]]);
+});
+
+test("ordinary visibility changes retire and restore document ownership", async () => {
+  const calls = [];
+  const bridge = await loadBridge(async () => completeApi({
+    restoreSitePrefs: async () => { calls.push("restore"); return { ok: true }; },
+    resumeDocument: async () => { calls.push("resume"); return { ok: true }; },
+    suspendDocument: async () => { calls.push("suspend"); return { ok: true }; },
+  }), { visibilityState: "hidden" });
+  await flush();
+
+  assert.deepEqual(calls, ["suspend", "restore"]);
+  bridge.window.emit("pageshow");
+  await flush();
+  assert.deepEqual(calls, ["suspend", "restore"],
+    "pageshow must not reactivate a document that is still visibility-hidden");
+
+  bridge.document.visibilityState = "visible";
+  bridge.document.emit("visibilitychange");
+  await flush();
+  assert.deepEqual(calls, ["suspend", "restore", "resume"]);
+
+  bridge.document.visibilityState = "hidden";
+  bridge.document.emit("visibilitychange");
+  await flush();
+  assert.deepEqual(calls, ["suspend", "restore", "resume", "suspend"]);
 });

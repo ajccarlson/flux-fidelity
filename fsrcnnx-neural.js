@@ -120,9 +120,15 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
   let runBusy = false;
   let deferredSessionReleases = [];
   const retirements = new Set();
+  let disposalPromise = null;
   const watchedDevices = new WeakSet();
   const lostDevices = new WeakSet();
+  const deviceInvalidations = new WeakMap();
+  const activeDeviceInvalidations = new Set();
+  const deviceInvalidationFailures = new Set();
   let deviceInvalidationTail = Promise.resolve();
+  let deviceInvalidationPromise = null;
+  let sessionReleaseFailures = [];
 
   // GPU resources (allocated on ORT's device)
   let sampler = null;
@@ -179,9 +185,17 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
   async function releaseDeferredSessions() {
     const pending = deferredSessionReleases;
     deferredSessionReleases = [];
+    const failures = [];
     for (const oldSession of pending) {
       try { await oldSession?.release?.(); }
-      catch (error) { warn("neural: deferred old session release failed:", error.message); }
+      catch (error) {
+        failures.push(error);
+        sessionReleaseFailures.push(error);
+        warn("neural: deferred old session release failed:", error.message);
+      }
+    }
+    if (failures.length) {
+      throw new AggregateError(failures, "neural deferred session release failed");
     }
   }
 
@@ -190,11 +204,83 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     watchedDevices.add(ownerDevice);
     ownerDevice.lost.then((info) => {
       lostDevices.add(ownerDevice);
-      if (device !== ownerDevice) return;
-      warn(`neural: GPU device lost: ${info?.message || info?.reason || "unknown reason"}`);
+      if (device === ownerDevice) {
+        warn(`neural: GPU device lost: ${info?.message || info?.reason || "unknown reason"}`);
+      }
+      // A replaced session can still be the lifetime guard for main's old
+      // adopted device. Route every watched loss through the identity-aware
+      // invalidator so a non-current guard is claimed and released as well.
       invalidateDevice(ownerDevice).catch((error) =>
         warn("neural: device-loss cleanup failed:", error.message));
     }).catch(() => {});
+  }
+
+  function refreshDeviceInvalidationBarrier() {
+    if (!activeDeviceInvalidations.size && !deviceInvalidationFailures.size) {
+      deviceInvalidationPromise = null;
+      return null;
+    }
+    const operations = [...activeDeviceInvalidations];
+    const latchedFailures = [...deviceInvalidationFailures];
+    const barrier = Promise.allSettled(operations).then((results) => {
+      const failures = new Set(latchedFailures);
+      for (const result of results) {
+        if (result.status === "rejected") addDeviceInvalidationFailure(failures, result.reason);
+      }
+      if (failures.size) {
+        throw new AggregateError([...failures], "neural device invalidation barrier failed");
+      }
+    });
+    // The provider watcher observes each per-device promise. This independent
+    // aggregate can reject before init()/dispose() consumes it, so attach a
+    // passive observer while preserving the rejection for those callers.
+    barrier.catch(() => {});
+    deviceInvalidationPromise = barrier;
+    return barrier;
+  }
+
+  function addDeviceInvalidationFailure(failures, error) {
+    if (error instanceof AggregateError && error.errors) {
+      for (const cause of error.errors) addDeviceInvalidationFailure(failures, cause);
+      return;
+    }
+    failures.add(error);
+  }
+
+  function exposeDeviceInvalidation(ownerDevice, cleanup, previousBarrier) {
+    const operation = Promise.allSettled([
+      previousBarrier || Promise.resolve(),
+      cleanup,
+    ]).then(([previous, current]) => {
+      const failures = new Set();
+      if (previous.status === "rejected") {
+        addDeviceInvalidationFailure(failures, previous.reason);
+      }
+      if (current.status === "rejected") {
+        addDeviceInvalidationFailure(failures, current.reason);
+      }
+      if (failures.size) {
+        throw new AggregateError([...failures], "neural device invalidation failed");
+      }
+      return current.value;
+    });
+    deviceInvalidations.set(ownerDevice, operation);
+    activeDeviceInvalidations.add(operation);
+    // Register settlement bookkeeping before building allSettled snapshots so
+    // a disposal continuation always sees the failure latch populated.
+    operation.then(
+      () => {
+        activeDeviceInvalidations.delete(operation);
+        refreshDeviceInvalidationBarrier();
+      },
+      (error) => {
+        activeDeviceInvalidations.delete(operation);
+        addDeviceInvalidationFailure(deviceInvalidationFailures, error);
+        refreshDeviceInvalidationBarrier();
+      },
+    );
+    refreshDeviceInvalidationBarrier();
+    return operation;
   }
 
   async function loadManifest() {
@@ -389,6 +475,13 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     outputName = entry.output || (next.outputNames && next.outputNames[0]) || "output";
     fp16Model = /fp16/i.test(entry.file) || entry.fp16 === true;
     sessionGeneration++;
+    // Transfer the prior session out of this initializer's local ownership before
+    // yielding. A concurrent dispose/device-loss can clear the just-published
+    // session at the microtask below; without this handoff, the identity check
+    // would throw before the prior session reached either release path.
+    if (oldSession && !deferredSessionReleases.includes(oldSession)) {
+      deferredSessionReleases.push(oldSession);
+    }
     // Re-check after synchronous publication as well. This closes the narrow
     // window between the pre-commit yield and assigning the public session.
     await Promise.resolve();
@@ -401,13 +494,19 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
       if (oldDevice === nextDevice) {
         // The new session retains the same shared device, so the old reference can
         // be released immediately without dropping its device refcount to zero.
-        try { await oldSession.release?.(); } catch (e) { warn("neural: old session release failed:", e.message); }
-      } else {
-        // main adopts device() only after init() resolves. Retain the old session
-        // until the first new-device run (whose pack is submitted after adoption),
-        // preventing a cross-device swap from orphaning main's current pipelines.
-        deferredSessionReleases.push(oldSession);
+        deferredSessionReleases = deferredSessionReleases.filter(
+          (candidate) => candidate !== oldSession,
+        );
+        try { await oldSession.release?.(); }
+        catch (error) {
+          sessionReleaseFailures.push(error);
+          warn("neural: old session release failed:", error.message);
+          throw new AggregateError([error], "neural replaced session release failed");
+        }
       }
+      // For a different device, keep the pre-yield deferred ownership until the
+      // first new-device run (whose pack is submitted after main's adoption).
+      // This prevents a cross-device swap from orphaning current main pipelines.
     }
 
     if (initializationCancelled) return null;
@@ -417,6 +516,16 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
   }
 
   function init(key) {
+    if (disposalPromise) {
+      return disposalPromise.then(() => init(key));
+    }
+    // A device invalidation owns the old ORT session until its GPU fence and
+    // release() have both completed. Allocate the init generation only after
+    // that physical cleanup finishes; otherwise invalidateDevice() would both
+    // overlap session creation and cancel the recovery request it is gating.
+    if (deviceInvalidationPromise) {
+      return deviceInvalidationPromise.then(() => init(key));
+    }
     const generation = ++initGeneration;
     const raw = initTail.catch(() => {}).then(() => initOne(key, generation));
     initTail = raw.then(() => undefined, () => undefined);
@@ -452,34 +561,55 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
 
   function invalidateDevice(lostDevice) {
     if (!lostDevice) return Promise.resolve(false);
-    const operation = deviceInvalidationTail.catch(() => {}).then(async () => {
-      if (device !== lostDevice) return false;
-      const oldSession = session;
-      const lostDeferred = deferredSessionReleases.filter(
-        (candidate) => getOrtSessionDevice(candidate) === lostDevice,
-      );
+    const existing = deviceInvalidations.get(lostDevice);
+    if (existing) return existing;
+    const previousBarrier = deviceInvalidationPromise;
+    const affectsCurrent = device === lostDevice;
+    const oldSession = affectsCurrent ? session : null;
+    const lostDeferred = deferredSessionReleases.filter(
+      (candidate) => getOrtSessionDevice(candidate) === lostDevice,
+    );
+    if (lostDeferred.length) {
       deferredSessionReleases = deferredSessionReleases.filter(
         (candidate) => getOrtSessionDevice(candidate) !== lostDevice,
       );
+    }
 
-      // Publish the invalid state before awaiting active inference so init() can
-      // never return the dead session as a reusable ready engine.
+    // Claim and unpublish logical ownership in this stack. Recovery and run()
+    // must not observe a lost current session during a prior invalidation's
+    // queued physical release. A loss of an old cross-device guard leaves the
+    // healthy current session published while still claiming that guard once.
+    let cleanup = Promise.resolve();
+    if (affectsCurrent) {
       ++initGeneration;
       ++lifecycleGeneration;
       ++sessionGeneration;
       session = null;
       device = null;
       runBusy = false;
-      const cleanup = destroyGpuResources(lostDevice);
-      await cleanup;
-      for (const candidate of lostDeferred) {
-        try { await candidate?.release?.(); } catch {}
+      cleanup = destroyGpuResources(lostDevice);
+    }
+    const claimedSessions = new Set([...lostDeferred, oldSession].filter(Boolean));
+    const claimed = affectsCurrent || claimedSessions.size > 0;
+    const operation = deviceInvalidationTail.catch(() => {}).then(async () => {
+      if (!claimed) return false;
+      const failures = [];
+      try { await cleanup; } catch (error) { failures.push(error); }
+      for (const candidate of claimedSessions) {
+        try { await candidate?.release?.(); }
+        catch (error) {
+          failures.push(error);
+          warn("neural: device-loss session release failed:", error.message);
+        }
       }
-      try { await oldSession?.release?.(); } catch {}
+      if (failures.length) throw new AggregateError(failures, "neural device-loss cleanup failed");
       return true;
     });
     deviceInvalidationTail = operation.then(() => undefined, () => undefined);
-    return operation;
+    // A GPUDevice cannot recover after `lost` settles. Retain its exact cleanup
+    // promise in a WeakMap so every observer (provider watcher, renderer, and
+    // disposal path) sees the claiming operation's result, including failures.
+    return exposeDeviceInvalidation(lostDevice, operation, previousBarrier);
   }
 
   // src: external texture (default) or { tex } for the texture_2d twin.
@@ -623,7 +753,101 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     // idle model VRAM in exchange for never orphaning the device).
     ++lifecycleGeneration;
     ++initGeneration;
-    destroyGpuResources();
+    return destroyGpuResources();
+  }
+
+  async function quiesce() {
+    // Cancel unpublished initialization and prevent active inference from
+    // reaching a newer continuation, while retaining the committed session as
+    // a device-lifetime guard until the main renderer releases its resources.
+    ++lifecycleGeneration;
+    ++initGeneration;
+    const pendingInit = initTail;
+    const cleanup = destroyGpuResources();
+    try { await pendingInit; } catch {}
+    await whenRunsIdle();
+    try { await cleanup; } catch {}
+    while (retirements.size) {
+      try { await Promise.allSettled([...retirements]); } catch {}
+    }
+  }
+
+  function dispose() {
+    if (disposalPromise) return disposalPromise;
+
+    // Publish the empty state synchronously. This makes ready()/device() truthful
+    // while an active run, queue fence, or stale session creation is draining.
+    ++lifecycleGeneration;
+    ++initGeneration;
+    ++sessionGeneration;
+    const oldSession = session;
+    const oldDevice = device;
+    const oldDeferredSessions = deferredSessionReleases;
+    const priorSessionReleaseFailures = sessionReleaseFailures;
+    const pendingInit = initTail;
+    const pendingDeviceInvalidation = deviceInvalidationPromise;
+    session = null;
+    device = null;
+    active = null;
+    inputName = "input";
+    outputName = "output";
+    fp16Model = false;
+    runBusy = false;
+    latestInitPromise = null;
+    deferredSessionReleases = [];
+    sessionReleaseFailures = [];
+    const cleanup = destroyGpuResources(oldDevice);
+
+    const operation = (async () => {
+      const failures = new Set(priorSessionReleaseFailures);
+      // invalidateDevice() may have unpublished the same session and retained
+      // sole ownership of releasing it. Disposal is not complete until that
+      // release is complete, even when there is nothing left to capture above.
+      try { await pendingDeviceInvalidation; }
+      catch (error) { failures.add(error); }
+      // A watcher can publish another identity-specific invalidation while the
+      // captured aggregate drains. Wait until the live set is empty, then consume
+      // the settled-failure latch exactly once through this disposal report.
+      while (activeDeviceInvalidations.size) {
+        try { await refreshDeviceInvalidationBarrier(); }
+        catch (error) { failures.add(error); }
+      }
+      deviceInvalidationFailures.clear();
+      refreshDeviceInvalidationBarrier();
+      try { await pendingInit; } catch {}
+      await whenRunsIdle();
+      try { await cleanup; } catch {}
+      while (retirements.size) {
+        try { await Promise.allSettled([...retirements]); } catch {}
+      }
+      // A losing initializer may transfer its prior committed session into the
+      // replacement array while pendingInit drains. Close disposal over both
+      // snapshots and the committed session, releasing each physical guard once.
+      const sessionsToRelease = new Set([
+        ...oldDeferredSessions,
+        ...deferredSessionReleases,
+        oldSession,
+      ].filter(Boolean));
+      deferredSessionReleases = [];
+      for (const error of sessionReleaseFailures) failures.add(error);
+      sessionReleaseFailures = [];
+      for (const old of sessionsToRelease) {
+        try { await old?.release?.(); }
+        catch (error) {
+          failures.add(error);
+          warn("neural: session release failed:", error.message);
+        }
+      }
+      if (failures.size) {
+        throw new AggregateError([...failures], "neural session disposal failed");
+      }
+    })().finally(() => {
+      if (disposalPromise === operation) disposalPromise = null;
+    });
+    disposalPromise = operation;
+    // New init() calls are serialized behind physical session release.
+    initTail = operation.then(() => undefined, () => undefined);
+    return operation;
   }
 
   return {
@@ -631,6 +855,8 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     init,
     run,
     stop,
+    quiesce,
+    dispose,
     invalidateDevice,
     ready: () => !!(session && device),
     activeEntry: () => active,

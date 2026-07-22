@@ -212,8 +212,12 @@ export class GpuInterp {
     this._retirements = new Set();
     this._destroyRequested = false;
     this._destroyPromise = null;
+    this._initPromise = null;
+    this._initDevice = undefined;
+    this._initOrt = undefined;
     this._ownsDevice = false;
     this._deviceLost = false;
+    this._deviceLossObserver = null;
     this.lastCaptureError = null;
     this.canvasCtx = null;
   }
@@ -223,6 +227,14 @@ export class GpuInterp {
     this._retirements.add(tracked);
     tracked.finally(() => this._retirements.delete(tracked));
     return tracked;
+  }
+
+  _revokePooledTexture(texture) {
+    if (!texture) return;
+    if (texture._gpuInterpOwner === this) texture._gpuInterpOwner = null;
+    texture._gpuInterpDevice = null;
+    texture._gpuInterpBytes = 0;
+    texture._refs = 0;
   }
 
   _afterSubmittedWork(callback, device = this.device) {
@@ -250,7 +262,10 @@ export class GpuInterp {
     const retirement = (async () => {
       await this._whenIdle();
       try { await device?.queue?.onSubmittedWorkDone?.(); } catch {}
-      for (const resource of live) { try { resource.destroy?.(); } catch {} }
+      for (const resource of live) {
+        if (resource?._gpuInterpOwner === this) this._revokePooledTexture(resource);
+        try { resource.destroy?.(); } catch {}
+      }
     })();
     return this._trackRetirement(retirement);
   }
@@ -276,7 +291,13 @@ export class GpuInterp {
       });
     }
     this._pool = this._pool.filter((texture) => !retiring.has(texture));
-    for (const texture of live) this._allPooledTextures.delete(texture);
+    for (const texture of live) {
+      this._allPooledTextures.delete(texture);
+      // Revoke logical ownership as soon as the texture leaves the live set.
+      // A stale caller reference must not retain/recycle an object that is only
+      // waiting for its queue fence and physical destroy.
+      this._revokePooledTexture(texture);
+    }
     this._retiringPooledBytes += bytes;
     const retirement = (async () => {
       await this._whenIdle();
@@ -350,9 +371,43 @@ export class GpuInterp {
   // init(device, ort): shared-device RIFE mode (device = ORT's device, ort provided).
   // init(null, null): STANDALONE blend mode — create our own device, no ORT needed;
   // RIFE inference (interpolateToPooledTex) is unavailable but blend works fully.
-  async init(device, ort) {
-    if (this.ready) return true;
-    if (this._destroyRequested) return false;
+  _matchesInit(device, ort) {
+    if (!this.ready) return false;
+    const requiredOrt = ort?.Tensor?.fromGpuBuffer ? ort : null;
+    if (device) {
+      if (this.device !== device) return false;
+      return !requiredOrt || this.ort === requiredOrt;
+    }
+    return !requiredOrt && this._ownsDevice;
+  }
+
+  // A helper can be reached by both the standalone-blend and RIFE startup paths.
+  // Keep initialization single-flight at the instance boundary as well as at the
+  // module coordinator: two callers must never request two owned devices or build
+  // pipelines concurrently into the same mutable fields.
+  init(device, ort) {
+    if (this.ready) return Promise.resolve(this._matchesInit(device, ort));
+    if (this._destroyRequested) return Promise.resolve(false);
+    if (this._initPromise) {
+      if (this._initDevice === device && this._initOrt === ort) return this._initPromise;
+      return this._initPromise.then(() => false, () => false);
+    }
+
+    this._initDevice = device;
+    this._initOrt = ort;
+    let operation;
+    operation = this._initInternal(device, ort).finally(() => {
+      if (this._initPromise === operation) {
+        this._initPromise = null;
+        this._initDevice = undefined;
+        this._initOrt = undefined;
+      }
+    });
+    this._initPromise = operation;
+    return operation;
+  }
+
+  async _initInternal(device, ort) {
     try {
       if (!device) {
         // standalone: request our own device (blend-only, no model load)
@@ -405,17 +460,33 @@ export class GpuInterp {
       });
       const watchedDevice = device;
       if (watchedDevice?.lost?.then) {
+        // A GPUDevice.lost promise cannot be unsubscribed and a shared ORT device
+        // may outlive many helpers. Capture a detachable holder rather than this
+        // instance so normal teardown can sever the otherwise permanent root.
+        const observer = { target: this, device: watchedDevice };
+        this._deviceLossObserver = observer;
         watchedDevice.lost.then(
-          (info) => this._handleDeviceLost(watchedDevice, info),
-          (error) => this._handleDeviceLost(watchedDevice, { reason: "unknown", message: error?.message || String(error) }),
+          (info) => observer.target?._handleDeviceLost(observer.device, info),
+          (error) => observer.target?._handleDeviceLost(observer.device, {
+            reason: "unknown", message: error?.message || String(error),
+          }),
         );
       }
       this.ready = true;
+      // A device can arrive with an already-settled loss promise. Let that
+      // watcher publish the loss before reporting initialization success.
+      await Promise.resolve();
+      if (this._destroyRequested || this._deviceLost || this.device !== watchedDevice) return false;
       return true;
     } catch (e) {
       this.warn("gpu init failed:", e.message);
       this.ready = false;
-      try { await this.destroy(); } catch {}
+      // If an external destroy already owns cleanup it is waiting for this init
+      // operation to settle. Do not await that promise from inside the operation
+      // itself. Otherwise perform the same cleanup without the self-wait.
+      if (!this._destroyRequested) {
+        try { await this._beginDestroy(false); } catch {}
+      }
       return false;
     }
   }
@@ -966,12 +1037,24 @@ export class GpuInterp {
   }
 
   destroy() {
+    return this._beginDestroy(true);
+  }
+
+  _beginDestroy(waitForInit) {
     if (this._destroyPromise) return this._destroyPromise;
     this.ready = false;
     this._destroyRequested = true;
-    const ownedDevice = this._ownsDevice ? this.device : null;
-    this._ownsDevice = false;
+    if (this._deviceLossObserver) this._deviceLossObserver.target = null;
+    this._deviceLossObserver = null;
+    this.onDeviceLost = null;
+    const pendingInit = waitForInit ? this._initPromise : null;
     this._destroyPromise = (async () => {
+      // requestDevice() can still be pending when teardown begins. init() checks
+      // _destroyRequested and destroys any late device before settling; waiting
+      // here makes the public destroy promise a complete physical barrier.
+      try { await pendingInit; } catch {}
+      const ownedDevice = this._ownsDevice ? this.device : null;
+      this._ownsDevice = false;
       // Let an awaited ORT run unwind, then fence every command it and the
       // presentation path submitted before destroying referenced resources.
       await this._whenIdle();
@@ -980,7 +1063,10 @@ export class GpuInterp {
         try { await Promise.allSettled([...this._retirements]); } catch {}
       }
       try { this.canvasCtx?.unconfigure?.(); } catch {}
-      for (const texture of this._allPooledTextures) { try { texture.destroy(); } catch {} }
+      for (const texture of this._allPooledTextures) {
+        this._revokePooledTexture(texture);
+        try { texture.destroy(); } catch {}
+      }
       this._allPooledTextures.clear();
       this._pool = [];
       this._retiringPooledBytes = 0;
@@ -988,7 +1074,12 @@ export class GpuInterp {
       for (const buffer of [this.inBuf, this.packParams, this.compParams, this.blendParams]) { try { buffer?.destroy?.(); } catch {} }
       this.prevTex = null; this.curTex = null; this.inBuf = null;
       this.packParams = null; this.compParams = null; this.blendParams = null;
-      this.canvasCtx = null; this.device = null; this.ort = null; this._rifeCapable = false;
+      this.sampler = null;
+      this.blitPipe = null; this.blit2dPipe = null;
+      this.packPipe = null; this.compPipe = null; this.blendPipe = null;
+      this.presentPipe = null;
+      this.canvasCtx = null; this._presentCanvas = null;
+      this.device = null; this.ort = null; this._rifeCapable = false;
       this._w = 0; this._h = 0; this._padW = 0; this._padH = 0; this._frames = 0;
       this._activeFrameBytes = 0; this._retiringFrameBytes = 0;
       this._activeInputBytes = 0; this._retiringInputBytes = 0;
