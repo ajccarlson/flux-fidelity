@@ -5,10 +5,8 @@
   "version": "0.49.0",
   "description": "Real-time WebGPU video upscaling, filtering, and optional frame interpolation for readable HTML5 video.",
   "permissions": [
+    "activeTab",
     "storage"
-  ],
-  "host_permissions": [
-    "<all_urls>"
   ],
   "action": {
     "default_popup": "popup.html",

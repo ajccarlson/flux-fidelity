@@ -1138,9 +1138,13 @@ async function runPopupSmoke(httpBase, extensionId, expectedName, signal) {
       problems.push("popup extension identity is incorrect");
     }
     if (state?.scriptType !== "module") problems.push("popup module script did not load");
-    if (state?.webgpuText !== "unavailable") problems.push("popup unsupported-page state was not rendered");
-    if (!/open an http, https, or permitted local file page/i.test(state?.operationText || "")) {
-      problems.push("popup unsupported-page guidance is missing");
+    if (!new Set(["unavailable", "disconnected"]).has(state?.webgpuText)) {
+      problems.push("popup non-content-page state was not rendered");
+    }
+    if (!/(?:open an http, https, or permitted local file page|reload this page)/i.test(
+      state?.operationText || "",
+    )) {
+      problems.push("popup non-content-page guidance is missing");
     }
     if (!Number.isInteger(state?.controlCount) || state.controlCount < 20 ||
         state.disabledCount !== state.controlCount) {
@@ -1261,7 +1265,16 @@ async function activateExtensionTab(client, url) {
   const encodedUrl = JSON.stringify(url);
   return evaluate(client, `(async () => {
     const tabs = await chrome.tabs.query({});
-    const tab = tabs.find((candidate) => candidate.url === ${encodedUrl}) || null;
+    let tab = tabs.find((candidate) => candidate.url === ${encodedUrl}) || null;
+    if (!tab) {
+      for (const candidate of tabs) {
+        if (!Number.isInteger(candidate.id)) continue;
+        try {
+          const response = await chrome.tabs.sendMessage(candidate.id, { type: "FSRCNNX_STATUS" });
+          if (response && typeof response === "object") { tab = candidate; break; }
+        } catch {}
+      }
+    }
     if (!tab || !Number.isInteger(tab.id)) throw new Error("fixture Chrome tab was not found");
     await chrome.tabs.update(tab.id, { active: true });
     return { id: tab.id, windowId: tab.windowId, url: tab.url || null };
@@ -1731,7 +1744,8 @@ async function runRealVideoIntegration(httpBase, fixtureBase, extensionId, expec
     const initial = await waitForStatus(popupPage.client, fixtureTab.id, "content-script startup", (status) =>
       status.loading !== true && status.failed !== true && status.hasVideo === true, signal);
     const initialPage = await fixtureSnapshot(fixturePage.client);
-    requireCondition(initial.tab?.url === fixtureUrl, `popup transport selected ${initial.tab?.url || "no tab"}`);
+    requireCondition(initial.tab?.id === fixtureTab.id,
+      `popup transport selected tab ${initial.tab?.id ?? "none"}; expected ${fixtureTab.id}`);
     requireCondition(initial.status.mode === "off" && initial.status.activeMode === "off",
       "fresh fixture did not start with renderer off");
     requireCondition(initial.status.renderer?.phase === "off", "fresh fixture renderer phase is not off");

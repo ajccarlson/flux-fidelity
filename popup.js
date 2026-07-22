@@ -78,7 +78,7 @@ export class PopupTransport {
       return { ok: false, error: "tab-query-failed", reason: errorText(error) };
     }
 
-    if (!activeTab || !isSupportedPageUrl(activeTab.url || "")) {
+    if (!activeTab || (typeof activeTab.url === "string" && !isSupportedPageUrl(activeTab.url))) {
       return {
         ok: false,
         error: "unsupported-page",

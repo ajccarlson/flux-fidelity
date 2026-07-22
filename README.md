@@ -10,7 +10,7 @@ Public distribution is not yet cleared. Several bundled artifacts still have unr
 - A readable, non-DRM BT.709/sRGB SDR HTML5 video in the top-level page. HDR, wide-gamut, or unverified color metadata remains on the browser's native renderer; cross-origin restrictions, iframes, and page-specific rendering can also prevent capture.
 - Node.js 20.11 or newer only for repository validation and packaging. Runtime use has no npm dependency.
 
-The extension requests access to all sites so it can find and process eligible page videos.
+The extension runs its content script on user-allowed sites so it can find and process eligible page videos. Processing stays on the device; see [Privacy](PRIVACY.md) for the data and permission boundaries.
 
 ## Install locally
 
@@ -44,7 +44,7 @@ npm run validate:browser
 
 Set `FSRCNNX_BROWSER` to an executable path when no supported browser is found automatically. After loading the extension manually, the GPU validation suite is available at `chrome-extension://<extension-id>/validate.html`; the ID is shown on `chrome://extensions`.
 
-`npm run package:internal` creates a deterministic validation archive under `dist/` after running the technical checks. `npm run package` additionally enforces the public-release gate and currently stops on the unresolved items in [Model provenance](MODEL_PROVENANCE.md).
+`npm run package:internal` creates a deterministic, versioned validation archive and `SHA256SUMS` under `dist/` after running the technical checks. `npm run package` additionally enforces the public-release gate and currently stops on the unresolved items in [Model provenance](MODEL_PROVENANCE.md).
 
 ## Licensing
 
