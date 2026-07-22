@@ -315,6 +315,22 @@ test("PopupTransport sends to http and file tabs and rejects malformed responses
   });
 });
 
+test("PopupTransport can use an injected active tab without persistent URL access", async () => {
+  const messages = [];
+  const transport = new PopupTransport({ tabs: {
+    query: async () => [{ id: 23 }],
+    sendMessage: async (tabId, message) => {
+      messages.push([tabId, message]);
+      return { loading: false, failed: false, statusVersion: 1 };
+    },
+  } });
+
+  assert.deepEqual(await transport.send("FSRCNNX_STATUS"), {
+    loading: false, failed: false, statusVersion: 1,
+  });
+  assert.deepEqual(messages, [[23, { type: "FSRCNNX_STATUS" }]]);
+});
+
 test("PopupTransport converts a silent receiver into a bounded timeout result", async () => {
   const timers = new Map();
   let nextTimer = 0;

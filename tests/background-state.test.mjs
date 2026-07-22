@@ -337,7 +337,8 @@ test("every action Promise rejection is observed", async () => {
 test("manifest pins the browser version that supplies document identity metadata", async () => {
   const manifest = JSON.parse(await readFile(manifestUrl, "utf8"));
   assert.equal(manifest.minimum_chrome_version, "113");
-  assert.deepEqual(manifest.permissions, ["storage"], "document ownership adds no permission");
+  assert.deepEqual(manifest.permissions, ["activeTab", "storage"],
+    "badge ownership adds no broad tabs or navigation permission");
   assert.equal(manifest.content_scripts[0].all_frames ?? false, false,
     "document lifecycle authority depends on outermost-only injection");
 });

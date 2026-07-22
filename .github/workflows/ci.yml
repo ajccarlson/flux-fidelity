@@ -51,10 +51,10 @@ jobs:
       - name: Build deterministic extension archive
         run: |
           npm run package:internal
-          cp dist/fsrcnnx-ext.zip /tmp/fsrcnnx-ext-first.zip
+          cp dist/fsrcnnx-ext-*.zip /tmp/fsrcnnx-ext-first.zip
           npm run package:internal
-          cmp /tmp/fsrcnnx-ext-first.zip dist/fsrcnnx-ext.zip
-          unzip -t dist/fsrcnnx-ext.zip
+          cmp /tmp/fsrcnnx-ext-first.zip dist/fsrcnnx-ext-*.zip
+          unzip -t dist/fsrcnnx-ext-*.zip
 
   browser-integration:
     name: Validate packaged extension in Chrome
