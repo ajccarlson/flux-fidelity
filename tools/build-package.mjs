@@ -22,6 +22,14 @@ function crc32(bytes) {
 function u16(value) { const b = Buffer.alloc(2); b.writeUInt16LE(value); return b; }
 function u32(value) { const b = Buffer.alloc(4); b.writeUInt32LE(value >>> 0); return b; }
 
+function isChromiumVersion(value) {
+  if (typeof value !== "string") return false;
+  const parts = value.split(".");
+  return parts.length >= 1 && parts.length <= 4 &&
+    parts.some((part) => part !== "0") &&
+    parts.every((part) => /^(?:0|[1-9]\d*)$/.test(part) && Number(part) <= 65535);
+}
+
 function makeZip(entries) {
   const locals = [];
   const centrals = [];
@@ -50,8 +58,18 @@ function makeZip(entries) {
 }
 
 export function buildPackage({ rootDir = root, distDir = resolve(rootDir, "dist") } = {}) {
+  const pkg = JSON.parse(readFileSync(resolve(rootDir, "package.json"), "utf8"));
+  const manifest = JSON.parse(readFileSync(resolve(rootDir, "manifest.json"), "utf8"));
+  const version = pkg.version;
+  if (!isChromiumVersion(version)) {
+    throw new Error(`Package version is not a valid Chromium extension version: ${version || "missing"}`);
+  }
+  if (manifest.version !== version) {
+    throw new Error(`Manifest version ${manifest.version || "missing"} differs from package ${version}`);
+  }
   const stage = resolve(distDir, "fsrcnnx-ext");
-  const archive = resolve(distDir, "fsrcnnx-ext.zip");
+  const archive = resolve(distDir, `fsrcnnx-ext-${version}.zip`);
+  const checksums = resolve(distDir, "SHA256SUMS");
 
   rmSync(stage, { recursive: true, force: true });
   mkdirSync(stage, { recursive: true });
@@ -73,8 +91,8 @@ export function buildPackage({ rootDir = root, distDir = resolve(rootDir, "dist"
   mkdirSync(distDir, { recursive: true });
   writeFileSync(archive, zip);
   const digest = createHash("sha256").update(zip).digest("hex");
-  writeFileSync(resolve(distDir, "SHA256SUMS"), `${digest}  ${relative(distDir, archive)}\n`);
-  return { archive, digest, fileCount: entries.length, stage };
+  writeFileSync(checksums, `${digest}  ${relative(distDir, archive)}\n`);
+  return { archive, checksums, digest, fileCount: entries.length, stage, version };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
