@@ -258,6 +258,8 @@ async function loadStatusHarness(storeHealth = {
     let deviceRecoveryPromise = null, deviceRecoveryTimer = null;
     let gpuAdapterPhase = deps.gpu.adapter, gpuDevicePhase = deps.gpu.device;
     let gpuRecoveryPhase = "idle", gpuRecoveryAttempt = 0, gpuLastFailure = null, gpuRecoveredAt = null;
+    let gpuResourcePhase = deps.runtime.resourcePhase || "idle";
+    let gpuResourceReason = deps.runtime.resourceReason || null;
     let rendererFallback = null, neuralLastFailure = null, neuralFail = 0;
     let imageUpscaler = null, imageUpscalerInitPromise = null, imageLastFailure = null;
     let preferenceValidationFailure = null, preferenceApplicationFailure = null;
@@ -694,6 +696,7 @@ test("status exposes configured interpolation and neural values without live run
   assert.equal(status.interpStats, null);
   assert.equal(status.statusVersion, 1);
   assert.equal(status.gpuState, "idle");
+  assert.deepEqual(status.runtime.resources, { phase: "idle", reason: null });
   assert.deepEqual(status.persistence, {
     scope: "https://video.example", schemaVersion: 2,
     state: "ready", operation: null, errorOperation: null, pendingWrites: 0, error: null,
@@ -739,6 +742,16 @@ test("status exposes configured interpolation and neural values without live run
   })).getStatus();
   assert.equal(unavailableGpu.gpuState, "unavailable");
   assert.equal(unavailableGpu.runtime.adapter, "unavailable");
+
+  const releasingGpu = (await loadStatusHarness(undefined, {
+    adapter: "ready", device: "releasing",
+  }, {
+    resourcePhase: "releasing", resourceReason: "document-hidden",
+  })).getStatus();
+  assert.equal(releasingGpu.gpuState, "releasing");
+  assert.deepEqual(releasingGpu.runtime.resources, {
+    phase: "releasing", reason: "document-hidden",
+  });
 
   const presentation = {
     committed: true,

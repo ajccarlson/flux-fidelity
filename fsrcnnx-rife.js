@@ -30,7 +30,13 @@ let ortSessionCreateTail = Promise.resolve();
 const ortSessionDevices = new WeakMap();
 const deviceLossListeners = new Set();
 let deviceInvalidationTail = Promise.resolve();
+let deviceInvalidationPromise = null;
+const deviceInvalidations = new WeakMap();
+const activeDeviceInvalidations = new Set();
+const deviceInvalidationFailures = new Set();
 const watchedOrtDevices = new WeakSet();
+const lostOrtDevices = new WeakSet();
+let runtimeDisposalPromise = null;
 
 // Consumers which own presentation state (notably Interpolator) need to leave
 // GPU-present mode as soon as either ORT's shared device or a standalone blend
@@ -56,9 +62,9 @@ function watchOrtDevice(ownerDevice) {
   if (!ownerDevice || watchedOrtDevices.has(ownerDevice) || !ownerDevice.lost?.then) return;
   watchedOrtDevices.add(ownerDevice);
   const handleLoss = (info) => {
-    // A replaced session can release its old device intentionally.  Only the
-    // device backing the currently committed session may invalidate public state.
-    if (getOrtSessionDevice(session) !== ownerDevice) return;
+    lostOrtDevices.add(ownerDevice);
+    // The identity-aware invalidator preserves a healthy current session while
+    // still releasing this device's non-current adoption guard, if one exists.
     invalidateDevice(ownerDevice, info).catch((error) =>
       console.warn("[RIFE] ORT device-loss invalidation failed:", error.message));
   };
@@ -66,6 +72,69 @@ function watchOrtDevice(ownerDevice) {
     handleLoss,
     (error) => handleLoss({ reason: "unknown", message: error?.message || String(error) }),
   );
+}
+
+function refreshDeviceInvalidationBarrier() {
+  if (!activeDeviceInvalidations.size && !deviceInvalidationFailures.size) {
+    deviceInvalidationPromise = null;
+    return null;
+  }
+  const operations = [...activeDeviceInvalidations];
+  const latchedFailures = [...deviceInvalidationFailures];
+  const barrier = Promise.allSettled(operations).then((results) => {
+    const failures = new Set(latchedFailures);
+    for (const result of results) {
+      if (result.status === "rejected") addDeviceInvalidationFailure(failures, result.reason);
+    }
+    if (failures.size) {
+      throw new AggregateError([...failures], "RIFE device invalidation barrier failed");
+    }
+  });
+  barrier.catch(() => {});
+  deviceInvalidationPromise = barrier;
+  return barrier;
+}
+
+function addDeviceInvalidationFailure(failures, error) {
+  if (error instanceof AggregateError && error.errors) {
+    for (const cause of error.errors) addDeviceInvalidationFailure(failures, cause);
+    return;
+  }
+  failures.add(error);
+}
+
+function exposeDeviceInvalidation(ownerDevice, cleanup, previousBarrier) {
+  const operation = Promise.allSettled([
+    previousBarrier || Promise.resolve(),
+    cleanup,
+  ]).then(([previous, current]) => {
+    const failures = new Set();
+    if (previous.status === "rejected") {
+      addDeviceInvalidationFailure(failures, previous.reason);
+    }
+    if (current.status === "rejected") {
+      addDeviceInvalidationFailure(failures, current.reason);
+    }
+    if (failures.size) {
+      throw new AggregateError([...failures], "RIFE device invalidation failed");
+    }
+    return current.value;
+  });
+  deviceInvalidations.set(ownerDevice, operation);
+  activeDeviceInvalidations.add(operation);
+  operation.then(
+    () => {
+      activeDeviceInvalidations.delete(operation);
+      refreshDeviceInvalidationBarrier();
+    },
+    (error) => {
+      activeDeviceInvalidations.delete(operation);
+      addDeviceInvalidationFailure(deviceInvalidationFailures, error);
+      refreshDeviceInvalidationBarrier();
+    },
+  );
+  refreshDeviceInvalidationBarrier();
+  return operation;
 }
 
 function whenCpuRunsIdle() {
@@ -218,11 +287,16 @@ export function getOrtSessionDevice(createdSession) {
 
 function releaseSessionGuards(guards) {
   if (!guards.length) return deferredGuardReleaseTail;
-  deferredGuardReleaseTail = deferredGuardReleaseTail.catch(() => {}).then(async () => {
+  const previous = deferredGuardReleaseTail;
+  deferredGuardReleaseTail = (async () => {
+    const failures = [];
+    try { await previous; } catch (error) { failures.push(error); }
     for (const guard of guards) {
-      try { await guard.session?.release?.(); } catch {}
+      try { await guard.session?.release?.(); }
+      catch (error) { failures.push(error); }
     }
-  });
+    if (failures.length) throw new AggregateError(failures, "RIFE session-guard release failed");
+  })();
   return deferredGuardReleaseTail;
 }
 
@@ -249,6 +323,17 @@ let _skipOutDispose = false; // set when a graph-capture session owns its output
 let usingWasmEp = false;    // wasm fallback EP: capture not applicable
 export function graphCaptureActive() { return captureActive; }
 export async function initRife(pinW = 0, pinH = 0) {
+  if (runtimeDisposalPromise) {
+    await runtimeDisposalPromise;
+    return initRife(pinW, pinH);
+  }
+  // A loss invalidation retains sole ownership of the unpublished session until
+  // all active work and release() finish. Allocate the recovery generation only
+  // after that physical cleanup so a new ORT session cannot overlap it.
+  if (deviceInvalidationPromise) {
+    await deviceInvalidationPromise;
+    return initRife(pinW, pinH);
+  }
   const generation = modelGeneration;
   if (initPromise) {
     if (initPromiseGeneration === generation) return initPromise;
@@ -433,8 +518,20 @@ async function initRifeGeneration(pinW, pinH, generation, modelKey) {
 
     session = candidateSession;
     candidateSession = null;
+    const committedSession = session;
+    const committedDevice = getOrtSessionDevice(committedSession);
+    const oldDevice = getOrtSessionDevice(oldSession);
+    let oldGuard = null;
+    // Transfer the predecessor out of this initializer's local ownership before
+    // yielding to the device-loss watcher. Disposal or an already-settled loss
+    // can otherwise clear the replacement and make this continuation return
+    // before the predecessor reaches a release path.
+    if (oldSession && oldSession !== committedSession) {
+      oldGuard = { session: oldSession, device: oldDevice };
+      deferredDeviceGuards.push(oldGuard);
+    }
     sessionModelKey = modelKey;
-    watchOrtDevice(getOrtSessionDevice(session));
+    watchOrtDevice(committedDevice);
     MODEL_IO.inputName = nextInputName;
     MODEL_IO.outputName = nextOutputName;
     pinnedDims = nextPinnedDims;
@@ -447,6 +544,19 @@ async function initRifeGeneration(pinW, pinH, generation, modelKey) {
     modelAvailable = true;
     modelLoadTried = true;
 
+    // A device can already be lost when ORT returns it. Let the watcher claim
+    // the committed session, then make initRife() report the resulting state
+    // truthfully instead of returning true for an already-unpublished session.
+    await Promise.resolve();
+    if (committedDevice && lostOrtDevices.has(committedDevice)) {
+      await invalidateDevice(committedDevice, {
+        reason: "unknown",
+        message: "ORT device was already lost during RIFE initialization",
+      });
+      return false;
+    }
+    if (session !== committedSession) return false;
+
     try { oldInputTensor?.dispose?.(); } catch {}
     if (_inTensor === oldInputTensor) {
       _inTensor = null; _inBuf = null; _outImg = null;
@@ -457,23 +567,15 @@ async function initRifeGeneration(pinW, pinH, generation, modelKey) {
     // The committed replacement now owns the runtime/device reference. Only now
     // may releasing a same-device old session decrement ORT's shared refcount. A
     // different-device session remains a guard until chain adoption is confirmed.
-    const committedDevice = getOrtSessionDevice(session);
-    const oldDevice = getOrtSessionDevice(oldSession);
     const nowGuardedByCommittedSession = deferredDeviceGuards.filter(
-      (guard) => guard.device && guard.device === committedDevice,
+      (guard) => (guard.device && guard.device === committedDevice) ||
+        (guard === oldGuard && (!oldDevice || oldDevice === committedDevice)),
     );
     if (nowGuardedByCommittedSession.length) {
       deferredDeviceGuards = deferredDeviceGuards.filter(
         (guard) => !nowGuardedByCommittedSession.includes(guard),
       );
       await releaseSessionGuards(nowGuardedByCommittedSession);
-    }
-    if (oldSession && oldSession !== session) {
-      if (oldDevice && oldDevice !== committedDevice) {
-        deferredDeviceGuards.push({ session: oldSession, device: oldDevice });
-      } else {
-        try { await oldSession.release?.(); } catch {}
-      }
     }
     if (!isCurrent()) return false;
     console.log(`[RIFE] ready (in=${MODEL_IO.inputName} out=${MODEL_IO.outputName})`);
@@ -495,9 +597,12 @@ export function getLastError() { return lastError; }
 
 // --- GPU-resident interpolation path (optional; falls back to CPU interpolate) ---
 let gpuInterp = null;
-let gpuTried = false;
-let gpuInitPromise = null, gpuInitSession = null, gpuInitModelGeneration = -1;
+let gpuInterpDescriptor = null;
+let gpuFailedDescriptor = null;
+let gpuInitPromise = null;
+let gpuInitDescriptor = null;
 let gpuLifecycleGeneration = 0;
+let lastGpuDestroyPromise = Promise.resolve();
 // Expose ORT's device so the GPU path can build buffers on the same device (required
 // for Tensor.fromGpuBuffer). Available after session creation in ORT WebGPU builds.
 export function getOrtDevice() {
@@ -506,103 +611,209 @@ export function getOrtDevice() {
 }
 export function getOrt() { return ort; }
 
-// Try to initialize the GPU-resident path. Returns true if active. Safe to call
-// after initRife(). Fails → CPU interpolate() stays in use.
-export async function initGpuInterp({ log, warn } = {}) {
-  if (gpuInterp) return true;
-  const targetSession = session;
-  const targetModelGeneration = modelGeneration;
-  if (gpuInitPromise) {
-    if (gpuInitSession === targetSession && gpuInitModelGeneration === targetModelGeneration) {
-      return gpuInitPromise;
-    }
-    try { await gpuInitPromise; } catch {}
-    return initGpuInterp({ log, warn });
+function gpuDescriptorsEqual(left, right) {
+  if (!left || !right || left.kind !== right.kind) return false;
+  if (left.kind === "rife") {
+    return left.session === right.session
+      && left.modelGeneration === right.modelGeneration
+      && left.device === right.device;
   }
-  if (gpuTried || !isReady() || !targetSession) return false;
-  gpuTried = true;
-  const targetOrt = ort;
-  const targetDevice = getOrtSessionDevice(targetSession);
-  const lifecycleGeneration = gpuLifecycleGeneration;
-  const promise = (async () => {
-    let candidate = null;
-    try {
-      if (!targetDevice) { (warn||console.warn)("[RIFE] no ORT device for GPU path"); return false; }
-      const mod = await import(chrome.runtime.getURL("fsrcnnx-rife-gpu.js"));
-      if (session !== targetSession || modelGeneration !== targetModelGeneration ||
-          lifecycleGeneration !== gpuLifecycleGeneration || !isReady()) return false;
-      candidate = new mod.GpuInterp({
-        log,
-        warn,
-        onDeviceLost: (lostDevice, info) => {
-          invalidateDevice(lostDevice, info).catch((error) =>
-            (warn || console.warn)("[RIFE] device-loss invalidation failed:", error.message));
-        },
-      });
-      if (!(await candidate.init(targetDevice, targetOrt))) return false;
-      if (session !== targetSession || modelGeneration !== targetModelGeneration ||
-          lifecycleGeneration !== gpuLifecycleGeneration || !isReady()) {
-        await candidate.destroy?.();
-        candidate = null;
-        return false;
-      }
-      if (gpuInterp) {
-        await candidate.destroy?.();
-        candidate = null;
-        return true;
-      }
-      gpuInterp = candidate;
-      candidate = null;
-      gpuInterp.skipOutputDispose = _skipOutDispose; // capture session owns its output buffer
-      (log||console.log)("[RIFE] GPU-resident path active");
-      return true;
-    } catch (e) {
-      try { await candidate?.destroy?.(); } catch {}
-      (warn||console.warn)("[RIFE] GPU path init failed:", e.message);
+  return left.device === right.device;
+}
+
+function gpuDescriptorCurrent(descriptor, generation = gpuLifecycleGeneration) {
+  if (!descriptor || descriptor.lifecycleGeneration !== generation ||
+      generation !== gpuLifecycleGeneration) return false;
+  if (descriptor.kind === "blend") return true;
+  return session === descriptor.session
+    && modelGeneration === descriptor.modelGeneration
+    && getOrtSessionDevice(descriptor.session) === descriptor.device
+    && isReady();
+}
+
+function activeGpuSatisfies(descriptor) {
+  if (!gpuInterp?.ready || !descriptor) return false;
+  if (descriptor.kind === "rife") {
+    return gpuInterpDescriptor?.kind === "rife"
+      && gpuInterpDescriptor.session === descriptor.session
+      && gpuInterpDescriptor.modelGeneration === descriptor.modelGeneration
+      && gpuInterp.device === descriptor.device
+      && !!gpuInterp._rifeCapable;
+  }
+  // An ORT-capable helper also contains the blend pipeline. A device-less blend
+  // request may reuse either kind; a chained request requires exact ownership.
+  return !descriptor.device || gpuInterp.device === descriptor.device;
+}
+
+async function waitForRuntimeDisposal() {
+  while (runtimeDisposalPromise) {
+    const disposal = runtimeDisposalPromise;
+    await disposal;
+    if (runtimeDisposalPromise === disposal) break;
+  }
+}
+
+async function initializeGpuCandidate(descriptor, generation, { log, warn } = {}) {
+  let candidate = null;
+  let published = false;
+  const isCurrent = () => gpuDescriptorCurrent(descriptor, generation);
+  const warning = warn || console.warn;
+  try {
+    if (!isCurrent()) return false;
+    if (descriptor.kind === "rife" && !descriptor.device) {
+      warning("[RIFE] no ORT device for GPU path");
       return false;
     }
-  })().finally(() => {
-    if (gpuInitPromise === promise) {
-      gpuInitPromise = null;
-      gpuInitSession = null;
-      gpuInitModelGeneration = -1;
-    }
-  });
-  gpuInitSession = targetSession;
-  gpuInitModelGeneration = targetModelGeneration;
-  gpuInitPromise = promise;
-  return promise;
-}
-// Standalone blend GPU path: NO RIFE model load. If `device` is provided (e.g. the
-// upscaler's, for the upscale→interpolate chain) the pipeline builds on it so
-// textures can be shared; otherwise it requests its own device.
-export async function initGpuBlendStandalone({ log, warn, device } = {}) {
-  if (gpuInterp) return true; // already have a pipeline (RIFE or standalone)
-  try {
     const mod = await import(chrome.runtime.getURL("fsrcnnx-rife-gpu.js"));
-    const g = new mod.GpuInterp({
+    if (!isCurrent()) return false;
+    candidate = new mod.GpuInterp({
       log,
       warn,
       onDeviceLost: (lostDevice, info) => {
+        const label = descriptor.kind === "rife" ? "device-loss" : "blend device-loss";
         invalidateDevice(lostDevice, info).catch((error) =>
-          (warn || console.warn)("[RIFE] blend device-loss invalidation failed:", error.message));
+          warning(`[RIFE] ${label} invalidation failed:`, error.message));
       },
     });
-    if (await g.init(device || null, null)) { gpuInterp = g; gpuTried = true; (log||console.log)(`[RIFE] standalone blend GPU path active${device ? " (shared device)" : ""}`); return true; }
+    const candidateOrt = descriptor.kind === "rife" ? descriptor.ort : null;
+    if (!(await candidate.init(descriptor.device || null, candidateOrt))) return false;
+    if (!candidate.ready || candidate._destroyRequested || candidate._deviceLost) return false;
+    if (!isCurrent()) return false;
+
+    // Only this one module-level operation is allowed to own an unpublished
+    // candidate. A defensive identity check keeps an accidental future publisher
+    // from being overwritten without retirement.
+    if (gpuInterp) return activeGpuSatisfies(descriptor);
+    gpuInterp = candidate;
+    gpuInterpDescriptor = descriptor;
+    candidate = null;
+    published = true;
+    if (descriptor.kind === "rife") {
+      gpuInterp.skipOutputDispose = _skipOutDispose;
+      (log || console.log)("[RIFE] GPU-resident path active");
+    } else {
+      (log || console.log)(`[RIFE] standalone blend GPU path active${descriptor.device ? " (shared device)" : ""}`);
+    }
+    return true;
+  } catch (error) {
+    if (isCurrent()) {
+      const label = descriptor.kind === "rife" ? "GPU path" : "standalone blend";
+      warning(`[RIFE] ${label} init failed:`, error.message);
+    }
     return false;
-  } catch (e) { (warn||console.warn)("[RIFE] standalone blend init failed:", e.message); return false; }
+  } finally {
+    // Failed, superseded, and teardown-cancelled candidates are never published.
+    // Their destruction is part of gpuInitPromise, so the retirement barrier can
+    // safely prevent a subsequent generation from allocating alongside them.
+    if (candidate && !published) {
+      try { await candidate.destroy?.(); } catch {}
+    }
+  }
+}
+
+async function initGpuHelper(descriptor, options = {}) {
+  for (;;) {
+    await waitForRuntimeDisposal();
+
+    const retirement = lastGpuDestroyPromise;
+    try { await retirement; } catch {}
+    if (retirement !== lastGpuDestroyPromise || runtimeDisposalPromise) continue;
+    if (!gpuDescriptorCurrent(descriptor)) return false;
+    if (activeGpuSatisfies(descriptor)) return true;
+
+    // A live but incompatible helper is retired before constructing its
+    // replacement. This covers standalone↔RIFE transitions and chain-device
+    // changes without ever publishing helpers backed by two devices at once.
+    if (gpuInterp) {
+      const expectedGeneration = gpuLifecycleGeneration + 1;
+      await destroyGpuInterp();
+      if (gpuLifecycleGeneration !== expectedGeneration) return false;
+      descriptor.lifecycleGeneration = expectedGeneration;
+      continue;
+    }
+
+    const pending = gpuInitPromise;
+    if (pending) {
+      if (gpuDescriptorsEqual(gpuInitDescriptor, descriptor)) return pending;
+      try { await pending; } catch {}
+      continue;
+    }
+    if (gpuDescriptorsEqual(gpuFailedDescriptor, descriptor)) return false;
+
+    const generation = gpuLifecycleGeneration;
+    let operation;
+    operation = initializeGpuCandidate(descriptor, generation, options)
+      .then((ok) => {
+        if (!ok && gpuDescriptorCurrent(descriptor, generation)) {
+          gpuFailedDescriptor = descriptor;
+        }
+        return ok;
+      })
+      .finally(() => {
+        if (gpuInitPromise === operation) {
+          gpuInitPromise = null;
+          gpuInitDescriptor = null;
+        }
+      });
+    gpuInitDescriptor = descriptor;
+    gpuInitPromise = operation;
+    return operation;
+  }
+}
+
+// Try to initialize the GPU-resident path. Returns true if active. Safe to call
+// after initRife(). Fails → CPU interpolate() stays in use.
+export async function initGpuInterp({ log, warn } = {}) {
+  const lifecycleGeneration = gpuLifecycleGeneration;
+  await waitForRuntimeDisposal();
+  if (lifecycleGeneration !== gpuLifecycleGeneration) return false;
+  const targetSession = session;
+  const descriptor = {
+    kind: "rife",
+    lifecycleGeneration,
+    session: targetSession,
+    modelGeneration,
+    device: getOrtSessionDevice(targetSession),
+    ort,
+  };
+  if (!targetSession || !isReady()) return false;
+  return initGpuHelper(descriptor, { log, warn });
+}
+
+// Standalone blend GPU path: NO RIFE model load. If `device` is provided (e.g. the
+// upscaler's, for the upscale→interpolate chain) the pipeline builds on it so
+// textures can be shared; otherwise it requests its own device.
+export function initGpuBlendStandalone({ log, warn, device } = {}) {
+  return initGpuHelper({
+    kind: "blend",
+    lifecycleGeneration: gpuLifecycleGeneration,
+    device: device || null,
+  }, { log, warn });
 }
 export function gpuCaptureTex(tex) { return gpuInterp ? gpuInterp.captureTexToPooled(tex, MODEL_IO.padTo, MODEL_IO.channels()) : null; }
-export function gpuActive() { return !!gpuInterp; }
-export function gpuRifeCapable() { return !!(gpuInterp && gpuInterp._rifeCapable); }
+export function gpuActive() { return !!gpuInterp?.ready; }
+export function gpuRifeCapable() { return !!(gpuInterp?.ready && gpuInterp._rifeCapable); }
 
 export function destroyGpuInterp() {
   gpuLifecycleGeneration++;
   const old = gpuInterp;
   gpuInterp = null;
-  gpuTried = false;
-  try { return old?.destroy?.() || Promise.resolve(); }
-  catch { return Promise.resolve(); }
+  gpuInterpDescriptor = null;
+  gpuFailedDescriptor = null;
+  const pendingInit = gpuInitPromise;
+  let current;
+  try { current = old?.destroy?.() || Promise.resolve(); }
+  catch { current = Promise.resolve(); }
+  const previous = lastGpuDestroyPromise;
+  // A pending candidate observes the generation change and destroys itself in
+  // its finally block. Include that entire path in the physical retirement fence.
+  const combined = Promise.allSettled([
+    previous,
+    Promise.resolve(current),
+    Promise.resolve(pendingInit),
+  ]).then(() => undefined);
+  lastGpuDestroyPromise = combined;
+  return combined;
 }
 
 // Full GPU-presentation API (no readback): configure a WebGPU canvas, capture to a
@@ -696,30 +907,109 @@ let _ca = null, _cb = null, _cout = null, _ctxA = null, _ctxB = null, _octx = nu
 let _inBuf = null, _inTensor = null, _outImg = null, _bufW = 0, _bufH = 0;
 let _tsFilled = null, _tsPlaneW = 0, _tsPlaneH = 0; // timestep-plane fill cache
 
+// Release the committed model session and every GPU/CPU cache. Logical state is
+// cleared synchronously; physical release waits for stale initialization,
+// inference, GpuInterp work, and session guards. The selected model key and the
+// loaded ORT module remain reusable for a later explicit start.
+export function disposeRife() {
+  if (runtimeDisposalPromise) return runtimeDisposalPromise;
+
+  modelGeneration++;
+  const committedSession = session;
+  const initialGuards = deferredDeviceGuards;
+  const pendingInit = initPromise;
+  const pendingDeviceInvalidation = deviceInvalidationPromise;
+  deferredDeviceGuards = [];
+  session = null;
+  sessionModelKey = null;
+  modelLoadTried = false;
+  modelAvailable = false;
+  pinnedDims = null;
+  captureActive = false;
+  captureBroken = false;
+  _skipOutDispose = false;
+  usingWasmEp = false;
+  fp16Active = false;
+  MODEL_IO.inputName = null;
+  MODEL_IO.outputName = null;
+  lastError = null;
+
+  const gpuDone = destroyGpuInterp();
+  const operation = (async () => {
+    const failures = new Set();
+    // invalidateDevice() may already own the only reference responsible for
+    // releasing the lost session. Disposal is incomplete until that release is
+    // done, even though the public session state is already empty.
+    try { await pendingDeviceInvalidation; }
+    catch (error) { failures.add(error); }
+    while (activeDeviceInvalidations.size) {
+      try { await refreshDeviceInvalidationBarrier(); }
+      catch (error) { failures.add(error); }
+    }
+    deviceInvalidationFailures.clear();
+    refreshDeviceInvalidationBarrier();
+    try { await pendingInit; } catch {}
+    try { await pendingGpuTeardown; } catch {}
+    try { await gpuDone; } catch {}
+    await whenCpuRunsIdle();
+    try { await cpuInterpolateTail; } catch {}
+
+    const oldInputTensor = _inTensor;
+    _inTensor = null; _inBuf = null; _outImg = null;
+    _ca = null; _cb = null; _cout = null; _ctxA = null; _ctxB = null; _octx = null;
+    _bufW = 0; _bufH = 0; _tsFilled = null; _tsPlaneW = 0; _tsPlaneH = 0;
+    try { oldInputTensor?.dispose?.(); } catch {}
+
+    // A replacement init that was already past publication can append a device
+    // guard before observing the generation change. Drain both snapshots.
+    const guards = [...initialGuards, ...deferredDeviceGuards];
+    deferredDeviceGuards = [];
+    // releaseSessionGuards([]) returns the existing serialized tail. Await it
+    // unconditionally: confirmOrtDeviceAdopted() may already have claimed the
+    // only guard while its asynchronous session.release() is still pending.
+    try { await releaseSessionGuards(guards); }
+    catch (error) { failures.add(error); }
+    try { await committedSession?.release?.(); }
+    catch (error) { failures.add(error); }
+    if (failures.size) {
+      throw new AggregateError([...failures], "RIFE session disposal failed");
+    }
+  })().finally(() => {
+    if (runtimeDisposalPromise === operation) runtimeDisposalPromise = null;
+  });
+  runtimeDisposalPromise = operation;
+  return operation;
+}
+
 // Invalidate every RIFE object backed by a lost device before any restart can
 // mistake the still-referenced session for a healthy reusable one. Calls are
 // serialized because the main renderer and GpuInterp can observe the same shared
 // loss independently. Identity checks make the second notification a no-op.
 export function invalidateDevice(lostDevice, info = null) {
   if (!lostDevice) return Promise.resolve(false);
-  const operation = deviceInvalidationTail.catch(() => {}).then(
-    () => invalidateDeviceSerial(lostDevice, info),
-  );
-  deviceInvalidationTail = operation.then(() => undefined, () => undefined);
-  return operation;
-}
+  const existing = deviceInvalidations.get(lostDevice);
+  if (existing) return existing;
+  const previousBarrier = deviceInvalidationPromise;
 
-async function invalidateDeviceSerial(lostDevice, info) {
   const committedSession = session;
   const committedDevice = getOrtSessionDevice(committedSession);
   const activeGpu = gpuInterp;
   const affectsSession = !!committedSession && committedDevice === lostDevice;
   const affectsGpu = !!activeGpu && activeGpu.device === lostDevice;
-  if (!affectsSession && !affectsGpu) return false;
+  const affectsPendingGpu = !!gpuInitPromise && gpuInitDescriptor?.device === lostDevice;
+  let gpuDone = Promise.resolve();
+  const lostGuards = deferredDeviceGuards.filter((guard) => guard.device === lostDevice);
+  if (lostGuards.length) {
+    // Claim old cross-device guards even when the currently committed session is
+    // healthy on another device. Main can lose the device it has not yet handed
+    // off while RIFE has already published the replacement session.
+    deferredDeviceGuards = deferredDeviceGuards.filter((guard) => guard.device !== lostDevice);
+  }
 
+  // Claim and unpublish affected state synchronously. In particular, a loss
+  // listener may request recovery immediately; by the time it runs, isReady()
+  // and getOrtDevice() must no longer expose the dead session.
   if (affectsSession) {
-    // Cancel in-flight initialization/CPU continuations and make initRife build a
-    // fresh session even though the selected model key itself did not change.
     modelGeneration++;
     session = null;
     sessionModelKey = null;
@@ -734,21 +1024,48 @@ async function invalidateDeviceSerial(lostDevice, info) {
     MODEL_IO.inputName = null;
     MODEL_IO.outputName = null;
     lastError = `device-lost: ${info?.message || info?.reason || "unknown reason"}`;
+
   }
 
-  // Notify synchronously after state publication so a controller restart can
-  // never re-enter initRife and observe the dead committed session as ready.
-  emitDeviceLoss(lostDevice, info);
-
-  if (affectsGpu) {
-    const gpuDone = destroyGpuInterp();
+  if (affectsGpu || affectsPendingGpu) {
+    const teardown = destroyGpuInterp();
     pendingGpuTeardown = pendingGpuTeardown.catch(() => {}).then(async () => {
-      try { await gpuDone; } catch {}
+      try { await teardown; } catch {}
     });
-    await pendingGpuTeardown;
+    gpuDone = pendingGpuTeardown;
   }
 
-  if (!affectsSession) return true;
+  const claim = (affectsSession || affectsGpu || affectsPendingGpu || lostGuards.length)
+    ? { committedSession, affectsSession, gpuDone, lostGuards }
+    : null;
+  const operation = deviceInvalidationTail.catch(() => {}).then(
+    () => finishDeviceInvalidation(claim),
+  );
+  deviceInvalidationTail = operation.then(() => undefined, () => undefined);
+  // Device loss is terminal. Every independent observer must receive the exact
+  // claiming cleanup promise rather than a later identity no-op that could mask
+  // a session-release failure from the renderer's recovery barrier.
+  const exposed = exposeDeviceInvalidation(lostDevice, operation, previousBarrier);
+
+  // Publish the cleanup barrier before callbacks can synchronously re-enter
+  // initRife() or disposeRife(). Duplicate notifications share this exact result.
+  if (affectsSession || affectsGpu || affectsPendingGpu) emitDeviceLoss(lostDevice, info);
+  return exposed;
+}
+
+async function finishDeviceInvalidation(claim) {
+  if (!claim) return false;
+  await claim.gpuDone;
+  // Even an empty list returns the existing serialized guard-release tail.
+  // Current-session invalidation must not resolve ahead of a guard already
+  // claimed by confirmOrtDeviceAdopted().
+  const failures = [];
+  try { await releaseSessionGuards(claim.lostGuards); }
+  catch (error) { failures.push(error); }
+  if (!claim.affectsSession) {
+    if (failures.length) throw new AggregateError(failures, "RIFE device-loss cleanup failed");
+    return true;
+  }
   await whenCpuRunsIdle();
 
   const oldInputTensor = _inTensor;
@@ -757,12 +1074,9 @@ async function invalidateDeviceSerial(lostDevice, info) {
   _bufW = 0; _bufH = 0; _tsFilled = null; _tsPlaneW = 0; _tsPlaneH = 0;
   try { oldInputTensor?.dispose?.(); } catch {}
 
-  const lostGuards = deferredDeviceGuards.filter((guard) => guard.device === lostDevice);
-  if (lostGuards.length) {
-    deferredDeviceGuards = deferredDeviceGuards.filter((guard) => guard.device !== lostDevice);
-    await releaseSessionGuards(lostGuards);
-  }
-  try { await committedSession.release?.(); } catch {}
+  try { await claim.committedSession.release?.(); }
+  catch (error) { failures.push(error); }
+  if (failures.length) throw new AggregateError(failures, "RIFE device-loss cleanup failed");
   return true;
 }
 

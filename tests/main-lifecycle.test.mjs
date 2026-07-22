@@ -94,6 +94,8 @@ async function loadInterpolationLifecycle(deps) {
     let interpInvertPref = true;
     let interpStaticPassthroughPref = true;
     let pageSuspended = false;
+    let gpuRetirementPromise = null;
+    const retireGpuResourcesIfIdle = async () => ({ ok: true, released: false });
     function cancelPreferenceRestore() { preferenceRestoreGeneration++; }
     function pauseInterpolationForNeural() { interpPausedByNeural = true; }
     ${settingsContract}
@@ -189,6 +191,7 @@ async function loadAdoptionInternal(deps) {
     const warn = (...args) => deps.warnings.push(args);
     const log = (...args) => deps.logs.push(args);
     let device = deps.oldDevice || null, deviceOwnedByMain = !!deps.oldOwned;
+    let gpuResourceGeneration = 0;
     let adoptionGeneration = 1, adopting = false;
     let pageSuspended = false, primaryController = null, videoMonitor = null, video = {};
     const lostDevices = new WeakSet();
@@ -234,9 +237,13 @@ async function loadAdoptionInternal(deps) {
     }
     const saveSitePrefs = () => {};
     const scheduleInterpolatorGpuRestart = () => {};
-    const invalidateMainDeviceResources = () => {
+    const runtimeGpuResourcesRequested = () => !pageSuspended;
+    const attachDeviceErrorHandler = () => {};
+    const detachDeviceErrorHandler = () => {};
+    const invalidateMainDeviceResources = async () => {
       deps.invalidations++;
       deps.events?.push("invalidate");
+      if (deps.invalidateGate) await deps.invalidateGate.promise;
     };
     const watchDeviceLoss = (owner) => deps.watchDeviceLoss(owner, {
       replace(next) { adoptionGeneration++; device = next; },
@@ -260,6 +267,12 @@ async function loadAdoptionInternal(deps) {
       return adoptChainDeviceInternal(extDevice, isRequestCurrent, options);
     }
     export function replace(next) { adoptionGeneration++; device = next; }
+    export function beginRetirement() {
+      gpuResourceGeneration++;
+      adoptionGeneration++;
+      device = null;
+      deviceOwnedByMain = false;
+    }
     export function state() {
       return { device, mode, images: optImages, adopting, adoptionGeneration,
         display: canvas.style.display, gpu: snapshotGpu() };
@@ -598,6 +611,35 @@ test("a delayed GPU-error restart cannot resurrect interpolation after disable",
 
   assert.equal(instance.running, false);
   assert.equal(instance.startCalls, 1);
+});
+
+test("Interpolation Off explicitly retires scratch while other GPU consumers remain active", async (t) => {
+  const previousDeps = globalThis.__mainLifecycleTestDeps;
+  t.after(() => { globalThis.__mainLifecycleTestDeps = previousDeps; });
+  let instance;
+  class FakeInterpolator {
+    constructor() {
+      instance = this;
+      this.running = false;
+      this.retireCalls = 0;
+    }
+    setAutoFallback() {}
+    setLadder() {}
+    async start() { this.running = true; return { ok: true }; }
+    stop() { this.running = false; }
+    async retireGpuResources() { this.retireCalls++; }
+    getStats() { return { running: this.running }; }
+  }
+  const lifecycle = await loadInterpolationLifecycle({
+    loadInterpolatorModule: async () => ({ Interpolator: FakeInterpolator }),
+  });
+
+  assert.equal((await lifecycle.setInterpolate(true)).ok, true);
+  assert.equal(instance.running, true);
+  assert.deepEqual(await lifecycle.setInterpolate(false), { ok: true, interpolate: false });
+  assert.equal(instance.running, false);
+  assert.equal(instance.retireCalls, 1,
+    "disabled interpolation must release source-sized scratch independently of the shared device");
 });
 
 test("a lifecycle-superseded interpolation handoff preserves requested intent", async (t) => {
@@ -1040,6 +1082,43 @@ test("device adoption pauses every producer before fencing and retiring old reso
   assert.equal(adoption.state().gpu.lastFailure, null);
   assert.deepEqual(deps.gpuReadyCalls, [{ recovered: false }]);
   assert.equal(deps.gpuFailures.length, 0);
+});
+
+test("hard retirement during adoption invalidation prevents late provider publication", async (t) => {
+  const previousDeps = globalThis.__mainLifecycleTestDeps;
+  t.after(() => { globalThis.__mainLifecycleTestDeps = previousDeps; });
+  const invalidateGate = deferred();
+  const events = [];
+  const oldDevice = {
+    queue: { onSubmittedWorkDone: async () => events.push("fence") },
+  };
+  const deps = {
+    oldDevice,
+    invalidateGate,
+    warnings: [],
+    logs: [],
+    invalidations: 0,
+    deactivations: 0,
+    events,
+    pauseDeviceProducers() { events.push("pause"); },
+    resumeDeviceProducers() { events.push("resume"); },
+    buildCore() { events.push("build"); },
+    watchDeviceLoss() {},
+  };
+  const adoption = await loadAdoptionInternal(deps);
+  const external = { addEventListener() {}, removeEventListener() {} };
+
+  const pending = adoption.adopt(external, { preserveModeOnFailure: true });
+  await waitFor(() => events.includes("invalidate"),
+    "adoption did not reach old-resource invalidation");
+  adoption.beginRetirement();
+  invalidateGate.resolve();
+
+  assert.equal(await pending, false);
+  assert.equal(adoption.state().device, null);
+  assert.equal(events.includes("build"), false);
+  assert.equal(events.includes("resume"), false);
+  assert.equal(deps.gpuReadyCalls.length, 0);
 });
 
 test("producer pause cancels primary, secondary, and unpublished image work without early destruction", async (t) => {

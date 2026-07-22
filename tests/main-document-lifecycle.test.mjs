@@ -15,7 +15,7 @@ function section(source, startMarker, endMarker) {
 
 async function loadLifecycle(deps) {
   const source = await readFile(mainUrl, "utf8");
-  const production = section(source, "export function suspendDocument()", "// A video can be unreadable");
+  const production = section(source, "export async function suspendDocument()", "// A video can be unreadable");
   const harness = `
     const deps = globalThis.__documentLifecycleDeps;
     let pageSuspended = false;
@@ -41,7 +41,13 @@ async function loadLifecycle(deps) {
     const detach = () => { deps.events.push("detach"); primaryController = null; };
     const notifyState = () => deps.events.push("notify");
     const updateVideoMonitor = () => deps.events.push("monitor-update");
+    const waitForGpuRetirement = async () => deps.events.push("retirement-wait");
+    const retireGpuResources = async (reason) => deps.events.push(["gpu-retire", reason]);
     const ensureImageUpscaler = async () => ({ start: () => deps.events.push("image-start") });
+    const startImageUpscalerIfCurrent = (upscaler) => {
+      upscaler?.start?.();
+      return !!upscaler;
+    };
     const findVideo = () => deps.video;
     const queueVideoSelection = async (candidate, options) => {
       deps.events.push(["reconcile", candidate, options.force]);
@@ -69,10 +75,14 @@ test("document suspension is idempotent and invalidates every asynchronous produ
   const deps = { video: { id: "A" }, events: [] };
   const lifecycle = await loadLifecycle(deps);
 
-  assert.deepEqual(lifecycle.suspendDocument(), { ok: true, suspended: true, changed: true });
+  assert.deepEqual(await lifecycle.suspendDocument(), { ok: true, suspended: true, changed: true });
   const firstEvents = [...deps.events];
-  assert.deepEqual(lifecycle.suspendDocument(), { ok: true, suspended: true, changed: false });
-  assert.deepEqual(deps.events, firstEvents, "duplicate lifecycle signals must not tear down twice");
+  assert.deepEqual(await lifecycle.suspendDocument(), { ok: true, suspended: true, changed: false });
+  assert.deepEqual(
+    deps.events.filter((event) => event !== "retirement-wait"),
+    firstEvents,
+    "duplicate lifecycle signals must not tear down twice",
+  );
 
   const state = lifecycle.state();
   assert.equal(state.mode, "upscale", "durable requested mode is preserved");
@@ -99,7 +109,7 @@ test("document resume restores current intent once and reconciles the current vi
   t.after(() => { globalThis.__documentLifecycleDeps = previous; });
   const deps = { video: { id: "B" }, events: [] };
   const lifecycle = await loadLifecycle(deps);
-  lifecycle.suspendDocument();
+  await lifecycle.suspendDocument();
   deps.events.length = 0;
 
   assert.deepEqual(

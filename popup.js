@@ -284,6 +284,7 @@ function gpuDisplayState(status) {
     initializing: "starting",
     starting: "starting",
     ready: "ready",
+    releasing: "releasing",
     recovering: "recovering",
     failed: "failed",
   }[status.gpuState];
@@ -292,6 +293,7 @@ function gpuDisplayState(status) {
   const runtime = objectRecord(status.runtime) ? status.runtime : null;
   if (runtime) {
     if (runtime.api === "unavailable") return "unavailable";
+    if (runtime.resources?.phase === "releasing") return "releasing";
     const recovery = runtime.recovery?.phase;
     if (recovery === "scheduled" || recovery === "running" || recovery === "recovering") {
       return "recovering";
@@ -314,6 +316,7 @@ function setGpuStatus(element, state) {
     available: "available",
     starting: "starting…",
     ready: "ready",
+    releasing: "releasing…",
     recovering: "recovering…",
     failed: "failed",
   };

@@ -127,6 +127,20 @@ export class Interpolator {
     this._cpuGrabInit = null;
     this._cpuGrabRecovery = null;
     this._cpuGrabRecoveryDelays = [0, 100, 500];
+    // WebGPUGrabber.destroy() is asynchronous because it drains any pending
+    // readback before destroying its owned GPUDevice.  Logical ownership is
+    // revoked synchronously, while this map keeps physical teardown visible to
+    // every restart path so two grabber devices can never overlap.
+    this._cpuGrabberTeardowns = new Map();
+    this._resourceRetirementPromise = null;
+    this._modelRetirementPromise = null;
+    this._activeCpuFrameTasks = new Set();
+    this._grab = null;
+    this._grabCtx = null;
+    this._blend = null;
+    this._blendCtx = null;
+    this._tw = null;
+    this._twctx = null;
     this.video = null;
     this.overlay = null;
     this._takeoverActive = false;
@@ -2155,6 +2169,16 @@ export class Interpolator {
   // a start requested after stop waits for the cancelled start to unwind before
   // creating another pipeline, preventing two module initializers from racing.
   start(sourceVideo) {
+    // Explicit retirement is a barrier, not a terminal state. A later enable may
+    // reuse this Interpolator, but it must not publish a new capture lifecycle
+    // while the previous model/session and its source-sized scratch state are
+    // still being released.
+    const retirement = this._modelRetirementPromise || this._resourceRetirementPromise;
+    if (retirement) {
+      const hasSource = arguments.length > 0;
+      return retirement.catch(() => {}).then(() =>
+        hasSource ? this.start(sourceVideo) : this.start());
+    }
     if (arguments.length > 0) {
       let requestedVideo = sourceVideo;
       try { if (typeof sourceVideo === "function") requestedVideo = sourceVideo(); }
@@ -2184,7 +2208,18 @@ export class Interpolator {
     // Treat initialization as active for callers deciding whether an engine change
     // requires stop/restart. Concurrent start() calls still share _startPromise.
     this.running = true;
-    const promise = this._startInternal(generation)
+    const beginStart = () => {
+      if (!this._isCurrent(generation)) return { ok: false, reason: "cancelled" };
+      return this._startInternal(generation);
+    };
+    // stop() deliberately returns before physical GPU teardown completes so DOM
+    // and playback state are restored synchronously.  Keep this start published as
+    // the single flight, but do not request any replacement devices until every
+    // retired WebGPUGrabber has actually finished destroying its device.
+    const pendingGrabberTeardown = this._cpuGrabberTeardowns.size
+      ? this._waitForCpuGrabberTeardown().then(beginStart)
+      : beginStart();
+    const promise = Promise.resolve(pendingGrabberTeardown)
       .then((result) => {
         if (this._isCurrent(generation)) {
           if (result.ok) {
@@ -2208,22 +2243,57 @@ export class Interpolator {
     return promise;
   }
 
+  _destroyCpuGrabber(grabber) {
+    if (!grabber || (typeof grabber !== "object" && typeof grabber !== "function")) {
+      return Promise.resolve();
+    }
+    const existing = this._cpuGrabberTeardowns.get(grabber);
+    if (existing) return existing;
+
+    let destruction;
+    try { destruction = grabber.destroy?.(); }
+    catch { destruction = null; }
+    let tracked;
+    tracked = Promise.resolve(destruction)
+      // Teardown is best-effort at this layer, matching the previous lifecycle
+      // contract.  Its completion, rather than its success, is the restart gate.
+      .catch(() => {})
+      .finally(() => {
+        if (this._cpuGrabberTeardowns.get(grabber) === tracked) {
+          this._cpuGrabberTeardowns.delete(grabber);
+        }
+      });
+    this._cpuGrabberTeardowns.set(grabber, tracked);
+    return tracked;
+  }
+
+  async _waitForCpuGrabberTeardown() {
+    // A stale initializer can discover that it lost ownership while an earlier
+    // destroy is draining and add its candidate to the map.  Re-snapshot until
+    // stable so callers cannot slip between two physical teardown generations.
+    while (this._cpuGrabberTeardowns.size) {
+      await Promise.all([...this._cpuGrabberTeardowns.values()]);
+    }
+  }
+
   _ensureCpuGrabber(generation) {
     if (!this._isCurrent(generation)) return Promise.resolve(false);
     if (this._gpuGrab?.ready) return Promise.resolve(true);
     if (this._gpuGrab) {
       const unavailable = this._gpuGrab;
       this._gpuGrab = null;
-      try { void unavailable.destroy?.(); } catch {}
+      this._destroyCpuGrabber(unavailable);
     }
     if (this._cpuGrabInit?.generation === generation) return this._cpuGrabInit.promise;
 
     const attempt = { generation, grabber: null, promise: null };
     const promise = (async () => {
+      let grabber = null;
       try {
+        await this._waitForCpuGrabberTeardown();
+        if (!this._isCurrent(generation)) return false;
         const gm = await import(chrome.runtime.getURL("fsrcnnx-grab.js"));
         if (!this._isCurrent(generation)) return false;
-        let grabber = null;
         grabber = new gm.WebGPUGrabber({
           log: this.log,
           warn: this.warn,
@@ -2235,7 +2305,7 @@ export class Interpolator {
         // Device.lost may settle between init() publishing its device and this
         // continuation. Never publish that already-invalid grabber as ready.
         if (!this._isCurrent(generation) || !ok || !grabber.ready) {
-          try { await grabber.destroy(); } catch {}
+          await this._destroyCpuGrabber(grabber);
           if (this._isCurrent(generation) && !ok) {
             this.warn("interp: WebGPU grab unavailable, using 2D fallback (may show waves)");
           }
@@ -2245,6 +2315,7 @@ export class Interpolator {
         this.log("interp: WebGPU clean CPU-path grab active");
         return true;
       } catch (e) {
+        if (grabber) await this._destroyCpuGrabber(grabber);
         if (this._isCurrent(generation)) this.warn("interp: grab module load failed:", e.message);
         return false;
       }
@@ -2262,6 +2333,10 @@ export class Interpolator {
     const ownsPending = pending?.generation === generation && pending.grabber === grabber;
     if ((!ownsPublished && !ownsPending) || !this._isCurrent(generation)) return false;
     if (ownsPublished) this._gpuGrab = null;
+    // WebGPUGrabber also self-destroys after invoking this callback. Calling its
+    // idempotent destroy here lets the coordinator observe and gate on that same
+    // physical teardown promise before recovery requests a replacement device.
+    this._destroyCpuGrabber(grabber);
     const detail = info?.message || info?.reason || "unknown reason";
     this.warn(`interp: CPU grab device lost (${detail}); rebuilding clean grab path`);
     if (!this._gpuPresent) void this._scheduleCpuGrabberRecovery(generation);
@@ -2334,7 +2409,12 @@ export class Interpolator {
     // The readback grabber is initialized only if GPU-resident presentation cannot
     // be established. Avoiding it on the normal path prevents a redundant adapter,
     // device, and staging allocation at every interpolation start.
+    const retainedGrabber = this._gpuGrab;
     this._gpuGrab = null;
+    if (retainedGrabber) {
+      await this._destroyCpuGrabber(retainedGrabber);
+      if (!this._isCurrent(generation)) return { ok: false, reason: "cancelled" };
+    }
     this.stats = { framesIn: 0, framesOut: 0, started: performance.now(), lastReport: 0, maxDriftMs: 0, maxGapMs: 0, lastGapMs: 0, stutters: 0 };
     const stats = this.stats;
     const log = this.log;
@@ -2503,8 +2583,10 @@ export class Interpolator {
     });
     this._pipelineInitPromise = pipelinePromise;
     // reusable canvas for the blend fallback tween
-    const blendCanvas = new OffscreenCanvas(2, 2);
-    const bctx = blendCanvas.getContext("2d", { colorSpace: SRGB_COLOR_SPACE });
+    this._blend = new OffscreenCanvas(2, 2);
+    this._blendCtx = this._blend.getContext("2d", { colorSpace: SRGB_COLOR_SPACE });
+    const blendCanvas = this._blend;
+    const bctx = this._blendCtx;
     const makeBlend = (a, b, w, h) => {
       if (blendCanvas.width !== w || blendCanvas.height !== h) { blendCanvas.width = w; blendCanvas.height = h; }
       bctx.globalAlpha = 1.0; bctx.drawImage(a, 0, 0, w, h);
@@ -2813,6 +2895,9 @@ export class Interpolator {
           // frames) so shared staging buffers/canvases aren't used concurrently.
           if (cpuTickBusy) return;
           cpuTickBusy = true;
+          let finishCpuFrameTask;
+          const cpuFrameTask = new Promise((resolve) => { finishCpuFrameTask = resolve; });
+          this._activeCpuFrameTasks.add(cpuFrameTask);
           try {
           if (grabCanvas.width !== vw || grabCanvas.height !== vh) {
             grabCanvas.width = vw; grabCanvas.height = vh;
@@ -2841,7 +2926,11 @@ export class Interpolator {
           if (this._isCurrent(generation) && (this._flushGen || 0) === frameFlushGeneration) {
             this._recordPipelineSuccess("capture");
           }
-          } finally { cpuTickBusy = false; }
+          } finally {
+            cpuTickBusy = false;
+            this._activeCpuFrameTasks.delete(cpuFrameTask);
+            finishCpuFrameTask();
+          }
           }
         }
       } catch (e) {
@@ -2939,7 +3028,15 @@ export class Interpolator {
     this._dimsRestarting = false;
     this._gpuResourceStopQueued = false;
     this._pipelineFailureStopQueued = false;
-    const active = this._state !== "idle" || this.running || this.video || this.overlay || this.queue;
+    const publishedGrabber = this._gpuGrab;
+    const pendingGrabber = this._cpuGrabInit?.grabber;
+    // Unpublish synchronously; physical device teardown remains observable through
+    // _cpuGrabberTeardowns and is awaited by start(), recovery, and retirement.
+    this._gpuGrab = null;
+    this._destroyCpuGrabber(publishedGrabber);
+    if (pendingGrabber !== publishedGrabber) this._destroyCpuGrabber(pendingGrabber);
+    const active = this._state !== "idle" || this.running || this.video || this.overlay || this.queue ||
+      publishedGrabber || pendingGrabber;
     if (!active) {
       this._takeoverActive = false;
       this._committedPresentation = null;
@@ -2970,8 +3067,6 @@ export class Interpolator {
     this._committedPresentation = null;
     this._presentationGeneration = 0;
     this.stats.framesPresented = 0;
-    try { this._gpuGrab && this._gpuGrab.destroy(); } catch {}
-    this._gpuGrab = null;
     // drain queued frames (release textures / close bitmaps) BEFORE freeing the GPU
     // pipeline, so nothing references pool textures after they're destroyed.
     if (this.queue) {
@@ -3009,6 +3104,134 @@ export class Interpolator {
     this._onScroll = null; this._onFullscreen = null; this._onSeeking = null; this._onPlay = null;
     this.log("interpolation stopped");
     return { ok: true, stopped: true };
+  }
+
+  retireGpuResources() {
+    if (this._resourceRetirementPromise) return this._resourceRetirementPromise;
+    let resolveRetirement;
+    const completion = new Promise((resolve) => { resolveRetirement = resolve; });
+    let exposed;
+    exposed = completion.finally(() => {
+      if (this._resourceRetirementPromise === exposed) {
+        this._resourceRetirementPromise = null;
+      }
+    });
+    // Publish before stop(): chain.tap(false), injected logging, and DOM cleanup
+    // are synchronous user-adjacent callbacks which may re-enter start(). Such a
+    // request must queue behind this exact physical retirement generation.
+    this._resourceRetirementPromise = exposed;
+
+    const pendingStart = this._startPromise;
+    const pendingPipeline = this._pipelineInitPromise;
+    const pendingGrabInit = this._cpuGrabInit?.promise;
+    const pendingGrabRecovery = this._cpuGrabRecovery?.promise;
+    const pendingCpuFrameTasks = [...this._activeCpuFrameTasks];
+    const grabber = this._gpuGrab || this._cpuGrabInit?.grabber || null;
+    try { this.stop(); }
+    catch (error) {
+      try { this.warn("interpolation stop during GPU retirement failed:", error.message); } catch {}
+    }
+    this._destroyCpuGrabber(grabber);
+    const operation = (async () => {
+      await Promise.allSettled([
+        Promise.resolve(pendingStart),
+        Promise.resolve(pendingPipeline),
+        Promise.resolve(pendingGrabInit),
+        Promise.resolve(pendingGrabRecovery),
+        ...pendingCpuFrameTasks,
+      ]);
+      await this._waitForCpuGrabberTeardown();
+      try { await this._rifeMod?.destroyGpuInterp?.(); } catch {}
+      // stop() deliberately leaves reusable per-run canvases and closures in
+      // place for an ordinary restart. Explicit GPU retirement is stronger: by
+      // this point every producer captured above has drained, so source-sized
+      // backing stores can be discarded without racing an in-flight CPU frame.
+      this._releaseRetainedLifecycleResources();
+    });
+    operation().then(
+      () => resolveRetirement(),
+      (error) => {
+        try { this.warn("interpolation GPU retirement failed:", error.message); } catch {}
+        resolveRetirement();
+      },
+    );
+    return exposed;
+  }
+
+  _releaseRifeDeviceLossListener() {
+    const unsubscribe = this._deviceLossUnsubscribe;
+    this._deviceLossUnsubscribe = null;
+    try { unsubscribe?.(); } catch {}
+  }
+
+  _releaseRetainedLifecycleResources() {
+    // Resizing clears backing stores immediately; nulling both the canvas and its
+    // context then removes the instance's last strong references. The blend canvas
+    // used to live only in a per-run closure, so make its ownership explicit too.
+    for (const canvas of [this._grab, this._blend, this._tw]) {
+      if (!canvas) continue;
+      try { canvas.width = 0; canvas.height = 0; } catch {}
+    }
+    this._grabCtx = null;
+    this._grab = null;
+    this._blendCtx = null;
+    this._blend = null;
+    this._twctx = null;
+    this._tw = null;
+
+    // _flush is created inside _startInternal and otherwise keeps that run's full
+    // lexical environment (video, canvases, frame closures) reachable after stop.
+    // Ordinary stop intentionally keeps reusable state; explicit GPU/model
+    // retirement does not, and a subsequent start constructs a fresh lifecycle.
+    this._flush = null;
+    this._closeCpuPrev = null;
+    this._activeCpuFrameTasks.clear();
+    this._lastTapFrame = null;
+    this._lastTapW = 0;
+    this._lastTapH = 0;
+    this._lastVW = null;
+    this._lastVH = null;
+    this._infWindow = null;
+    this._srcFrameBase = null;
+    this._outFrameBase = null;
+    this._fbWindowStart = null;
+    this._prevTs = null;
+    this._lastPresentedTs = null;
+    this._lastEnqTs = null;
+    this._videoLatencyMs = null;
+  }
+
+  releaseModelResources() {
+    if (this._modelRetirementPromise) return this._modelRetirementPromise;
+    let resolveRetirement;
+    let rejectRetirement;
+    const completion = new Promise((resolve, reject) => {
+      resolveRetirement = resolve;
+      rejectRetirement = reject;
+    });
+    let exposed;
+    exposed = completion.finally(() => {
+      if (this._modelRetirementPromise === exposed) this._modelRetirementPromise = null;
+    });
+    // Publish before invoking the external unsubscribe callback for the same
+    // re-entrancy reason as resource retirement above.
+    this._modelRetirementPromise = exposed;
+    // RIFE owns a module-global listener set. Unsubscribe synchronously so an idle
+    // discarded Interpolator is no longer rooted while queue/model draining runs;
+    // repeat after the drain to cover a listener installed by a losing start.
+    this._releaseRifeDeviceLossListener();
+    const operation = (async () => {
+      try {
+        await this.retireGpuResources();
+        await this._rifeMod?.disposeRife?.();
+      } finally {
+        this._releaseRifeDeviceLossListener();
+        this._releaseRetainedLifecycleResources();
+        this._rifeMod = null;
+      }
+    });
+    operation().then(resolveRetirement, rejectRetirement);
+    return exposed;
   }
 
   getStats() {
