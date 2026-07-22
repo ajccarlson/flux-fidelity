@@ -1,248 +1,968 @@
-const $ = (id) => document.getElementById(id);
-function setBool(el, v, ok="yes", no="no"){ el.textContent = v?ok:no; el.className = "v "+(v?"ok":"no"); }
+const STATUS_COMMAND = "FSRCNNX_STATUS";
+const STATUS_TIMEOUT_MS = 3_000;
+const COMMAND_TIMEOUT_MS = 30_000;
 
-async function tab(){ const [t] = await chrome.tabs.query({active:true,currentWindow:true}); return t; }
-async function send(type, extra={}){
-  const t = await tab();
-  if(!t || !/^https?:\/\//.test(t.url||"")) return {error:"unsupported-page"};
-  try { return await chrome.tabs.sendMessage(t.id, {type, ...extra}); }
-  catch { return {error:"no-cs"}; }
-}
-
-async function refresh(){
-  const st = await send("FSRCNNX_STATUS");
-  if(st?.error){ $("s-webgpu").textContent = st.error==="unsupported-page"?"open a video page":"reload tab"; $("s-webgpu").className="v no"; return; }
-  setBool($("s-webgpu"), st.webgpu);
-  setBool($("s-video"), st.hasVideo);
-  // DRM/protected source: show a clear state and disable the mode buttons' effect.
-  const banner = $("drm-banner");
-  if(banner){
-    if(st.protected){
-      banner.style.display="block";
-      banner.textContent = st.protectedReason === "tainted"
-        ? "This video is served cross-origin without CORS headers, so the browser blocks reading its pixels — upscaling isn't possible here."
-        : "This video appears DRM-protected — its frames can't be read, so upscaling is unavailable here.";
-    }
-    else banner.style.display="none";
-  }
-  $("s-model").textContent = st.model ? (st.engine==="artcnn" ? st.model.replace("ArtCNN_","ArtCNN ") : `${st.scale}× ${st.model.replace("FSRCNNX_","").replace("_16-0-4-1","").replace("_56-16-4-1"," high")}`) : "—";
-  $("s-model").className = "v " + (st.model?"ok":"");
-  $("s-frames").textContent = st.frameCount ?? 0;
-  if(st.engine && $("engine").value !== st.engine){ $("engine").value = st.engine; const isArt=st.engine==="artcnn"; $("artvariant").style.display = isArt?"block":"none"; $("neuralrow").style.display = st.engine==="neural"?"block":"none"; buildPolicyOptions(st.engine, st.policy); }
-  if (Array.isArray(st.neuralModels)) {
-    const sel = $("neural-model");
-    if (sel.options.length !== Math.max(1, st.neuralModels.length)) {
-      sel.innerHTML = st.neuralModels.length
-        ? st.neuralModels.map(m=>`<option value="${m.key}">${m.label} (${m.scale}x)</option>`).join("")
-        : `<option value="">no models — see tools/neural-export</option>`;
-    }
-    if (st.neural && st.neural.model && sel.value !== st.neural.model) sel.value = st.neural.model;
-    $("neural-note").textContent = st.engine==="neural" ? (st.neural && st.neural.ready ? `\u03bc${(st.neural.mu||0).toFixed(1)}ms  skip:${st.neural.skip||0}` : "initializing\u2026") : "";
-  }
-  if (st.engine === "neural" && st.neural) $("s-model").textContent = `${st.neural.scale||"?"}\u00d7 ${st.neural.label||st.neural.model||"neural"}`;
-  if(st.artVariant && $("artvariant").value !== st.artVariant) $("artvariant").value = st.artVariant;
-  if(st.policy && $("policy").value !== st.policy && [...$("policy").options].some(o=>o.value===st.policy)) $("policy").value = st.policy;
-  for(const b of document.querySelectorAll(".modes button")) b.dataset.active = (b.dataset.mode === st.mode) ? "1" : "0";
-  if(typeof st.ssimds === "boolean") $("ssimds").checked = st.ssimds;
-  if(typeof st.sharpen === "boolean"){ $("sharpen").checked = st.sharpen; $("sharpen-row").style.display = st.sharpen ? "block" : "none"; }
-  if(typeof st.deband === "boolean"){ $("deband").checked = st.deband; $("deband-row").style.display = st.deband ? "block" : "none"; }
-  if(typeof st.debandStrength === "number"){ $("deband-str").value = st.debandStrength; $("deband-val").textContent = st.debandStrength.toFixed(1); }
-  if(typeof st.hoverReveal === "boolean") $("hover-reveal").checked = st.hoverReveal;
-  if(typeof st.interpAutoFallback === "boolean") $("interp-autofallback").checked = st.interpAutoFallback;
-  if(typeof st.interpLadder === "boolean") $("interp-ladder").checked = st.interpLadder;
-  if(typeof st.interpInvert === "boolean") $("interp-invert").checked = st.interpInvert;
-  if(typeof st.allVideos === "boolean") $("all-videos").checked = st.allVideos;
-  if($("multi-count")) $("multi-count").textContent = (st.allVideos && st.multiCount) ? `(${st.multiCount} active)` : "";
-  if(typeof st.images === "boolean") $("images").checked = st.images;
-  if($("image-count")) $("image-count").textContent = (st.images && st.imageCount) ? `(${st.imageCount} done)` : "";
-  if(typeof st.interpolate === "boolean"){ $("interpolate").checked = st.interpolate; $("interp-res-row").style.display = st.interpolate ? "block" : "none"; }
-  if(st.interpStats && Array.isArray(st.interpStats.models) && st.interpStats.models.length && document.activeElement !== $("interp-model")){
-    const sel = $("interp-model");
-    const want = st.interpStats.models.map(m=>m.key).join(",");
-    if(sel._sig !== want){
-      sel.innerHTML = st.interpStats.models.map(m=>`<option value="${m.key}">${m.label}</option>`).join("");
-      sel._sig = want;
-    }
-    const cur = st.interpStats.models.find(m=>m.current);
-    if(cur && sel.value !== cur.key) sel.value = cur.key;
-  }
-  if(st.interpStats && st.interpStats.resMode && $("interp-res").value !== st.interpStats.resMode) $("interp-res").value = st.interpStats.resMode;
-  if(st.interpStats && st.interpStats.targetFps != null && document.activeElement !== $("interp-target")){
-    const tv = String(st.interpStats.targetFps);
-    if($("interp-target").value !== tv) $("interp-target").value = tv;
-    const hz = st.interpStats.detectedHz;
-    $("interp-target-hz").textContent = st.interpStats.targetFps === "auto"
-      ? (hz ? `detected ${hz}Hz` : "detecting…")
-      : (st.interpStats.effectiveTargetFps ? `→ ${st.interpStats.effectiveTargetFps} fps` : "");
-  }
-  if(st.interpStats && typeof st.interpStats.avOffsetMs === "number" && document.activeElement !== $("interp-avoff")){ $("interp-avoff").value = st.interpStats.avOffsetMs; $("interp-avoff-val").textContent = st.interpStats.avOffsetMs; }
-  if($("interp-stats")) $("interp-stats").textContent = (st.interpolate && st.interpStats) ? `(in ${st.interpStats.fpsIn} → out ${st.interpStats.fpsOut} fps, ${st.interpStats.rife ? `${st.interpStats.interpMode === "blend" ? `BLEND @100%→${st.interpStats.effectiveTargetFps}fps${st.interpStats.chain ? " ⛓upscaled" : ""}` : `RIFE ${st.interpStats.inferMs}ms${st.interpStats.inferMeanMs ? ` (μ${st.interpStats.inferMeanMs})` : ""} @${Math.round((st.interpStats.scale||1)*100)}%`}${st.interpStats.gpuPath ? " gpu" : ""}${st.interpStats.fp16 ? " fp16" : ""}${st.interpStats.capture ? " gc" : ""}${st.interpStats.jspi ? " jspi" : ""}${st.interpStats.inverted ? " \u26d3inv" : ""}${(st.interpStats.interpMode !== "blend" && st.interpStats.timing) ? ` [pre ${st.interpStats.timing.pre.toFixed(1)}/inf ${st.interpStats.timing.infer.toFixed(1)}/post ${st.interpStats.timing.post.toFixed(1)}]` : ""}${st.interpStats.skippedTweens ? ` skip:${st.interpStats.skippedTweens} (${st.interpStats.skipRate}/s)` : ""}${st.interpStats.ladderBlends ? ` lad:${st.interpStats.ladderBlends}` : ""}` : `blend${st.interpStats.rifeError ? " — "+st.interpStats.rifeError : ""}`}${st.interpStats.audioDelayMs!=null ? `, a/v sync ${st.interpStats.audioDelayMs}ms` : ""}, gap ${st.interpStats.maxGapMs}ms)` : "";
-  if(typeof st.sharpenStrength === "number"){ $("sharpen-str").value = st.sharpenStrength; $("sharpen-val").textContent = st.sharpenStrength.toFixed(1); }
-}
-
-const POLICY_OPTS = {
-  fsrcnnx: [
+export const POLICY_OPTIONS = Object.freeze({
+  fsrcnnx: Object.freeze([
     ["display", "Source below display (recommended)"],
-    ["auto", "Auto (mpv WHEN thresholds)"],
+    ["auto", "Auto (mpv thresholds)"],
     ["force2", "Always ×2"],
     ["force3", "Always ×3"],
     ["force4", "Always ×4"],
-  ],
-  "fsrcnnx-hi": [
+  ]),
+  "fsrcnnx-hi": Object.freeze([
     ["display", "Source below display (recommended)"],
-    ["auto", "Auto (mpv WHEN thresholds)"],
+    ["auto", "Auto (mpv thresholds)"],
     ["force2", "Always ×2"],
     ["force4", "Always ×4"],
     ["force8", "Always ×8"],
-  ],
-  artcnn: [
+  ]),
+  artcnn: Object.freeze([
     ["display", "Source below display (recommended)"],
-    ["auto", "Auto (mpv WHEN thresholds)"],
+    ["auto", "Auto (mpv thresholds)"],
     ["force2", "Always ×2"],
     ["force4", "Always ×4"],
     ["force8", "Always ×8"],
-  ],
-};
+  ]),
+});
 
-function buildPolicyOptions(engine, selected) {
-  const sel = $("policy");
-  const opts = POLICY_OPTS[engine] || POLICY_OPTS.fsrcnnx;
-  sel.innerHTML = opts.map(([v, l]) => `<option value="${v}">${l}</option>`).join("");
-  if (selected && opts.some(([v]) => v === selected)) sel.value = selected;
+const STATIC_INTERPOLATION_MODELS = Object.freeze([
+  ["rife_v4.26", "RIFE 4.26 (default; may wave on bright motion)"],
+  ["rife_v4.26_fp16", "RIFE 4.26 FP16 (experimental)"],
+  ["blend", "Blend (no AI)"],
+]);
+
+function objectRecord(value) {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-$("engine").addEventListener("change", async () => {
-  const e = $("engine").value;
-  $("neuralrow").style.display = e==="neural"?"block":"none";
-  const isArt = e === "artcnn";
-  $("artvariant").style.display = isArt ? "block" : "none";
-  await send("FSRCNNX_SETENGINE", { engine: e });
-  // rebuild policy options for the new engine; if current policy isn't valid for
-  // the new engine (e.g. force3 on a 2x-only engine), fall back to display.
-  const cur = $("policy").value;
-  buildPolicyOptions(e, cur);
-  // ensure the module's policy matches what's now shown
-  await send("FSRCNNX_SETPOLICY", { policy: $("policy").value });
-  setTimeout(refresh, 150);
-});
-$("artvariant").addEventListener("change", async () => {
-  await send("FSRCNNX_SETARTVARIANT", { variant: $("artvariant").value });
-  setTimeout(refresh, 150);
-});
+function errorText(error) {
+  if (error && typeof error.message === "string" && error.message) return error.message;
+  if (typeof error === "string" && error) return error;
+  return "Unknown extension error";
+}
 
-$("policy").addEventListener("change", async () => {
-  await send("FSRCNNX_SETPOLICY", { policy: $("policy").value });
-  setTimeout(refresh, 150);
-});
+export function isSupportedPageUrl(value) {
+  try {
+    const protocol = new URL(value).protocol;
+    return protocol === "http:" || protocol === "https:" || protocol === "file:";
+  } catch {
+    return false;
+  }
+}
 
-$("ssimds").addEventListener("change", async () => {
-  await send("FSRCNNX_SETSSIMDS", { on: $("ssimds").checked });
-  setTimeout(refresh, 150);
-});
+function timeout(promise, milliseconds, setTimer, clearTimer) {
+  let timer = null;
+  const expired = new Promise((_, reject) => {
+    timer = setTimer(() => reject(new Error(`No response after ${milliseconds} ms`)), milliseconds);
+  });
+  return Promise.race([promise, expired]).finally(() => clearTimer(timer));
+}
 
-$("sharpen").addEventListener("change", async () => {
-  $("sharpen-row").style.display = $("sharpen").checked ? "block" : "none";
-  await send("FSRCNNX_SETSHARPEN", { on: $("sharpen").checked });
-  setTimeout(refresh, 150);
-});
+export class PopupTransport {
+  constructor(chromeApi, {
+    setTimer = globalThis.setTimeout?.bind(globalThis),
+    clearTimer = globalThis.clearTimeout?.bind(globalThis),
+  } = {}) {
+    this.chrome = chromeApi;
+    this.setTimer = setTimer;
+    this.clearTimer = clearTimer;
+  }
 
-$("sharpen-str").addEventListener("input", async () => {
-  $("sharpen-val").textContent = parseFloat($("sharpen-str").value).toFixed(1);
-});
-$("sharpen-str").addEventListener("change", async () => {
-  await send("FSRCNNX_SETSHARPENSTR", { strength: parseFloat($("sharpen-str").value) });
-  setTimeout(refresh, 150);
-});
+  async send(type, payload = {}) {
+    let activeTab;
+    try {
+      const tabs = await this.chrome.tabs.query({ active: true, currentWindow: true });
+      activeTab = Array.isArray(tabs) ? tabs[0] : null;
+    } catch (error) {
+      return { ok: false, error: "tab-query-failed", reason: errorText(error) };
+    }
 
-$("deband").addEventListener("change", async () => {
-  $("deband-row").style.display = $("deband").checked ? "block" : "none";
-  await send("FSRCNNX_SETDEBAND", { on: $("deband").checked });
-  setTimeout(refresh, 150);
-});
-$("deband-str").addEventListener("input", () => {
-  $("deband-val").textContent = parseFloat($("deband-str").value).toFixed(1);
-});
-$("deband-str").addEventListener("change", async () => {
-  await send("FSRCNNX_SETDEBANDSTR", { strength: parseFloat($("deband-str").value) });
-  setTimeout(refresh, 150);
-});
-$("interpolate").addEventListener("change", async () => {
-  $("interp-res-row").style.display = $("interpolate").checked ? "block" : "none";
-  await send("FSRCNNX_SETINTERPOLATE", { on: $("interpolate").checked });
-  setTimeout(refresh, 200);
-});
-$("interp-res").addEventListener("change", async () => {
-  await send("FSRCNNX_SETINTERPRES", { mode: $("interp-res").value });
-  setTimeout(refresh, 200);
-});
-$("interp-avoff").addEventListener("input", () => {
-  $("interp-avoff-val").textContent = $("interp-avoff").value;
-});
-$("interp-avoff").addEventListener("change", async () => {
-  await send("FSRCNNX_SETINTERPAVOFFSET", { ms: Number($("interp-avoff").value) });
-});
-$("interp-diag").addEventListener("change", async () => {
-  await send("FSRCNNX_SETINTERPDIAG", { on: $("interp-diag").checked });
-});
-$("interp-ladder").addEventListener("change", async () => {
-  await send("FSRCNNX_SETLADDER", { on: $("interp-ladder").checked });
-});
-$("interp-autofallback").addEventListener("change", async () => {
-  await send("FSRCNNX_SETAUTOFALLBACK", { on: $("interp-autofallback").checked });
-});
-$("interp-invert").addEventListener("change", async () => {
-  $("interp-invert").disabled = true; // flip restarts the interpolator
-  await send("FSRCNNX_SETINVERT", { on: $("interp-invert").checked });
-  setTimeout(() => { $("interp-invert").disabled = false; refresh(); }, 400);
-});
-$("interp-model").addEventListener("change", async () => {
-  $("interp-model").disabled = true;
-  await send("FSRCNNX_SETINTERPMODEL", { key: $("interp-model").value });
-  setTimeout(() => { $("interp-model").disabled = false; refresh(); }, 400);
-});
+    if (!activeTab || (typeof activeTab.url === "string" && !isSupportedPageUrl(activeTab.url))) {
+      return {
+        ok: false,
+        error: "unsupported-page",
+        reason: "The extension cannot run on this browser page.",
+      };
+    }
 
-$("interp-target").addEventListener("change", async () => {
-  const v = $("interp-target").value;
-  await send("FSRCNNX_SETINTERPTARGETFPS", { value: v === "auto" ? "auto" : Number(v) });
-  setTimeout(refresh, 150);
-});
+    try {
+      const waitMs = type === STATUS_COMMAND ? STATUS_TIMEOUT_MS : COMMAND_TIMEOUT_MS;
+      const response = await timeout(
+        Promise.resolve(this.chrome.tabs.sendMessage(activeTab.id, { type, ...payload })),
+        waitMs,
+        this.setTimer,
+        this.clearTimer,
+      );
+      if (!objectRecord(response)) {
+        return { ok: false, error: "invalid-response", reason: "The page returned an invalid response." };
+      }
+      if (type !== STATUS_COMMAND && typeof response.ok !== "boolean") {
+        return { ok: false, error: "invalid-response", reason: "The command response was incomplete." };
+      }
+      return response;
+    } catch (error) {
+      const reason = errorText(error);
+      return {
+        ok: false,
+        error: /No response after/.test(reason) ? "response-timeout" : "no-content-script",
+        reason,
+      };
+    }
+  }
+}
 
-$("images").addEventListener("change", async () => {
-  await send("FSRCNNX_SETIMAGES", { on: $("images").checked });
-  setTimeout(refresh, 150);
-});
+// Coalesces interval and post-command refreshes into one request at a time. A
+// mutation invalidates an older response even if it was already in flight.
+export class StatusCoordinator {
+  constructor(load, apply) {
+    this.load = load;
+    this.apply = apply;
+    this.requested = 0;
+    this.mutation = 0;
+    this.drain = null;
+  }
 
-$("hover-reveal").addEventListener("change", async () => {
-  await send("FSRCNNX_SETHOVERREVEAL", { on: $("hover-reveal").checked });
-  setTimeout(refresh, 150);
-});
-$("all-videos").addEventListener("change", async () => {
-  await send("FSRCNNX_SETALLVIDEOS", { on: $("all-videos").checked });
-  setTimeout(refresh, 150);
-});
+  invalidate() {
+    this.mutation++;
+  }
 
-for(const b of document.querySelectorAll(".modes button")){
-  b.addEventListener("click", async () => {
-    const res = await send("FSRCNNX_SETMODE", {mode: b.dataset.mode});
-    if(res && res.ok === false){
-      const banner = $("drm-banner");
-      if(banner){
-        banner.style.display = "block";
-        banner.textContent =
-          res.reason === "drm" ? "This video appears DRM-protected — its frames can't be read, so upscaling is unavailable here." :
-          res.reason === "tainted" ? "This video is served cross-origin without CORS headers, so the browser blocks reading its pixels — upscaling isn't possible here." :
-          res.reason === "no video" ? "No playable video found on this page yet. Start the video, then try again." :
-          res.reason === "WebGPU init failed" ? "WebGPU couldn't initialize on this page." :
-          "Couldn't enable on this source.";
+  refresh() {
+    this.requested++;
+    if (!this.drain) {
+      this.drain = this.run().finally(() => { this.drain = null; });
+    }
+    return this.drain;
+  }
+
+  async run() {
+    let completed = 0;
+    while (completed < this.requested) {
+      const request = this.requested;
+      const mutation = this.mutation;
+      let status;
+      try {
+        status = await this.load();
+      } catch (error) {
+        status = { ok: false, error: "status-failed", reason: errorText(error) };
+      }
+      completed = request;
+      if (request === this.requested && mutation === this.mutation) this.apply(status);
+    }
+  }
+}
+
+function optionSignature(items) {
+  return items.map(({ value, label, disabled }) => `${value}\u0000${label}\u0000${disabled ? 1 : 0}`).join("\u0001");
+}
+
+export function reconcileSelectOptions(documentRef, select, rawItems, selected = null) {
+  const items = rawItems.map((item) => Array.isArray(item)
+    ? { value: String(item[0]), label: String(item[1]), disabled: false }
+    : {
+        value: String(item.value ?? ""),
+        label: String(item.label ?? item.value ?? ""),
+        disabled: item.disabled === true,
+      });
+  const signature = optionSignature(items);
+  if (select.dataset.optionSignature !== signature) {
+    const options = items.map((item) => {
+      const option = documentRef.createElement("option");
+      option.value = item.value;
+      option.textContent = item.label;
+      option.disabled = item.disabled;
+      return option;
+    });
+    select.replaceChildren(...options);
+    select.dataset.optionSignature = signature;
+  }
+  if (selected != null && items.some((item) => item.value === String(selected))) {
+    select.value = String(selected);
+  }
+  return signature;
+}
+
+export function describeCommandFailure(result) {
+  const code = result?.error || result?.reason || "command-failed";
+  const messages = {
+    "unsupported-page": "The extension cannot run on this browser page.",
+    "tab-query-failed": "The active tab could not be inspected.",
+    "no-content-script": "The page is not connected to the extension. Reload the page and try again.",
+    "response-timeout": "The page did not answer the command in time.",
+    "invalid-response": "The page returned an invalid extension response.",
+    "invalid-input": "That setting is not valid.",
+    "invalid mode": "That mode is not valid.",
+    "invalid engine": "That engine is not valid.",
+    "invalid policy": "That upscale policy is not valid for this engine.",
+    "no video": "No playable video is available yet. The requested setting will be retried when one appears.",
+    drm: "This video is DRM-protected, so its frames cannot be processed.",
+    tainted: "This cross-origin video does not permit the extension to read its pixels.",
+    protected: "This protected video cannot be processed.",
+    "color-hdr-unsupported": "HDR video remains on the browser's native renderer because enhancement supports SDR only.",
+    "color-wide-gamut-unsupported": "Wide-gamut video remains on the browser's native renderer because its color cannot be preserved.",
+    "color-space-unsupported": "This video's color space is outside the validated BT.709 SDR boundary.",
+    "color-metadata-unavailable": "The video's decoded color metadata could not be verified safely.",
+    "renderer unavailable": "The WebGPU renderer is unavailable on this page.",
+    "lifecycle-pending": "The page changed while the renderer was starting. The request remains pending.",
+    superseded: "A newer page or setting change replaced this request.",
+    "startup-failed": "The extension could not start on this page.",
+    "status-failed": "The page status could not be read.",
+    "command-failed": "The page could not apply that setting.",
+  };
+  if (messages[code]) return messages[code];
+  if (typeof result?.message === "string" && result.message) return result.message;
+  if (typeof result?.reason === "string" && result.reason) return result.reason;
+  return messages["command-failed"];
+}
+
+function setBooleanStatus(element, value, yes = "yes", no = "no") {
+  element.textContent = value ? yes : no;
+  element.className = `v ${value ? "ok" : "no"}`;
+}
+
+function failureDetail(failure) {
+  if (typeof failure === "string") return failure.trim();
+  if (!objectRecord(failure)) return "";
+  for (const value of [failure.detail, failure.message, failure.reason, failure.error?.message]) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
+function joinFailureMessage(summary, failure, prefixes = []) {
+  const base = String(summary || "").trim().replace(/[.:]+$/, "");
+  let detail = failureDetail(failure);
+  for (const prefix of prefixes) detail = detail.replace(prefix, "").trim();
+  detail = detail.replace(/^[:\s-]+/, "").trim();
+  if (!detail) return `${base}.`;
+  const normalizedBase = base.toLocaleLowerCase();
+  const normalizedDetail = detail.replace(/[.:]+$/, "").toLocaleLowerCase();
+  if (normalizedDetail === normalizedBase || normalizedBase.includes(normalizedDetail)) {
+    return `${base}.`;
+  }
+  return `${base}: ${detail}`;
+}
+
+function isPreferenceFailure(status) {
+  const code = String(status?.error || "").toLocaleLowerCase();
+  return /preference|settings|storage|application/.test(code) ||
+    objectRecord(status?.persistence) &&
+      (status.persistence.state === "error" || !!status.persistence.error);
+}
+
+function preferenceFailureMessage(status) {
+  const code = String(status?.error || "").toLocaleLowerCase();
+  if (/validation|invalid|corrupt|schema/.test(code)) {
+    return joinFailureMessage("Stored settings are invalid", status?.reason, [
+      /^invalid stored settings?\s*/i,
+      /^settings validation failed\s*/i,
+    ]);
+  }
+  if (/application|apply/.test(code)) {
+    return joinFailureMessage("Settings could not be applied", status?.reason, [
+      /^preference application failed\s*/i,
+      /^settings could not be applied\s*/i,
+    ]);
+  }
+  if (/sync/.test(code)) {
+    return joinFailureMessage("Settings could not be synchronized", status?.reason, [
+      /^preference (?:sync|synchronization) failed\s*/i,
+      /^settings could not be synchronized\s*/i,
+    ]);
+  }
+  if (/write|save/.test(code)) {
+    return joinFailureMessage("Settings could not be saved", status?.reason, [
+      /^settings could not be saved\s*/i,
+    ]);
+  }
+  if (/read|load|storage/.test(code)) {
+    return joinFailureMessage("Settings could not be loaded", status?.reason, [
+      /^settings could not be (?:read|loaded)\s*/i,
+    ]);
+  }
+  return joinFailureMessage("Settings could not be accessed", status?.reason);
+}
+
+function gpuDisplayState(status) {
+  const direct = {
+    unavailable: "unavailable",
+    idle: "available",
+    available: "available",
+    initializing: "starting",
+    starting: "starting",
+    ready: "ready",
+    releasing: "releasing",
+    recovering: "recovering",
+    failed: "failed",
+  }[status.gpuState];
+  if (direct) return direct;
+
+  const runtime = objectRecord(status.runtime) ? status.runtime : null;
+  if (runtime) {
+    if (runtime.api === "unavailable") return "unavailable";
+    if (runtime.resources?.phase === "releasing") return "releasing";
+    const recovery = runtime.recovery?.phase;
+    if (recovery === "scheduled" || recovery === "running" || recovery === "recovering") {
+      return "recovering";
+    }
+    if (recovery === "exhausted") return "failed";
+    if (runtime.device === "ready") return "ready";
+    if (runtime.adapter === "requesting" || runtime.device === "requesting" ||
+        runtime.device === "initializing") return "starting";
+    if (runtime.adapter === "failed" || runtime.device === "failed" || runtime.device === "lost") {
+      return "failed";
+    }
+    if (runtime.api === "available") return "available";
+  }
+  return status.webgpu === true ? "available" : "unavailable";
+}
+
+function setGpuStatus(element, state) {
+  const labels = {
+    unavailable: "unavailable",
+    available: "available",
+    starting: "starting…",
+    ready: "ready",
+    releasing: "releasing…",
+    recovering: "recovering…",
+    failed: "failed",
+  };
+  element.textContent = labels[state] || labels.unavailable;
+  element.className = `v ${state === "available" || state === "ready"
+    ? "ok"
+    : state === "unavailable" || state === "failed" ? "no" : ""}`.trimEnd();
+}
+
+function setVisible(element, visible, display = "block") {
+  const hidden = !visible;
+  const nextDisplay = visible ? display : "none";
+  if (element.hidden !== hidden) element.hidden = hidden;
+  if (element.style.display !== nextDisplay) element.style.display = nextDisplay;
+}
+
+function setText(element, value) {
+  const next = String(value ?? "");
+  if (element.textContent !== next) element.textContent = next;
+}
+
+function sourceBlockMessage(reason) {
+  return ({
+    drm: "This DRM-protected video does not permit the extension to read its frames.",
+    tainted: "This cross-origin video does not permit the extension to read its pixels.",
+    "color-hdr-unsupported": "HDR video is unsupported; the browser's native renderer remains active.",
+    "color-wide-gamut-unsupported": "Wide-gamut video is unsupported because enhancement cannot preserve its color.",
+    "color-space-unsupported": "This video's color space is outside the validated BT.709 SDR boundary.",
+    "color-metadata-unavailable": "Decoded color metadata is unavailable or incomplete, so the native renderer remains active.",
+  })[reason] || "The requested renderer is blocked by this video source.";
+}
+
+function rendererFallback(status) {
+  const renderer = objectRecord(status.renderer) ? status.renderer : null;
+  if (objectRecord(renderer?.fallback)) return renderer.fallback;
+  const requested = renderer?.requestedEngine || status.engine;
+  const effective = renderer?.effectiveEngine || status.activeEngine;
+  if (requested === "neural" && effective && effective !== "neural") {
+    return { from: "neural", to: effective };
+  }
+  return null;
+}
+
+function effectiveEngine(status) {
+  const renderer = objectRecord(status.renderer) ? status.renderer : null;
+  return renderer?.effectiveEngine || status.activeEngine || status.engine;
+}
+
+function engineLabel(engine) {
+  return ({
+    fsrcnnx: "FSRCNNX standard",
+    "fsrcnnx-hi": "FSRCNNX high",
+    artcnn: "ArtCNN",
+    neural: "Neural",
+  })[engine] || "Renderer";
+}
+
+function formatEngineModel(status, engine) {
+  if (engine === "neural") {
+    const neural = status.neural;
+    const key = neural?.label || neural?.model || status.neuralModel;
+    if (!key) return "—";
+    return `${neural?.scale || "?"}× ${key}`;
+  }
+  if (!status.model) return "—";
+  if (engine === "artcnn") return String(status.model).replace("ArtCNN_", "ArtCNN ");
+  const scale = status.scale ? `${status.scale}× ` : "";
+  return scale + String(status.model)
+    .replace("FSRCNNX_", "")
+    .replace("_16-0-4-1", "")
+    .replace("_56-16-4-1", " high");
+}
+
+function formatModel(status) {
+  const activeEngine = effectiveEngine(status);
+  const fallback = rendererFallback(status);
+  if (fallback) {
+    const fallbackEngine = fallback.to || activeEngine || "fsrcnnx";
+    const model = formatEngineModel(status, fallbackEngine);
+    const label = `${engineLabel(fallbackEngine)} fallback`;
+    return model === "—" ? label : `${model} (${label})`;
+  }
+  return formatEngineModel(status, activeEngine);
+}
+
+function formatInterpolationStats(status) {
+  const stats = status.interpStats;
+  if (!status.interpolate) return "";
+  if (status.interpPausedByNeural) return "Paused while the neural upscaler is selected.";
+  if (status.interpQuarantined) return "Stopped after a repeated interpolation failure.";
+  if (!stats) return "Configured; waiting for the interpolation runtime.";
+  const parts = [`input ${stats.fpsIn ?? 0} → output ${stats.fpsOut ?? 0} fps`];
+  if (stats.interpMode === "blend") parts.push(`blend → ${stats.effectiveTargetFps ?? "?"} fps`);
+  else if (stats.rife) parts.push(`RIFE ${stats.inferMs ?? 0} ms @ ${Math.round((stats.scale || 1) * 100)}%`);
+  if (Number.isFinite(stats.maxGapMs)) parts.push(`max gap ${stats.maxGapMs} ms`);
+  return parts.join(" · ");
+}
+
+function commandSucceeded(result) {
+  return objectRecord(result) && result.ok === true;
+}
+
+export function createPopupController({
+  document: documentRef,
+  chrome: chromeApi,
+  setInterval: setIntervalRef = globalThis.setInterval?.bind(globalThis),
+  clearInterval: clearIntervalRef = globalThis.clearInterval?.bind(globalThis),
+  transport = new PopupTransport(chromeApi),
+} = {}) {
+  if (!documentRef) throw new TypeError("A document is required");
+  if (!chromeApi && !transport) throw new TypeError("The Chrome extension API is required");
+
+  const $ = (id) => documentRef.getElementById(id);
+  const modeButtons = [...documentRef.querySelectorAll(".modes button")];
+  const controls = [...documentRef.querySelectorAll("button, input, select")];
+  let ready = false;
+  let commandBusy = 0;
+  let currentStatus = null;
+  let operationSerial = 0;
+  let commandTail = Promise.resolve();
+  let refreshTimer = null;
+  let feedbackScope = "context";
+  let forceControlSync = false;
+
+  function feedback(message = "", tone = "", scope = "operation") {
+    const element = $("operation-status");
+    setText(element, message);
+    if (element.dataset.tone !== tone) element.dataset.tone = tone;
+    feedbackScope = scope;
+  }
+
+  function contextFeedback(message = "", tone = "") {
+    if (feedbackScope === "operation") return;
+    feedback(message, tone, "context");
+  }
+
+  function clearPageState() {
+    $("s-video").textContent = "—";
+    $("s-video").className = "v";
+    $("s-model").textContent = "—";
+    $("s-model").className = "v";
+    $("s-frames").textContent = "0";
+    setText($("runtime-status"), "");
+    setVisible($("drm-banner"), false);
+  }
+
+  function updateAvailability() {
+    const globallyDisabled = !ready || commandBusy > 0;
+    for (const control of controls) control.disabled = globallyDisabled;
+    if (globallyDisabled || !currentStatus) return;
+
+    const neural = currentStatus.engine === "neural";
+    $("policy").disabled = neural;
+    $("all-videos").disabled = neural;
+    $("artvariant").disabled = currentStatus.engine !== "artcnn";
+    $("neural-model").disabled = !neural || !Array.isArray(currentStatus.neuralModels) ||
+      currentStatus.neuralModels.length === 0;
+
+    const interpolationConfigured = currentStatus.interpolate === true;
+    for (const id of [
+      "interp-model", "interp-res", "interp-target", "interp-avoff", "interp-diag",
+      "interp-ladder", "interp-invert", "interp-autofallback",
+    ]) $(id).disabled = !interpolationConfigured;
+  }
+
+  function unavailable(status) {
+    ready = false;
+    currentStatus = null;
+    clearPageState();
+    $("s-webgpu").className = "v no";
+    const code = status?.error;
+    if (code === "unsupported-page") {
+      $("s-webgpu").textContent = "unavailable";
+      feedback("Open an http, https, or permitted local file page to use the extension.", "notice", "context");
+    } else if (code === "no-content-script") {
+      $("s-webgpu").textContent = "disconnected";
+      feedback("Reload this page so it can connect to the extension.", "error", "context");
+    } else {
+      $("s-webgpu").textContent = "error";
+      feedback(describeCommandFailure(status), "error", "context");
+    }
+    updateAvailability();
+  }
+
+  function loading() {
+    ready = false;
+    currentStatus = null;
+    clearPageState();
+    $("s-webgpu").textContent = "checking…";
+    $("s-webgpu").className = "v";
+    feedback("The extension is starting on this page…", "notice", "context");
+    updateAvailability();
+  }
+
+  function failed(status) {
+    ready = false;
+    currentStatus = null;
+    clearPageState();
+    const preferenceFailure = isPreferenceFailure(status);
+    if (preferenceFailure) {
+      setGpuStatus($("s-webgpu"), gpuDisplayState(status));
+    } else {
+      $("s-webgpu").textContent = "failed";
+      $("s-webgpu").className = "v no";
+    }
+    const message = preferenceFailure
+      ? preferenceFailureMessage(status)
+      : joinFailureMessage(describeCommandFailure(status), status.reason);
+    feedback(message, "error", "context");
+    updateAvailability();
+  }
+
+  function persistenceHealth(status) {
+    const candidates = [
+      status.persistence,
+      status.settingsPersistence,
+      status.settings?.persistence,
+      status.settings,
+    ];
+    return candidates.find((candidate) => objectRecord(candidate) && (
+      typeof candidate.state === "string" ||
+      typeof candidate.phase === "string" ||
+      typeof candidate.operation === "string" ||
+      typeof candidate.errorOperation === "string" ||
+      candidate.error || candidate.lastFailure ||
+      Number.isFinite(candidate.pendingWrites) || Number.isFinite(candidate.pending)
+    )) || null;
+  }
+
+  function persistenceMessage(status, persistence) {
+    if (!persistence) return "";
+    const detail = failureDetail(persistence.error || persistence.lastFailure);
+    const pending = Number(persistence.pendingWrites ?? persistence.pending ?? 0);
+    const signal = [
+      persistence.operation,
+      persistence.errorOperation,
+      persistence.phase,
+      persistence.state,
+      persistence.error?.code,
+      persistence.lastFailure?.code,
+      detail,
+    ].filter(Boolean).join(" ").toLocaleLowerCase();
+    const failed = persistence.state === "error" || !!persistence.error ||
+      /(?:^|[-\s])(?:error|failed|failure)(?:$|[-\s])/.test(signal);
+
+    // A BFCache synchronization can make the store report a generic active
+    // write state while it is actually reading and applying external changes.
+    if (!failed && status.runtime?.phase === "syncing") return "Synchronizing settings…";
+    if (!failed) {
+      if (/sync/.test(signal)) return "Synchronizing settings…";
+      if (/(?:^|[-\s])(?:read|reading|load|loading)(?:$|[-\s])/.test(signal)) {
+        return "Loading settings…";
+      }
+      if (/validat/.test(signal)) return "Validating settings…";
+      if (/application|apply/.test(signal)) return "Applying settings…";
+      if (/writ|sav/.test(signal)) return "Saving settings…";
+      return "";
+    }
+
+    if (/validat|invalid|corrupt|schema/.test(signal)) {
+      return joinFailureMessage("Stored settings are invalid", detail, [
+        /^invalid stored settings?\s*/i,
+        /^settings validation failed\s*/i,
+      ]);
+    }
+    if (/application|apply/.test(signal)) {
+      return joinFailureMessage("Settings could not be applied", detail, [
+        /^preference application failed\s*/i,
+        /^settings could not be applied\s*/i,
+      ]);
+    }
+    if (/sync/.test(signal)) {
+      return joinFailureMessage("Settings could not be synchronized", detail, [
+        /^preference (?:sync|synchronization) failed\s*/i,
+        /^settings could not be synchronized\s*/i,
+      ]);
+    }
+    if (/read|load|get/.test(signal)) {
+      return joinFailureMessage("Settings could not be loaded", detail, [
+        /^settings could not be (?:read|loaded)\s*/i,
+      ]);
+    }
+    if (pending > 0 || /writ|sav|quota|storage set/.test(signal)) {
+      return joinFailureMessage("Settings could not be saved", detail, [
+        /^settings could not be saved\s*/i,
+      ]);
+    }
+    return joinFailureMessage("Settings could not be loaded or applied", detail);
+  }
+
+  function requestedFeaturesNeedGpu(status) {
+    const renderer = objectRecord(status.renderer) ? status.renderer : null;
+    const images = objectRecord(status.imagesRuntime) ? status.imagesRuntime : null;
+    const interpolation = objectRecord(status.interpolationRuntime)
+      ? status.interpolationRuntime
+      : null;
+    const requestedMode = renderer?.requestedMode || status.mode || "off";
+    return requestedMode !== "off" || images?.requested === true || status.images === true ||
+      interpolation?.requested === true || status.interpolate === true;
+  }
+
+  function runtimeMessage(status) {
+    const persistence = persistenceHealth(status);
+    const settingsMessage = persistenceMessage(status, persistence);
+    if (settingsMessage) return settingsMessage;
+
+    const gpuState = gpuDisplayState(status);
+    if (requestedFeaturesNeedGpu(status)) {
+      if (gpuState === "recovering" || status.gpuRecovering) {
+        return "Recovering the WebGPU device…";
+      }
+      if (gpuState === "unavailable") {
+        return "WebGPU is unavailable, so the requested features cannot start.";
+      }
+      if (gpuState === "failed") {
+        const detail = failureDetail(status.runtime?.lastFailure);
+        return detail
+          ? `WebGPU failed: ${detail}`
+          : "WebGPU failed, so the requested features cannot start.";
       }
     }
-    setTimeout(refresh, 200);
-  });
-}
-buildPolicyOptions($("engine").value);
-refresh(); setInterval(refresh, 1000);
 
-$("neural-model").addEventListener("change", async () => {
-  const k = $("neural-model").value;
-  if (k) await send("FSRCNNX_SETNEURALMODEL", { model: k });
-});
+    const renderer = objectRecord(status.renderer) ? status.renderer : null;
+    const requestedMode = renderer?.requestedMode || status.mode || "off";
+    const activeMode = renderer?.activeMode || status.activeMode || "off";
+    if (renderer?.phase === "blocked") {
+      return sourceBlockMessage(renderer.blockedReason || status.protectedReason);
+    }
+    if (renderer?.phase === "waiting-video") {
+      return "The requested mode will activate when a playable video appears.";
+    }
+    if (renderer?.phase === "starting") return "The requested renderer is starting…";
+    if (renderer?.phase === "failed") return "The requested renderer could not start.";
+
+    const fallback = rendererFallback(status);
+    if (fallback) {
+      const from = fallback.from === "neural" ? "Neural upscaling" : engineLabel(fallback.from);
+      const to = engineLabel(fallback.to || effectiveEngine(status));
+      const detail = failureDetail(fallback);
+      return `${from} fell back to ${to}${detail ? `: ${detail}` : "."}`;
+    }
+
+    if (status.documentSuspended || renderer?.phase === "suspended") {
+      return "Rendering is suspended while this page is hidden.";
+    }
+
+    const neural = objectRecord(status.neuralRuntime) ? status.neuralRuntime : null;
+    if (neural?.requested === true && neural.phase === "failed") {
+      return joinFailureMessage("Neural upscaling failed", neural.lastFailure);
+    }
+
+    const images = objectRecord(status.imagesRuntime) ? status.imagesRuntime : null;
+    if (images?.requested === true && images.phase === "failed") {
+      return joinFailureMessage("Image upscaling failed", images.lastFailure);
+    }
+
+    const interpolation = objectRecord(status.interpolationRuntime)
+      ? status.interpolationRuntime
+      : null;
+    if (interpolation?.phase === "blocked") {
+      return sourceBlockMessage(interpolation.blockedReason || status.protectedReason);
+    }
+    const interpFailure = interpolation?.lastFailure || status.interpFailure;
+    if (interpFailure) {
+      const detail = failureDetail(interpFailure);
+      const suffix = detail ? `: ${detail}` : ".";
+      return `Interpolation stopped after repeated failures${suffix}`;
+    }
+
+    // Terminal optional-feature failures are reported above as a group so a
+    // lower-severity startup or wait state cannot hide them.
+    if (images?.requested === true) {
+      if (images.phase === "recovering") return "Image upscaling is recovering…";
+      if (images.phase === "starting") return "Image upscaling is starting…";
+      if (images.phase !== "active") return "Image upscaling is waiting to start.";
+    }
+
+    if (status.interpPausedByNeural ||
+        (interpolation?.phase === "paused" && interpolation.pauseReason === "neural")) {
+      return "Frame interpolation is paused while the neural upscaler is selected.";
+    }
+    if (requestedMode !== "off" && activeMode === "off") {
+      return status.hasVideo
+        ? "The requested mode is waiting for the renderer."
+        : "The requested mode will activate when a playable video appears.";
+    }
+    return "";
+  }
+
+  function render(status) {
+    if (!objectRecord(status)) {
+      unavailable({ error: "invalid-response" });
+      return;
+    }
+    if (status.error && !status.failed) {
+      unavailable(status);
+      return;
+    }
+    if (status.loading) {
+      loading();
+      return;
+    }
+    if (status.failed) {
+      failed(status);
+      return;
+    }
+
+    ready = true;
+    currentStatus = status;
+    const forceSync = forceControlSync;
+    forceControlSync = false;
+    if (feedbackScope === "context") contextFeedback("", "");
+    setGpuStatus($("s-webgpu"), gpuDisplayState(status));
+    setBooleanStatus($("s-video"), status.hasVideo === true);
+    const modelText = formatModel(status);
+    $("s-model").textContent = modelText;
+    $("s-model").className = `v ${modelText === "—" ? "" : "ok"}`.trimEnd();
+    $("s-frames").textContent = String(status.frameCount ?? 0);
+    setText($("runtime-status"), runtimeMessage(status));
+
+    const protectedMessage = status.protected ? sourceBlockMessage(status.protectedReason) : "";
+    setText($("drm-banner"), protectedMessage);
+    setVisible($("drm-banner"), !!protectedMessage);
+
+    const engine = ["fsrcnnx", "fsrcnnx-hi", "artcnn", "neural"].includes(status.engine)
+      ? status.engine
+      : "fsrcnnx";
+    const hasNeuralModels = Array.isArray(status.neuralModels) && status.neuralModels.length > 0;
+    if (forceSync || documentRef.activeElement !== $("engine")) {
+      reconcileSelectOptions(documentRef, $("engine"), [
+        ["fsrcnnx", "FSRCNNX standard"],
+        ["fsrcnnx-hi", "FSRCNNX high"],
+        ["artcnn", "ArtCNN"],
+        { value: "neural", label: "Neural (ONNX)", disabled: !hasNeuralModels },
+      ], engine);
+    }
+    setVisible($("artvariant"), engine === "artcnn");
+    setVisible($("neuralrow"), engine === "neural");
+    if (status.artVariant && (forceSync || documentRef.activeElement !== $("artvariant"))) {
+      $("artvariant").value = status.artVariant;
+    }
+
+    const policyItems = POLICY_OPTIONS[engine] || POLICY_OPTIONS.fsrcnnx;
+    reconcileSelectOptions(
+      documentRef,
+      $("policy"),
+      policyItems,
+      forceSync || documentRef.activeElement !== $("policy") ? status.policy || "display" : $("policy").value,
+    );
+
+    const neuralItems = Array.isArray(status.neuralModels) && status.neuralModels.length
+      ? status.neuralModels.map((model) => ({
+          value: model.key,
+          label: `${model.label || model.key} (${model.scale}×)`,
+        }))
+      : [{ value: "", label: "No bundled neural models", disabled: true }];
+    const selectedNeural = status.neural?.model || status.neuralModel || "";
+    reconcileSelectOptions(
+      documentRef,
+      $("neural-model"),
+      neuralItems,
+      forceSync || documentRef.activeElement !== $("neural-model") ? selectedNeural : $("neural-model").value,
+    );
+    if (engine === "neural") {
+      const fallback = rendererFallback(status);
+      if (fallback) {
+        const detail = failureDetail(fallback);
+        $("neural-note").textContent = `Using ${engineLabel(fallback.to || effectiveEngine(status))} fallback` +
+          (detail ? ` · ${detail}` : ".");
+      } else {
+        $("neural-note").textContent = status.neural?.ready
+          ? `mean ${(status.neural.mu || 0).toFixed(1)} ms · skipped ${status.neural.skip || 0}`
+          : (selectedNeural ? "Selected; initializes when video upscaling is active." : "No model selected.");
+      }
+    } else {
+      $("neural-note").textContent = "";
+    }
+
+    for (const button of modeButtons) {
+      const selected = button.dataset.mode === status.mode;
+      button.dataset.active = selected ? "1" : "0";
+      button.setAttribute("aria-pressed", selected ? "true" : "false");
+    }
+
+    const syncCheckbox = (id, value) => {
+      if (typeof value === "boolean") $(id).checked = value;
+    };
+    syncCheckbox("ssimds", status.ssimds);
+    syncCheckbox("sharpen", status.sharpen);
+    syncCheckbox("hover-reveal", status.hoverReveal);
+    syncCheckbox("all-videos", status.allVideos);
+    syncCheckbox("idle-power-saving", status.idlePowerSaving);
+    syncCheckbox("images", status.images);
+    syncCheckbox("interpolate", status.interpolate);
+    syncCheckbox("interp-diag", status.interpStaticPassthrough);
+    syncCheckbox("interp-ladder", status.interpLadder);
+    syncCheckbox("interp-invert", status.interpInvert);
+    syncCheckbox("interp-autofallback", status.interpAutoFallback);
+
+    setVisible($("sharpen-row"), status.sharpen === true);
+    setVisible($("interp-res-row"), status.interpolate === true);
+    $("multi-count").textContent = status.allVideos && status.multiCount
+      ? `(${status.multiCount} active)` : "";
+    $("image-count").textContent = status.images && status.imageCount
+      ? `(${status.imageCount} processed)` : "";
+
+    const syncRange = (id, outputId, value, digits = null) => {
+      if (!Number.isFinite(value) || (!forceSync && documentRef.activeElement === $(id))) return;
+      $(id).value = String(value);
+      $(outputId).textContent = digits == null ? String(value) : value.toFixed(digits);
+    };
+    syncRange("sharpen-str", "sharpen-val", status.sharpenStrength, 1);
+
+    const interpModels = Array.isArray(status.interpStats?.models) && status.interpStats.models.length
+      ? status.interpStats.models.map((model) => [model.key, model.label])
+      : STATIC_INTERPOLATION_MODELS;
+    const selectedInterp = status.interpModel ||
+      status.interpStats?.models?.find((model) => model.current)?.key || "rife_v4.26";
+    if (forceSync || documentRef.activeElement !== $("interp-model")) {
+      reconcileSelectOptions(documentRef, $("interp-model"), interpModels, selectedInterp);
+    }
+
+    const resMode = status.interpResMode || status.interpStats?.resMode;
+    if (resMode && (forceSync || documentRef.activeElement !== $("interp-res"))) $("interp-res").value = resMode;
+    const target = status.interpTargetFps ?? status.interpStats?.targetFps;
+    if (target != null && (forceSync || documentRef.activeElement !== $("interp-target"))) {
+      $("interp-target").value = String(target);
+    }
+    const detectedHz = status.interpStats?.detectedHz;
+    $("interp-target-hz").textContent = target === "auto"
+      ? (detectedHz ? `detected ${detectedHz} Hz` : "detecting display refresh…")
+      : (status.interpStats?.effectiveTargetFps ? `effective ${status.interpStats.effectiveTargetFps} fps` : "");
+    const avOffset = status.interpAvOffsetMs ?? status.interpStats?.avOffsetMs;
+    syncRange("interp-avoff", "interp-avoff-val", avOffset);
+    $("interp-stats").textContent = formatInterpolationStats(status);
+
+    updateAvailability();
+  }
+
+  const coordinator = new StatusCoordinator(
+    () => transport.send(STATUS_COMMAND),
+    render,
+  );
+
+  function runCommand(label, invoke) {
+    const operation = ++operationSerial;
+    coordinator.invalidate();
+    commandBusy++;
+    feedback(`${label}…`, "pending", "operation");
+    updateAvailability();
+
+    const task = commandTail.catch(() => {}).then(async () => {
+      let result;
+      try {
+        result = await invoke();
+      } catch (error) {
+        result = { ok: false, error: "command-failed", reason: errorText(error) };
+      }
+      const current = operation === operationSerial;
+      if (current) {
+        if (commandSucceeded(result)) {
+          const pending = result.pending === true || result.running === false || result.paused;
+          feedback(pending ? "Setting saved; activation is pending." : "Setting applied.", "success", "operation");
+        } else {
+          feedback(describeCommandFailure(result), result?.pending ? "notice" : "error", "operation");
+        }
+        coordinator.invalidate();
+        forceControlSync = true;
+        await coordinator.refresh();
+      }
+      return result;
+    }).finally(() => {
+      commandBusy = Math.max(0, commandBusy - 1);
+      updateAvailability();
+    });
+    commandTail = task;
+    return task;
+  }
+
+  function command(id, event, label, type, payload) {
+    $(id).addEventListener(event, () => runCommand(label, () => transport.send(type, payload())));
+  }
+
+  function bind() {
+    command("engine", "change", "Changing upscaler engine", "FSRCNNX_SETENGINE", () => ({ engine: $("engine").value }));
+    command("artvariant", "change", "Changing ArtCNN variant", "FSRCNNX_SETARTVARIANT", () => ({ variant: $("artvariant").value }));
+    command("policy", "change", "Changing upscale policy", "FSRCNNX_SETPOLICY", () => ({ policy: $("policy").value }));
+    command("ssimds", "change", "Updating downscaling", "FSRCNNX_SETSSIMDS", () => ({ on: $("ssimds").checked }));
+    command("sharpen", "change", "Updating sharpening", "FSRCNNX_SETSHARPEN", () => ({ on: $("sharpen").checked }));
+    command("sharpen-str", "change", "Changing sharpen strength", "FSRCNNX_SETSHARPENSTR", () => ({ strength: Number($("sharpen-str").value) }));
+    command("interpolate", "change", "Updating frame interpolation", "FSRCNNX_SETINTERPOLATE", () => ({ on: $("interpolate").checked }));
+    command("interp-res", "change", "Changing inference resolution", "FSRCNNX_SETINTERPRES", () => ({ mode: $("interp-res").value }));
+    command("interp-avoff", "change", "Changing audio sync trim", "FSRCNNX_SETINTERPAVOFFSET", () => ({ ms: Number($("interp-avoff").value) }));
+    command("interp-diag", "change", "Updating static-detail stabilization", "FSRCNNX_SETINTERPDIAG", () => ({ on: $("interp-diag").checked }));
+    command("interp-ladder", "change", "Updating blend ladder", "FSRCNNX_SETLADDER", () => ({ on: $("interp-ladder").checked }));
+    command("interp-autofallback", "change", "Updating automatic fallback", "FSRCNNX_SETAUTOFALLBACK", () => ({ on: $("interp-autofallback").checked }));
+    command("interp-invert", "change", "Changing interpolation order", "FSRCNNX_SETINVERT", () => ({ on: $("interp-invert").checked }));
+    command("interp-model", "change", "Changing interpolation model", "FSRCNNX_SETINTERPMODEL", () => ({ key: $("interp-model").value }));
+    command("interp-target", "change", "Changing blend target", "FSRCNNX_SETINTERPTARGETFPS", () => ({
+      value: $("interp-target").value === "auto" ? "auto" : Number($("interp-target").value),
+    }));
+    command("images", "change", "Updating image enhancement", "FSRCNNX_SETIMAGES", () => ({ on: $("images").checked }));
+    command("hover-reveal", "change", "Updating hover reveal", "FSRCNNX_SETHOVERREVEAL", () => ({ on: $("hover-reveal").checked }));
+    command("all-videos", "change", "Updating multi-video processing", "FSRCNNX_SETALLVIDEOS", () => ({ on: $("all-videos").checked }));
+    command("idle-power-saving", "change", "Updating idle power saving", "FSRCNNX_SETIDLEPOWERSAVING", () => ({ on: $("idle-power-saving").checked }));
+    command("neural-model", "change", "Changing neural model", "FSRCNNX_SETNEURALMODEL", () => ({ model: $("neural-model").value }));
+
+    $("sharpen-str").addEventListener("input", () => {
+      $("sharpen-val").textContent = Number($("sharpen-str").value).toFixed(1);
+    });
+    $("interp-avoff").addEventListener("input", () => {
+      $("interp-avoff-val").textContent = $("interp-avoff").value;
+    });
+
+    for (const button of modeButtons) {
+      button.addEventListener("click", () => runCommand(
+        `Switching to ${button.textContent.trim().toLowerCase()} mode`,
+        () => transport.send("FSRCNNX_SETMODE", { mode: button.dataset.mode }),
+      ));
+    }
+  }
+
+  function start() {
+    bind();
+    loading();
+    void coordinator.refresh();
+    refreshTimer = setIntervalRef(() => { void coordinator.refresh(); }, 1_000);
+    return api;
+  }
+
+  function stop() {
+    if (refreshTimer != null) clearIntervalRef(refreshTimer);
+    refreshTimer = null;
+  }
+
+  const api = { start, stop, refresh: () => coordinator.refresh(), runCommand, render };
+  return api;
+}
+
+if (typeof document !== "undefined" && globalThis.chrome?.tabs) {
+  createPopupController({ document, chrome: globalThis.chrome }).start();
+}

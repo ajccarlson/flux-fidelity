@@ -1,14 +1,12 @@
 {
   "manifest_version": 3,
-  "name": "FSRCNNX/ArtCNN \u2014 Real-time Video Upscaler",
+  "minimum_chrome_version": "113",
+  "name": "FSRCNNX-EXT — WebGPU Video Enhancer",
   "version": "0.49.0",
-  "description": "Real-time FSRCNNX/ArtCNN luma upscaling + SSimDownscaler + adaptive sharpen for non-DRM web video via WebGPU.",
+  "description": "Real-time WebGPU video upscaling, filtering, and optional frame interpolation for readable HTML5 video.",
   "permissions": [
-    "scripting",
+    "activeTab",
     "storage"
-  ],
-  "host_permissions": [
-    "<all_urls>"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -36,22 +34,22 @@
     {
       "resources": [
         "fsrcnnx-main.js",
+        "fsrcnnx-model-bundle.js",
+        "fsrcnnx-model-catalog.js",
+        "fsrcnnx-performance.js",
         "fsrcnnx-runtime.js",
+        "fsrcnnx-settings-store.js",
+        "fsrcnnx-color-support.js",
         "fsrcnnx-color.js",
         "model/*.wgsl",
         "model/*.json",
-        "validate.html",
         "fsrcnnx-ssimds.js",
         "fsrcnnx-ssimds-runtime.js",
+        "fsrcnnx-video-controller.js",
         "fsrcnnx-sharpen.js",
         "fsrcnnx-artcnn-runtime.js",
         "model/*.artcnn.wgsl",
         "model/*.artcnn.json",
-        "fsrcnnx-deband.js",
-        "icons/icon-off-16.png",
-        "icons/icon-off-32.png",
-        "icons/icon-off-48.png",
-        "icons/icon-off-128.png",
         "fsrcnnx-images.js",
         "fsrcnnx-interpolate.js",
         "fsrcnnx-rife.js",

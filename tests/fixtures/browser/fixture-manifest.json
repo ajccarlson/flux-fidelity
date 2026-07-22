@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 1,
+  "initialSource": "bt709-a",
+  "generator": {
+    "script": "tools/generate-browser-fixtures.mjs",
+    "ffmpegVersion": "n7.1.1",
+    "libvpxVersion": "1.15.0",
+    "source": "FFmpeg lavfi testsrc2",
+    "frames": 48,
+    "frameRate": 24
+  },
+  "clips": [
+    {
+      "id": "bt709-a",
+      "path": "media/bt709-a.webm",
+      "bytes": 30946,
+      "sha256": "64efbcbfaea35f0f4cc9079cad225a3a8966c1ffd77b5554fa07580a141b470b",
+      "codec": "vp9",
+      "profile": 0,
+      "pixelFormat": "yuv420p",
+      "width": 160,
+      "height": 90,
+      "frameRate": 24,
+      "frames": 48,
+      "durationMs": 2000,
+      "encodedColor": {
+        "primaries": "bt709",
+        "transfer": "bt709",
+        "matrix": "bt709",
+        "range": "tv"
+      },
+      "colorSpace": {
+        "primaries": "bt709",
+        "transfer": "bt709",
+        "matrix": "bt709",
+        "fullRange": false
+      }
+    },
+    {
+      "id": "bt709-b",
+      "path": "media/bt709-b.webm",
+      "bytes": 30613,
+      "sha256": "0e68236e2bc519d227e9f678b1c86b0d34ecab9c0bbfb4d7427f5c5a41cedfe7",
+      "codec": "vp9",
+      "profile": 0,
+      "pixelFormat": "yuv420p",
+      "width": 128,
+      "height": 72,
+      "frameRate": 24,
+      "frames": 48,
+      "durationMs": 2000,
+      "encodedColor": {
+        "primaries": "bt709",
+        "transfer": "bt709",
+        "matrix": "bt709",
+        "range": "tv"
+      },
+      "colorSpace": {
+        "primaries": "bt709",
+        "transfer": "bt709",
+        "matrix": "bt709",
+        "fullRange": false
+      }
+    },
+    {
+      "id": "bt2020-pq",
+      "path": "media/bt2020-pq.webm",
+      "bytes": 29352,
+      "sha256": "a760f871bd1b09eedbeefbc82d9b6eaf032dc7e2a37d18fa2b9ae4cd30539a47",
+      "codec": "vp9",
+      "profile": 2,
+      "pixelFormat": "yuv420p10le",
+      "width": 128,
+      "height": 72,
+      "frameRate": 24,
+      "frames": 48,
+      "durationMs": 2000,
+      "encodedColor": {
+        "primaries": "bt2020",
+        "transfer": "smpte2084",
+        "matrix": "bt2020nc",
+        "range": "tv"
+      },
+      "colorSpace": {
+        "primaries": "bt2020",
+        "transfer": "pq",
+        "matrix": "bt2020-ncl",
+        "fullRange": false
+      }
+    },
+    {
+      "id": "bt2020-sdr",
+      "path": "media/bt2020-sdr.webm",
+      "bytes": 29847,
+      "sha256": "bc7c0f10be3c25d2fcbbc0b4cbb27c251a85ef7ab76b29fc989d7663ee01c4c3",
+      "codec": "vp9",
+      "profile": 0,
+      "pixelFormat": "yuv420p",
+      "width": 128,
+      "height": 72,
+      "frameRate": 24,
+      "frames": 48,
+      "durationMs": 2000,
+      "encodedColor": {
+        "primaries": "bt2020",
+        "transfer": "bt709",
+        "matrix": "bt2020nc",
+        "range": "tv"
+      },
+      "colorSpace": {
+        "primaries": "bt2020",
+        "transfer": "bt709",
+        "matrix": "bt2020-ncl",
+        "fullRange": false
+      }
+    }
+  ]
+}

@@ -1,10 +1,1 @@
-[
-  {
-    "key": "span2x_smoke",
-    "label": "SPAN 2x SMOKE (random weights)",
-    "file": "span2x_smoke.fp16.onnx",
-    "scale": 2,
-    "padMultiple": 1,
-    "arch": "SPAN(random)"
-  }
-]
+[]

@@ -1,0 +1,217 @@
+{
+  "schemaVersion": 1,
+  "scope": "Public repository and distributable extension package",
+  "gates": [
+    {
+      "id": "unidentified-rife-model",
+      "status": "blocked",
+      "artifacts": [
+        {
+          "path": "model/rife.onnx",
+          "sha256": "6a31074c0f588648982b5e828aee6c27e005015a712a46ea63da48c65fa9a26b",
+          "disposition": "removed"
+        }
+      ],
+      "evidence": [
+        "fsrcnnx-rife.js",
+        "tools/package-files.mjs",
+        "MODEL_PROVENANCE.md"
+      ],
+      "resolution": "The artifact is absent from the current tree and package; purge it from private Git history before making the repository public."
+    },
+    {
+      "id": "unproven-rife-fp16-conversion",
+      "status": "cleared",
+      "artifacts": [
+        {
+          "path": "model/rife_v4.26_fp16.onnx",
+          "sha256": "d5672f39b493609220c95c709542d6b99204145a67d9ca496d4500cd8895301f"
+        }
+      ],
+      "evidence": [
+        "tools/model-reproduction/reproduce-rife-fp16.py",
+        "tools/model-reproduction/requirements-rife-fp16.txt",
+        "tools/model-reproduction/check-rife-fp16.sh",
+        "tools/model-reproduction/README.md",
+        ".github/workflows/ci.yml",
+        "MODEL_PROVENANCE.md"
+      ],
+      "resolution": "Retain the hash-locked reproduction environment, full ONNX and numerical validation, and byte-for-byte CI check."
+    },
+    {
+      "id": "unknown-high-x2-shader-origin",
+      "status": "blocked",
+      "artifacts": [
+        {
+          "path": "shaders/FSRCNNX_x2_56-16-4-1.glsl",
+          "sha256": "34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6",
+          "disposition": "present"
+        },
+        {
+          "path": "model/FSRCNNX_x2_56-16-4-1.wgsl",
+          "sha256": "267ba203867483a467c535fd03c36c62ff9428116111d4d258dc5c295ef8e0d7",
+          "disposition": "present"
+        },
+        {
+          "path": "model/FSRCNNX_x2_56-16-4-1.passes.json",
+          "sha256": "57395ac668b4cbebea69938a9089c9bea0029ce785f7cc6dad239c4be31d43e7",
+          "disposition": "present"
+        }
+      ],
+      "evidence": [
+        "fsrcnnx-model-catalog.js",
+        "tools/package-files.mjs",
+        "MODEL_PROVENANCE.md",
+        "shaders/README.md",
+        "THIRD_PARTY_NOTICES.md",
+        "https://github.com/resc863/Project/blob/0e6bdb96f2845d883ec0131af8598c438c68e30a/mpv-config/FSRCNNX_x2_56-16-4-1.glsl"
+      ],
+      "resolution": "The exact source and generated pair are present and functional but have no authoritative origin or license. Do not publish the current repository tree or distribute an extension package containing them until the author or another authoritative source identifies the exact artifact and confirms its applicable license."
+    },
+    {
+      "id": "missing-x3-x4-shader-sources",
+      "status": "blocked",
+      "artifacts": [
+        {
+          "path": "model/FSRCNNX_x3_16-0-4-1.wgsl",
+          "sha256": "7df8eaae1c6f50bfd2b494d403cce8e1638c7408e0b92362b174cb72fdf816fb",
+          "disposition": "removed"
+        },
+        {
+          "path": "model/FSRCNNX_x3_16-0-4-1.passes.json",
+          "sha256": "b96ed9241b9e5303d17eb05c13c923f2173465046317d44b4d95cf627fecb80b",
+          "disposition": "removed"
+        },
+        {
+          "path": "model/FSRCNNX_x4_16-0-4-1.wgsl",
+          "sha256": "3be5b66c0d87f222f2b192ceb4c4e66b6b5f6759e00872ab3b70a542c3ee38e3",
+          "disposition": "removed"
+        },
+        {
+          "path": "model/FSRCNNX_x4_16-0-4-1.passes.json",
+          "sha256": "25a5cdacc30aaef84b738bc64981afdaf6a17aabff5e68456a0afa4961f804ea",
+          "disposition": "removed"
+        }
+      ],
+      "evidence": [
+        "fsrcnnx-model-catalog.js",
+        "tools/package-files.mjs",
+        "MODEL_PROVENANCE.md"
+      ],
+      "resolution": "The assets are absent from the current tree and package; purge them from private Git history before making the repository public."
+    },
+    {
+      "id": "unreproducible-span-smoke-model",
+      "status": "blocked",
+      "artifacts": [
+        {
+          "path": "model/neural/span2x_smoke.fp16.onnx",
+          "sha256": "ae7642c2b3bdd96e475dfcbf6a9180d8ec41175a1329d9f9b2a402f186c05c25",
+          "disposition": "removed"
+        }
+      ],
+      "evidence": [
+        "model/neural/manifest.json",
+        "tools/package-files.mjs",
+        "MODEL_PROVENANCE.md"
+      ],
+      "resolution": "The artifact is absent from the current tree and package; purge it from private Git history before making the repository public."
+    },
+    {
+      "id": "unresolved-deband-port-origin",
+      "status": "blocked",
+      "artifacts": [
+        {
+          "path": "fsrcnnx-deband.js",
+          "sha256": "56155c7bd5a15b5524ec1b44baeb4b5cb368e57f9adaf5ff8635bd1a2dba3f84",
+          "disposition": "removed"
+        }
+      ],
+      "evidence": [
+        "tools/package-files.mjs",
+        "MODEL_PROVENANCE.md"
+      ],
+      "resolution": "The artifact is absent from the current tree and package; purge it from private Git history before making the repository public."
+    },
+    {
+      "id": "lgpl-compliance-review",
+      "status": "blocked",
+      "artifacts": [
+        {
+          "path": "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl",
+          "sha256": "d5a24a271e5d9a3f7f7a053b150c460a44c25b3cf7f770857d57cc3a2e1c9965"
+        },
+        {
+          "path": "model/FSRCNNX_x2_16-0-4-1.wgsl",
+          "sha256": "2b005b9c4e60c59445708b2f503c9afb01fd70ee9efb1615782274e7b7707f26"
+        },
+        {
+          "path": "model/FSRCNNX_x2_16-0-4-1.passes.json",
+          "sha256": "1378fc336deb2588f75ddf8b9ed6ec70109256f2c3fa0477ca742adf830fb3e0"
+        },
+        {
+          "path": "shaders/upstream/SSimDownscaler.glsl",
+          "sha256": "f46f4710a162d17058b9d82ed8610588b0c04d7be07cef6bf2a8c4077828f804"
+        },
+        {
+          "path": "fsrcnnx-ssimds.js",
+          "sha256": "0f55f8f2b49bea3cb8ee2e4c801a663f21d4dfabb88efaf2de23b709c6ade3c6"
+        },
+        {
+          "path": "transpile.js",
+          "sha256": "58b7cf1ff4749a3845348ba90b41647d9fc3d8b7a78e0a2bbd8fcd36bd88a817"
+        },
+        {
+          "path": "LGPL_REBUILDING.md",
+          "sha256": "b23f3a64a3db81248f1fe99dc1138d4b55aace39b162cfaefaa667836240effe"
+        },
+        {
+          "path": "LICENSE",
+          "sha256": "29018b491588ba5338f7cceb3eec504a7958985ed69bf1a91c03daac4c2e3fbf"
+        }
+      ],
+      "evidence": [
+        "GPL-3.0.txt",
+        "LGPL-3.0.txt",
+        "LGPL_REBUILDING.md",
+        "LICENSE",
+        "MODEL_PROVENANCE.md",
+        "THIRD_PARTY_NOTICES.md"
+      ],
+      "resolution": "Exact source, transformation tooling, rebuilding and Load unpacked substitution instructions, license texts, notices, and artifact hashes are bundled; obtain and record qualified legal review confirming that the distribution plan satisfies every applicable LGPL obligation before clearing."
+    },
+    {
+      "id": "onnx-runtime-third-party-review",
+      "status": "blocked",
+      "artifacts": [
+        {
+          "path": "vendor/ort/ort.webgpu.min.mjs",
+          "sha256": "46988a5a025f49449850f39f95eb0d21e40e67b3beb13a0b54efd3ab5d83f60e"
+        },
+        {
+          "path": "vendor/ort/ort-wasm-simd-threaded.asyncify.mjs",
+          "sha256": "7236653b8565da4046e459cd0e274123419a1d9f1f8f18fd36c28058346ca655"
+        },
+        {
+          "path": "vendor/ort/ort-wasm-simd-threaded.asyncify.wasm",
+          "sha256": "7e83cd6cee77e478bc96a7e91b198144fb5e4126287daf1f9b54bb195ebcd55a"
+        },
+        {
+          "path": "vendor/ort/LICENSE",
+          "sha256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c"
+        },
+        {
+          "path": "vendor/ort/ThirdPartyNotices.txt",
+          "sha256": "0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2"
+        }
+      ],
+      "evidence": [
+        "MODEL_PROVENANCE.md",
+        "THIRD_PARTY_NOTICES.md",
+        "vendor/ort/LICENSE",
+        "vendor/ort/ThirdPartyNotices.txt"
+      ],
+      "resolution": "The exact upstream MIT license and third-party notice set are bundled and byte-pinned; complete and record qualified review of which third-party notices and obligations apply to the distributed Web runtime files before clearing."
+    }
+  ]
+}
