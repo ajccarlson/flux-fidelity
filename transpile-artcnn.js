@@ -24,9 +24,8 @@
  *   skip: 2 binds summed into inp[] before matmul (conv2d_5 + conv2d)
  *   d2s : depth-to-space, fixed template (unpack 4x2 features -> 2x luma)
  */
-"use strict";
-const fs = require("fs");
-const path = require("path");
+import fs from "node:fs";
+import path from "node:path";
 
 const args = process.argv.slice(2);
 const outIdx = args.indexOf("--out");
@@ -177,35 +176,53 @@ function emitConvPass(pass, idx) {
   }
 
   const isL0 = parsed.terms.some(t => t.kind === "vec");
-  const featStride = isL0 ? null : "vec2i(4, 2)";
 
-  // load taps. For L0: scalar luma at (sp + (dx-1,dy-1)). For Lk: feature k packed.
-  // We load every (feat, dx, dy) referenced.
+  // Load taps. ArtCNN's convolutions use zero padding: a logical source pixel
+  // outside the image contributes zero. Keep that test explicit instead of
+  // clamping or relying on implementation-dependent out-of-bounds textureLoad
+  // behavior. For L0, inputs are scalar luma at sp + (dx-1,dy-1). For later
+  // layers, each logical pixel is a packed 4x2 block of eight feature vectors.
   const tapSet = new Set();
   for (const t of parsed.terms) tapSet.add(`${t.feat}_${t.dx}_${t.dy}`);
+  const tapPositions = new Set();
+  for (const key of tapSet) {
+    const [, dx, dy] = key.split("_").map(Number);
+    tapPositions.add(`${dx}_${dy}`);
+  }
+  for (const key of tapPositions) {
+    const [dx, dy] = key.split("_").map(Number);
+    w += `  let tap_${dx}_${dy} = sp + vec2i(${dx - 1}, ${dy - 1});\n`;
+  }
 
   if (isL0) {
     // scalar luma input, single bind
     const src = binds[0];
     for (const key of tapSet) {
       const [feat, dx, dy] = key.split("_").map(Number);
-      const ox = dx - 1, oy = dy - 1;
-      w += `  let inp_${feat}_${dx}_${dy} = textureLoad(t_${src}, clamp(sp + vec2i(${ox}, ${oy}), vec2i(0), sdim - vec2i(1)), 0).x;\n`;
+      w += `  var inp_${feat}_${dx}_${dy} : f32 = 0.0;\n`;
+      w += `  if (all(tap_${dx}_${dy} >= vec2i(0)) && all(tap_${dx}_${dy} < sdim)) {\n`;
+      w += `    inp_${feat}_${dx}_${dy} = textureLoad(t_${src}, tap_${dx}_${dy}, 0).x;\n`;
+      w += `  }\n`;
     }
   } else {
     // packed features: feature f of source pixel q lives at texel q*(4,2) + (f%4, f/4)
     // skip-sum: sum the two bound sources.
     const srcs = binds;
+    w += `  let logicalDim = sdim / vec2i(4, 2);\n`;
     for (const key of tapSet) {
       const [feat, dx, dy] = key.split("_").map(Number);
-      const ox = dx - 1, oy = dy - 1;
       const fx = feat % 4, fy = Math.floor(feat / 4);
-      const coord = `clamp((sp + vec2i(${ox}, ${oy})) * vec2i(4,2) + vec2i(${fx}, ${fy}), vec2i(0), sdim - vec2i(1))`;
+      const tap = `tap_${dx}_${dy}`;
+      const coord = `packed_${feat}_${dx}_${dy}`;
+      w += `  var inp_${feat}_${dx}_${dy} : vec4f = vec4f(0.0);\n`;
+      w += `  if (all(${tap} >= vec2i(0)) && all(${tap} < logicalDim)) {\n`;
+      w += `    let ${coord} = ${tap} * vec2i(4, 2) + vec2i(${fx}, ${fy});\n`;
       if (parsed.skipSum && srcs.length === 2) {
-        w += `  let inp_${feat}_${dx}_${dy} = textureLoad(t_${srcs[0]}, ${coord}, 0) + textureLoad(t_${srcs[1]}, ${coord}, 0);\n`;
+        w += `    inp_${feat}_${dx}_${dy} = textureLoad(t_${srcs[0]}, ${coord}, 0) + textureLoad(t_${srcs[1]}, ${coord}, 0);\n`;
       } else {
-        w += `  let inp_${feat}_${dx}_${dy} = textureLoad(t_${srcs[0]}, ${coord}, 0);\n`;
+        w += `    inp_${feat}_${dx}_${dy} = textureLoad(t_${srcs[0]}, ${coord}, 0);\n`;
       }
+      w += `  }\n`;
     }
   }
 

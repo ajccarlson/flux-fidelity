@@ -1,0 +1,2 @@
+# Preserve pinned upstream shader bytes exactly, including source whitespace.
+shaders/upstream/*.glsl -whitespace

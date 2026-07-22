@@ -1,16 +1,51 @@
 # FSRCNNX-EXT
 
-FSRCNNX-EXT is a Chromium extension for real-time video enhancement with WebGPU. It combines FSRCNNX and ArtCNN upscaling, optional SSimDownscaler, debanding and sharpening filters, GPU-based RIFE frame interpolation, and experimental ONNX super-resolution support.
+FSRCNNX-EXT is a pre-release Chromium extension for real-time WebGPU video enhancement. It provides standard and High FSRCNNX upscaling, ArtCNN upscaling, optional SSimDownscaler and sharpening, RIFE or blend frame interpolation, and an experimental ONNX super-resolution path.
 
-## Status
+Public distribution is not yet cleared. Several bundled artifacts still have unresolved provenance or licensing records; see [Model provenance](MODEL_PROVENANCE.md) before packaging or publishing the extension.
 
-This project is pre-release and under active reconstruction. It currently targets Chromium browsers with WebGPU and non-DRM video sources that the page permits the extension to read. The bundled neural super-resolution model is a random-weight smoke-test model and is not intended for normal viewing.
+## Requirements
 
-## Project structure
+- A current Chromium-based browser with WebGPU enabled and a compatible GPU driver.
+- A readable, non-DRM BT.709/sRGB SDR HTML5 video in the top-level page. HDR, wide-gamut, or unverified color metadata remains on the browser's native renderer; cross-origin restrictions, iframes, and page-specific rendering can also prevent capture.
+- Node.js 20.11 or newer only for repository validation and packaging. Runtime use has no npm dependency.
 
-- `fsrcnnx-main.js` coordinates video discovery, rendering, settings, and feature modules.
-- `fsrcnnx-runtime.js` and `fsrcnnx-artcnn-runtime.js` execute generated WGSL model passes.
-- `fsrcnnx-interpolate.js`, `fsrcnnx-rife.js`, and `fsrcnnx-rife-gpu.js` implement frame interpolation.
-- `fsrcnnx-neural.js` runs full-RGB ONNX super-resolution models through ONNX Runtime Web.
-- `model/` contains generated shader manifests, WGSL programs, and runtime models.
-- `transpile.js`, `transpile-artcnn.js`, and `tools/neural-export/` generate runtime assets from source models.
+The extension runs its content script on user-allowed sites so it can find and process eligible page videos. Processing stays on the device; see [Privacy](PRIVACY.md) for the data and permission boundaries.
+
+## Install locally
+
+1. Open `chrome://extensions` in Chromium.
+2. Enable **Developer mode**.
+3. Choose **Load unpacked** and select this directory.
+4. Reload the extension from that page after updating the checkout.
+
+## Use
+
+1. Open a page containing a video and start playback.
+2. Open the extension popup.
+3. Select an upscaling engine and policy, then choose **Upscale**. Optional filters and interpolation can be enabled separately.
+4. Choose **Off** to restore normal page rendering.
+
+Settings are stored per origin. GPU memory, source resolution, browser support, and model cost determine which combinations can sustain real-time playback. No ONNX super-resolution model is bundled, so that engine remains unavailable unless a compatible, licensed model is added to the neural manifest.
+
+## Validate
+
+Run the complete repository check with:
+
+```sh
+npm run check
+```
+
+Run the production-pipeline and model-inference smoke checks in a temporary local Edge/Chrome/Chromium profile with:
+
+```sh
+npm run validate:browser
+```
+
+Set `FSRCNNX_BROWSER` to an executable path when no supported browser is found automatically. After loading the extension manually, the GPU validation suite is available at `chrome-extension://<extension-id>/validate.html`; the ID is shown on `chrome://extensions`.
+
+`npm run package:internal` creates a deterministic, versioned validation archive and `SHA256SUMS` under `dist/` after running the technical checks. `npm run package` additionally enforces the public-release gate and currently stops on the unresolved items in [Model provenance](MODEL_PROVENANCE.md).
+
+## Licensing
+
+The project-owned source is all rights reserved; see [LICENSE](LICENSE). Bundled and derived third-party material remains under its own terms, recorded in [Third-party notices](THIRD_PARTY_NOTICES.md) and [Model provenance](MODEL_PROVENANCE.md).

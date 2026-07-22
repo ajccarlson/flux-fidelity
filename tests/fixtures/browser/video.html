@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; media-src 'self'; base-uri 'none'">
+  <title>FSRCNNX browser video fixture</title>
+</head>
+<body>
+  <main>
+    <h1>FSRCNNX browser video fixture</h1>
+    <div id="fixture-player">
+      <video
+        id="fixture-video"
+        width="240"
+        height="135"
+        autoplay
+        controls
+        crossorigin="anonymous"
+        loop
+        muted
+        playsinline
+        preload="auto"
+      ></video>
+    </div>
+    <output id="fixture-status" aria-live="polite">Loading BT.709 fixture…</output>
+  </main>
+  <script type="module" src="video-fixture.js"></script>
+</body>
+</html>

@@ -1,4 +1,19 @@
-// fsrcnnx-ssimds.js — SSimDownscaler, hand-ported from Shiandow's mpv shader.
+// This library is free software; you can redistribute it and/or
+// modify it under the terms of the GNU Lesser General Public
+// License as published by the Free Software Foundation; either
+// version 3.0 of the License, or (at your option) any later version.
+//
+// This library is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+// Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public
+// License along with this library.
+//
+// fsrcnnx-ssimds.js — SSimDownscaler, hand-ported from igv's mpv shader at
+// gist revision 38992bce7f9ff844f800820df0908692b65bb74a.
+// Local WebGPU/WGSL port and numerical-safety modifications: 2026.
 //
 // Purpose: when our FSRCNNX output OVERSHOOTS the display resolution (e.g. force
 // x4 on 1080p = 7680px wide on a 5160px screen), the browser would normally
@@ -22,6 +37,15 @@
 //   MN(0,0.5)            : Mitchell-Netravali (used for moment downscales), taps=2
 //   pow(1/locality,|x|)  : locality weighting for variance smoothing, taps=3, locality=2
 
+function requireDownscaleRatio(value, label) {
+  let ratio;
+  try { ratio = Number(value); } catch { ratio = NaN; }
+  if (!Number.isFinite(ratio) || ratio < 1.0) {
+    throw new RangeError(`${label} must be a finite downscale ratio >= 1`);
+  }
+  return ratio;
+}
+
 // Shared WGSL helpers (kernels). Prepended to each pass.
 const HELPERS = /* wgsl */ `
 fn mn(x : f32) -> f32 {
@@ -36,6 +60,7 @@ fn mn(x : f32) -> f32 {
 }
 fn loc(x : f32) -> f32 { return pow(0.5, abs(x)); } // locality=2 -> 1/2
 fn luma(c : vec3f) -> f32 { return dot(c, vec3f(0.2126, 0.7152, 0.0722)); }
+const NUM_EPS : f32 = 1.0e-6;
 `;
 
 // Fullscreen-triangle vertex shader shared by all passes.
@@ -53,7 +78,8 @@ struct VsOut { @builtin(position) pos : vec4f, @location(0) uv : vec2f };
 // constant (output dims aren't available without derivatives).
 export function buildMeanShader(ratioX, ratioY) {
   // taps=2 in output space; gather hi-res samples within +/- taps*ratio.
-  const rx = ratioX.toFixed(6), ry = ratioY.toFixed(6);
+  const rx = requireDownscaleRatio(ratioX, "ratioX").toFixed(6);
+  const ry = requireDownscaleRatio(ratioY, "ratioY").toFixed(6);
   return HELPERS + VS + `
 @group(0) @binding(0) var samp : sampler;
 @group(0) @binding(1) var hiTex : texture_2d<f32>;
@@ -77,6 +103,9 @@ export function buildMeanShader(ratioX, ratioY) {
       W += w;
     }
   }
+  if (abs(W) <= NUM_EPS) {
+    return textureSampleLevel(hiTex, samp, uv, 0.0);
+  }
   return acc / W;
 }`;
 }
@@ -84,7 +113,8 @@ export function buildMeanShader(ratioX, ratioY) {
 // P1+P2 combined as one separable build: vertical then horizontal MN on tex*tex.
 // We emit two shaders sharing the kernel. axis 1 = vertical (P1), axis 0 = horiz.
 export function buildL2Shader(axis, ratio) {
-  const r = ratio.toFixed(6);
+  if (axis !== 0 && axis !== 1) throw new RangeError("axis must be 0 or 1");
+  const r = requireDownscaleRatio(ratio, "ratio").toFixed(6);
   const isV = axis === 1;
   // P1 reads hiTex (rgb), squares it. P2 reads l2v (already squared), no square.
   const square = isV ? "s = s * s;" : "";
@@ -111,6 +141,11 @@ export function buildL2Shader(axis, ratio) {
     ${square}
     acc += w * s;
     W += w;
+  }
+  if (abs(W) <= NUM_EPS) {
+    var fallback = textureSampleLevel(src, samp, uv, 0.0);
+    ${isV ? "fallback = fallback * fallback;" : ""}
+    return fallback;
   }
   return acc / W;
 }`;
@@ -150,9 +185,12 @@ const oversharp : f32 = 0.0;
   avg0 /= W; avg1 /= W; avg2 /= W;
   let Sl = luma(max(avg1 - avg0 * avg0, vec3f(0.0)));
   let Sh = luma(max(avg2 - avg0 * avg0, vec3f(0.0)));
+  // select evaluates both value operands. Keep the low-variance branch finite on
+  // a uniform field (Sl=Sh=0), even though the other branch is selected there.
+  let varianceRatio = clamp(Sh / max(Sl, NUM_EPS), 0.0, 1.0);
   let R = select(
     sqrt((Sh + sigma_nsq) / (Sl + sigma_nsq)) * (1.0 + oversharp),
-    clamp(Sh / Sl, 0.0, 1.0),
+    varianceRatio,
     Sl > Sh
   );
   // store the local mean (avg0) and R

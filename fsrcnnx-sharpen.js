@@ -1,5 +1,30 @@
+// Copyright (c) 2015-2021, bacondither
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions
+// are met:
+// 1. Redistributions of source code must retain the above copyright
+//    notice, this list of conditions and the following disclaimer
+//    in this position and unchanged.
+// 2. Redistributions in binary form must reproduce the above copyright
+//    notice, this list of conditions and the following disclaimer in the
+//    documentation and/or other materials provided with the distribution.
+//
+// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
+// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+// IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+// INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+// NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+// THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
 // fsrcnnx-sharpen.js — adaptive-sharpen, hand-ported from bacondither's shader
 // (version 2021-10-17, "tuned for use post-resize").
+// Local WebGPU/WGSL port and numerical-safety modifications: 2026.
 //
 // Hooks OUTPUT in mpv: runs last, on the final RGB. In our pipeline it's the
 // final pass before the canvas — after SSimDownscaler if it ran, else after
@@ -12,7 +37,14 @@
 //  - curve_height is exposed as a pipeline-overridable constant (strength).
 
 export function buildSharpenShader(curveHeight = 1.0, overshootCtrl = false) {
-  const ch = curveHeight.toFixed(4);
+  let requested;
+  try { requested = Number(curveHeight); } catch { requested = NaN; }
+  // Keep generated WGSL finite even when this builder is called directly or a
+  // corrupted persisted value bypasses the public-setting normalization.
+  const normalized = Number.isFinite(requested)
+    ? Math.max(0.1, Math.min(2.0, requested))
+    : 1.0;
+  const ch = normalized.toFixed(4);
   const oc = overshootCtrl ? "true" : "false";
   return /* wgsl */ `
 @group(0) @binding(0) var samp : sampler;
@@ -27,6 +59,7 @@ const D_compr_high : f32 = 0.500;
 const scale_lim    : f32 = 0.1;
 const scale_cs     : f32 = 0.056;
 const pm_p         : f32 = 1.0;
+const NUM_EPS      : f32 = 1.0e-6;
 
 fn sat1(x : f32) -> f32 { return clamp(x, 0.0, 1.0); }
 fn sat3(x : vec3f) -> vec3f { return clamp(x, vec3f(0.0), vec3f(1.0)); }
@@ -38,8 +71,14 @@ fn ctl(rgb : vec3f) -> f32 {
 fn dxdy(v : vec3f) -> f32 { return length(fwidth(v)); }
 
 fn soft_lim(v : f32, s : f32) -> f32 {
+  // A perfectly flat neighborhood has no permitted overshoot distance. Returning
+  // zero preserves that field and avoids both 0/0 and an unbounded v/s ratio.
+  if (s <= NUM_EPS) { return 0.0; }
   let r = v / s;
-  return sat1(abs(r) * (27.0 + pow(r, 2.0)) / (27.0 + 9.0 * pow(r, 2.0))) * s;
+  // r may be negative; r*r is finite and well-defined where pow(r, 2) is not
+  // guaranteed to be for a negative base on every shader implementation.
+  let r2 = r * r;
+  return sat1(abs(r) * (27.0 + r2) / (27.0 + 9.0 * r2)) * s;
 }
 fn wpmean(a : f32, b : f32, w : f32) -> f32 {
   return pow(w * pow(abs(a), pm_p) + abs(1.0 - w) * pow(abs(b), pm_p), 1.0 / pm_p);
@@ -127,18 +166,18 @@ struct VsOut { @builtin(position) pos : vec4f, @location(0) uv : vec2f };
   let modif_e0 = 3.0 * e[0] + 0.02/2.5;
 
   var weights : array<f32, 12>;
-  weights[0]  = min(modif_e0/e[1],  dW.y);
+  weights[0]  = min(modif_e0/max(e[1], NUM_EPS),  dW.y);
   weights[1]  = dW.x;
-  weights[2]  = min(modif_e0/e[3],  dW.y);
+  weights[2]  = min(modif_e0/max(e[3], NUM_EPS),  dW.y);
   weights[3]  = dW.x;
   weights[4]  = dW.x;
-  weights[5]  = min(modif_e0/e[6],  dW.y);
+  weights[5]  = min(modif_e0/max(e[6], NUM_EPS),  dW.y);
   weights[6]  = dW.x;
-  weights[7]  = min(modif_e0/e[8],  dW.y);
-  weights[8]  = min(modif_e0/e[9],  dW.z);
-  weights[9]  = min(modif_e0/e[10], dW.z);
-  weights[10] = min(modif_e0/e[11], dW.z);
-  weights[11] = min(modif_e0/e[12], dW.z);
+  weights[7]  = min(modif_e0/max(e[8], NUM_EPS),  dW.y);
+  weights[8]  = min(modif_e0/max(e[9], NUM_EPS),  dW.z);
+  weights[9]  = min(modif_e0/max(e[10], NUM_EPS), dW.z);
+  weights[10] = min(modif_e0/max(e[11], NUM_EPS), dW.z);
+  weights[11] = min(modif_e0/max(e[12], NUM_EPS), dW.z);
 
   weights[0] = (max(max((weights[8]  + weights[9])/4.0,  weights[0]), 0.25) + weights[0])/2.0;
   weights[2] = (max(max((weights[8]  + weights[10])/4.0, weights[2]), 0.25) + weights[2])/2.0;
@@ -152,7 +191,13 @@ struct VsOut { @builtin(position) pos : vec4f, @location(0) uv : vec2f };
     weightsum   += weights[pix] * lowthr;
     lowthrsum   += lowthr / 12.0;
   }
-  neg_laplace = sqrt(neg_laplace / weightsum);
+  // Flat fields make every lowthr zero, hence both accumulators are zero. Their
+  // mathematically neutral result is the center luma: sharpdiff then remains zero.
+  if (weightsum > NUM_EPS) {
+    neg_laplace = sqrt(max(neg_laplace, 0.0) / weightsum);
+  } else {
+    neg_laplace = c0_Y;
+  }
 
   let sharpen_val = curve_height/(curve_height*curveslope*edge + 0.625);
   var sharpdiff = (c0_Y - neg_laplace)*(lowthrsum*sharpen_val + 0.01);
