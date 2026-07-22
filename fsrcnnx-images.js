@@ -85,47 +85,66 @@ export class ImageUpscaler {
     this.running = false;
     this.processed = new WeakSet(); // imgs we've handled (success or skip)
     this.replaced = new Set();      // imgs whose src we replaced (for restore)
-    this._writing = new WeakMap();  // img -> nested writes; suppress our mutations
+    this._writing = new WeakMap();  // img -> nested synchronous writes
+    this._ownedMutations = new WeakMap(); // img -> expected src/srcset transitions
     this._revisions = new WeakMap();
     this._jobs = new WeakMap();
     this._queue = [];
     this._active = null;
+    this._activePromise = null;
     this._deferred = new Set();
     this._runGeneration = 0;
     this._pendingLoads = new Set();
     this._loadCancelByImage = new WeakMap();
     this._observedImages = new Map();
-    this._mutationObservers = new Set();
-    this._observedRoots = new WeakSet();
+    // Keep the observed root alongside its observer. A WeakSet cannot be
+    // enumerated when a shadow host is detached, which left both the observer
+    // and its shadow tree retained until the whole image feature stopped.
+    this._mutationObservers = new Map();
     this._failures = new Map();
     this._destroyed = false;
+    this._destroyPromise = null;
 
-    // dedicated FSRCNNX model instance (own texture cache)
-    this.model = fsrcnnxSource
-      ? new FsrcnnxModel(device, fsrcnnxSource.manifest, fsrcnnxSource.wgsl,
-        { expectedName: fsrcnnxSource.name })
-      : null;
-    this.ssimds = new SsimDownscaler(device);
+    this.model = null;
+    this.ssimds = null;
+    this.extractPipe = null;
+    this.recombinePipe = null;
+    this.blitPipe = null;
 
-    // pipelines
-    this.extractPipe = device.createComputePipeline({
-      layout: "auto",
-      compute: { module: device.createShaderModule({ code: LUMA_FROM_TEX }), entryPoint: "main" },
-    });
-    const rmod = device.createShaderModule({ code: RECOMBINE_IMG });
-    this.recombinePipe = device.createRenderPipeline({
-      layout: "auto",
-      vertex: { module: rmod, entryPoint: "vs" },
-      fragment: { module: rmod, entryPoint: "fs", targets: [{ format: "rgba16float" }] },
-      primitive: { topology: "triangle-list" },
-    });
-    const bmod = device.createShaderModule({ code: BLIT });
-    this.blitPipe = device.createRenderPipeline({
-      layout: "auto",
-      vertex: { module: bmod, entryPoint: "vs" },
-      fragment: { module: bmod, entryPoint: "fs", targets: [{ format }] },
-      primitive: { topology: "triangle-list" },
-    });
+    // Construction is transactional. Model/downscaler constructors allocate
+    // caches, so a later shader or pipeline failure must not strand those
+    // allocations behind a constructor that never returned to its caller.
+    try {
+      this.model = fsrcnnxSource
+        ? new FsrcnnxModel(device, fsrcnnxSource.manifest, fsrcnnxSource.wgsl,
+          { expectedName: fsrcnnxSource.name })
+        : null;
+      this.ssimds = new SsimDownscaler(device);
+
+      this.extractPipe = device.createComputePipeline({
+        layout: "auto",
+        compute: { module: device.createShaderModule({ code: LUMA_FROM_TEX }), entryPoint: "main" },
+      });
+      const rmod = device.createShaderModule({ code: RECOMBINE_IMG });
+      this.recombinePipe = device.createRenderPipeline({
+        layout: "auto",
+        vertex: { module: rmod, entryPoint: "vs" },
+        fragment: { module: rmod, entryPoint: "fs", targets: [{ format: "rgba16float" }] },
+        primitive: { topology: "triangle-list" },
+      });
+      const bmod = device.createShaderModule({ code: BLIT });
+      this.blitPipe = device.createRenderPipeline({
+        layout: "auto",
+        vertex: { module: bmod, entryPoint: "vs" },
+        fragment: { module: bmod, entryPoint: "fs", targets: [{ format }] },
+        primitive: { topology: "triangle-list" },
+      });
+    } catch (error) {
+      this._releaseOwnedGpuResources();
+      this.device = null;
+      this.sampler = null;
+      throw error;
+    }
   }
 
   // --- smart filter ---------------------------------------------------------
@@ -139,6 +158,11 @@ export class ImageUpscaler {
     if (src.startsWith("data:")) return false;     // inline data URI
     if (src.startsWith("blob:")) return false;      // our own (or page's) blob
     if (/\.svg(\?|$)/i.test(src)) return false;     // vector, no benefit
+    // A matching <picture><source> wins over attributes on the fallback <img>.
+    // Replacing only img.src/srcset would create and count an unused blob while
+    // currentSrc remains page-owned. Until source ownership can be transactional,
+    // fail closed for pictures which expose any responsive source candidates.
+    if (this._pictureHasSourceCandidates(img)) return false;
     if (nw < MIN_SOURCE_EDGE || nh < MIN_SOURCE_EDGE || nw * nh < MIN_SOURCE_PIXELS) return false;
     const target = this._targetDimensions(img, nw, nh);
     if (!target) return false;
@@ -147,6 +171,24 @@ export class ImageUpscaler {
     if (target.w <= nw * 1.05 && target.h <= nh * 1.05) return false;
     if (!this._dimensionsAllowed(nw, nh, target.w, target.h, true)) return false;
     return true;
+  }
+
+  _pictureHasSourceCandidates(img) {
+    let picture = null;
+    try { picture = img?.closest?.("picture") || null; } catch {}
+    if (!picture) {
+      for (let parent = img?.parentElement; parent; parent = parent.parentElement) {
+        if (parent.tagName === "PICTURE") { picture = parent; break; }
+      }
+    }
+    if (!picture) return false;
+    try {
+      return [...(picture.querySelectorAll?.("source") || [])].some((source) =>
+        String(source.getAttribute?.("srcset") || source.srcset || "").trim().length > 0);
+    } catch {
+      // An inaccessible/hostile picture subtree is not safe to rewrite.
+      return true;
+    }
   }
 
   _targetDimensions(img, nw, nh) {
@@ -215,16 +257,28 @@ export class ImageUpscaler {
     } else {
       this.io = null;
     }
-    this._observedRoots = new WeakSet();
     this._observeMutationRoot(document.body || document.documentElement);
     this.scan();
   }
 
   stop() {
+    // Consume mutations already queued for delivery before deciding which
+    // attributes still belong to us. In particular, a page can replace src and
+    // srcset and immediately disable the extension in the same task.
+    const pendingMutations = [];
+    for (const mo of [...this._mutationObservers.values()]) {
+      try {
+        const records = mo.takeRecords?.();
+        if (records?.length) pendingMutations.push(...records);
+      } catch {}
+    }
+    // Process the complete snapshot before a removed shadow host can disconnect
+    // one of the other observers and discard its pending attribute records.
+    if (pendingMutations.length) this._handleMutations(pendingMutations);
     this.running = false;
     this._runGeneration++;
     this.io?.disconnect(); this.io = null;
-    for (const mo of this._mutationObservers) mo.disconnect();
+    for (const mo of this._mutationObservers.values()) mo.disconnect();
     this._mutationObservers.clear(); this.mo = null;
     for (const cancel of [...this._pendingLoads]) cancel();
     this._clearQueuedJobs();
@@ -269,19 +323,53 @@ export class ImageUpscaler {
   }
 
   destroy() {
-    this.stop();
-    try { this.model?.destroy?.(); } catch {}
-    try { this.ssimds?.destroy?.(); } catch {}
+    if (this._destroyPromise) return this._destroyPromise;
+    // Publish both terminal state and the single-flight promise before stopping
+    // observers. stop() reports count=0 through an injected callback, and that
+    // callback is allowed to synchronously re-enter destroy().
     this._destroyed = true;
+    let resolveDestroy, rejectDestroy;
+    const promise = new Promise((resolve, reject) => {
+      resolveDestroy = resolve;
+      rejectDestroy = reject;
+    });
+    this._destroyPromise = promise;
+    let stopError = null;
+    try { this.stop(); } catch (error) { stopError = error; }
+    (async () => {
+      // A job can be awaiting submitted GPU work or PNG encoding after stop().
+      // Keep its model/cache generation alive until that continuation is done.
+      while (this._activePromise) {
+        const active = this._activePromise;
+        try { await active; } catch {}
+        if (this._activePromise === active) this._activePromise = null;
+      }
+      try { await this.device?.queue?.onSubmittedWorkDone?.(); } catch {}
+      this._releaseOwnedGpuResources();
+      // The device and sampler are borrowed from the main runtime, so only
+      // release our references after all submitted image work has drained.
+      this.device = null;
+      this.sampler = null;
+      if (stopError) throw stopError;
+    })().then(resolveDestroy, rejectDestroy);
+    return promise;
   }
 
   // Put the original src/srcset back.
   restore(img, adjustCount = true) {
     if (!img || !img.dataset) return;
     if (img.dataset.fsrcnnxOrig != null) {
+      const url = img._fsrcnnxURL;
       this._ownWrite(img, () => {
-        this._restoreAttribute(img, "src", "fsrcnnxOrig", "fsrcnnxOrigHadSrc");
-        this._restoreAttribute(img, "srcset", "fsrcnnxOrigSrcset", "fsrcnnxOrigHadSrcset");
+        // Restore only exact values published by this instance. Attribute
+        // writes from the page may still be waiting in MutationObserver's
+        // queue (or the observer may not implement takeRecords), and must win.
+        if (url && img.getAttribute("src") === url) {
+          this._restoreAttribute(img, "src", "fsrcnnxOrig", "fsrcnnxOrigHadSrc");
+        }
+        if (img.hasAttribute("srcset") && img.getAttribute("srcset") === "") {
+          this._restoreAttribute(img, "srcset", "fsrcnnxOrigSrcset", "fsrcnnxOrigHadSrcset");
+        }
         this._clearReplacementMetadata(img);
       });
     }
@@ -317,7 +405,15 @@ export class ImageUpscaler {
     if (!this.running || !img || img.tagName !== "IMG") return;
     if (!this._observedImages.has(img)) {
       const onLoad = () => {
-        if (!this.running || this._isWriting(img) || this._isOwnReplacement(img)) return;
+        if (!this.running || this._isWriting(img)) return;
+        // A responsive-image selection can change currentSrc without changing
+        // an attribute on the <img> itself (for example, after a <picture>
+        // media query starts matching). Only suppress the load for the blob we
+        // actually own; an effective-source change retires that replacement.
+        if (this._isOwnReplacement(img)) return;
+        if (this.replaced.has(img) || img.dataset?.fsrcnnxDone) {
+          this._discardReplacementForExternalChange(img, new Set());
+        }
         this._cancelImageWork(img);
         this.processed.delete(img);
         this.observe(img, true);
@@ -333,34 +429,105 @@ export class ImageUpscaler {
   }
 
   _observeMutationRoot(root) {
-    if (!this.running || !root || this._observedRoots.has(root) || typeof MutationObserver !== "function") return;
-    this._observedRoots.add(root);
+    if (!this.running || !root || this._mutationObservers.has(root) || typeof MutationObserver !== "function") return;
     const mo = new MutationObserver((records) => this._handleMutations(records));
     try {
-      mo.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "srcset", "sizes"] });
-      this._mutationObservers.add(mo);
+      mo.observe(root, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeOldValue: true,
+        attributeFilter: ["src", "srcset", "sizes", "media", "type"],
+      });
+      this._mutationObservers.set(root, mo);
       if (!this.mo) this.mo = mo;
     } catch { mo.disconnect(); }
   }
 
   _handleMutations(records) {
     if (!this.running) return;
+    const imageAttributeRecords = new Map();
+    const effectiveSourceChecks = new Set();
+
     for (const record of records) {
       if (record.type === "attributes" && record.target?.tagName === "IMG") {
         const img = record.target;
-        if (this._isOwnMutation(img, record.attributeName)) continue;
-        this._discardReplacementForExternalChange(img, record.attributeName);
-        this._cancelImageWork(img);
-        this.processed.delete(img);
-        this.observe(img, true);
+        let pending = imageAttributeRecords.get(img);
+        if (!pending) imageAttributeRecords.set(img, pending = []);
+        pending.push(record);
         continue;
       }
+      if (record.type === "attributes" && record.target?.tagName === "SOURCE") {
+        this._collectPictureImages(record.target, effectiveSourceChecks);
+      } else if (record.type === "childList") {
+        // Adding, removing, or reordering <source> nodes can replace currentSrc
+        // while leaving the descendant <img>'s own attributes untouched.
+        this._collectPictureImages(record.target, effectiveSourceChecks);
+      }
+    }
+
+    // MutationObserver exposes the final attribute value for every record. Use
+    // successive oldValue entries to reconstruct each transition, then handle
+    // all externally changed attributes for an image as one ownership event.
+    // This prevents a src record from restoring over a srcset change (or vice
+    // versa) that occurred in the same observer delivery.
+    for (const [img, pending] of imageAttributeRecords) {
+      const externalAttributes = new Set();
+      for (let index = 0; index < pending.length; index++) {
+        const record = pending[index];
+        const attribute = record.attributeName;
+        let nextValue = img.getAttribute?.(attribute) ?? null;
+        for (let next = index + 1; next < pending.length; next++) {
+          if (pending[next].attributeName === attribute && "oldValue" in pending[next]) {
+            nextValue = pending[next].oldValue;
+            break;
+          }
+        }
+        const oldValue = "oldValue" in record ? record.oldValue : undefined;
+        if (!this._isOwnMutation(img, attribute, oldValue, nextValue)) externalAttributes.add(attribute);
+      }
+      if (!externalAttributes.size) continue;
+      this._discardReplacementForExternalChange(img, externalAttributes);
+      this._cancelImageWork(img);
+      this.processed.delete(img);
+      this.observe(img, true);
+    }
+
+    for (const img of effectiveSourceChecks) {
+      const hasReplacement = this.replaced.has(img) || !!img.dataset?.fsrcnnxDone;
+      if (hasReplacement && this._isOwnReplacement(img)) continue;
+      if (hasReplacement) this._discardReplacementForExternalChange(img, new Set());
+      this._cancelImageWork(img);
+      this.processed.delete(img);
+      this.observe(img, true);
+    }
+
+    // Tree ownership changes run after attribute ownership changes so removing
+    // an image cannot restore over page-authored attributes from the same batch.
+    for (const record of records) {
+      if (record.type !== "childList") continue;
       for (const node of record.removedNodes || []) this._unobserveTree(node);
       for (const node of record.addedNodes || []) this._scanRoot(node);
     }
   }
 
+  _collectPictureImages(node, output) {
+    let picture = null;
+    if (node?.nodeType === 1 && node.tagName === "PICTURE") picture = node;
+    if (!picture) {
+      try { picture = node?.closest?.("picture") || null; } catch {}
+    }
+    if (!picture) {
+      for (let parent = node?.parentElement; parent; parent = parent.parentElement) {
+        if (parent.tagName === "PICTURE") { picture = parent; break; }
+      }
+    }
+    if (!picture) return;
+    try { picture.querySelectorAll?.("img").forEach((img) => output.add(img)); } catch {}
+  }
+
   _unobserveTree(root) {
+    this._disconnectMutationRoot(root);
     const images = [];
     if (root?.nodeType === 1 && root.tagName === "IMG") images.push(root);
     try { root?.querySelectorAll?.("img").forEach((img) => images.push(img)); } catch {}
@@ -375,6 +542,22 @@ export class ImageUpscaler {
       if (this.replaced.has(img)) this.restore(img);
       this.processed.delete(img);
     }
+  }
+
+  _disconnectMutationRoot(root) {
+    const mo = this._mutationObservers.get(root);
+    if (!mo) return;
+    // A document-root observer can report removal of a shadow host before the
+    // shadow observer receives attribute records queued in the same task.
+    // Consume them before disconnect(), which otherwise discards the records and
+    // lets restore() overwrite the page's final same-value src/srcset writes.
+    try {
+      const records = mo.takeRecords?.();
+      if (records?.length) this._handleMutations(records);
+    } catch {}
+    try { mo.disconnect(); } catch {}
+    this._mutationObservers.delete(root);
+    if (this.mo === mo) this.mo = this._mutationObservers.values().next().value || null;
   }
 
   // --- processing -----------------------------------------------------------
@@ -433,11 +616,13 @@ export class ImageUpscaler {
     }
     if (!job) { this._drainDeferred(); return; }
     this._active = job;
-    this._processJob(job).then((ok) => this._finishJob(job, ok)).finally(() => {
+    const activePromise = this._processJob(job).then((ok) => this._finishJob(job, ok)).finally(() => {
       if (this._active === job) this._active = null;
+      if (this._activePromise === activePromise) this._activePromise = null;
       this._drainDeferred();
       this._drainQueue();
     });
+    this._activePromise = activePromise;
   }
 
   _finishJob(job, result) {
@@ -620,12 +805,27 @@ export class ImageUpscaler {
   _isWriting(img) { return (this._writing.get(img) || 0) > 0; }
   _isOwnReplacement(img) {
     const url = img?._fsrcnnxURL;
-    return !!(url && img.dataset?.fsrcnnxDone &&
-      (img.getAttribute?.("src") === url || img.src === url || img.currentSrc === url));
+    return !!(url && img.dataset?.fsrcnnxDone && this._source(img) === url);
   }
 
-  _isOwnMutation(img, attribute) {
+  _isOwnMutation(img, attribute, oldValue = undefined, newValue = undefined) {
     if (this._isWriting(img)) return true;
+    const byAttribute = this._ownedMutations.get(img);
+    const transitions = byAttribute?.get(attribute);
+    if (transitions?.length) {
+      const match = transitions.findIndex((transition) =>
+        (oldValue === undefined || transition.oldValue === oldValue) &&
+        (newValue === undefined || transition.newValue === newValue));
+      if (match >= 0) {
+        transitions.splice(match, 1);
+        if (!transitions.length) byAttribute.delete(attribute);
+        if (!byAttribute.size) this._ownedMutations.delete(img);
+        return true;
+      }
+    }
+    // With attributeOldValue enabled, an unmatched transition is page-owned,
+    // even when the page deliberately wrote the same value we already had.
+    if (oldValue !== undefined && newValue !== undefined) return false;
     const url = img?._fsrcnnxURL;
     if (!url || !img.dataset?.fsrcnnxDone) return false;
     if (attribute === "src") return img.getAttribute("src") === url;
@@ -634,14 +834,38 @@ export class ImageUpscaler {
   }
 
   _ownWrite(img, fn) {
+    const attributes = ["src", "srcset"];
+    const before = new Map(attributes.map((attribute) => [attribute, img.getAttribute?.(attribute) ?? null]));
     this._writing.set(img, (this._writing.get(img) || 0) + 1);
     try { fn(); }
     finally {
-      setTimeout(() => {
-        const remaining = (this._writing.get(img) || 1) - 1;
-        if (remaining > 0) this._writing.set(img, remaining); else this._writing.delete(img);
-      }, 0);
+      for (const attribute of attributes) {
+        const oldValue = before.get(attribute);
+        const newValue = img.getAttribute?.(attribute) ?? null;
+        if (oldValue !== newValue) this._recordOwnMutation(img, attribute, oldValue, newValue);
+      }
+      const remaining = (this._writing.get(img) || 1) - 1;
+      if (remaining > 0) this._writing.set(img, remaining); else this._writing.delete(img);
     }
+  }
+
+  _recordOwnMutation(img, attribute, oldValue, newValue) {
+    let byAttribute = this._ownedMutations.get(img);
+    if (!byAttribute) this._ownedMutations.set(img, byAttribute = new Map());
+    let transitions = byAttribute.get(attribute);
+    if (!transitions) byAttribute.set(attribute, transitions = []);
+    const transition = { oldValue, newValue };
+    transitions.push(transition);
+    // MutationObserver callbacks run before timers. Drop an undelivered token
+    // after the current task so it cannot misclassify a later page mutation.
+    setTimeout(() => {
+      const pending = this._ownedMutations.get(img)?.get(attribute);
+      const index = pending?.indexOf(transition) ?? -1;
+      if (index >= 0) pending.splice(index, 1);
+      const current = this._ownedMutations.get(img);
+      if (pending && !pending.length) current?.delete(attribute);
+      if (current && !current.size) this._ownedMutations.delete(img);
+    }, 0);
   }
 
   _captureOriginal(img) {
@@ -664,18 +888,38 @@ export class ImageUpscaler {
     for (const key of ["fsrcnnxOrig", "fsrcnnxOrigHadSrc", "fsrcnnxOrigSrcset", "fsrcnnxOrigHadSrcset", "fsrcnnxDone"]) delete img.dataset[key];
   }
 
-  _discardReplacementForExternalChange(img, changedAttribute) {
+  _discardReplacementForExternalChange(img, changedAttributes) {
     if (!this.replaced.has(img) && !img.dataset?.fsrcnnxDone) return;
+    const changed = typeof changedAttributes === "string"
+      ? new Set([changedAttributes])
+      : new Set(changedAttributes || []);
     const url = img._fsrcnnxURL;
     this._ownWrite(img, () => {
-      // Preserve the attribute the page just changed; restore only attributes we
-      // still own so a responsive-image update is not overwritten.
-      if (changedAttribute !== "src" && img.getAttribute("src") === url) this._restoreAttribute(img, "src", "fsrcnnxOrig", "fsrcnnxOrigHadSrc");
-      if (changedAttribute !== "srcset") this._restoreAttribute(img, "srcset", "fsrcnnxOrigSrcset", "fsrcnnxOrigHadSrcset");
+      // Preserve every attribute the page changed in this delivery. Restore an
+      // untouched attribute only while it still has our exact owned value.
+      if (!changed.has("src") && img.getAttribute("src") === url) {
+        this._restoreAttribute(img, "src", "fsrcnnxOrig", "fsrcnnxOrigHadSrc");
+      }
+      if (!changed.has("srcset") && img.hasAttribute("srcset") && img.getAttribute("srcset") === "") {
+        this._restoreAttribute(img, "srcset", "fsrcnnxOrigSrcset", "fsrcnnxOrigHadSrcset");
+      }
       this._clearReplacementMetadata(img);
     });
     if (url) { try { URL.revokeObjectURL(url); } catch {} img._fsrcnnxURL = null; }
     if (this.replaced.delete(img)) this._setCount(Math.max(0, this.count - 1));
+  }
+
+  _releaseOwnedGpuResources() {
+    // GPU pipelines do not currently expose destroy(), but honoring it keeps
+    // cleanup correct for compatible implementations and focused test doubles.
+    for (const resource of [this.blitPipe, this.recombinePipe, this.extractPipe, this.ssimds, this.model]) {
+      try { resource?.destroy?.(); } catch {}
+    }
+    this.blitPipe = null;
+    this.recombinePipe = null;
+    this.extractPipe = null;
+    this.ssimds = null;
+    this.model = null;
   }
 
   _setCount(value) {

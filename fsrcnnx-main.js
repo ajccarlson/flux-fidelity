@@ -89,11 +89,21 @@ let mode = "off";
 let modeSelectionGeneration = 0;
 let preferenceRestoreGeneration = 0;
 let device = null, deviceOwnedByMain = false;
+let gpuResourceGeneration = 0;
+let gpuResourcePhase = "idle"; // idle | initializing | active | releasing
+let gpuResourceReason = null;
+let gpuRetirementTail = Promise.resolve();
+let gpuRetirementPromise = null;
+let primaryAllocationRetirementTail = Promise.resolve();
+let primaryAllocationRetirementPromise = null;
 const watchedDeviceLosses = new WeakSet();
 const lostDevices = new WeakSet();
+const deviceErrorHandlers = new WeakMap();
 let deviceRecoveryGeneration = 0;
 let deviceRecoveryPromise = null;
 let deviceRecoveryTimer = null;
+const deviceLossInvalidations = new WeakMap();
+let deviceLossInvalidationPromise = null;
 const STATUS_VERSION = 1;
 const GPU_RECOVERY_MAX_ATTEMPTS = 3;
 let gpuAdapterPhase = "unrequested";
@@ -236,6 +246,7 @@ function setGpuFailure(stage, code, error, { adapter = gpuAdapterPhase, device: 
 }
 
 function setGpuReady({ recovered = false } = {}) {
+  if (!device || lostDevices.has(device) || gpuResourcePhase === "releasing") return false;
   const deferredRecovery = gpuRecoveryPhase === "scheduled" || gpuRecoveryPhase === "exhausted";
   // A normal initialization can be the successful retry after a loss that was
   // deferred by BFCache suspension, or after terminal recovery exhausted. In
@@ -248,12 +259,15 @@ function setGpuReady({ recovered = false } = {}) {
   }
   gpuAdapterPhase = "ready";
   gpuDevicePhase = "ready";
+  gpuResourcePhase = "active";
+  gpuResourceReason = null;
   if (recovered || deferredRecovery || gpuRecoveryPhase === "idle") {
     gpuRecoveryPhase = "idle";
     gpuRecoveryAttempt = 0;
   }
   if (recovered || deferredRecovery) gpuRecoveredAt = Date.now();
   notifyState();
+  return true;
 }
 
 function resetPresentedRuntime() {
@@ -1164,36 +1178,235 @@ function positionCanvas(outW, outH) {
   return positionVideoCanvas(video, canvas, layoutController, outW, outH);
 }
 
+function runtimeGpuResourcesRequested() {
+  return !pageSuspended && deviceRecoveryRequested();
+}
+
+function gpuInitializationCurrent(generation) {
+  return generation === gpuResourceGeneration && runtimeGpuResourcesRequested();
+}
+
+function waitForGpuRetirement() {
+  return gpuRetirementPromise || Promise.resolve();
+}
+
+function lifecycleCall(target, method) {
+  try { return Promise.resolve(target?.[method]?.()); }
+  catch (error) { return Promise.reject(error); }
+}
+
+function retireGpuResources(reason = "idle") {
+  const retirementGeneration = ++gpuResourceGeneration;
+  const retiringDevice = device;
+  const retiringDeviceOwnedByMain = deviceOwnedByMain;
+  const retiringNeuralEng = neuralEng;
+  const retiringInterpolator = interpolator;
+  const pendingDeviceRecovery = deviceRecoveryPromise;
+  const pendingDeviceLossInvalidation = deviceLossInvalidationPromise;
+  gpuResourcePhase = "releasing";
+  gpuResourceReason = reason;
+  gpuDevicePhase = retiringDevice ? "releasing" : "uninitialized";
+  // Close publication before waiting on any producer. All asynchronous
+  // initializers are generation-fenced below, while already-published resources
+  // remain alive until their drains and the captured device fence settle.
+  device = null;
+  deviceOwnedByMain = false;
+  cancelDeviceRecovery();
+  adoptionGeneration++;
+  imageUpscalerInitGeneration++;
+  pauseDeviceProducers();
+  try { retiringNeuralEng?.stop?.(); } catch {}
+  try { retiringInterpolator?.stop?.(); } catch {}
+  const pendingWebGpuInit = webGpuInitPromise;
+  const pendingAdoption = adoptionPromise;
+  const pendingPrimaryRetirement = primaryAllocationRetirementPromise;
+  const neuralDrain = lifecycleCall(retiringNeuralEng, "quiesce");
+  const interpolationDrain = lifecycleCall(retiringInterpolator, "retireGpuResources");
+  const imageDrain = invalidateImageUpscaler();
+  const observeCleanup = (resource, promise) => Promise.resolve(promise).then(
+    () => null,
+    (error) => ({ resource, detail: boundedRuntimeDetail(error, `${resource} cleanup failed`) }),
+  );
+  // Attach rejection handlers immediately. A prior serialized retirement can
+  // delay the operation below, but cleanup failures must never surface as
+  // detached/unhandled promise rejections while they wait their turn.
+  const producerCleanupResults = [
+    observeCleanup("neural-quiesce", neuralDrain),
+    observeCleanup("interpolation-retirement", interpolationDrain),
+    observeCleanup("image-retirement", imageDrain),
+  ];
+  notifyState();
+
+  const operation = gpuRetirementTail.catch(() => {}).then(async () => {
+    const cleanupErrors = [];
+    const recordCleanupError = (failure) => {
+      if (!failure) return;
+      cleanupErrors.push(failure);
+      warn(`${failure.resource} cleanup failed:`, failure.detail);
+    };
+    // Adoption and subsystem continuations can submit after an earlier queue
+    // fence. Invalidate them first and wait for their own drain barriers.
+    await Promise.allSettled([
+      Promise.resolve(pendingWebGpuInit),
+      Promise.resolve(pendingAdoption),
+      Promise.resolve(pendingDeviceRecovery),
+      Promise.resolve(pendingDeviceLossInvalidation),
+      Promise.resolve(pendingPrimaryRetirement),
+    ]);
+    for (const result of await Promise.all(producerCleanupResults)) recordCleanupError(result);
+
+    adopting = false;
+
+    // Clearing the published device makes every model/stage initializer fail its
+    // identity check. Wait for those losing candidates before destroying caches.
+    await Promise.allSettled([
+      Promise.resolve(modelLoadPromise),
+      Promise.resolve(fsrcnnxStageBuildPromise),
+      Promise.resolve(artStageBuildPromise),
+      Promise.resolve(imageUpscalerInitPromise),
+      Promise.resolve(interpolatorInitPromise),
+    ]);
+
+    // No current initializer is allowed to publish during retirement. Keep a
+    // defensive backstop for a provider continuation that was already beyond a
+    // publication point when its lifecycle was invalidated.
+    const lateDevice = device;
+    const lateDeviceOwnedByMain = deviceOwnedByMain;
+    device = null;
+    deviceOwnedByMain = false;
+    const retiringDevices = new Map();
+    if (retiringDevice) retiringDevices.set(retiringDevice, retiringDeviceOwnedByMain);
+    if (lateDevice) {
+      retiringDevices.set(
+        lateDevice,
+        (retiringDevices.get(lateDevice) || false) || lateDeviceOwnedByMain,
+      );
+    }
+    for (const ownerDevice of retiringDevices.keys()) {
+      try { await ownerDevice?.queue?.onSubmittedWorkDone?.(); } catch {}
+    }
+    try {
+      const mainCleanup = await invalidateMainDeviceResources();
+      if (mainCleanup?.ok === false) {
+        for (const failure of mainCleanup.errors || []) cleanupErrors.push(failure);
+      }
+    } catch (error) {
+      recordCleanupError({
+        resource: "main-device-resources",
+        detail: boundedRuntimeDetail(error, "main device cleanup failed"),
+      });
+    }
+    for (const ownerDevice of retiringDevices.keys()) detachDeviceErrorHandler(ownerDevice);
+
+    // Only initWebGPU() transfers device ownership to this module. ORT and
+    // interpolation providers retire their own devices by releasing sessions or
+    // their standalone helper after all main-owned resources are gone.
+    for (const [ownerDevice, ownedByMain] of retiringDevices) {
+      if (!ownedByMain) continue;
+      try { ownerDevice?.destroy?.(); }
+      catch (error) {
+        recordCleanupError({
+          resource: "owned-device",
+          detail: boundedRuntimeDetail(error, "owned device destruction failed"),
+        });
+      }
+    }
+    const providerCleanupResults = await Promise.all([
+      observeCleanup("interpolation-models", lifecycleCall(retiringInterpolator, "releaseModelResources")),
+      observeCleanup("neural-session", lifecycleCall(retiringNeuralEng, "dispose")),
+    ]);
+    for (const result of providerCleanupResults) recordCleanupError(result);
+
+    if (retirementGeneration === gpuResourceGeneration) {
+      gpuResourcePhase = "idle";
+      gpuResourceReason = reason;
+      gpuDevicePhase = "uninitialized";
+      if (gpuAdapterPhase === "requesting") gpuAdapterPhase = "unrequested";
+      gpuRecoveryPhase = "idle";
+      gpuRecoveryAttempt = 0;
+      notifyState();
+    }
+    return {
+      ok: cleanupErrors.length === 0,
+      released: true,
+      reason,
+      ...(cleanupErrors.length ? { errors: cleanupErrors } : {}),
+    };
+  });
+  let exposed;
+  exposed = operation.finally(() => {
+    if (gpuRetirementPromise === exposed) gpuRetirementPromise = null;
+  });
+  gpuRetirementPromise = exposed;
+  gpuRetirementTail = exposed.then(() => undefined, () => undefined);
+  return exposed;
+}
+
+function retireGpuResourcesIfIdle(reason = "all-features-off") {
+  if (runtimeGpuResourcesRequested()) return Promise.resolve({ ok: true, released: false });
+  return retireGpuResources(reason);
+}
+
 let webGpuInitPromise = null;
 function initWebGPU() {
+  if (gpuRetirementPromise) {
+    return waitForGpuRetirement().then(() => initWebGPU());
+  }
   if (device && !lostDevices.has(device)) {
     if (gpuDevicePhase !== "ready") setGpuReady();
     return Promise.resolve(true);
   }
   if (webGpuInitPromise) return webGpuInitPromise;
+  const resourceGeneration = gpuResourceGeneration;
+  if (!gpuInitializationCurrent(resourceGeneration)) return Promise.resolve(false);
+  gpuResourcePhase = "initializing";
+  gpuResourceReason = null;
   gpuAdapterPhase = "requesting";
   gpuDevicePhase = "requesting";
   notifyState();
   const promise = (async () => {
     try {
-      const ok = await initWebGPUInternal();
+      const ok = await initWebGPUInternal(resourceGeneration);
       // GPUDevice.lost can already be settled when watchDeviceLoss() subscribes.
       // Validate publication after that microtask has had a chance to invalidate
       // the candidate, and give every concurrent caller this same truthful result.
       await Promise.resolve();
       const ready = !!(ok && device && !lostDevices.has(device));
-      if (ready) setGpuReady();
-      else if (gpuDevicePhase === "requesting") {
+      if (ready && gpuInitializationCurrent(resourceGeneration)) setGpuReady();
+      else if (gpuDevicePhase === "requesting" && gpuInitializationCurrent(resourceGeneration)) {
         setGpuFailure("device", "device-init-failed", "WebGPU device initialization failed");
       }
-      return ready;
+      if (!ready && gpuInitializationCurrent(resourceGeneration)) {
+        gpuResourcePhase = "idle";
+        gpuResourceReason = gpuLastFailure?.code || "device-init-failed";
+        notifyState();
+      }
+      return ready && gpuInitializationCurrent(resourceGeneration);
     } catch (error) {
-      if (gpuDevicePhase === "requesting") {
+      if (gpuDevicePhase === "requesting" && gpuInitializationCurrent(resourceGeneration)) {
         setGpuFailure("device", "device-request-failed", error);
       }
+      if (!gpuInitializationCurrent(resourceGeneration)) return false;
+      gpuResourcePhase = "idle";
+      gpuResourceReason = gpuLastFailure?.code || "device-request-failed";
+      notifyState();
       throw error;
     }
   })().finally(() => {
+    // A caller can invalidate demand without entering hard retirement (for
+    // example, a superseded settings request in a focused lifecycle). Do not
+    // leave telemetry claiming that an adapter/device request is still active
+    // after its generation has conclusively drained.
+    if (resourceGeneration !== gpuResourceGeneration && !device &&
+        gpuResourcePhase === "initializing") {
+      gpuResourcePhase = "idle";
+      gpuResourceReason = "initialization-cancelled";
+      if (gpuAdapterPhase === "requesting" || gpuAdapterPhase === "ready") {
+        gpuAdapterPhase = "unrequested";
+      }
+      if (gpuDevicePhase === "requesting") gpuDevicePhase = "uninitialized";
+      notifyState();
+    }
     if (webGpuInitPromise === promise) webGpuInitPromise = null;
   });
   webGpuInitPromise = promise;
@@ -1213,19 +1426,99 @@ function watchDeviceLoss(ownerDevice) {
   }).catch(() => {});
 }
 
+function invalidateLostDeviceProviders(
+  lostDevice,
+  info,
+  neuralProvider = neuralEng,
+  rifeProvider = interpolator?._rifeMod,
+) {
+  if (!lostDevice) return Promise.resolve({ ok: true, failures: [] });
+  const existing = deviceLossInvalidations.get(lostDevice);
+  if (existing) return existing;
+
+  // Publish the shared barrier before invoking either provider. Their invalidation
+  // hooks can synchronously unpublish sessions and notify other lifecycle owners;
+  // a re-entrant request must observe the barrier for this exact lost device.
+  let resolveBarrier;
+  const barrier = new Promise((resolve) => { resolveBarrier = resolve; });
+  deviceLossInvalidations.set(lostDevice, barrier);
+  deviceLossInvalidationPromise = barrier;
+
+  const observe = (resource, invalidate) => {
+    try {
+      return Promise.resolve(invalidate()).then(
+        () => null,
+        (error) => ({
+          resource,
+          detail: boundedRuntimeDetail(error, `${resource} invalidation failed`),
+        }),
+      );
+    } catch (error) {
+      return Promise.resolve({
+        resource,
+        detail: boundedRuntimeDetail(error, `${resource} invalidation failed`),
+      });
+    }
+  };
+
+  // Invoke both providers in this stack even when the first one throws. Promise
+  // settlement is observed by the single barrier below, so detached failures can
+  // neither become unhandled rejections nor let recovery overtake either release.
+  const neuralInvalidation = observe(
+    "neural-session",
+    () => neuralProvider?.invalidateDevice?.(lostDevice),
+  );
+  const rifeInvalidation = observe(
+    "rife-session",
+    () => rifeProvider?.invalidateDevice?.(lostDevice, info),
+  );
+  Promise.all([neuralInvalidation, rifeInvalidation]).then((results) => {
+    const failures = results.filter(Boolean);
+    for (const failure of failures) {
+      try { warn(`${failure.resource} device-loss invalidation failed:`, failure.detail); } catch {}
+    }
+    resolveBarrier({ ok: failures.length === 0, failures });
+  });
+  barrier.then(() => {
+    if (deviceLossInvalidationPromise === barrier) deviceLossInvalidationPromise = null;
+  });
+  return barrier;
+}
+
 function invalidateMainDeviceResources() {
-  invalidateImageUpscaler();
-  clearMultiTargets();
+  const cleanupErrors = [];
+  const recordCleanupError = (resource, error) => {
+    const detail = boundedRuntimeDetail(error, `${resource} cleanup failed`);
+    cleanupErrors.push({ resource, detail });
+    warn(`${resource} cleanup failed:`, detail);
+  };
+  let imageRetirement = null;
+  try { imageRetirement = invalidateImageUpscaler(); }
+  catch (error) { recordCleanupError("image-upscaler", error); }
+  let multiTargetRetirement = null;
+  try { multiTargetRetirement = clearMultiTargets(); }
+  catch (error) { recordCleanupError("secondary-targets", error); }
   const oldModels = new Set([
     ...models,
     ...Object.values(artStages).flat(),
   ]);
-  for (const model of oldModels) { try { model?.destroy?.(); } catch {} }
-  for (const texture of [chainTapTex, lumaTexture, hiRGB, dispRGB]) {
-    try { texture?.destroy?.(); } catch {}
+  for (const model of oldModels) {
+    try { model?.destroy?.(); }
+    catch (error) { recordCleanupError("model", error); }
   }
-  try { ssimds?.destroy?.(); } catch {}
-  try { context?.unconfigure?.(); } catch {}
+  for (const [name, texture] of [
+    ["chain-tap-texture", chainTapTex],
+    ["luma-texture", lumaTexture],
+    ["upscale-texture", hiRGB],
+    ["display-texture", dispRGB],
+  ]) {
+    try { texture?.destroy?.(); }
+    catch (error) { recordCleanupError(name, error); }
+  }
+  try { ssimds?.destroy?.(); }
+  catch (error) { recordCleanupError("ssim-downscaler", error); }
+  try { context?.unconfigure?.(); }
+  catch (error) { recordCleanupError("canvas-context", error); }
 
   chainTapTex = null; chainTapFrame = 0;
   lumaTexture = null; lumaW = 0; lumaH = 0;
@@ -1240,9 +1533,73 @@ function invalidateMainDeviceResources() {
   models = []; modelsDevice = null; activeModel = null;
   artStages = {}; chainedFsrcnnx = null; chainedArt = null;
   fsrcnnxLoadPending = false; artLoadPending = false;
-  resetScaleSelection();
-  resetPresentedRuntime();
+  try { resetScaleSelection(); }
+  catch (error) { recordCleanupError("scale-selection", error); }
+  try { resetPresentedRuntime(); }
+  catch (error) { recordCleanupError("presentation", error); }
   _texSource = null;
+  const imageDrain = Promise.resolve(imageRetirement).then(
+    () => undefined,
+    (error) => recordCleanupError("image-upscaler", error),
+  );
+  const secondaryDrain = Promise.resolve(multiTargetRetirement).then(
+    (result) => {
+      if (result?.ok !== false) return;
+      for (const failure of result.errors || []) {
+        cleanupErrors.push({
+          resource: failure.resource || "secondary-targets",
+          detail: failure.detail || "secondary target cleanup failed",
+        });
+      }
+    },
+    (error) => recordCleanupError("secondary-targets", error),
+  );
+  return Promise.all([imageDrain, secondaryDrain]).then(() => ({
+    ok: cleanupErrors.length === 0,
+    errors: cleanupErrors,
+  }));
+}
+
+function retirePrimaryGpuAllocations(reason = "source-change") {
+  const ownerDevice = device;
+  const operation = primaryAllocationRetirementTail.catch(() => {}).then(async () => {
+    try { await ownerDevice?.queue?.onSubmittedWorkDone?.(); } catch {}
+    // A device transition owns the old generation and its complete invalidation.
+    if (!ownerDevice || device !== ownerDevice || lostDevices.has(ownerDevice)) return false;
+
+    const stages = new Set([
+      ...models,
+      ...Object.values(artStages).flat(),
+    ]);
+    for (const stage of stages) {
+      try { stage?.resetAllocation?.(); } catch {}
+    }
+    for (const texture of [chainTapTex, lumaTexture, hiRGB, dispRGB]) {
+      try { texture?.destroy?.(); } catch {}
+    }
+    chainTapTex = null; chainTapFrame = 0;
+    lumaTexture = null; lumaW = 0; lumaH = 0;
+    hiRGB = null; hiRGBW = 0; hiRGBH = 0;
+    dispRGB = null; dispRGBW = 0; dispRGBH = 0;
+    try { ssimds?.destroy?.(); } catch {}
+    activeModel = null;
+    chainedFsrcnnx = null;
+    chainedArt = null;
+    _texSource = null;
+    resetScaleSelection();
+    resetPresentedRuntime();
+    gpuResourceReason = reason;
+    return true;
+  });
+  let exposed;
+  exposed = operation.finally(() => {
+    if (primaryAllocationRetirementPromise === exposed) {
+      primaryAllocationRetirementPromise = null;
+    }
+  });
+  primaryAllocationRetirementPromise = exposed;
+  primaryAllocationRetirementTail = exposed.then(() => undefined, () => undefined);
+  return exposed;
 }
 
 function cancelDeviceRecovery() {
@@ -1282,36 +1639,50 @@ function handleCurrentDeviceLoss(lostDevice, info) {
     device: "lost",
   });
   warn(`device lost: ${info?.message || info?.reason || "unknown reason"}`);
+  detachDeviceErrorHandler(lostDevice);
   device = null;
   deviceOwnedByMain = false;
+  gpuResourcePhase = "idle";
+  gpuResourceReason = "device-lost";
   adopting = false;
   cancelMainLoop();
+  const retainedNeuralProvider = neuralEng;
+  const retainedRifeProvider = interpolator?._rifeMod;
   try { interpolator?.stop?.(); } catch {}
-  invalidateMainDeviceResources();
+  const providerInvalidation = invalidateLostDeviceProviders(
+    lostDevice,
+    info,
+    retainedNeuralProvider,
+    retainedRifeProvider,
+  );
+  Promise.resolve(invalidateMainDeviceResources()).catch((error) => {
+    warn("device-loss resource invalidation failed:", boundedRuntimeDetail(error));
+  });
   if (canvas) {
     canvas.style.display = "none";
     canvas.style.opacity = "1";
   }
-  // Neural keeps a persistent ORT session by design; explicitly invalidate it
-  // so recovery cannot hand the renderer the same dead shared device again.
-  try { neuralEng?.invalidateDevice?.(lostDevice); } catch {}
-  if (shouldRecover) scheduleDeviceRecovery(generation, lostDevice, 0);
+  if (shouldRecover) scheduleDeviceRecovery(generation, lostDevice, 0, providerInvalidation);
 }
 
-function scheduleDeviceRecovery(generation, lostDevice, attempt) {
+function scheduleDeviceRecovery(generation, lostDevice, attempt, providerInvalidation) {
   if (pageSuspended || generation !== deviceRecoveryGeneration || !deviceRecoveryRequested()) return;
   gpuRecoveryPhase = "running";
   gpuRecoveryAttempt = attempt + 1;
   notifyState();
-  const promise = recoverDevice(generation, lostDevice, attempt).finally(() => {
+  const promise = recoverDevice(generation, lostDevice, attempt, providerInvalidation).finally(() => {
     if (deviceRecoveryPromise === promise) deviceRecoveryPromise = null;
   });
   deviceRecoveryPromise = promise;
 }
 
-async function recoverDevice(generation, lostDevice, attempt) {
+async function recoverDevice(generation, lostDevice, attempt, providerInvalidation) {
   try {
-    try { await neuralEng?.invalidateDevice?.(lostDevice); } catch {}
+    const invalidation = await (providerInvalidation || deviceLossInvalidations.get(lostDevice));
+    if (invalidation?.ok === false) {
+      const resources = invalidation.failures.map(({ resource }) => resource).join(", ");
+      throw new Error(`device provider invalidation failed${resources ? ` (${resources})` : ""}`);
+    }
     if (pageSuspended || generation !== deviceRecoveryGeneration || !deviceRecoveryRequested()) return false;
 
     if (mode === "upscale" && engine === "neural") {
@@ -1328,10 +1699,15 @@ async function recoverDevice(generation, lostDevice, attempt) {
     }
 
     if (pageSuspended || generation !== deviceRecoveryGeneration || !deviceRecoveryRequested()) return false;
-    if (optImages) (await ensureImageUpscaler())?.start();
+    if (optImages) {
+      const imageSelection = imagesSelectionGeneration;
+      startImageUpscalerIfCurrent(await ensureImageUpscaler(imageSelection), imageSelection);
+    }
     if ((mode !== "off" || (optInterpolate && engine !== "neural")) && !pageSuspended) {
       await queueVideoSelection(findVideo(), { force: true });
     }
+    if (pageSuspended || generation !== deviceRecoveryGeneration || !deviceRecoveryRequested() ||
+        !device || lostDevices.has(device) || gpuResourcePhase === "releasing") return false;
     setGpuReady({ recovered: true });
     log(`WebGPU recovered after device loss${attempt ? ` (attempt ${attempt + 1})` : ""}`);
     return true;
@@ -1348,7 +1724,7 @@ async function recoverDevice(generation, lostDevice, attempt) {
       const delay = 250 * Math.pow(2, attempt);
       deviceRecoveryTimer = setTimeout(() => {
         deviceRecoveryTimer = null;
-        scheduleDeviceRecovery(generation, lostDevice, attempt + 1);
+        scheduleDeviceRecovery(generation, lostDevice, attempt + 1, providerInvalidation);
       }, delay);
     } else {
       gpuRecoveryPhase = "exhausted";
@@ -1369,8 +1745,9 @@ async function recoverDevice(generation, lostDevice, attempt) {
   }
 }
 
-async function initWebGPUInternal() {
+async function initWebGPUInternal(resourceGeneration = gpuResourceGeneration) {
   if (device) return true;
+  if (!gpuInitializationCurrent(resourceGeneration)) return false;
   if (!("gpu" in navigator)) {
     warn("no WebGPU");
     setGpuFailure("api", "webgpu-api-unavailable", "WebGPU is not available", {
@@ -1382,11 +1759,15 @@ async function initWebGPUInternal() {
   try {
     adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
   } catch (error) {
-    setGpuFailure("adapter", "adapter-request-failed", error, {
-      adapter: "failed", device: "uninitialized",
-    });
+    if (!gpuInitializationCurrent(resourceGeneration)) return false;
+    if (gpuInitializationCurrent(resourceGeneration)) {
+      setGpuFailure("adapter", "adapter-request-failed", error, {
+        adapter: "failed", device: "uninitialized",
+      });
+    }
     throw error;
   }
+  if (!gpuInitializationCurrent(resourceGeneration)) return false;
   if (!adapter) {
     warn("no adapter");
     setGpuFailure("adapter", "adapter-unavailable", "No compatible WebGPU adapter is available", {
@@ -1403,10 +1784,17 @@ async function initWebGPUInternal() {
   try {
     requestedDevice = await adapter.requestDevice({ requiredFeatures: feats });
   } catch (error) {
-    setGpuFailure("device", "device-request-failed", error, {
-      adapter: "ready", device: "failed",
-    });
+    if (!gpuInitializationCurrent(resourceGeneration)) return false;
+    if (gpuInitializationCurrent(resourceGeneration)) {
+      setGpuFailure("device", "device-request-failed", error, {
+        adapter: "ready", device: "failed",
+      });
+    }
     throw error;
+  }
+  if (!gpuInitializationCurrent(resourceGeneration)) {
+    try { requestedDevice.destroy?.(); } catch {}
+    return false;
   }
   // Another provider may have supplied a shared device while the adapter request
   // was pending. Keep that newer device and release the redundant one we own.
@@ -1421,16 +1809,30 @@ async function initWebGPUInternal() {
   try {
     ensureCanvas();
     buildCore();
+    await Promise.resolve();
+    if (!gpuInitializationCurrent(resourceGeneration) || device !== requestedDevice ||
+        lostDevices.has(requestedDevice)) {
+      if (device === requestedDevice) {
+        await invalidateMainDeviceResources();
+        device = null;
+        deviceOwnedByMain = false;
+      }
+      try { requestedDevice.destroy?.(); } catch {}
+      return false;
+    }
   } catch (error) {
     if (device === requestedDevice) {
-      invalidateMainDeviceResources();
+      await invalidateMainDeviceResources();
       device = null;
       deviceOwnedByMain = false;
     }
     try { requestedDevice.destroy?.(); } catch {}
-    setGpuFailure("core", "core-init-failed", error, {
-      adapter: "ready", device: "failed",
-    });
+    if (gpuInitializationCurrent(resourceGeneration)) {
+      setGpuFailure("core", "core-init-failed", error, {
+        adapter: "ready", device: "failed",
+      });
+    }
+    if (!gpuInitializationCurrent(resourceGeneration)) return false;
     throw error;
   }
   setGpuReady();
@@ -1492,9 +1894,45 @@ function buildCore() {
 let adopting = false, adoptionPromise = null, adoptionTarget = null;
 let adoptionGeneration = 0;
 
+function attachDeviceErrorHandler(ownerDevice) {
+  if (!ownerDevice?.addEventListener || deviceErrorHandlers.has(ownerDevice)) return;
+  const handler = () => {
+    if (device !== ownerDevice) return;
+    const now = performance.now();
+    if (now - (_gpuErrWinStart || 0) > 2000) { _gpuErrWinStart = now; _gpuErrCount = 0; }
+    _gpuErrCount++;
+    if (_gpuErrCount !== 6 || !chainInverted) return;
+    if (now - (_invRestartLast || 0) < 60000 && _invRestarts >= 2) {
+      warn("inverted chain: repeated GPU error bursts — DISABLING inverted (re-enable via the toggle)");
+      interpInvertPref = false;
+      saveSitePrefs(["interpInvert"]);
+      scheduleInterpolatorGpuRestart();
+      return;
+    }
+    if (now - (_invRestartLast || 0) > 60000) _invRestarts = 0;
+    _invRestarts++;
+    _invRestartLast = now;
+    warn(`inverted chain: GPU error burst — clean restart (${_invRestarts}/2 this minute)`);
+    scheduleInterpolatorGpuRestart();
+  };
+  try {
+    ownerDevice.addEventListener("uncapturederror", handler);
+    deviceErrorHandlers.set(ownerDevice, handler);
+  } catch {}
+}
+
+function detachDeviceErrorHandler(ownerDevice) {
+  const handler = ownerDevice && deviceErrorHandlers.get(ownerDevice);
+  if (!handler) return;
+  try { ownerDevice.removeEventListener?.("uncapturederror", handler); } catch {}
+  deviceErrorHandlers.delete(ownerDevice);
+}
+
 function pauseDeviceProducers() {
-  cancelMainLoop();
-  for (const target of multiTargets.values()) target.controller?.cancelScheduledFrame?.();
+  try { cancelMainLoop(); } catch {}
+  for (const target of multiTargets.values()) {
+    try { target.controller?.cancelScheduledFrame?.(); } catch {}
+  }
   // Invalidate unpublished initialization and stop new submissions, but retain
   // published resources until the old queue fence settles. Device-resource
   // invalidation after the fence performs the actual destruction.
@@ -1519,7 +1957,9 @@ function resumeDeviceProducers() {
     }
   }
   if (optImages && !pageSuspended) {
-    ensureImageUpscaler().then((upscaler) => upscaler?.start?.())
+    const imageSelection = imagesSelectionGeneration;
+    ensureImageUpscaler(imageSelection).then((upscaler) =>
+      startImageUpscalerIfCurrent(upscaler, imageSelection))
       .catch((error) => warn("image upscaler resume failed:", error.message));
   }
 }
@@ -1566,8 +2006,10 @@ export function adoptChainDevice(extDevice, isRequestCurrent = null, { preserveM
 
 async function adoptChainDeviceInternal(extDevice, isRequestCurrent, { preserveModeOnFailure = false } = {}) {
   const attemptGeneration = adoptionGeneration;
+  const resourceGeneration = gpuResourceGeneration;
   const requestCurrent = typeof isRequestCurrent === "function" ? isRequestCurrent : () => true;
-  const generationCurrent = () => attemptGeneration === adoptionGeneration && !pageSuspended;
+  const generationCurrent = () => attemptGeneration === adoptionGeneration &&
+    resourceGeneration === gpuResourceGeneration && runtimeGpuResourcesRequested();
   const attemptCurrent = () => generationCurrent() && requestCurrent();
   if (!attemptCurrent()) return false;
   const old = device;
@@ -1581,7 +2023,8 @@ async function adoptChainDeviceInternal(extDevice, isRequestCurrent, { preserveM
     pauseDeviceProducers();
     try { await old?.queue?.onSubmittedWorkDone?.(); } catch {}
     if (!attemptCurrent() || device !== old) return false;
-    invalidateMainDeviceResources();
+    await invalidateMainDeviceResources();
+    if (!attemptCurrent() || device !== old) return false;
     // ---- swap + rebuild ----
     device = extDevice;
     swapped = true;
@@ -1590,37 +2033,10 @@ async function adoptChainDeviceInternal(extDevice, isRequestCurrent, { preserveM
     // model switch; only a device requested by initWebGPU() is ours to destroy.
     deviceOwnedByMain = false;
     watchDeviceLoss(extDevice);
-    {
-      const d = device;
-      // PRESENT-PATH CIRCUIT BREAKER: WebGPU validation errors are ASYNC events —
-      // no try/catch sees them, so a poisoned inverted pipeline can storm (the
-      // 237-error 1080p reattach). Count uncaptured errors on the adopted device;
-      // a burst while inverted triggers ONE clean interpolator restart (the
-      // proven toggle path); repeated bursts hard-disable inverted with a loud
-      // line. Listener does not preventDefault — ORT's own handler still sees
-      // its errors.
-      if (!d.__fsrcnnxErrHook) {
-        d.__fsrcnnxErrHook = true;
-        d.addEventListener("uncapturederror", () => {
-          if (device !== d) return;
-          const now = performance.now();
-          if (now - (_gpuErrWinStart || 0) > 2000) { _gpuErrWinStart = now; _gpuErrCount = 0; }
-          _gpuErrCount++;
-          if (_gpuErrCount === 6 && chainInverted) {
-            if (now - (_invRestartLast || 0) < 60000 && _invRestarts >= 2) {
-              warn("inverted chain: repeated GPU error bursts — DISABLING inverted (re-enable via the toggle)");
-              interpInvertPref = false; saveSitePrefs(["interpInvert"]);
-              scheduleInterpolatorGpuRestart();
-              return;
-            }
-            if (now - (_invRestartLast || 0) > 60000) _invRestarts = 0;
-            _invRestarts++; _invRestartLast = now;
-            warn(`inverted chain: GPU error burst — clean restart (${_invRestarts}/2 this minute)`);
-            scheduleInterpolatorGpuRestart();
-          }
-        });
-      }
-    }
+    // PRESENT-PATH CIRCUIT BREAKER: WebGPU validation errors are asynchronous,
+    // so count bursts on the currently adopted device. Module-owned handlers are
+    // removed when that provider device is relinquished.
+    attachDeviceErrorHandler(extDevice);
     buildCore();
     // Let an already-settled extDevice.lost callback invalidate this attempt even
     // in passthrough mode, where no model-loading await would otherwise yield.
@@ -1638,18 +2054,10 @@ async function adoptChainDeviceInternal(extDevice, isRequestCurrent, { preserveM
       error.code = "DEVICE_ADOPTION_SUPERSEDED";
       throw error;
     }
-    if (optImages && !pageSuspended) {
-      try { (await ensureImageUpscaler())?.start(); }
-      catch (e) { warn("image upscaler rebuild failed:", e.message); }
-    }
-    if (!attemptCurrent() || device !== extDevice || lostDevices.has(extDevice)) {
-      const error = new Error("device adoption superseded");
-      error.code = "DEVICE_ADOPTION_SUPERSEDED";
-      throw error;
-    }
     // Free only a device this module requested itself. A previously adopted ORT
     // device may still be referenced by a persistent session and is not ours.
     if (oldOwnedByMain) { try { old?.destroy?.(); } catch {} }
+    else if (old !== extDevice) detachDeviceErrorHandler(old);
     // A user can turn the extension off while asynchronous adoption is rebuilding
     // pipelines. Respect that newer state instead of resurrecting rendering.
     if (mode !== "off") {
@@ -1678,8 +2086,9 @@ async function adoptChainDeviceInternal(extDevice, isRequestCurrent, { preserveM
     // caches so a failed external-device adoption degrades back to the prior
     // renderer instead of leaving a half-configured device behind.
     try {
-      invalidateMainDeviceResources();
+      await invalidateMainDeviceResources();
       if (!generationCurrent() || (swapped && device !== extDevice)) return false;
+      if (swapped && extDevice !== old) detachDeviceErrorHandler(extDevice);
       device = old;
       deviceOwnedByMain = oldOwnedByMain;
       if (!device || lostDevices.has(device)) throw new Error("no healthy previous device available");
@@ -1698,11 +2107,6 @@ async function adoptChainDeviceInternal(extDevice, isRequestCurrent, { preserveM
         await ensureArtStages(artVariant, chainDepth);
         if (!rollbackCurrent()) return false;
       }
-      if (optImages && !pageSuspended) {
-        const upscaler = await ensureImageUpscaler();
-        if (!rollbackCurrent()) return false;
-        upscaler?.start?.();
-      }
       setGpuReady();
       warn("external device adoption rolled back to the previous renderer");
     } catch (rollbackError) {
@@ -1710,8 +2114,9 @@ async function adoptChainDeviceInternal(extDevice, isRequestCurrent, { preserveM
       // A replacement/loss that arrived during an await owns both the published
       // device and cleanup. This stale rollback must not invalidate or null it.
       if (!generationCurrent() || (device !== old && device !== extDevice)) return false;
-      invalidateMainDeviceResources();
+      await invalidateMainDeviceResources();
       if (!generationCurrent() || (device !== old && device !== extDevice)) return false;
+      detachDeviceErrorHandler(device);
       device = null;
       deviceOwnedByMain = false;
       setGpuFailure("adoption", "device-adoption-failed", rollbackError, {
@@ -2136,7 +2541,8 @@ function resumeInterpolationAfterNeural() {
 }
 
 function neuralSelectionCurrent(expectedSelection) {
-  return expectedSelection === engineSelectionGeneration && engine === "neural";
+  return expectedSelection === engineSelectionGeneration && engine === "neural" &&
+    mode === "upscale" && !pageSuspended && gpuResourcePhase !== "releasing";
 }
 
 function neuralSupersededError() {
@@ -2227,7 +2633,14 @@ export async function setNeuralModel(key, { persist = true } = {}) {
   const activateNow = requestedEngine === "neural" && engine === "neural" &&
     mode === "upscale" && !pageSuspended &&
     primaryController?.active && primaryController.video === video;
-  if (requestedEngine === "neural" && !activateNow) pauseInterpolationForNeural();
+  if (requestedEngine === "neural" && !activateNow) {
+    pauseInterpolationForNeural();
+    // With video rendering off, changing fallback→neural pauses the last
+    // standalone interpolation consumer. Retire its retained RIFE session/device
+    // immediately when no image/video demand remains.
+    void retireGpuResourcesIfIdle("all-features-off").catch((error) =>
+      warn("idle GPU retirement after neural model selection failed:", error.message));
+  }
   if (activateNow) {
     try { await ensureNeural(selectionGeneration, { modelKey: requestedModelKey }); }
     catch (e) {
@@ -2519,9 +2932,9 @@ function handlePrimarySourceBoundary(owner, event = null) {
 // One shutdown path keeps callback, observer, overlay, and badge state aligned.
 // Protected-source callers deliberately do not persist "off", preserving the
 // requested site mode for a future processable source.
-function deactivateRendering({ persist = true, protectedFailure = false } = {}) {
+async function deactivateRendering({ persist = true, protectedFailure = false } = {}) {
   adoptionGeneration++;
-  modeSelectionGeneration++;
+  const deactivationGeneration = ++modeSelectionGeneration;
   videoSelectionGeneration++;
   mode = "off";
   // Turning off video rendering must not cancel recovery owned by image
@@ -2538,13 +2951,21 @@ function deactivateRendering({ persist = true, protectedFailure = false } = {}) 
   detach();
   if (canvas) { canvas.style.display = "none"; canvas.style.opacity = "1"; }
   if (persist) saveSitePrefs(["mode"]);
+  if (protectedFailure) notifyProtected(); else notifyState();
+
+  const retirement = runtimeGpuResourcesRequested()
+    ? await retirePrimaryGpuAllocations("video-off")
+    : await retireGpuResources("all-features-off");
+  if (mode !== "off" || deactivationGeneration !== modeSelectionGeneration || pageSuspended) {
+    return retirement;
+  }
   updateVideoMonitor();
   if (optInterpolate && engine !== "neural" && video && !pageSuspended) {
     attach();
-    restartInterpolationForVideoSelection(videoSelectionGeneration)
+    await restartInterpolationForVideoSelection(videoSelectionGeneration)
       .catch((error) => warn("standalone interpolation restart failed:", error.message));
   }
-  if (protectedFailure) notifyProtected(); else notifyState();
+  return retirement;
 }
 
 function suspendSelectedVideo(reason) {
@@ -2563,6 +2984,7 @@ function suspendSelectedVideo(reason) {
   protectedSource = true;
   protectedReason = reason;
   notifyProtected();
+  void retirePrimaryGpuAllocations("protected-source");
   videoMonitor?.setCurrent?.(video);
   videoMonitor?.request?.();
 }
@@ -2639,7 +3061,8 @@ function loop(owner) {
     }
   } catch (e) {
     warn("render error:", e.message, "\n", e.stack);
-    deactivateRendering({ persist: true });
+    void deactivateRendering({ persist: true })
+      .catch((error) => warn("renderer teardown failed:", error.message));
   }
   scheduleMainLoop();
 }
@@ -2876,6 +3299,11 @@ async function applyVideoSelection(
   restartInterpolation = false,
 ) {
   if (generation !== videoSelectionGeneration || expectedModeGeneration !== modeSelectionGeneration || pageSuspended) return false;
+  if (primaryAllocationRetirementPromise) {
+    try { await primaryAllocationRetirementPromise; } catch {}
+    if (generation !== videoSelectionGeneration || expectedModeGeneration !== modeSelectionGeneration ||
+        pageSuspended) return false;
+  }
   const previous = video;
   const changed = candidate !== previous || sourceBoundary ||
     !sameVideoSource(source, selectedVideoSource);
@@ -2896,6 +3324,13 @@ async function applyVideoSelection(
     activeModel = null;
     resetScaleSelection();
     frameTimes = [];
+    await Promise.allSettled([
+      retirePrimaryGpuAllocations(sourceBoundary ? "media-source-boundary" : "video-selection"),
+      Promise.resolve(neuralEng?.quiesce?.()),
+      Promise.resolve(interpolator?.retireGpuResources?.()),
+    ]);
+    if (generation !== videoSelectionGeneration || expectedModeGeneration !== modeSelectionGeneration ||
+        pageSuspended) return false;
     video = candidate;
     selectedVideoSource = source;
     videoMonitor?.setCurrent?.(candidate);
@@ -2979,8 +3414,11 @@ async function applyVideoSelection(
   return true;
 }
 
-export function suspendDocument() {
-  if (pageSuspended) return { ok: true, suspended: true, changed: false };
+export async function suspendDocument() {
+  if (pageSuspended) {
+    await waitForGpuRetirement();
+    return { ok: true, suspended: true, changed: false };
+  }
   pageSuspended = true;
   cancelDeviceRecovery();
   adoptionGeneration++;
@@ -3004,6 +3442,7 @@ export function suspendDocument() {
   detach();
   if (canvas) { canvas.style.display = "none"; canvas.style.opacity = "1"; }
   notifyState();
+  await retireGpuResources("document-hidden");
   return { ok: true, suspended: true, changed: true };
 }
 
@@ -3012,14 +3451,15 @@ export async function resumeDocument() {
     updateVideoMonitor();
     return { ok: true, suspended: false, changed: false };
   }
+  await waitForGpuRetirement();
   pageSuspended = false;
   const modeGeneration = ++modeSelectionGeneration;
   updateVideoMonitor();
   if (optImages) {
     const imageGeneration = ++imagesSelectionGeneration;
     try {
-      const upscaler = await ensureImageUpscaler();
-      if (!pageSuspended && optImages && imageGeneration === imagesSelectionGeneration) upscaler?.start?.();
+      const upscaler = await ensureImageUpscaler(imageGeneration);
+      startImageUpscalerIfCurrent(upscaler, imageGeneration);
     } catch (error) {
       warn("image upscaler resume failed:", error.message);
     }
@@ -3136,8 +3576,17 @@ export async function setMode(next, restoreToken = null, { persist = true } = {}
   }
   const selectionGeneration = ++modeSelectionGeneration;
   if (next === "off") {
-    deactivateRendering({ persist });
+    await deactivateRendering({ persist });
     return { ok: true };
+  }
+
+  while (gpuRetirementPromise) {
+    const retirement = gpuRetirementPromise;
+    try { await retirement; } catch {}
+    if (selectionGeneration !== modeSelectionGeneration ||
+        (restoreToken != null && restoreToken !== preferenceRestoreGeneration)) {
+      return { ok: false, reason: "superseded" };
+    }
   }
 
   // `mode` is the durable requested mode. The active renderer is represented by
@@ -3202,6 +3651,8 @@ export function setEngine(e, { persist = true } = {}) {
     // inactive. Otherwise standalone interpolation can keep using the device
     // while recovery correctly assumes a neural selection has paused it.
     pauseInterpolationForNeural();
+    void retireGpuResourcesIfIdle("all-features-off").catch((error) =>
+      warn("idle GPU retirement after neural selection failed:", error.message));
   } else if (wasNeural || interpPausedByNeural) {
     try { neuralEng?.stop?.(); } catch {}
     resumeInterpolationAfterNeural();
@@ -3253,22 +3704,66 @@ export function setAllVideos(on, { persist = true } = {}) {
 // gets a MultiTarget holding its own canvas + per-source GPU intermediates. Each
 // frame we "swap in" a target's state into the globals, render, then restore.
 // This trades a little bookkeeping for not duplicating the render code.
+const multiTargetRetirements = new Set();
+
+function trackMultiTargetRetirement(operation) {
+  // Target teardown is frequently initiated from synchronous setters and media
+  // callbacks. Make the public barrier non-rejecting before publishing it so an
+  // ignored return value can never become an unhandled rejection.
+  const retirement = Promise.resolve(operation).then(
+    (result) => result || { ok: true, errors: [] },
+    (error) => ({
+      ok: false,
+      errors: [{ resource: "secondary-target", detail: boundedRuntimeDetail(error, "cleanup failed") }],
+    }),
+  );
+  multiTargetRetirements.add(retirement);
+  retirement.then(
+    () => multiTargetRetirements.delete(retirement),
+    () => multiTargetRetirements.delete(retirement),
+  );
+  return retirement;
+}
+
+async function drainMultiTargetRetirements(additional = []) {
+  const seen = new Set();
+  const results = [];
+  let pending = [...additional, ...multiTargetRetirements];
+  while (pending.length) {
+    const batch = [];
+    for (const retirement of pending) {
+      if (seen.has(retirement)) continue;
+      seen.add(retirement);
+      batch.push(Promise.resolve(retirement).then(
+        (result) => result || { ok: true, errors: [] },
+        (error) => {
+          const detail = boundedRuntimeDetail(error, "secondary target cleanup failed");
+          try { warn("secondary target cleanup failed:", detail); } catch {}
+          return {
+            ok: false,
+            errors: [{ resource: "secondary-target", detail }],
+          };
+        },
+      ));
+    }
+    if (batch.length) results.push(...await Promise.all(batch));
+    pending = [...multiTargetRetirements].filter((retirement) => !seen.has(retirement));
+  }
+  const errors = results.flatMap((result) => result?.errors || []);
+  return { ok: errors.length === 0, errors };
+}
+
 class MultiTarget {
   constructor(vid) {
     this.video = vid;
     this.device = device;
-    this.canvas = document.createElement("canvas");
-    this.canvas.className = "fsrcnnx-overlay-multi";
-    this.canvas.setAttribute?.("data-fsrcnnx-overlay", "secondary");
-    Object.assign(this.canvas.style, { position: "absolute", top: "0", left: "0", pointerEvents: "none", zIndex: "10", transition: "opacity 0.18s ease" });
+    this.canvas = null;
     this.lumaTexture = null; this.lumaW = 0; this.lumaH = 0;
     this.hiRGB = null; this.hiRGBW = 0; this.hiRGBH = 0;
     this.dispRGB = null; this.dispRGBW = 0; this.dispRGBH = 0;
-    this.ssimds = new SsimDownscaler(device);
+    this.ssimds = null;
     this.sharpenPipeline = null; this.sharpenStrengthBuilt = null;
-    // Each canvas needs its OWN GPUCanvasContext configured for the device.
-    this.context = this.canvas.getContext("webgpu");
-    this.context.configure({ device, format, colorSpace: SRGB_COLOR_SPACE, alphaMode: "premultiplied" });
+    this.context = null;
     // Per-target model instances. Models cache GPU textures keyed to one input
     // size, so sharing the global model across differently-sized videos would
     // thrash (realloc every frame). Each target owns its models, built from the
@@ -3283,10 +3778,22 @@ class MultiTarget {
     this.hoverHidden = false; this.neuralBypassLogged = false;
     this.colorProbeFrames = 0;
     this.failedReason = null;
-    this.controller = new VideoController(vid, {
+    this.controller = null;
+    this._retirementPromise = null;
+    try {
+      this.canvas = document.createElement("canvas");
+      this.canvas.className = "fsrcnnx-overlay-multi";
+      this.canvas.setAttribute?.("data-fsrcnnx-overlay", "secondary");
+      Object.assign(this.canvas.style, { position: "absolute", top: "0", left: "0", pointerEvents: "none", zIndex: "10", transition: "opacity 0.18s ease" });
+      this.ssimds = new SsimDownscaler(device);
+      // Each canvas needs its OWN GPUCanvasContext configured for the device.
+      this.context = this.canvas.getContext("webgpu");
+      if (!this.context?.configure) throw new Error("secondary WebGPU canvas context is unavailable");
+      this.context.configure({ device, format, colorSpace: SRGB_COLOR_SPACE, alphaMode: "premultiplied" });
+      this.controller = new VideoController(vid, {
       onFrame: (owner) => {
         if (owner !== this.controller || multiTargets.get(this.video) !== this ||
-            mode === "off" || !optAllVideos || pageSuspended) return;
+            mode === "off" || !optAllVideos || pageSuspended || gpuResourcePhase === "releasing") return;
         this.colorProbeFrames++;
         if (this.colorProbeFrames % 300 === 0) {
           const reason = probeVideo(this.video, { forceColor: true, publish: false });
@@ -3317,25 +3824,105 @@ class MultiTarget {
       },
       onSourceChange: (owner) => handleSecondarySourceBoundary(this, owner),
       resolveHoverRegion: hoverRegionFor,
-    });
+      });
+    } catch (error) {
+      this.destroy();
+      throw error;
+    }
   }
   start() {
-    this.controller.start();
-    this.controller.scheduleFrame();
-    return this;
+    try {
+      this.controller.start();
+      this.controller.scheduleFrame();
+      return this;
+    } catch (error) {
+      this.destroy();
+      throw error;
+    }
   }
   destroy() {
-    try { this.controller?.destroy?.(); } catch {}
+    if (this._retirementPromise) return this._retirementPromise;
+    let resolveRetirement;
+    const retirementCompletion = new Promise((resolve) => { resolveRetirement = resolve; });
+    // Publish the barrier before invoking controller cleanup so even a
+    // re-entrant destroy() observes this same retirement operation.
+    this._retirementPromise = trackMultiTargetRetirement(retirementCompletion);
+
+    const cleanupErrors = [];
+    const recordCleanupError = (resource, error) => {
+      const detail = boundedRuntimeDetail(error, `${resource} cleanup failed`);
+      cleanupErrors.push({ resource, detail });
+      try { warn(`${resource} cleanup failed:`, detail); } catch {}
+    };
+    const cleanup = (resource, operation) => {
+      try { operation?.(); }
+      catch (error) { recordCleanupError(resource, error); }
+    };
+
+    // Logical teardown is synchronous: stop callbacks, remove publication, and
+    // detach the overlay before waiting for any outstanding GPU submission.
+    const controller = this.controller;
+    const ownerDevice = this.device;
+    const canvas = this.canvas;
+    this.controller = null;
+    if (multiTargets.get(this.video) === this) multiTargets.delete(this.video);
+    this.canvas = null;
+    cleanup("secondary controller", () => controller?.destroy?.());
+    cleanup("secondary canvas", () => canvas?.remove?.());
+
+    // Capture every device-backed object before clearing the public fields. The
+    // closure deliberately retains these references until the owning queue's
+    // fence settles; only then is physical destruction safe.
     const ownedModels = new Set([
-      ...this.models,
-      ...Object.values(this.artStages).flat(),
+      ...(this.models || []),
+      ...Object.values(this.artStages || {}).flat(),
     ]);
-    for (const model of ownedModels) { try { model?.destroy?.(); } catch {} }
+    const ownedTextures = new Set([this.lumaTexture, this.hiRGB, this.dispRGB].filter(Boolean));
+    const ownedDownscaler = this.ssimds;
+    const ownedContext = this.context;
+    const retainedReferences = new Set([
+      this.sharpenPipeline,
+      this.activeModel,
+      this.chainedFsrcnnx,
+      this.chainedArt,
+    ].filter(Boolean));
+    this.device = null;
     this.models = []; this.artStages = {};
-    this.lumaTexture?.destroy?.(); this.hiRGB?.destroy?.(); this.dispRGB?.destroy?.();
-    this.ssimds?.destroy?.();
-    try { this.context?.unconfigure?.(); } catch {}
-    this.canvas.remove();
+    this.lumaTexture = this.hiRGB = this.dispRGB = null;
+    this.ssimds = null;
+    this.context = null;
+    this.sharpenPipeline = null; this.sharpenStrengthBuilt = null;
+    this.activeModel = null; this.chainedFsrcnnx = null; this.chainedArt = null;
+
+    let queueFence;
+    try { queueFence = ownerDevice?.queue?.onSubmittedWorkDone?.(); }
+    catch (error) {
+      recordCleanupError("secondary queue fence", error);
+      queueFence = Promise.resolve();
+    }
+    Promise.resolve(queueFence).then(
+      () => undefined,
+      (error) => recordCleanupError("secondary queue fence", error),
+    ).then(() => {
+      for (const model of ownedModels) cleanup("secondary model", () => model?.destroy?.());
+      for (const texture of ownedTextures) cleanup("secondary texture", () => texture?.destroy?.());
+      cleanup("secondary downscaler", () => ownedDownscaler?.destroy?.());
+      cleanup("secondary canvas context", () => ownedContext?.unconfigure?.());
+      // Keep non-destructible pipeline/wrapper references live through the fence
+      // as well. Iteration makes that retention explicit to optimizers.
+      for (const reference of retainedReferences) void reference;
+      return { ok: cleanupErrors.length === 0, errors: cleanupErrors };
+    }).then(
+      resolveRetirement,
+      (error) => resolveRetirement({
+        ok: false,
+        errors: [{
+          resource: "secondary-target",
+          detail: boundedRuntimeDetail(error, "cleanup failed"),
+        }],
+      }),
+    );
+    return this._retirementPromise;
   }
 }
 let multiTargets = new Map(); // video element -> MultiTarget
@@ -3445,7 +4032,8 @@ const MAX_SECONDARY_SOURCE_PIXELS = 1920 * 1080 * 2;
 
 // Reconcile multiTargets with the current set of on-screen videos.
 function syncMultiTargets() {
-  if (!optAllVideos || mode === "off" || adopting || pageSuspended) { clearMultiTargets(); return; }
+  if (!optAllVideos || mode === "off" || adopting || pageSuspended ||
+      gpuResourcePhase === "releasing") { clearMultiTargets(); return; }
   const candidates = findAllVideos()
     .filter((candidate) => candidate !== video)
     .filter((candidate) => probeVideo(candidate, { publish: false }) === "ok")
@@ -3463,30 +4051,56 @@ function syncMultiTargets() {
   }
   // remove targets whose video is gone/offscreen
   for (const [vid, t] of multiTargets) {
-    if (!present.has(vid)) { t.destroy(); multiTargets.delete(vid); }
+    if (!present.has(vid)) {
+      try { t.destroy(); }
+      catch (error) { warn("secondary target cleanup failed:", error.message); }
+      finally { multiTargets.delete(vid); }
+    }
   }
   // add new ones
   for (const vid of present) {
     if (!multiTargets.has(vid)) {
+      let t = null;
       try {
-        const t = new MultiTarget(vid);
+        t = new MultiTarget(vid);
         multiTargets.set(vid, t);
         t.canvas.style.display = "none";
         t.start();
       } catch (error) {
+        if (t && multiTargets.get(vid) === t) multiTargets.delete(vid);
+        try { t?.destroy?.(); } catch {}
         warn("secondary target initialization failed:", error.message);
       }
     }
   }
 }
 function clearMultiTargets() {
-  for (const [, t] of multiTargets) t.destroy();
+  const targets = [...multiTargets.values()];
+  // Close publication for the complete set before invoking user-adjacent
+  // controller cleanup. A throwing target cannot leave itself or a later target
+  // reachable from the render loop.
   multiTargets.clear();
+  const drains = [];
+  for (const t of targets) {
+    try {
+      const drain = t?.destroy?.();
+      if (drain) drains.push(drain);
+    } catch (error) {
+      const detail = boundedRuntimeDetail(error, "secondary target cleanup failed");
+      try { warn("secondary target cleanup failed:", detail); } catch {}
+      drains.push(Promise.resolve({
+        ok: false,
+        errors: [{ resource: "secondary-target", detail }],
+      }));
+    }
+  }
+  return drainMultiTargetRetirements(drains);
 }
 
 // Render one secondary video (called from its own rVFC loop).
 function renderMultiOne(vid) {
-  if (mode === "off" || !optAllVideos || adopting || pageSuspended) return;
+  if (mode === "off" || !optAllVideos || adopting || pageSuspended ||
+      gpuResourcePhase === "releasing") return;
   const t = multiTargets.get(vid);
   if (!t || t.device !== device || !vid.videoWidth) return;
   try {
@@ -3840,6 +4454,7 @@ export function getStatus() {
   const recovering = gpuRecoveryPhase === "scheduled" || gpuRecoveryPhase === "running" ||
     !!(deviceRecoveryPromise || deviceRecoveryTimer);
   const gpuState = !apiAvailable ? "unavailable"
+    : gpuResourcePhase === "releasing" ? "releasing"
     : recovering ? "recovering"
     : gpuAdapterPhase === "unavailable" ? "unavailable"
     : gpuDevicePhase === "ready" ? "ready"
@@ -3937,6 +4552,10 @@ export function getStatus() {
              },
              lastFailure: gpuLastFailure,
              recoveredAt: gpuRecoveredAt,
+             resources: {
+               phase: gpuResourcePhase,
+               reason: gpuResourceReason,
+             },
            },
            renderer: {
              requestedMode: mode,
@@ -3999,32 +4618,77 @@ function persistenceStatus() {
 // quality-focused FSRCNNX x2 model. It owns a separate per-size texture cache so
 // image work cannot reallocate the active video model. Lazily initialized.
 let imageUpscaler = null, imageUpscalerInitPromise = null, imageUpscalerInitDevice = null;
-let imageUpscalerInitToken = -1;
+let imageUpscalerInitToken = -1, imageUpscalerInitSelection = -1;
 let imageUpscalerInitGeneration = 0, imagesSelectionGeneration = 0;
+let imageUpscalerPublishedGeneration = -1;
+let imageUpscalerRetirementPromise = null;
 let optImages = false, imageUpscaledCount = 0;
 let imageLastFailure = null;
 
 function invalidateImageUpscaler() {
   imageUpscalerInitGeneration++;
   const up = imageUpscaler;
-  if (!up) return;
-  try { up.destroy?.(); } catch {}
   imageUpscaler = null;
+  imageUpscalerPublishedGeneration = -1;
   imageUpscaledCount = 0;
+  if (!up) return imageUpscalerRetirementPromise || Promise.resolve();
+  let cleanup;
+  try { cleanup = up.destroy?.(); }
+  catch (error) { cleanup = Promise.reject(error); }
+  const previous = imageUpscalerRetirementPromise;
+  const operation = Promise.allSettled([
+    Promise.resolve(previous),
+    Promise.resolve(cleanup),
+  ]).then((results) => {
+    const failed = results.find((result) => result.status === "rejected");
+    if (failed) throw failed.reason;
+  });
+  let exposed;
+  exposed = operation.finally(() => {
+    if (imageUpscalerRetirementPromise === exposed) imageUpscalerRetirementPromise = null;
+  });
+  imageUpscalerRetirementPromise = exposed;
+  return exposed;
 }
 
-async function createImageUpscaler(initDevice, initFormat, initSampler, initGeneration) {
+function imageUpscalerCurrent(upscaler, selectionGeneration = imagesSelectionGeneration) {
+  return !!upscaler && upscaler === imageUpscaler && upscaler.device === device &&
+    imageUpscalerPublishedGeneration === imageUpscalerInitGeneration &&
+    selectionGeneration === imagesSelectionGeneration && optImages &&
+    !pageSuspended && !adopting;
+}
+
+function startImageUpscalerIfCurrent(upscaler, selectionGeneration = imagesSelectionGeneration) {
+  if (!imageUpscalerCurrent(upscaler, selectionGeneration)) return false;
+  upscaler.start?.();
+  return imageUpscalerCurrent(upscaler, selectionGeneration);
+}
+
+async function createImageUpscaler(
+  initDevice,
+  initFormat,
+  initSampler,
+  initGeneration,
+  initSelectionGeneration,
+) {
+  const initializationCurrent = () =>
+    initGeneration === imageUpscalerInitGeneration &&
+    initSelectionGeneration === imagesSelectionGeneration &&
+    device === initDevice && optImages && !pageSuspended && !adopting &&
+    gpuResourcePhase !== "releasing";
+  const superseded = () => {
+    const error = new Error("image upscaler initialization superseded");
+    error.code = "IMAGE_INIT_SUPERSEDED";
+    return error;
+  };
   // Images use a dedicated instance of the verified standard FSRCNNX x2 model
   // so image-sized allocations cannot disturb the active video model.
   await loadModels();
+  if (!initializationCurrent()) throw superseded();
   const imageSource = srcCache.fsrcnnx[STANDARD_MODEL];
   if (!imageSource) throw new Error(`verified image model ${STANDARD_MODEL} is unavailable`);
   const mod = await import(chrome.runtime.getURL("fsrcnnx-images.js"));
-  if (initGeneration !== imageUpscalerInitGeneration || device !== initDevice) {
-    const error = new Error("image upscaler initialization superseded");
-    error.code = "IMAGE_INIT_SUPERSEDED";
-    throw error;
-  }
+  if (!initializationCurrent()) throw superseded();
   const created = new mod.ImageUpscaler({
     device: initDevice, format: initFormat, sampler: initSampler,
     fsrcnnxSource: { name: STANDARD_MODEL, ...imageSource },
@@ -4040,45 +4704,85 @@ async function createImageUpscaler(initDevice, initFormat, initSampler, initGene
     },
     warn,
   });
-  if (initGeneration !== imageUpscalerInitGeneration || device !== initDevice) {
-    try { created.destroy?.(); } catch {}
-    const error = new Error("image upscaler initialization superseded");
-    error.code = "IMAGE_INIT_SUPERSEDED";
-    throw error;
+  if (!initializationCurrent()) {
+    try { await created.destroy?.(); } catch {}
+    throw superseded();
   }
   if (imageUpscaler) {
-    try { created.destroy?.(); } catch {}
+    try { await created.destroy?.(); } catch {}
     return imageUpscaler;
   }
   imageUpscaler = created;
+  imageUpscalerPublishedGeneration = initGeneration;
   return created;
 }
 
-async function ensureImageUpscaler() {
-  if (imageUpscaler) return imageUpscaler;
+async function ensureImageUpscaler(selectionGeneration = imagesSelectionGeneration) {
+  const demandCurrent = () => selectionGeneration === imagesSelectionGeneration &&
+    optImages && !pageSuspended && gpuResourcePhase !== "releasing";
+  if (!demandCurrent()) return null;
+  if (gpuRetirementPromise) {
+    try { await gpuRetirementPromise; } catch {}
+    if (!demandCurrent()) return null;
+  }
+  if (adopting && adoptionPromise) {
+    try { await adoptionPromise; } catch {}
+    if (!demandCurrent()) return null;
+    return ensureImageUpscaler(selectionGeneration);
+  }
+  if (imageUpscaler && imageUpscalerCurrent(imageUpscaler, selectionGeneration)) return imageUpscaler;
+  if (imageUpscaler) await invalidateImageUpscaler();
+  if (!demandCurrent() || adopting) return null;
+  if (imageUpscalerRetirementPromise) {
+    try { await imageUpscalerRetirementPromise; } catch {}
+    if (!demandCurrent() || adopting) return null;
+  }
   if (imageUpscalerInitPromise) {
-    if (imageUpscalerInitDevice === device && imageUpscalerInitToken === imageUpscalerInitGeneration) {
+    if (imageUpscalerInitDevice === device &&
+        imageUpscalerInitToken === imageUpscalerInitGeneration &&
+        imageUpscalerInitSelection === selectionGeneration) {
       return imageUpscalerInitPromise;
     }
     try { await imageUpscalerInitPromise; } catch {}
-    return ensureImageUpscaler();
+    if (!demandCurrent()) return null;
+    return ensureImageUpscaler(selectionGeneration);
   }
   if (!(await initWebGPU())) return null;
-  if (imageUpscaler) return imageUpscaler;
-  if (imageUpscalerInitPromise) return imageUpscalerInitPromise;
+  if (!demandCurrent() || adopting) return null;
+  if (imageUpscaler && imageUpscalerCurrent(imageUpscaler, selectionGeneration)) return imageUpscaler;
+  if (imageUpscaler) await invalidateImageUpscaler();
+  if (!demandCurrent() || adopting) return null;
+  if (imageUpscalerInitPromise) {
+    if (imageUpscalerInitDevice === device &&
+        imageUpscalerInitToken === imageUpscalerInitGeneration &&
+        imageUpscalerInitSelection === selectionGeneration) {
+      return imageUpscalerInitPromise;
+    }
+    try { await imageUpscalerInitPromise; } catch {}
+    if (!demandCurrent()) return null;
+    return ensureImageUpscaler(selectionGeneration);
+  }
   const initDevice = device;
   const initFormat = format;
   const initSampler = sampler;
   const initGeneration = imageUpscalerInitGeneration;
-  const promise = createImageUpscaler(initDevice, initFormat, initSampler, initGeneration).finally(() => {
+  const promise = createImageUpscaler(
+    initDevice,
+    initFormat,
+    initSampler,
+    initGeneration,
+    selectionGeneration,
+  ).finally(() => {
     if (imageUpscalerInitPromise === promise) {
       imageUpscalerInitPromise = null;
       imageUpscalerInitDevice = null;
       imageUpscalerInitToken = -1;
+      imageUpscalerInitSelection = -1;
     }
   });
   imageUpscalerInitDevice = initDevice;
   imageUpscalerInitToken = initGeneration;
+  imageUpscalerInitSelection = selectionGeneration;
   imageUpscalerInitPromise = promise;
   return promise;
 }
@@ -4093,7 +4797,7 @@ export async function setImages(on, { persist = true } = {}) {
   if (optImages) {
     if (pageSuspended) return { ok: true, images: true, pending: true, suspended: true };
     let up;
-    try { up = await ensureImageUpscaler(); }
+    try { up = await ensureImageUpscaler(selectionGeneration); }
     catch (error) {
       if (selectionGeneration !== imagesSelectionGeneration || !optImages || error.code === "IMAGE_INIT_SUPERSEDED") {
         return { ok: false, images: optImages, reason: "superseded" };
@@ -4107,7 +4811,7 @@ export async function setImages(on, { persist = true } = {}) {
       return { ok: false, images: optImages, reason: error.message, pending: true };
     }
     if (selectionGeneration !== imagesSelectionGeneration || !optImages) {
-      if (!optImages) { try { up?.stop?.(); } catch {} }
+      if (!optImages && up === imageUpscaler) await invalidateImageUpscaler();
       return { ok: false, images: optImages, reason: "superseded" };
     }
     if (!up) {
@@ -4118,13 +4822,12 @@ export async function setImages(on, { persist = true } = {}) {
       };
       return { ok: false, images: true, reason: "renderer unavailable", pending: true };
     }
-    up.start();
-  } else if (imageUpscaler) {
-    imageUpscalerInitGeneration++;
-    imageUpscaler.stop();
-    imageUpscaledCount = 0;
+    if (!startImageUpscalerIfCurrent(up, selectionGeneration)) {
+      return { ok: false, images: optImages, reason: "superseded" };
+    }
   } else {
-    imageUpscalerInitGeneration++;
+    await invalidateImageUpscaler();
+    await retireGpuResourcesIfIdle("all-features-off");
   }
   return { ok: true, images: optImages };
 }
@@ -4225,6 +4928,12 @@ export async function setInterpolate(on, restoreToken = null, { persist = true }
     if (pageSuspended) {
       return { ok: true, interpolate: true, running: false, pending: true, suspended: true };
     }
+    if (gpuRetirementPromise) {
+      try { await gpuRetirementPromise; } catch {}
+      if (selectionGeneration !== interpolationSelectionGeneration || !optInterpolate) {
+        return { ok: false, interpolate: optInterpolate, reason: "superseded" };
+      }
+    }
     if (engine === "neural") {
       pauseInterpolationForNeural();
       return { ok: true, interpolate: true, running: false, paused: "neural" };
@@ -4285,8 +4994,11 @@ export async function setInterpolate(on, restoreToken = null, { persist = true }
   } else if (interpolator) {
     interpPausedByNeural = false;
     interpolator.stop();
+    await interpolator.retireGpuResources?.();
+    await retireGpuResourcesIfIdle("all-features-off");
   } else {
     interpPausedByNeural = false;
+    await retireGpuResourcesIfIdle("all-features-off");
   }
   updateVideoMonitor();
   return { ok: true, interpolate: optInterpolate };

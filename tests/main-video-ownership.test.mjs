@@ -30,7 +30,7 @@ async function loadSelectionCoordinator(deps) {
   const production = section(
     source,
     "function videoMonitoringNeeded()",
-    "export function suspendDocument()",
+    "export async function suspendDocument()",
   );
   const harness = `
     const deps = globalThis.__videoOwnershipDeps;
@@ -60,6 +60,7 @@ async function loadSelectionCoordinator(deps) {
     let selectedColorSupport = uncheckedColorSupport("not checked");
     let chainInverted = false, _texSource = null, activeModel = null;
     let frameTimes = [];
+    let primaryAllocationRetirementPromise = null;
     let canvas = { style: {} };
     let neuralEng = { stop: () => deps.events.push(["neural-stop", video]) };
     class VideoSelectionMonitor {}
@@ -92,6 +93,10 @@ async function loadSelectionCoordinator(deps) {
     };
     const scheduleMainLoop = () => deps.events.push(["schedule", video]);
     const syncMultiTargets = () => {};
+    const retirePrimaryGpuAllocations = async (reason) => {
+      deps.events.push(["retire-primary", reason]);
+      return true;
+    };
     ${sourceIdentity}
     selectedVideoSource = captureVideoSource(video);
     ${production}
@@ -216,6 +221,11 @@ async function loadEngineSelection(deps) {
       deps.events.push("reconcile-recovery");
       return true;
     };
+    const retireGpuResourcesIfIdle = async (reason) => {
+      deps.events.push(["retire-if-idle", reason]);
+      if (deps.retirementGate) await deps.retirementGate.promise;
+      return { ok: true, released: true, reason };
+    };
     const clearNeuralFallback = () => {};
     const activateNeuralFallback = () => { engine = "fsrcnnx"; };
     const policyToDepth = () => 1;
@@ -255,6 +265,11 @@ async function loadNeuralModelSelection(deps) {
     const reconcileDeviceRecoveryDemand = () => {
       deps.events.push("reconcile-recovery");
       return true;
+    };
+    const retireGpuResourcesIfIdle = async (reason) => {
+      deps.events.push(["retire-if-idle", reason]);
+      if (deps.retirementGate) await deps.retirementGate.promise;
+      return { ok: true, released: true, reason };
     };
     const activateNeuralFallback = () => { engine = "fsrcnnx"; };
     const boundedRuntimeDetail = (error) => error?.message || String(error);
@@ -1041,7 +1056,11 @@ test("selecting neural while upscaling is inactive pauses standalone interpolati
   assert.equal(calls, 0, "inactive neural selection remains lazy");
   assert.equal(selection.state().interpPausedByNeural, true);
   assert.ok(deps.events.includes("pause-interp"));
+  assert.ok(deps.events.some((event) => Array.isArray(event) &&
+    event[0] === "retire-if-idle" && event[1] === "all-features-off"));
 
+  // Switching back immediately is allowed while physical retirement drains;
+  // the runtime start/device coordinators provide the actual reuse barrier.
   selection.setEngine("fsrcnnx");
   assert.equal(selection.state().interpPausedByNeural, false);
   assert.ok(deps.events.includes("resume-interp"),
@@ -1066,6 +1085,8 @@ test("changing the neural model from fallback pauses inactive standalone interpo
   assert.equal(calls, 0, "inactive model selection remains lazy");
   assert.ok(deps.events.includes("pause-interp"));
   assert.ok(deps.events.includes("reconcile-recovery"));
+  assert.ok(deps.events.some((event) => Array.isArray(event) &&
+    event[0] === "retire-if-idle" && event[1] === "all-features-off"));
 });
 
 test("overlapping neural model switches use distinct generations and preserve the newest intent", async (t) => {

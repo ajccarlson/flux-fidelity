@@ -41,6 +41,46 @@ function installGlobals(values) {
   };
 }
 
+let cpuGrabModuleSequence = 0;
+
+function installCpuGrabModule(state) {
+  const stateKey = `__fsrcnnxCpuGrabState${++cpuGrabModuleSequence}`;
+  globalThis[stateKey] = state;
+  const source = `
+    const state = globalThis[${JSON.stringify(stateKey)}];
+    export class WebGPUGrabber {
+      constructor(options = {}) {
+        this.options = options;
+        this.ready = false;
+        state.instances.push(this);
+        state.events.push("construct");
+      }
+      async init() {
+        state.initCalls++;
+        state.events.push("init");
+        this.ready = true;
+        return true;
+      }
+      destroy() {
+        if (this._destroyPromise) return this._destroyPromise;
+        state.destroyCalls++;
+        state.events.push("replacement-destroy");
+        this.ready = false;
+        this._destroyPromise = Promise.resolve();
+        return this._destroyPromise;
+      }
+    }
+  `;
+  const moduleUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(source)}`;
+  const restoreGlobals = installGlobals({
+    chrome: { runtime: { getURL: () => moduleUrl } },
+  });
+  return () => {
+    restoreGlobals();
+    delete globalThis[stateKey];
+  };
+}
+
 test("only verified bundled RIFE models remain selectable", () => {
   assert.deepEqual(listModels().map(({ key }) => key).sort(), ["rife_v4.26", "rife_v4.26_fp16"]);
   assert.equal(setModel("rife_orig"), false);
@@ -70,6 +110,377 @@ test("concurrent starts share one lifecycle and failed startup cleans up", async
   assert.equal(interpolator.running, false);
   assert.equal(interpolator._state, "idle");
   assert.deepEqual(interpolator.stop(), { ok: true, stopped: false });
+});
+
+test("resource retirement drains GPU teardown before releasing the model session", async () => {
+  const interpolator = makeInterpolator();
+  const gpu = deferred();
+  const events = [];
+  interpolator._rifeMod = {
+    async destroyGpuInterp() {
+      events.push("gpu-start");
+      await gpu.promise;
+      events.push("gpu-end");
+    },
+    async disposeRife() { events.push("model-release"); },
+  };
+
+  const gpuRetirement = interpolator.retireGpuResources();
+  const fullRetirement = interpolator.releaseModelResources();
+  await waitFor(() => events.length === 1, "GPU retirement did not start");
+  assert.deepEqual(events, ["gpu-start"]);
+  gpu.resolve();
+  await gpuRetirement;
+  await fullRetirement;
+  assert.deepEqual(events, ["gpu-start", "gpu-end", "model-release"]);
+});
+
+test("resource retirement is published before stop callbacks can re-enter start", async () => {
+  const interpolator = makeInterpolator();
+  const gpuRelease = deferred();
+  const events = [];
+  let destroyPromise = null;
+  let restart = null;
+  let starts = 0;
+  interpolator._rifeMod = {
+    destroyGpuInterp() {
+      if (!destroyPromise) {
+        events.push("gpu-release-start");
+        destroyPromise = gpuRelease.promise.then(() => events.push("gpu-release-end"));
+      }
+      return destroyPromise;
+    },
+  };
+  interpolator.chain = {
+    tap(on) {
+      if (!on) {
+        events.push("tap-off");
+        restart = interpolator.start();
+      }
+    },
+  };
+  Object.assign(interpolator, {
+    running: true,
+    _state: "running",
+    _stopped: false,
+    video: {},
+    overlay: { remove() {} },
+    queue: [],
+    _chainActive: true,
+  });
+  interpolator._startInternal = async () => {
+    starts++;
+    events.push("restart");
+    return { ok: true };
+  };
+
+  const retirement = interpolator.retireGpuResources();
+  assert.ok(restart, "chain teardown must have exercised synchronous re-entry");
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(starts, 0, "re-entrant startup must wait behind physical retirement");
+  assert.deepEqual(events, ["gpu-release-start", "tap-off"]);
+
+  gpuRelease.resolve();
+  await retirement;
+  assert.deepEqual(await restart, { ok: true });
+  assert.equal(starts, 1);
+  assert.deepEqual(events, ["gpu-release-start", "tap-off", "gpu-release-end", "restart"]);
+});
+
+test("full model release drops scratch backing stores, run closures, and the RIFE loss listener", async () => {
+  const interpolator = makeInterpolator();
+  const listenerOwner = new Set();
+  const listener = () => interpolator._handleRifeDeviceLoss({}, {});
+  listenerOwner.add(listener);
+  interpolator._deviceLossUnsubscribe = () => listenerOwner.delete(listener);
+
+  const makeScratch = (width, height) => ({ width, height });
+  const grab = makeScratch(1920, 1080);
+  const blend = makeScratch(1920, 1080);
+  const tween = makeScratch(1920, 1080);
+  interpolator._grab = grab;
+  interpolator._grabCtx = {};
+  interpolator._blend = blend;
+  interpolator._blendCtx = {};
+  interpolator._tw = tween;
+  interpolator._twctx = {};
+  interpolator._flush = () => {};
+  interpolator._lastTapFrame = { sourceSizedTexture: true };
+  interpolator._lastTapW = 1920;
+  interpolator._lastTapH = 1080;
+  interpolator._lastVW = 1920;
+  interpolator._lastVH = 1080;
+  interpolator._infWindow = [1, 2, 3];
+  interpolator._srcFrameBase = 12;
+  interpolator._outFrameBase = 24;
+  interpolator._fbWindowStart = 100;
+  interpolator._prevTs = 123;
+  interpolator._lastPresentedTs = 456;
+  interpolator._lastEnqTs = 789;
+  interpolator._videoLatencyMs = 10;
+  interpolator._rifeMod = {
+    async destroyGpuInterp() {},
+    async disposeRife() {},
+  };
+
+  const release = interpolator.releaseModelResources();
+  assert.equal(listenerOwner.size, 0,
+    "the external module listener owner must release the instance synchronously");
+  await release;
+
+  for (const canvas of [grab, blend, tween]) {
+    assert.equal(canvas.width, 0);
+    assert.equal(canvas.height, 0);
+  }
+  for (const key of [
+    "_grab", "_grabCtx", "_blend", "_blendCtx", "_tw", "_twctx", "_flush",
+    "_lastTapFrame", "_lastVW", "_lastVH", "_infWindow", "_srcFrameBase",
+    "_outFrameBase", "_fbWindowStart", "_prevTs", "_lastPresentedTs",
+    "_lastEnqTs", "_videoLatencyMs", "_deviceLossUnsubscribe", "_rifeMod",
+  ]) assert.equal(interpolator[key], null, `${key} should be released`);
+  assert.equal(interpolator._lastTapW, 0);
+  assert.equal(interpolator._lastTapH, 0);
+});
+
+test("full release drains an active CPU frame before retiring its scratch backing", async () => {
+  const interpolator = makeInterpolator();
+  const frame = deferred();
+  const scratch = { width: 1280, height: 720 };
+  const events = [];
+  interpolator._activeCpuFrameTasks.add(frame.promise);
+  interpolator._grab = scratch;
+  interpolator._grabCtx = {};
+  interpolator._rifeMod = {
+    async destroyGpuInterp() { events.push("gpu-release"); },
+    async disposeRife() { events.push("model-release"); },
+  };
+
+  const release = interpolator.releaseModelResources();
+  await Promise.resolve();
+  assert.equal(scratch.width, 1280);
+  assert.deepEqual(events, [], "retirement must not overtake the active CPU frame");
+
+  frame.resolve();
+  await release;
+  assert.deepEqual(events, ["gpu-release", "model-release"]);
+  assert.equal(scratch.width, 0);
+  assert.equal(scratch.height, 0);
+});
+
+test("GPU retirement drains active CPU work, releases per-run scratch, and permits restart", async () => {
+  const interpolator = makeInterpolator();
+  const frame = deferred();
+  const events = [];
+  const scratch = {
+    grab: { width: 1280, height: 720 },
+    grabCtx: {},
+    blend: { width: 1280, height: 720 },
+    blendCtx: {},
+    tween: { width: 1280, height: 720 },
+    tweenCtx: {},
+    flush: () => {},
+  };
+  Object.assign(interpolator, {
+    _grab: scratch.grab,
+    _grabCtx: scratch.grabCtx,
+    _blend: scratch.blend,
+    _blendCtx: scratch.blendCtx,
+    _tw: scratch.tween,
+    _twctx: scratch.tweenCtx,
+    _flush: scratch.flush,
+    _lastTapFrame: { sourceSizedTexture: true },
+    _lastTapW: 1280,
+    _lastTapH: 720,
+    _lastVW: 1280,
+    _lastVH: 720,
+    _infWindow: [1, 2],
+    _srcFrameBase: 10,
+    _outFrameBase: 20,
+    _fbWindowStart: 30,
+    _prevTs: 40,
+    _lastPresentedTs: 50,
+    _lastEnqTs: 60,
+    _videoLatencyMs: 70,
+  });
+  interpolator._activeCpuFrameTasks.add(frame.promise);
+  const rifeModule = {
+    async destroyGpuInterp() { events.push("gpu-release"); },
+  };
+  interpolator._rifeMod = rifeModule;
+
+  const retirement = interpolator.retireGpuResources();
+  await Promise.resolve();
+  assert.deepEqual(events, []);
+  for (const canvas of [scratch.grab, scratch.blend, scratch.tween]) {
+    assert.equal(canvas.width, 1280, "scratch must remain valid while CPU work is active");
+    assert.equal(canvas.height, 720, "scratch must remain valid while CPU work is active");
+  }
+
+  frame.resolve();
+  await retirement;
+  assert.deepEqual(events, ["gpu-release"]);
+  for (const canvas of [scratch.grab, scratch.blend, scratch.tween]) {
+    assert.equal(canvas.width, 0);
+    assert.equal(canvas.height, 0);
+  }
+  for (const key of [
+    "_grab", "_grabCtx", "_blend", "_blendCtx", "_tw", "_twctx", "_flush",
+    "_lastTapFrame", "_lastVW", "_lastVH", "_infWindow", "_srcFrameBase",
+    "_outFrameBase", "_fbWindowStart", "_prevTs", "_lastPresentedTs",
+    "_lastEnqTs", "_videoLatencyMs",
+  ]) assert.equal(interpolator[key], null, `${key} should be released`);
+  assert.equal(interpolator._lastTapW, 0);
+  assert.equal(interpolator._lastTapH, 0);
+  assert.equal(interpolator._activeCpuFrameTasks.size, 0);
+  assert.equal(interpolator._rifeMod, rifeModule,
+    "GPU retirement must preserve the model module for a later restart");
+
+  const fresh = { width: 320, height: 180 };
+  interpolator._startInternal = async () => {
+    assert.equal(interpolator._grab, null,
+      "restart must construct a new lifecycle after explicit retirement");
+    interpolator._grab = fresh;
+    interpolator._grabCtx = {};
+    return { ok: true };
+  };
+  assert.deepEqual(await interpolator.start(), { ok: true });
+  assert.equal(interpolator.running, true);
+  assert.equal(interpolator._state, "running");
+  assert.equal(interpolator._grab, fresh);
+});
+
+test("ordinary stop keeps reusable scratch state and the shared loss subscription", async () => {
+  const interpolator = makeInterpolator();
+  const scratch = {
+    grab: { width: 640, height: 360 },
+    grabCtx: {},
+    blend: { width: 640, height: 360 },
+    blendCtx: {},
+    tween: { width: 640, height: 360 },
+    tweenCtx: {},
+    flush: () => {},
+  };
+  Object.assign(interpolator, {
+    _grab: scratch.grab,
+    _grabCtx: scratch.grabCtx,
+    _blend: scratch.blend,
+    _blendCtx: scratch.blendCtx,
+    _tw: scratch.tween,
+    _twctx: scratch.tweenCtx,
+    _flush: scratch.flush,
+    running: true,
+    _state: "running",
+    _stopped: false,
+    video: {},
+    overlay: { remove() {} },
+    queue: [],
+  });
+  let unsubscribes = 0;
+  interpolator._deviceLossUnsubscribe = () => { unsubscribes++; };
+  interpolator._rifeMod = { destroyGpuInterp() {} };
+
+  assert.deepEqual(interpolator.stop(), { ok: true, stopped: true });
+  assert.equal(interpolator._grab, scratch.grab);
+  assert.equal(interpolator._grabCtx, scratch.grabCtx);
+  assert.equal(interpolator._blend, scratch.blend);
+  assert.equal(interpolator._blendCtx, scratch.blendCtx);
+  assert.equal(interpolator._tw, scratch.tween);
+  assert.equal(interpolator._twctx, scratch.tweenCtx);
+  assert.equal(interpolator._flush, scratch.flush);
+  assert.equal(interpolator._deviceLossUnsubscribe instanceof Function, true);
+  assert.equal(unsubscribes, 0);
+
+  interpolator._startInternal = async () => ({ ok: true });
+  assert.deepEqual(await interpolator.start(), { ok: true });
+  assert.equal(interpolator.running, true);
+  assert.equal(interpolator._state, "running");
+});
+
+test("ordinary stop resets ownership synchronously and one restart waits for grabber destruction", async () => {
+  const interpolator = makeInterpolator();
+  const destruction = deferred();
+  let destroyCalls = 0;
+  let starts = 0;
+  const oldGrabber = {
+    ready: true,
+    destroy() {
+      destroyCalls++;
+      this.ready = false;
+      return destruction.promise;
+    },
+  };
+  Object.assign(interpolator, {
+    running: true,
+    _state: "running",
+    _stopped: false,
+    video: {},
+    overlay: { remove() {} },
+    queue: [],
+    _gpuGrab: oldGrabber,
+  });
+  interpolator._startInternal = async () => {
+    starts++;
+    return { ok: true };
+  };
+
+  assert.deepEqual(interpolator.stop(), { ok: true, stopped: true });
+  assert.equal(interpolator.running, false);
+  assert.equal(interpolator._state, "idle");
+  assert.equal(interpolator.video, null);
+  assert.equal(interpolator._gpuGrab, null);
+  assert.equal(destroyCalls, 1);
+
+  const first = interpolator.start();
+  const second = interpolator.start();
+  assert.equal(second, first, "restart callers must share the teardown-gated start");
+  await Promise.resolve();
+  assert.equal(starts, 0, "startup must not request replacement resources during physical teardown");
+
+  destruction.resolve();
+  assert.deepEqual(await first, { ok: true });
+  assert.equal(starts, 1);
+  assert.equal(interpolator.running, true);
+  assert.equal(interpolator._state, "running");
+  assert.equal(interpolator._cpuGrabberTeardowns.size, 0);
+});
+
+test("a dimension restart cannot overlap the prior CPU grabber device", async () => {
+  const interpolator = makeInterpolator();
+  const destruction = deferred();
+  const events = [];
+  const oldGrabber = {
+    ready: true,
+    destroy() {
+      events.push("destroy-start");
+      this.ready = false;
+      return destruction.promise.then(() => events.push("destroy-end"));
+    },
+  };
+  Object.assign(interpolator, {
+    running: true,
+    _state: "running",
+    _stopped: false,
+    video: {},
+    overlay: { remove() {} },
+    queue: [],
+    _gpuGrab: oldGrabber,
+  });
+  interpolator._startInternal = async () => {
+    events.push("start");
+    return { ok: true };
+  };
+
+  const generation = interpolator._lifecycleGen;
+  assert.equal(interpolator._scheduleDimsRestart(generation, 1920, 1080), true);
+  await waitFor(() => events.includes("destroy-start"), "dimension restart did not stop the old grabber");
+  assert.deepEqual(events, ["destroy-start"]);
+
+  destruction.resolve();
+  await waitFor(() => events.includes("start") && !interpolator._dimsRestarting,
+    "dimension restart did not resume after grabber teardown");
+  assert.deepEqual(events, ["destroy-start", "destroy-end", "start"]);
+  assert.equal(interpolator.running, true);
 });
 
 test("an exact source bypasses rescoring and an early failure preserves its visibility", async () => {
@@ -1483,6 +1894,44 @@ test("device-loss restart is single-flight and a newer user stop wins", async ()
   assert.equal(interpolator._deviceRestarting, false);
 });
 
+test("device-loss restart waits for the old CPU grabber device to finish destroying", async () => {
+  const interpolator = makeInterpolator();
+  const destruction = deferred();
+  const events = [];
+  Object.assign(interpolator, {
+    running: true,
+    _state: "running",
+    _stopped: false,
+    video: {},
+    overlay: { remove() {} },
+    queue: [],
+    _gpuGrab: {
+      ready: true,
+      destroy() {
+        events.push("grab-destroy-start");
+        this.ready = false;
+        return destruction.promise.then(() => events.push("grab-destroy-end"));
+      },
+    },
+  });
+  interpolator._startInternal = async () => {
+    events.push("restart");
+    return { ok: true };
+  };
+
+  assert.equal(interpolator._handleRifeDeviceLoss({}, { message: "GPU reset" }), true);
+  await waitFor(() => events.includes("grab-destroy-start"),
+    "device-loss recovery did not stop the old CPU grabber");
+  assert.deepEqual(events, ["grab-destroy-start"]);
+
+  destruction.resolve();
+  await waitFor(() => events.includes("restart") && !interpolator._deviceRestarting,
+    "device-loss recovery did not restart after CPU grabber teardown");
+  assert.deepEqual(events, ["grab-destroy-start", "grab-destroy-end", "restart"]);
+  assert.equal(interpolator.running, true);
+  assert.equal(interpolator._state, "running");
+});
+
 test("loss of a replacement device queues one subsequent interpolation recovery", async () => {
   const interpolator = makeInterpolator();
   interpolator.running = true;
@@ -1565,6 +2014,89 @@ test("user stop cancels a replacement-device loss queued during recovery", async
   assert.equal(stops, 2);
   assert.equal(interpolator.running, false);
   assert.equal(interpolator._pendingDeviceLoss, null);
+});
+
+test("CPU grab initialization waits for unavailable-grabber destruction", async () => {
+  const state = { instances: [], events: [], initCalls: 0, destroyCalls: 0 };
+  const cleanup = installCpuGrabModule(state);
+  const destruction = deferred();
+  try {
+    const interpolator = makeInterpolator();
+    const oldGrabber = {
+      ready: false,
+      destroy() {
+        state.events.push("old-destroy-start");
+        return destruction.promise.then(() => state.events.push("old-destroy-end"));
+      },
+    };
+    interpolator._gpuGrab = oldGrabber;
+    interpolator._stopped = false;
+    const generation = interpolator._lifecycleGen;
+
+    const first = interpolator._ensureCpuGrabber(generation);
+    const second = interpolator._ensureCpuGrabber(generation);
+    assert.equal(second, first, "teardown-gated initialization must stay single-flight");
+    await Promise.resolve();
+    assert.equal(state.initCalls, 0);
+    assert.deepEqual(state.events, ["old-destroy-start"]);
+
+    destruction.resolve();
+    assert.equal(await first, true);
+    assert.equal(state.initCalls, 1);
+    assert.equal(interpolator._gpuGrab, state.instances[0]);
+    assert.deepEqual(state.events.slice(0, 4), [
+      "old-destroy-start", "old-destroy-end", "construct", "init",
+    ]);
+  } finally {
+    cleanup();
+  }
+});
+
+test("CPU grab device-loss recovery waits for physical destruction before replacement init", async () => {
+  const state = { instances: [], events: [], initCalls: 0, destroyCalls: 0 };
+  const cleanup = installCpuGrabModule(state);
+  const destruction = deferred();
+  try {
+    const interpolator = makeInterpolator();
+    interpolator.running = true;
+    interpolator._state = "running";
+    interpolator._stopped = false;
+    interpolator._gpuPresent = false;
+    interpolator._cpuGrabRecoveryDelays = [0];
+    const generation = interpolator._lifecycleGen;
+    let destroyCalls = 0;
+    const lostGrabber = {
+      ready: false,
+      destroy() {
+        destroyCalls++;
+        state.events.push("lost-destroy-start");
+        return destruction.promise.then(() => state.events.push("lost-destroy-end"));
+      },
+    };
+    interpolator._gpuGrab = lostGrabber;
+
+    assert.equal(interpolator._handleCpuGrabberDeviceLoss(
+      lostGrabber, generation, { message: "GPU reset" },
+    ), true);
+    assert.equal(interpolator._gpuGrab, null);
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(destroyCalls, 1);
+    assert.equal(state.initCalls, 0,
+      "recovery must not request a replacement device while the lost device drains");
+
+    destruction.resolve();
+    await waitFor(() => interpolator._gpuGrab === state.instances[0],
+      "CPU grab recovery did not publish its replacement");
+    assert.equal(state.initCalls, 1);
+    assert.deepEqual(state.events.slice(0, 4), [
+      "lost-destroy-start", "lost-destroy-end", "construct", "init",
+    ]);
+    assert.equal(interpolator._cpuGrabRecovery, null);
+    assert.equal(interpolator._cpuGrabberTeardowns.size, 0);
+  } finally {
+    cleanup();
+  }
 });
 
 test("CPU grab device loss replaces only the current grabber in one recovery flight", async () => {

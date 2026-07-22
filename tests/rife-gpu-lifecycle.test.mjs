@@ -347,10 +347,34 @@ test("GpuInterp destroys only a standalone device it requested itself", async (t
   installWebGpuGlobals(t);
 
   const sharedDevice = makeDevice("shared");
-  const shared = new GpuInterp({ log() {}, warn() {} });
+  let sharedLosses = 0;
+  const shared = new GpuInterp({
+    log() {}, warn() {}, onDeviceLost() { sharedLosses++; },
+  });
   assert.equal(await shared.init(sharedDevice, null), true);
+  const lossObserver = shared._deviceLossObserver;
+  assert.equal(lossObserver.target, shared);
+  const checkedOut = shared._acquireTex(32, 24);
+  assert.equal(checkedOut._gpuInterpOwner, shared);
   await shared.destroy();
   assert.equal(sharedDevice.events.destroys, 0);
+  assert.equal(checkedOut.destroyed, true);
+  assert.equal(checkedOut._gpuInterpOwner, null,
+    "a late pooled-texture reference must not retain the retired helper");
+  assert.equal(checkedOut._gpuInterpDevice, null,
+    "a late pooled-texture reference must not retain the retired shared device");
+  assert.equal(checkedOut._refs, 0);
+  assert.equal(lossObserver.target, null,
+    "the never-settled shared-device loss promise must detach from the helper");
+  assert.equal(shared._deviceLossObserver, null);
+  assert.equal(shared.onDeviceLost, null);
+  sharedDevice.lose({ message: "late shared loss" });
+  await Promise.resolve();
+  assert.equal(sharedLosses, 0, "a retired helper must not receive late shared-device loss");
+  for (const field of [
+    "sampler", "blitPipe", "blit2dPipe", "packPipe", "compPipe", "blendPipe",
+    "presentPipe", "canvasCtx", "_presentCanvas", "device", "ort",
+  ]) assert.equal(shared[field], null, `${field} should be released`);
 
   const ownedDevice = makeDevice("owned");
   navigator.gpu.requestAdapter = async () => ({
@@ -360,6 +384,84 @@ test("GpuInterp destroys only a standalone device it requested itself", async (t
   assert.equal(await standalone.init(null, null), true);
   await standalone.destroy();
   assert.equal(ownedDevice.events.destroys, 1);
+});
+
+test("GpuInterp standalone initialization is single-flight", async (t) => {
+  installWebGpuGlobals(t);
+  const adapterGate = deferred();
+  const deviceGate = deferred();
+  const ownedDevice = makeDevice("single-flight");
+  let adapterRequests = 0;
+  let deviceRequests = 0;
+  navigator.gpu.requestAdapter = () => {
+    adapterRequests++;
+    return adapterGate.promise;
+  };
+
+  const gpu = new GpuInterp({ log() {}, warn() {} });
+  const first = gpu.init(null, null);
+  const second = gpu.init(null, null);
+  assert.equal(adapterRequests, 1);
+
+  adapterGate.resolve({
+    requestDevice() {
+      deviceRequests++;
+      return deviceGate.promise;
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(deviceRequests, 1);
+  deviceGate.resolve(ownedDevice);
+
+  assert.deepEqual(await Promise.all([first, second]), [true, true]);
+  assert.equal(gpu.device, ownedDevice);
+  await gpu.destroy();
+  assert.equal(ownedDevice.events.destroys, 1);
+});
+
+test("GpuInterp destruction fences a pending owned-device request", async (t) => {
+  installWebGpuGlobals(t);
+  const deviceGate = deferred();
+  const lateDevice = makeDevice("late-owned-device");
+  let deviceRequests = 0;
+  navigator.gpu.requestAdapter = async () => ({
+    requestDevice() {
+      deviceRequests++;
+      return deviceGate.promise;
+    },
+  });
+
+  const gpu = new GpuInterp({ log() {}, warn() {} });
+  const initialization = gpu.init(null, null);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(deviceRequests, 1);
+
+  let retirementSettled = false;
+  const retirement = gpu.destroy().then(() => { retirementSettled = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(retirementSettled, false);
+
+  deviceGate.resolve(lateDevice);
+  assert.equal(await initialization, false);
+  await retirement;
+  assert.equal(lateDevice.events.destroys, 1);
+  assert.equal(gpu.device, null);
+  assert.equal(gpu.ready, false);
+});
+
+test("GpuInterp rejects an already-lost device before publishing readiness", async (t) => {
+  installWebGpuGlobals(t);
+  const lostDevice = makeDevice("already-lost");
+  lostDevice.lost = Promise.resolve({ reason: "destroyed", message: "already lost" });
+  navigator.gpu.requestAdapter = async () => ({ requestDevice: async () => lostDevice });
+
+  const gpu = new GpuInterp({ log() {}, warn() {} });
+  assert.equal(await gpu.init(null, null), false);
+  await gpu.destroy();
+  assert.equal(gpu.ready, false);
+  assert.equal(gpu.device, null);
+  assert.equal(lostDevice.events.destroys, 1,
+    "the unpublished standalone device remains owned and is destroyed once");
 });
 
 test("standalone blend capture never allocates a RIFE inference buffer", async (t) => {
@@ -514,6 +616,16 @@ test("GpuInterp evicts every stale free texture and retries after fenced retirem
     error instanceof GpuResourceLimitError && error.details.requested === 176 && error.details.transient === true);
   assert.equal(gpu._pool.length, 0, "all incompatible zero-reference textures should retire together");
   assert.equal(gpu._retiringPooledBytes, 96);
+  for (const texture of stale) {
+    assert.equal(texture._gpuInterpOwner, null);
+    assert.equal(texture._gpuInterpDevice, null);
+    assert.equal(texture._refs, 0);
+  }
+  gpu.retainTex(stale[0]);
+  gpu.releaseTex(stale[0]);
+  assert.equal(stale[0]._refs, 0, "late references cannot revive a retired texture");
+  assert.equal(gpu._pool.includes(stale[0]), false,
+    "a texture awaiting physical destruction cannot re-enter the live pool");
   await new Promise((resolve) => setImmediate(resolve));
 
   const replacement = gpu._acquireTex(10, 2);

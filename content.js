@@ -732,11 +732,18 @@ function startLifecycleDrain() {
     });
 }
 
-requestDocumentState(document.prerendering === true ? "hidden" : "active");
+function currentDocumentState() {
+  return document.prerendering === true || document.visibilityState === "hidden"
+    ? "hidden"
+    : "active";
+}
+
+requestDocumentState(currentDocumentState());
 window.addEventListener("pagehide", () => requestDocumentState("hidden"));
 document.addEventListener("freeze", () => requestDocumentState("hidden"));
-window.addEventListener("pageshow", () => requestDocumentState("active"));
-document.addEventListener("resume", () => requestDocumentState("active"));
+window.addEventListener("pageshow", () => requestDocumentState(currentDocumentState()));
+document.addEventListener("resume", () => requestDocumentState(currentDocumentState()));
+document.addEventListener("visibilitychange", () => requestDocumentState(currentDocumentState()));
 document.addEventListener("prerenderingchange", () => {
-  if (document.prerendering !== true) requestDocumentState("active");
+  requestDocumentState(currentDocumentState());
 });
