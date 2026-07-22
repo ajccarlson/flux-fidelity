@@ -121,12 +121,14 @@ async function loadSelectionCoordinator(deps) {
 async function loadPresentationBoundary() {
   const source = await readFile(mainUrl, "utf8");
   const targetDimensions = section(source, "export function chainTargetDims()", "let lumaTexture");
-  const presentation = section(source, "function showPresentedCanvas(", "function positionCanvas");
+  const resetPresentation = section(source, "function resetPresentedRuntime()", "// ---- advanced");
+  const presentation = section(source, "function presentationDimensions(", "function positionCanvas");
   const harness = `
     let canvas = null, video = null, primaryController = null, renderTargetOwner = null;
     let presentedCanvasVideo = null, presentedSourceW = 0, presentedSourceH = 0;
     let primaryPresentationGeneration = 0;
     let presentedVideoSource = null, presentedRuntimeMode = "off", presentedRuntimeEngine = null;
+    let presentedPresentation = null;
     let pageSuspended = false, device = {}, engine = "fsrcnnx";
     const lostDevices = new WeakSet();
     let reconcileRequests = 0;
@@ -136,14 +138,15 @@ async function loadPresentationBoundary() {
     const videoPageVisible = (candidate) => candidate?.pageVisible !== false;
     const videoMonitor = { request() { reconcileRequests++; } };
     ${targetDimensions}
+    ${resetPresentation}
     ${presentation}
     export function setPrimary(nextVideo, nextCanvas, active = true) {
       video = nextVideo; canvas = nextCanvas;
       primaryController = { active, video: nextVideo };
       renderTargetOwner = null;
     }
-    export function presentPrimary(mode = "upscale", activeEngine = "fsrcnnx") {
-      showPresentedCanvas(mode, activeEngine);
+    export function presentPrimary(mode = "upscale", activeEngine = "fsrcnnx", diagnostics = null) {
+      showPresentedCanvas(mode, activeEngine, diagnostics);
     }
     export function presentSecondary(nextVideo, nextCanvas) {
       const saved = { video, canvas, renderTargetOwner };
@@ -152,6 +155,8 @@ async function loadPresentationBoundary() {
       ({ video, canvas, renderTargetOwner } = saved);
     }
     export function generation() { return primaryPresentationGeneration; }
+    export function diagnostics() { return presentedPresentation; }
+    export function reset() { return resetPresentedRuntime(); }
     export function requests() { return reconcileRequests; }
   `;
   return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
@@ -355,11 +360,14 @@ async function loadRuntimeNotifications(deps) {
     const chrome = { runtime: { sendMessage(message) { deps.messages.push(message); return deps.pending(); } } };
     const siteHost = () => "example.test";
     let protectedSource = false, mode = "upscale";
-    const video = { videoWidth: 640, videoHeight: 360, currentSrc: "video" };
+    const video = {
+      videoWidth: 640, videoHeight: 360, currentSrc: "video",
+      isConnected: true, style: { display: "block" },
+    };
     const primaryController = { active: true, video };
     const device = {};
     const lostDevices = new WeakSet();
-    const canvas = { style: { display: "block" } };
+    const canvas = { isConnected: true, style: { display: "block" } };
     let pageSuspended = false;
     let presentedRuntimeMode = "upscale", presentedRuntimeEngine = "fsrcnnx";
     let presentedCanvasVideo = video, presentedSourceW = 640, presentedSourceH = 360;
@@ -368,6 +376,12 @@ async function loadRuntimeNotifications(deps) {
     const sameVideoSource = (left, right) => left?.video === right?.video && left?.currentSrc === right?.currentSrc;
     ${production}
     export { notifyProtected, notifyState };
+    export function setPresentationAttachment({ videoConnected = true, canvasConnected = true,
+      canvasDisplay = "block" } = {}) {
+      video.isConnected = videoConnected;
+      canvas.isConnected = canvasConnected;
+      canvas.style.display = canvasDisplay;
+    }
   `;
   globalThis.__videoOwnershipDeps = deps;
   return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
@@ -1204,6 +1218,28 @@ test("renderer runtime notifications observe rejected extension-message promises
   assert.deepEqual(deps.messages.map(({ type }) => type), ["FSRCNNX_STATE", "FSRCNNX_PROTECTED"]);
 });
 
+test("renderer notifications fail closed when a committed presentation detaches or hides", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  const deps = { messages: [], pending: () => undefined };
+  const notifications = await loadRuntimeNotifications(deps);
+
+  notifications.notifyState();
+  assert.equal(deps.messages.at(-1).mode, "upscale");
+
+  notifications.setPresentationAttachment({ videoConnected: false });
+  notifications.notifyState();
+  assert.equal(deps.messages.at(-1).mode, "off", "a detached source cannot remain presented");
+
+  notifications.setPresentationAttachment({ canvasConnected: false });
+  notifications.notifyState();
+  assert.equal(deps.messages.at(-1).mode, "off", "a detached sink cannot remain presented");
+
+  notifications.setPresentationAttachment({ canvasDisplay: "none" });
+  notifications.notifyState();
+  assert.equal(deps.messages.at(-1).mode, "off", "a hidden sink cannot remain presented");
+});
+
 test("main source keeps secondary mutable state and neural completion target-scoped", async () => {
   const source = await readFile(mainUrl, "utf8");
   const targetSwap = section(source, "function withTarget(t, fn)", "// Find all qualifying videos");
@@ -1242,8 +1278,38 @@ test("interpolation dimensions require a successful frame from the current prima
   boundary.setPrimary(primaryVideo, primaryCanvas);
 
   assert.equal(boundary.chainTargetDims(), null, "a default or hidden canvas is not a presentation");
-  boundary.presentPrimary();
+  boundary.presentPrimary("upscale", "fsrcnnx", {
+    source: { width: 640, height: 360 },
+    ssimds: {
+      source: { width: 2560, height: 1440 },
+      output: { width: 1280, height: 720 },
+    },
+    sharpen: {
+      source: { width: 1280, height: 720 },
+      output: { width: 1280, height: 720 },
+      strength: 0.8,
+    },
+    interpolation: { inverted: true },
+  });
   assert.deepEqual(boundary.chainTargetDims(), { w: 1280, h: 720 });
+  assert.deepEqual(boundary.diagnostics(), {
+    committed: true,
+    generation: 1,
+    mode: "upscale",
+    engine: "fsrcnnx",
+    source: { width: 640, height: 360 },
+    output: { width: 1280, height: 720 },
+    ssimds: {
+      source: { width: 2560, height: 1440 },
+      output: { width: 1280, height: 720 },
+    },
+    sharpen: {
+      source: { width: 1280, height: 720 },
+      output: { width: 1280, height: 720 },
+      strength: 0.8,
+    },
+    interpolation: { inverted: true },
+  });
   const primaryGeneration = boundary.generation();
 
   boundary.presentSecondary(
@@ -1252,6 +1318,8 @@ test("interpolation dimensions require a successful frame from the current prima
   );
   assert.equal(boundary.generation(), primaryGeneration,
     "secondary presentation cannot replace primary presentation identity");
+  assert.equal(boundary.diagnostics().generation, primaryGeneration,
+    "secondary presentation cannot replace primary submitted diagnostics");
   assert.deepEqual(boundary.chainTargetDims(), { w: 1280, h: 720 });
 
   primaryVideo.videoWidth = 1920;
@@ -1262,6 +1330,9 @@ test("interpolation dimensions require a successful frame from the current prima
   primaryCanvas.height = 2160;
   boundary.presentPrimary();
   assert.deepEqual(boundary.chainTargetDims(), { w: 3840, h: 2160 });
+  assert.deepEqual(boundary.diagnostics().output, { width: 3840, height: 2160 });
+  assert.equal(boundary.diagnostics().ssimds, null);
+  assert.equal(boundary.diagnostics().sharpen, null);
 
   primaryVideo.pageVisible = false;
   boundary.presentPrimary();
@@ -1277,6 +1348,27 @@ test("interpolation dimensions require a successful frame from the current prima
   assert.equal(hiddenSecondaryCanvas.style.display, "none",
     "a secondary canvas cannot publish over page-hidden media");
   assert.equal(boundary.requests(), 2);
+
+  assert.equal(boundary.reset(), true);
+  assert.equal(boundary.diagnostics(), null, "detach/off/suspension reset submitted diagnostics");
+  assert.equal(boundary.chainTargetDims(), null);
+});
+
+test("production overlays expose stable primary, secondary, and interpolation markers", async () => {
+  const mainSource = await readFile(mainUrl, "utf8");
+  const interpolationSource = await readFile(new URL("../fsrcnnx-interpolate.js", import.meta.url), "utf8");
+  assert.match(
+    section(mainSource, "function ensureCanvas()", "// True if"),
+    /setAttribute\?\.\("data-fsrcnnx-overlay", "primary"\)/,
+  );
+  assert.match(
+    section(mainSource, "class MultiTarget", "let multiTargets"),
+    /setAttribute\?\.\("data-fsrcnnx-overlay", "secondary"\)/,
+  );
+  assert.match(
+    interpolationSource,
+    /setAttribute\?\.\("data-fsrcnnx-overlay", "interpolation"\)/,
+  );
 });
 
 test("main canvas mounting respects direct and container fullscreen inside shadow DOM", async () => {

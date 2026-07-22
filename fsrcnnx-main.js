@@ -106,6 +106,9 @@ let context = null, format = null, canvas = null, video = null, sampler = null;
 let presentedCanvasVideo = null, presentedSourceW = 0, presentedSourceH = 0;
 let primaryPresentationGeneration = 0;
 let presentedVideoSource = null, presentedRuntimeMode = "off", presentedRuntimeEngine = null;
+// Last primary frame that reached queue.submit() and committed a visible canvas.
+// Requested filter settings are intentionally separate from these applied stages.
+let presentedPresentation = null;
 let extractPipeline = null, recombinePipeline = null, passthroughPipeline = null;
 // INVERTED CHAIN (#4): tex-ingest twins of the ext-consuming pipelines, plus state.
 let extractPipelineTex = null, recombinePipelineTex = null, recombine16PipelineTex = null;
@@ -254,13 +257,15 @@ function setGpuReady({ recovered = false } = {}) {
 }
 
 function resetPresentedRuntime() {
-  const changed = presentedRuntimeMode !== "off" || presentedCanvasVideo !== null;
+  const changed = presentedRuntimeMode !== "off" || presentedCanvasVideo !== null ||
+    presentedPresentation !== null;
   presentedCanvasVideo = null;
   presentedSourceW = 0;
   presentedSourceH = 0;
   presentedVideoSource = null;
   presentedRuntimeMode = "off";
   presentedRuntimeEngine = null;
+  presentedPresentation = null;
   return changed;
 }
 
@@ -453,9 +458,24 @@ function notifyProtected() {
   sendRuntimeMessage({ type: "FSRCNNX_PROTECTED", host: siteHost() });
 }
 
+function presentationElementVisible(target) {
+  if (!target || target.isConnected !== true || target.style?.display === "none") return false;
+  try {
+    if (typeof target.checkVisibility === "function" &&
+        !target.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return false;
+  } catch {}
+  try {
+    const style = globalThis.getComputedStyle?.(target);
+    if (style && (style.display === "none" || style.visibility === "hidden" ||
+        style.visibility === "collapse" || Number(style.opacity) === 0)) return false;
+  } catch {}
+  return true;
+}
+
 function currentPresentedRuntime() {
   const current = presentedRuntimeMode !== "off" && !pageSuspended &&
-    !!device && !lostDevices.has(device) && canvas?.style?.display !== "none" &&
+    !!device && !lostDevices.has(device) && presentationElementVisible(video) &&
+    presentationElementVisible(canvas) &&
     primaryController?.active && primaryController.video === video &&
     presentedCanvasVideo === video &&
     presentedSourceW === video?.videoWidth && presentedSourceH === video?.videoHeight &&
@@ -1023,6 +1043,7 @@ function ensureCanvas() {
   if (canvas) return;
   canvas = document.createElement("canvas");
   canvas.id = "fsrcnnx-overlay";
+  canvas.setAttribute?.("data-fsrcnnx-overlay", "primary");
   Object.assign(canvas.style, { position: "absolute", top: "0", left: "0", display: "none", pointerEvents: "none", zIndex: "10", transition: "opacity 0.18s ease" });
 }
 
@@ -1084,7 +1105,25 @@ function positionVideoCanvas(targetVideo, targetCanvas, owner, outW, outH) {
   return true;
 }
 
-function showPresentedCanvas(runtimeMode, runtimeEngine = null) {
+function presentationDimensions(width, height) {
+  return Number.isSafeInteger(width) && width > 0 && Number.isSafeInteger(height) && height > 0
+    ? Object.freeze({ width, height })
+    : null;
+}
+
+function presentationStage(stage, includeStrength = false) {
+  if (!stage) return null;
+  const source = presentationDimensions(stage.source?.width, stage.source?.height);
+  const output = presentationDimensions(stage.output?.width, stage.output?.height);
+  if (!source || !output) return null;
+  return Object.freeze({
+    source,
+    output,
+    ...(includeStrength && Number.isFinite(stage.strength) ? { strength: stage.strength } : {}),
+  });
+}
+
+function showPresentedCanvas(runtimeMode, runtimeEngine = null, diagnostics = null) {
   if (!canvas) return;
   if (!videoPageVisible(video)) {
     canvas.style.display = "none";
@@ -1103,6 +1142,18 @@ function showPresentedCanvas(runtimeMode, runtimeEngine = null) {
     presentedRuntimeMode = runtimeMode === "upscale" ? "upscale" : "passthrough";
     presentedRuntimeEngine = presentedRuntimeMode === "upscale" ? (runtimeEngine || engine) : null;
     primaryPresentationGeneration++;
+    presentedPresentation = Object.freeze({
+      committed: true,
+      generation: primaryPresentationGeneration,
+      mode: presentedRuntimeMode,
+      engine: presentedRuntimeEngine,
+      source: presentationDimensions(diagnostics?.source?.width, diagnostics?.source?.height) ||
+        presentationDimensions(video.videoWidth, video.videoHeight),
+      output: presentationDimensions(canvas.width, canvas.height),
+      ssimds: presentationStage(diagnostics?.ssimds),
+      sharpen: presentationStage(diagnostics?.sharpen, true),
+      interpolation: Object.freeze({ inverted: diagnostics?.interpolation?.inverted === true }),
+    });
     if (previousMode !== presentedRuntimeMode || previousEngine !== presentedRuntimeEngine ||
         previousVideo !== presentedCanvasVideo) notifyState();
   }
@@ -2026,7 +2077,22 @@ function renderUpscale() {
   }
 
   device.queue.submit([enc.finish()]);
-  showPresentedCanvas("upscale", engine);
+  const sharpenSource = presentation.ssimds
+    ? { width: outW, height: outH }
+    : { width: modelOutW, height: modelOutH };
+  showPresentedCanvas("upscale", engine, {
+    source: { width: srcW, height: srcH },
+    ssimds: presentation.ssimds ? {
+      source: { width: modelOutW, height: modelOutH },
+      output: { width: outW, height: outH },
+    } : null,
+    sharpen: sharpenEnabled ? {
+      source: sharpenSource,
+      output: { width: outW, height: outH },
+      strength: sharpenStrength,
+    } : null,
+    interpolation: { inverted: !!_ts },
+  });
 }
 
 // Final stage: take an rgba16float RGB texture and put it on the canvas, applying
@@ -2205,7 +2271,21 @@ function presentHiRGBTexture(tex, outW, outH) {
     finalizeToCanvas(enc, tex);
   }
   device.queue.submit([enc.finish()]);
-  showPresentedCanvas("upscale", "neural");
+  const presentationWidth = overshoot ? dispW : outW;
+  const presentationHeight = overshoot ? dispH : outH;
+  showPresentedCanvas("upscale", "neural", {
+    source: { width: video.videoWidth, height: video.videoHeight },
+    ssimds: overshoot ? {
+      source: { width: outW, height: outH },
+      output: { width: dispW, height: dispH },
+    } : null,
+    sharpen: sharpenEnabled ? {
+      source: { width: presentationWidth, height: presentationHeight },
+      output: { width: presentationWidth, height: presentationHeight },
+      strength: sharpenStrength,
+    } : null,
+    interpolation: { inverted: false },
+  });
   return true;
 }
 
@@ -2366,7 +2446,10 @@ function renderPassthrough() {
   rp.draw(3);
   rp.end();
   device.queue.submit([enc.finish()]);
-  showPresentedCanvas("passthrough");
+  showPresentedCanvas("passthrough", null, {
+    source: { width: video.videoWidth, height: video.videoHeight },
+    interpolation: { inverted: false },
+  });
 }
 
 // Safe presentation fallback for the inverted interpolation chain. The source is
@@ -2397,7 +2480,10 @@ function renderTexturePassthrough(tex, width, height) {
   rp.draw(3);
   rp.end();
   device.queue.submit([enc.finish()]);
-  showPresentedCanvas("passthrough");
+  showPresentedCanvas("passthrough", null, {
+    source: { width, height },
+    interpolation: { inverted: true },
+  });
   return true;
 }
 
@@ -3173,6 +3259,7 @@ class MultiTarget {
     this.device = device;
     this.canvas = document.createElement("canvas");
     this.canvas.className = "fsrcnnx-overlay-multi";
+    this.canvas.setAttribute?.("data-fsrcnnx-overlay", "secondary");
     Object.assign(this.canvas.style, { position: "absolute", top: "0", left: "0", pointerEvents: "none", zIndex: "10", transition: "opacity 0.18s ease" });
     this.lumaTexture = null; this.lumaW = 0; this.lumaH = 0;
     this.hiRGB = null; this.hiRGBW = 0; this.hiRGBH = 0;
@@ -3748,6 +3835,7 @@ export function getStatus() {
   const hasVideo = !!findVideo();
   const presented = currentPresentedRuntime();
   const activeMode = mode === "off" ? "off" : presented.mode;
+  const presentation = activeMode !== "off" ? presentedPresentation : null;
   const configuredNeuralModel = neuralModelKey || _neuralList[0]?.key || null;
   const recovering = gpuRecoveryPhase === "scheduled" || gpuRecoveryPhase === "running" ||
     !!(deviceRecoveryPromise || deviceRecoveryTimer);
@@ -3780,6 +3868,8 @@ export function getStatus() {
     : interpStats?.phase === "running" ? "active"
     : interpStats?.phase === "starting" ? "starting"
     : "waiting";
+  const interpolationTakeoverActive = interpolationPhase === "active" &&
+    interpStats?.takeoverActive === true && interpStats?.presentation?.committed === true;
   const imageStats = imageUpscaler?.getStats?.() || null;
   const imagesPhase = !optImages ? "off"
     : pageSuspended ? "suspended"
@@ -3800,6 +3890,7 @@ export function getStatus() {
   const persistence = persistenceStatus();
   return { statusVersion: STATUS_VERSION,
            mode, activeMode, hasVideo, webgpu: apiAvailable, gpuState,
+           presentation,
            frameCount: primaryPresentationGeneration, renderAttempts: frameCount,
            model: activeModel?.manifest?.name || null, scale: activeModel?.scale || null,
            policy: upscalePolicy, ssimds: ssimdsEnabled,
@@ -3857,6 +3948,7 @@ export function getStatus() {
              blockedReason: protectedSource ? protectedReason : null,
              colorSupport: selectedColorSupport,
              framesPresented: primaryPresentationGeneration,
+             presentation,
              fallback: rendererFallback,
            },
            imagesRuntime: {
@@ -3871,6 +3963,8 @@ export function getStatus() {
              phase: interpolationPhase,
              pauseReason: interpPausedByNeural ? "neural" : (pageSuspended ? "document" : null),
              blockedReason: protectedSource ? protectedReason : null,
+             takeoverActive: interpolationTakeoverActive,
+             presentation: interpolationTakeoverActive ? (interpStats?.presentation || null) : null,
              lastFailure: interpFailure,
            },
            neuralRuntime: {
