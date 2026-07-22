@@ -1884,7 +1884,16 @@ async function runRealVideoIntegration(httpBase, fixtureBase, extensionId, expec
     await fixturePage.client.send("Page.setWebLifecycleState", { state: "frozen" });
     await waitForBadge(popupPage.client, fixtureTab.id, "", signal);
     await fixturePage.client.send("Page.setWebLifecycleState", { state: "active" });
+    // A synthetic frozen→active transition can leave an already-frontmost CDP
+    // target visibility-hidden even though Chromium emits `resume`. Move focus
+    // away and back so this checkpoint represents a genuinely visible active
+    // document, matching the state in which rendering is allowed to restart.
+    await popupPage.client.send("Page.bringToFront");
     await fixturePage.client.send("Page.bringToFront");
+    await waitFor("visible document after lifecycle activation", () => evaluate(
+      fixturePage.client,
+      "document.visibilityState",
+    ), (state) => state === "visible", { timeoutMs: CDP_TIMEOUT_MS, signal });
     await waitForStatus(popupPage.client, fixtureTab.id, "document reactivation intent", (status) =>
       status.mode === "upscale" && status.documentSuspended === false,
     signal, CDP_TIMEOUT_MS);
