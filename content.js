@@ -161,6 +161,7 @@ const COMMANDS = Object.freeze({
   FSRCNNX_SETIMAGES: booleanPayload((module, msg) => module.setImages(msg.on)),
   FSRCNNX_SETHOVERREVEAL: booleanPayload((module, msg) => module.setHoverReveal(msg.on)),
   FSRCNNX_SETALLVIDEOS: booleanPayload((module, msg) => module.setAllVideos(msg.on)),
+  FSRCNNX_SETIDLEPOWERSAVING: booleanPayload((module, msg) => module.setIdlePowerSaving(msg.on)),
   FSRCNNX_SETSHARPEN: booleanPayload((module, msg) => module.setSharpen(msg.on)),
   FSRCNNX_SETSHARPENSTR: boundedNumberPayload("strength", 0.1, 2,
     (module, msg) => module.setSharpenStrength(msg.strength)),
@@ -343,6 +344,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   const type = msg && typeof msg === "object" ? msg.type : null;
   if (type !== "FSRCNNX_STATUS" && !Object.prototype.hasOwnProperty.call(COMMANDS, type)) {
     return false;
+  }
+
+  // Lifecycle events can be lost while a document is frozen. Any extension
+  // interaction is a safe reconciliation point because visibility and
+  // prerendering state are authoritative at the time the message arrives.
+  const observedDocumentState = currentDocumentState();
+  if (observedDocumentState !== requestedDocumentState) {
+    requestDocumentState(observedDocumentState);
   }
 
   let responded = false;
