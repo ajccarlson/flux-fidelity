@@ -17,8 +17,12 @@ This directory contains source material used to generate runtime JSON/WGSL model
 
 The FSRCNN release tag resolves to commit `1aa11ab0e1fc12741fdb84cef31da5619a478670`, but its shader asset was attached later. The pinned asset checksum, not the tag commit, identifies the exact source bytes.
 
+## Unresolved high x2 source
+
+`FSRCNNX_x2_56-16-4-1.glsl` is retained so FSRCNNX High remains functional. Its SHA-256 is `34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6`; it reproduces `model/FSRCNNX_x2_56-16-4-1.wgsl` and `.passes.json` with SHA-256 values `267ba203867483a467c535fd03c36c62ff9428116111d4d258dc5c295ef8e0d7` and `57395ac668b4cbebea69938a9089c9bea0029ce785f7cc6dad239c4be31d43e7`.
+
+An exact public copy exists at [`resc863/Project` commit `0e6bdb9`](https://github.com/resc863/Project/blob/0e6bdb96f2845d883ec0131af8598c438c68e30a/mpv-config/FSRCNNX_x2_56-16-4-1.glsl), but that downstream mirror is only byte-identity corroboration: it does not establish the author, authoritative revision, or license. The source itself has no license header. Do not publish the current repository tree or distribute an extension package containing the source or generated pair until authoritative license evidence for these exact weights is recorded and the `unknown-high-x2-shader-origin` release gate is cleared.
+
 ## Removed historical assets
 
-The unverified high-quality x2 source and generated pair, and the source-less x3 and x4 generated pairs, have been removed from the current tree and extension package. Their historical hashes are retained as tombstones in [MODEL_PROVENANCE.md](../MODEL_PROVENANCE.md) and [`release-clearance.json`](../release-clearance.json).
-
-Those bytes still exist in private Git history. Do not make that repository history public until it has been purged or authoritative source and license evidence has been established. `npm run check:generated` deliberately covers only the standard x2 and three ArtCNN rows above; `tools/check-models.mjs` separately pins the SSim source and port.
+The source-less x3 and x4 generated pairs remain removed from the current tree and extension package. Their historical hashes are retained as tombstones in [MODEL_PROVENANCE.md](../MODEL_PROVENANCE.md) and [`release-clearance.json`](../release-clearance.json). Those bytes still exist in private Git history, so do not publish that history until it has been purged or authoritative source and license evidence has been established. `tools/check-models.mjs` separately pins the SSim source and port.

@@ -1616,6 +1616,30 @@ test("fullscreen, picture-in-picture, and audio blocks hand an inverted producer
   }
 });
 
+test("a PiP event synchronously relinquishes an active inverted takeover", () => {
+  const harness = makeAudioHarness({ initialMuted: true });
+  const transitions = [];
+  harness.interpolator.chain = {
+    setInverted(value) { transitions.push(value); return true; },
+  };
+  harness.interpolator._chainInverted = true;
+  harness.interpolator._chainPresentationSuspended = false;
+  try {
+    const staged = harness.interpolator._stageTakeover(harness.generation);
+    assert.ok(staged);
+    assert.equal(harness.interpolator._activateTakeover(harness.generation, staged), true);
+    assert.equal(harness.interpolator._takeoverActive, true);
+
+    harness.document.pictureInPictureElement = harness.video;
+    harness.video.emit("enterpictureinpicture");
+    assert.equal(harness.interpolator._takeoverActive, false);
+    assert.equal(harness.interpolator._chainPresentationSuspended, true);
+    assert.deepEqual(transitions, [false]);
+  } finally {
+    harness.cleanup();
+  }
+});
+
 test("early activation invalidation rolls back the staged route without claiming native audio", async () => {
   const harness = makeAudioHarness();
   try {

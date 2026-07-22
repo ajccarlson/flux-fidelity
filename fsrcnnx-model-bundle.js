@@ -2,7 +2,11 @@
 // This module deliberately has no DOM, WebGPU-global, or Node dependencies so it
 // can be consumed by extension runtime code, the browser validator, and CI.
 
-export const DEFAULT_MODEL_WORKING_SET_BYTES = 512 * 1024 * 1024;
+// WebGPU exposes texture dimensions and binding limits, but not a trustworthy
+// available-VRAM budget. Keep the calculated working set as diagnostics and
+// allow callers to opt into a known deployment-specific cap; the portable
+// default only rejects unsafe arithmetic and real device-limit violations.
+export const DEFAULT_MODEL_WORKING_SET_BYTES = Number.MAX_SAFE_INTEGER;
 
 const BYTES_PER_RGBA16FLOAT_TEXEL = 8;
 const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const mainUrl = new URL("../fsrcnnx-main.js", import.meta.url);
+const videoControllerUrl = new URL("../fsrcnnx-video-controller.js", import.meta.url);
 let revision = 0;
 
 function deferred() {
@@ -79,6 +80,7 @@ async function loadSelectionCoordinator(deps) {
     const clearMultiTargets = () => deps.events.push(["clear-multi"]);
     const chainTap = (on) => deps.events.push(["chain-tap", on]);
     const resetScaleSelection = () => deps.events.push(["reset-scale"]);
+    const resetPlaybackPerformanceFallback = () => deps.events.push(["reset-performance"]);
     const probeVideo = (candidate, options) => deps.probe(candidate, options);
     const notifyProtected = () => deps.events.push(["notify-protected", protectedReason]);
     const notifyState = () => deps.events.push(["notify-state", mode, !!primaryController]);
@@ -129,12 +131,14 @@ async function loadPresentationBoundary() {
   const resetPresentation = section(source, "function resetPresentedRuntime()", "// ---- advanced");
   const presentation = section(source, "function presentationDimensions(", "function positionCanvas");
   const harness = `
+    import { videoPresentationState } from ${JSON.stringify(videoControllerUrl.href)};
     let canvas = null, video = null, primaryController = null, renderTargetOwner = null;
     let presentedCanvasVideo = null, presentedSourceW = 0, presentedSourceH = 0;
     let primaryPresentationGeneration = 0;
     let presentedVideoSource = null, presentedRuntimeMode = "off", presentedRuntimeEngine = null;
     let presentedPresentation = null;
     let pageSuspended = false, device = {}, engine = "fsrcnnx";
+    const document = { fullscreenElement: null, pictureInPictureElement: null };
     const lostDevices = new WeakSet();
     let reconcileRequests = 0;
     const captureVideoSource = (candidate) => candidate ? ({ video: candidate, currentSrc: candidate.currentSrc || "" }) : null;
@@ -171,6 +175,7 @@ async function loadPositionBoundary() {
   const source = await readFile(mainUrl, "utf8");
   const production = section(source, "function inShadowDom(node)", "function showPresentedCanvas(");
   const harness = `
+    import { videoPresentationState } from ${JSON.stringify(videoControllerUrl.href)};
     class ShadowRoot {
       constructor(host) { this.host = host; this.fullscreenElement = null; }
       appendChild(node) { node.parentNode = this; }
@@ -230,6 +235,7 @@ async function loadEngineSelection(deps) {
     const activateNeuralFallback = () => { engine = "fsrcnnx"; };
     const policyToDepth = () => 1;
     const ensureFsrcnnxStages = async () => {};
+    const ensureHighStages = async () => {};
     const ensureArtStages = async () => {};
     const cancelPreferenceRestore = () => { deps.preferenceFences = (deps.preferenceFences || 0) + 1; };
     const saveSitePrefs = () => deps.events.push("save");
@@ -1270,8 +1276,11 @@ test("main source keeps secondary mutable state and neural completion target-sco
     "activeModel = t.activeModel",
     "dispRGB = t.dispRGB",
     "chainedFsrcnnx = t.chainedFsrcnnx",
+    "highStages = t.highStages",
+    "chainedHigh = t.chainedHigh",
     "_scaleHeld = t.scaleHeld",
     "t.activeModel = activeModel",
+    "t.chainedHigh = chainedHigh",
     "t.scaleHeld = _scaleHeld",
   ]) {
     assert.match(targetSwap, new RegExp(fragment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
