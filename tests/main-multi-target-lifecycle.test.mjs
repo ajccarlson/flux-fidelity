@@ -62,6 +62,13 @@ async function loadMultiTargetLifecycle(deps) {
     const renderMultiOne = () => {};
     const videoPageVisible = () => true;
     const positionVideoCanvas = () => true;
+    const videoPresentationState = () => ({
+      pictureInPicture: false,
+      directFullscreen: false,
+      fullscreenElsewhere: false,
+      nativeRequired: false,
+    });
+    const applyOverlayReveal = () => {};
     const hoverRegionFor = () => null;
     const invalidateVideoColorSupport = () => {};
     const findAllVideos = () => deps.candidates || [];

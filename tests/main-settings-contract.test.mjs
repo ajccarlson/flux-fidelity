@@ -269,6 +269,12 @@ async function loadStatusHarness(storeHealth = {
       consecutiveDegradedWindows: 0,
       consecutiveBacklogs: 0,
     }) };
+    const primaryPresentationBoundary = {
+      pictureInPicture: false,
+      directFullscreen: false,
+      fullscreenElsewhere: false,
+      nativeRequired: false,
+    };
     let imageUpscaler = null, imageUpscalerInitPromise = null, imageLastFailure = null;
     let preferenceValidationFailure = null, preferenceApplicationFailure = null;
     const multiTargets = new Map();
@@ -720,6 +726,12 @@ test("status exposes configured interpolation and neural values without live run
   });
   assert.equal(status.renderer.requestedEngine, "neural");
   assert.equal(status.renderer.effectiveEngine, "neural");
+  assert.deepEqual(status.renderer.nativePresentation, {
+    pictureInPicture: false,
+    directFullscreen: false,
+    fullscreenElsewhere: false,
+    nativeRequired: false,
+  });
   assert.strictEqual(status.renderer.colorSupport, status.colorSupport);
   assert.equal(status.colorSupport.code, "color-not-checked");
   assert.deepEqual({
