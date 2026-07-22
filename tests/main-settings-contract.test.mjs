@@ -228,13 +228,14 @@ async function loadInterpolationConfigHarness(instance = null, {
 async function loadStatusHarness(storeHealth = {
   state: "ready", operation: null, errorOperation: null, pending: 0, error: null,
   schemaVersion: 2, scope: "https://video.example",
-}, gpu = { adapter: "unrequested", device: "uninitialized" }) {
+}, gpu = { adapter: "unrequested", device: "uninitialized" }, runtime = {}) {
   const getStatus = section("export function getStatus()", "// ---- image upscaling");
   return importHarness(`
     const deps = globalThis.__mainSettingsContractDeps;
     const STATUS_VERSION = 1, GPU_RECOVERY_MAX_ATTEMPTS = 3;
-    let mode = "off", primaryController = null, video = null, frameCount = 0;
+    let mode = deps.runtime.mode || "off", primaryController = null, video = null, frameCount = 0;
     let primaryPresentationGeneration = 0;
+    let presentedPresentation = deps.runtime.presentation || null;
     let activeModel = null, upscalePolicy = "display", ssimdsEnabled = true;
     let sharpenEnabled = false, sharpenStrength = 1, requestedEngine = "neural", engine = "neural";
     let artVariant = "ArtCNN_C4F32", chainDepth = 1, neuralModelKey = "span-lazy";
@@ -246,12 +247,15 @@ async function loadStatusHarness(storeHealth = {
       colorSpace: { primaries: null, transfer: null, matrix: null, fullRange: null },
     };
     let optHoverReveal = false, optAllVideos = false;
-    let optImages = false, imageUpscaledCount = 0, optInterpolate = false, interpPausedByNeural = false;
-    let interpolationTerminalQuarantine = null, interpolator = null;
+    let optImages = false, imageUpscaledCount = 0;
+    let optInterpolate = deps.runtime.interpolate === true, interpPausedByNeural = false;
+    let interpolationTerminalQuarantine = deps.runtime.interpFailure || null, interpolator = null;
+    if (deps.runtime.interpStats) interpolator = { getStats: () => deps.runtime.interpStats };
     let pendingEngine = "blend", pendingResMode = "quarter", pendingTargetFps = 165;
     let pendingAvOffsetMs = -25, interpStaticPassthroughPref = false;
     let interpAutoFallbackPref = false, interpLadderPref = true, interpInvertPref = false;
-    let pageSuspended = false, deviceRecoveryPromise = null, deviceRecoveryTimer = null;
+    let pageSuspended = deps.runtime.suspended === true;
+    let deviceRecoveryPromise = null, deviceRecoveryTimer = null;
     let gpuAdapterPhase = deps.gpu.adapter, gpuDevicePhase = deps.gpu.device;
     let gpuRecoveryPhase = "idle", gpuRecoveryAttempt = 0, gpuLastFailure = null, gpuRecoveredAt = null;
     let rendererFallback = null, neuralLastFailure = null, neuralFail = 0;
@@ -260,14 +264,14 @@ async function loadStatusHarness(storeHealth = {
     const multiTargets = new Map();
     const _neuralList = [];
     const navigator = { gpu: {} };
-    const findVideo = () => null;
+    const findVideo = () => deps.runtime.hasVideo ? {} : null;
     const siteHost = () => "video.example";
     const siteScope = () => "https://video.example";
     const siteSettingsStore = { health: () => deps.storeHealth };
-    const currentPresentedRuntime = () => ({ mode: "off", engine: null });
-    const interpolationQuarantineMatches = () => false;
+    const currentPresentedRuntime = () => deps.runtime.presented || ({ mode: "off", engine: null });
+    const interpolationQuarantineMatches = () => interpolationTerminalQuarantine !== null;
     ${getStatus}
-  `, { storeHealth, gpu });
+  `, { storeHealth, gpu, runtime });
 }
 
 async function loadPreferenceApplicationHarness(
@@ -735,6 +739,86 @@ test("status exposes configured interpolation and neural values without live run
   })).getStatus();
   assert.equal(unavailableGpu.gpuState, "unavailable");
   assert.equal(unavailableGpu.runtime.adapter, "unavailable");
+
+  const presentation = {
+    committed: true,
+    generation: 4,
+    mode: "upscale",
+    engine: "fsrcnnx",
+    source: { width: 640, height: 360 },
+    output: { width: 1920, height: 1080 },
+    ssimds: {
+      source: { width: 2560, height: 1440 },
+      output: { width: 1920, height: 1080 },
+    },
+    sharpen: {
+      source: { width: 1920, height: 1080 },
+      output: { width: 1920, height: 1080 },
+      strength: 1,
+    },
+    interpolation: { inverted: true },
+  };
+  const active = (await loadStatusHarness(undefined, undefined, {
+    mode: "upscale",
+    hasVideo: true,
+    presented: { mode: "upscale", engine: "fsrcnnx" },
+    presentation,
+    interpolate: true,
+    interpStats: {
+      phase: "running",
+      takeoverActive: true,
+      presentation: {
+        committed: true,
+        generation: 3,
+        gpu: true,
+        sink: "renderer",
+        source: { width: 640, height: 360 },
+        output: { width: 1920, height: 1080 },
+        framesIn: 5,
+        framesOut: 8,
+      },
+    },
+  })).getStatus();
+  assert.strictEqual(active.presentation, presentation);
+  assert.strictEqual(active.renderer.presentation, presentation);
+  assert.equal(active.interpolationRuntime.takeoverActive, true);
+  assert.strictEqual(active.interpolationRuntime.presentation, active.interpStats.presentation);
+  assert.doesNotThrow(() => JSON.stringify(active));
+
+  const inactive = (await loadStatusHarness(undefined, undefined, {
+    mode: "upscale",
+    presentation,
+    presented: { mode: "off", engine: null },
+    interpolate: true,
+    suspended: true,
+    interpStats: active.interpStats,
+  })).getStatus();
+  assert.equal(inactive.presentation, null, "a non-current renderer cannot leak its last commit");
+  assert.equal(inactive.renderer.presentation, null);
+  assert.equal(inactive.interpolationRuntime.takeoverActive, false);
+  assert.equal(inactive.interpolationRuntime.presentation, null,
+    "suspension cannot publish a stale interpolation takeover");
+
+  const failed = (await loadStatusHarness(undefined, undefined, {
+    hasVideo: true,
+    interpolate: true,
+    interpFailure: { stage: "capture", detail: "decoder failed" },
+    interpStats: active.interpStats,
+  })).getStatus();
+  assert.equal(failed.interpolationRuntime.phase, "failed");
+  assert.equal(failed.interpolationRuntime.takeoverActive, false);
+  assert.equal(failed.interpolationRuntime.presentation, null,
+    "terminal quarantine cannot publish a stale takeover while cleanup is queued");
+
+  const uncommitted = (await loadStatusHarness(undefined, undefined, {
+    hasVideo: true,
+    interpolate: true,
+    interpStats: { phase: "running", takeoverActive: true, presentation: null },
+  })).getStatus();
+  assert.equal(uncommitted.interpolationRuntime.phase, "active");
+  assert.equal(uncommitted.interpolationRuntime.takeoverActive, false);
+  assert.equal(uncommitted.interpolationRuntime.presentation, null,
+    "generated frames are not a committed presentation");
 });
 
 test("interpolation quarantine identity includes every runtime-affecting preference", async () => {
