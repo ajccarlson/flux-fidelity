@@ -24,7 +24,7 @@ async function flush(turns = 4) {
 async function loadCoordinator(deps) {
   const source = await readFile(mainUrl, "utf8");
   const start = source.indexOf("function watchDeviceLoss(ownerDevice)");
-  const end = source.indexOf("async function initWebGPUInternal()", start);
+  const end = source.indexOf("async function initWebGPUInternal(", start);
   assert.notEqual(start, -1);
   assert.notEqual(end, -1);
   const production = source.slice(start, end);
@@ -44,13 +44,21 @@ async function loadCoordinator(deps) {
     let device = deps.device, deviceOwnedByMain = true;
     let adoptionGeneration = 0;
     let videoSelectionGeneration = 0;
+    let imagesSelectionGeneration = 0;
     let deviceRecoveryGeneration = 0, deviceRecoveryPromise = null, deviceRecoveryTimer = null;
+    const deviceLossInvalidations = new WeakMap();
+    let deviceLossInvalidationPromise = null;
     let mode = deps.mode || "passthrough", optImages = deps.images === true;
-    let optInterpolate = deps.interpolate === true, engine = "fsrcnnx";
+    let optInterpolate = deps.interpolate === true, engine = deps.engine || "fsrcnnx";
     let engineSelectionGeneration = 0, chainDepth = 1, artVariant = "ArtCNN_C4F32";
-    let adopting = false, pageSuspended = false, interpolator = null;
+    let adopting = false, pageSuspended = false;
+    let interpolator = {
+      _rifeMod: { invalidateDevice: (...args) => deps.invalidateRife(...args) },
+      stop: () => { deps.interpolatorStops++; },
+    };
     let context = deps.context, format = "rgba8unorm", canvas = deps.canvas;
     let gpuAdapterPhase = "ready", gpuDevicePhase = "ready", gpuRecoveryPhase = "idle";
+    let gpuResourcePhase = "active", gpuResourceReason = null;
     let gpuRecoveryAttempt = 0, gpuLastFailure = null, gpuRecoveredAt = null;
     function boundedRuntimeDetail(error, fallback = "Unknown runtime failure") {
       const detail = error?.message || (typeof error === "string" ? error : fallback);
@@ -78,6 +86,8 @@ async function loadCoordinator(deps) {
     function setGpuReady({ recovered = false } = {}) {
       gpuAdapterPhase = "ready";
       gpuDevicePhase = "ready";
+      gpuResourcePhase = "active";
+      gpuResourceReason = null;
       if (recovered || gpuRecoveryPhase === "idle") {
         gpuRecoveryPhase = "idle";
         gpuRecoveryAttempt = 0;
@@ -102,6 +112,7 @@ async function loadCoordinator(deps) {
     function resetScaleSelection() { _scaleHeld = undefined; _scalePending = null; _scalePendingSince = 0; }
     let neuralEng = { invalidateDevice: (...args) => deps.invalidateNeural(...args) };
     function invalidateImageUpscaler() { deps.imageInvalidations++; }
+    function detachDeviceErrorHandler() {}
     function clearMultiTargets() { deps.multiClears++; }
     async function initWebGPU() {
       deps.recoveries++;
@@ -119,15 +130,18 @@ async function loadCoordinator(deps) {
     async function loadModels() {}
     async function ensureFsrcnnxStages() {}
     async function ensureArtStages() {}
-    async function ensureNeural() {}
+    async function ensureNeural() { deps.neuralEnsures++; device = deps.replacement; }
     function neuralSelectionCurrent() { return true; }
     async function ensureImageUpscaler() { return null; }
+    function startImageUpscalerIfCurrent(upscaler) { upscaler?.start?.(); return !!upscaler; }
     function attach() { deps.attaches++; }
     function scheduleMainLoop() { deps.schedules++; }
     function cancelMainLoop() {}
     function findVideo() { return { id: "selected-video" }; }
     async function queueVideoSelection() {
       deps.selections++;
+      if (deps.selectionGate) await deps.selectionGate.promise;
+      if (!deviceRecoveryRequested() || pageSuspended) return false;
       canvas.style.display = "block";
       attach(); scheduleMainLoop(); return true;
     }
@@ -146,6 +160,7 @@ async function loadCoordinator(deps) {
     export function state() {
       return { device, mode, images: optImages, interpolate: optInterpolate,
         recovering: !!deviceRecoveryPromise || deviceRecoveryTimer != null,
+        providerInvalidating: !!deviceLossInvalidationPromise,
         display: canvas.style.display, gpu: snapshotGpu(),
         chainTapTex, lumaTexture, hiRGB, dispRGB, context, models };
     }
@@ -165,6 +180,9 @@ async function loadInitializer(deps) {
     const deps = globalThis.__mainDeviceLossDeps;
     let device = null;
     const lostDevices = new WeakSet();
+    let gpuRetirementPromise = null;
+    let gpuResourceGeneration = 0;
+    let gpuResourcePhase = "idle", gpuResourceReason = null;
     let gpuAdapterPhase = "unrequested", gpuDevicePhase = "uninitialized";
     let gpuRecoveryPhase = "idle", gpuRecoveryAttempt = 0;
     let gpuLastFailure = null, gpuRecoveredAt = null;
@@ -183,6 +201,8 @@ async function loadInitializer(deps) {
       };
     }
     function notifyState() { deps.notifications.push(snapshotGpu()); }
+    function waitForGpuRetirement() { return Promise.resolve(); }
+    function gpuInitializationCurrent() { return true; }
     function setGpuFailure(stage, code, error,
       { adapter = gpuAdapterPhase, device: devicePhase = "failed" } = {}) {
       gpuAdapterPhase = adapter;
@@ -235,6 +255,9 @@ async function loadGpuReadiness(deps) {
     let gpuRecoveryPhase = deps.recovery;
     let gpuRecoveryAttempt = deps.attempt;
     let gpuRecoveredAt = deps.recoveredAt || null;
+    let gpuResourcePhase = "idle", gpuResourceReason = null;
+    const device = {};
+    const lostDevices = new WeakSet();
     let deviceRecoveryGeneration = deps.generation || 0;
     let deviceRecoveryTimer = deps.timer || null;
     const clearTimeout = (timer) => {
@@ -269,8 +292,8 @@ async function loadGpuReadiness(deps) {
   return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
 }
 
-function setup({ mode = "passthrough", images = false, interpolate = false, recoveryResults = null,
-  controlledTimers = false } = {}) {
+function setup({ mode = "passthrough", images = false, interpolate = false, engine = "fsrcnnx",
+  recoveryResults = null, controlledTimers = false } = {}) {
   const loss = deferred();
   const recoveryGate = deferred();
   const destroyed = { count: 0 };
@@ -280,6 +303,7 @@ function setup({ mode = "passthrough", images = false, interpolate = false, reco
     mode,
     images,
     interpolate,
+    engine,
     device,
     replacement,
     loss,
@@ -300,6 +324,9 @@ function setup({ mode = "passthrough", images = false, interpolate = false, reco
     modelDestroys: 0,
     ssimDestroys: 0,
     neuralInvalidations: 0,
+    rifeInvalidations: 0,
+    neuralEnsures: 0,
+    interpolatorStops: 0,
     notifications: [],
     gpuFailures: [],
     gpuReadyCalls: [],
@@ -308,7 +335,14 @@ function setup({ mode = "passthrough", images = false, interpolate = false, reco
     timers: [],
     onModelDestroy() { deps.modelDestroys++; },
     onSsimDestroy() { deps.ssimDestroys++; },
-    async invalidateNeural() { deps.neuralInvalidations++; },
+    async invalidateNeural() {
+      deps.neuralInvalidations++;
+      await deps.neuralInvalidationGate?.promise;
+    },
+    async invalidateRife() {
+      deps.rifeInvalidations++;
+      await deps.rifeInvalidationGate?.promise;
+    },
   };
   if (controlledTimers) {
     deps.setTimeout = (callback) => {
@@ -391,7 +425,10 @@ test("current device loss retires stale state and single-flights recovery", asyn
   assert.equal(deps.unconfigured, 1);
   assert.equal(deps.imageInvalidations, 1);
   assert.equal(deps.multiClears, 1);
-  assert.equal(deps.neuralInvalidations >= 1, true);
+  assert.equal(deps.neuralInvalidations, 1,
+    "duplicate loss observation must reuse the neural invalidation barrier");
+  assert.equal(deps.rifeInvalidations, 1,
+    "the retained RIFE provider must join the same device-loss barrier");
   assert.deepEqual(
     [coordinator.state().chainTapTex, coordinator.state().lumaTexture,
       coordinator.state().hiRGB, coordinator.state().dispRGB],
@@ -416,6 +453,76 @@ test("current device loss retires stale state and single-flights recovery", asyn
   );
   assert.equal(coordinator.state().gpu.recoveredAt != null, true);
   assert.deepEqual(deps.gpuReadyCalls, [{ recovered: true }]);
+});
+
+test("device recovery cannot create either renderer provider until neural and RIFE releases settle", async (t) => {
+  const previous = globalThis.__mainDeviceLossDeps;
+  t.after(() => { globalThis.__mainDeviceLossDeps = previous; });
+
+  for (const scenario of [
+    { label: "WebGPU", options: {}, starts: "recoveries" },
+    {
+      label: "neural",
+      options: { mode: "upscale", engine: "neural" },
+      starts: "neuralEnsures",
+    },
+  ]) {
+    const deps = setup(scenario.options);
+    deps.neuralInvalidationGate = deferred();
+    deps.rifeInvalidationGate = deferred();
+    const coordinator = await loadCoordinator(deps);
+    coordinator.watch();
+    deps.loss.resolve({ message: `${scenario.label} shared device lost` });
+    await flush();
+
+    assert.equal(deps.neuralInvalidations, 1, scenario.label);
+    assert.equal(deps.rifeInvalidations, 1, scenario.label);
+    assert.equal(deps.recoveries, 0, `${scenario.label} init overtook provider invalidation`);
+    assert.equal(deps.neuralEnsures, 0, `${scenario.label} session creation overtook provider invalidation`);
+    assert.equal(coordinator.state().providerInvalidating, true, scenario.label);
+
+    deps.neuralInvalidationGate.resolve();
+    await flush();
+    assert.equal(deps.recoveries, 0,
+      `${scenario.label} recovery started after neural cleanup alone`);
+    assert.equal(deps.neuralEnsures, 0,
+      `${scenario.label} session creation started before deferred RIFE cleanup`);
+    assert.equal(coordinator.state().providerInvalidating, true, scenario.label);
+
+    deps.rifeInvalidationGate.resolve();
+    await flush();
+    assert.equal(deps[scenario.starts], 1,
+      `${scenario.label} recovery did not start after the combined barrier settled`);
+    assert.equal(coordinator.state().providerInvalidating, false, scenario.label);
+    assert.equal(deps.neuralInvalidations, 1,
+      `${scenario.label} recovery must reuse, not repeat, neural invalidation`);
+    assert.equal(deps.rifeInvalidations, 1,
+      `${scenario.label} recovery must reuse, not repeat, RIFE invalidation`);
+
+    deps.recoveryGate.resolve();
+    await flush();
+  }
+});
+
+test("a provider invalidation rejection is observed without a detached loss promise", async (t) => {
+  const previous = globalThis.__mainDeviceLossDeps;
+  t.after(() => { globalThis.__mainDeviceLossDeps = previous; });
+  const deps = setup({ mode: "off" });
+  deps.invalidateRife = async () => {
+    deps.rifeInvalidations++;
+    throw new Error("deferred RIFE release failed");
+  };
+  const coordinator = await loadCoordinator(deps);
+  coordinator.watch();
+  deps.loss.resolve({ message: "loss without recovery demand" });
+  await flush();
+
+  assert.equal(deps.neuralInvalidations, 1);
+  assert.equal(deps.rifeInvalidations, 1);
+  assert.equal(deps.recoveries, 0);
+  assert.equal(coordinator.state().providerInvalidating, false);
+  assert.equal(deps.warnings.some((args) =>
+    args.join(" ").includes("rife-session device-loss invalidation failed")), true);
 });
 
 test("interpolation-only device loss remains recovery-eligible and reconciles video selection", async (t) => {
@@ -573,6 +680,31 @@ test("user off during recovery prevents device-loss resurrection", async (t) => 
   assert.equal(deps.schedules, 0);
 });
 
+test("user off while recovery reconciles video cannot publish stale ready telemetry", async (t) => {
+  const previous = globalThis.__mainDeviceLossDeps;
+  t.after(() => { globalThis.__mainDeviceLossDeps = previous; });
+  const deps = setup();
+  deps.selectionGate = deferred();
+  const coordinator = await loadCoordinator(deps);
+  coordinator.watch();
+  deps.loss.resolve({ message: "reset during selection" });
+  await flush();
+
+  deps.recoveryGate.resolve();
+  while (deps.selections === 0) await new Promise((resolve) => setImmediate(resolve));
+  coordinator.turnOff();
+  deps.selectionGate.resolve();
+  await flush();
+
+  assert.equal(coordinator.state().mode, "off");
+  assert.equal(coordinator.state().display, "none");
+  assert.equal(coordinator.state().gpu.recovery, "idle");
+  assert.equal(deps.attaches, 0);
+  assert.equal(deps.schedules, 0);
+  assert.deepEqual(deps.gpuReadyCalls, [],
+    "the cancelled recovery must revalidate demand after video reconciliation");
+});
+
 test("exhausted recovery reports terminal failure without clearing requested features", async (t) => {
   const previous = globalThis.__mainDeviceLossDeps;
   t.after(() => { globalThis.__mainDeviceLossDeps = previous; });
@@ -618,6 +750,10 @@ test("exhausted recovery reports terminal failure without clearing requested fea
     (code) => code === "device-recovery-failed",
   ).length, 2);
   assert.equal(deps.gpuFailures.at(-1).code, "device-recovery-exhausted");
+  assert.equal(deps.neuralInvalidations, 1,
+    "retries must await the original neural cleanup barrier without reinvoking it");
+  assert.equal(deps.rifeInvalidations, 1,
+    "retries must await the original RIFE cleanup barrier without reinvoking it");
   assert.equal(deps.multiClears, 2, "loss cleanup and terminal exhaustion both clear stale targets");
   assert.equal(deps.presentationResets, 2,
     "loss cleanup and terminal exhaustion both invalidate presented runtime state");

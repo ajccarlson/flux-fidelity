@@ -164,6 +164,10 @@ function readyStatus(overrides = {}) {
       phase: "idle", attempt: 0, maxAttempts: 3,
       ...(overrides.runtime?.recovery || {}),
     },
+    resources: {
+      phase: "idle", reason: null,
+      ...(overrides.runtime?.resources || {}),
+    },
   };
   const persistence = {
     state: "ready", operation: null, errorOperation: null, pendingWrites: 0, error: null,
@@ -539,6 +543,7 @@ test("WebGPU status distinguishes idle capability, initialization, readiness, re
     ["idle", "available", "v ok"],
     ["initializing", "starting…", "v"],
     ["ready", "ready", "v ok"],
+    ["releasing", "releasing…", "v"],
     ["recovering", "recovering…", "v"],
     ["failed", "failed", "v no"],
     ["unavailable", "unavailable", "v no"],
@@ -553,6 +558,12 @@ test("WebGPU status distinguishes idle capability, initialization, readiness, re
     runtime: { api: "available", adapter: "requesting", device: "requesting" },
   }));
   assert.equal(webgpu.textContent, "starting…", "nested runtime state is accepted");
+
+  controller.render(readyStatus({
+    gpuState: undefined,
+    runtime: { api: "available", resources: { phase: "releasing", reason: "document-hidden" } },
+  }));
+  assert.equal(webgpu.textContent, "releasing…", "nested resource retirement is accepted");
 
   const legacy = readyStatus();
   delete legacy.gpuState;
