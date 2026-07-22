@@ -105,6 +105,7 @@ function completeApi(overrides = {}) {
     setImages: () => ({ ok: true }),
     setHoverReveal: () => ({ ok: true }),
     setAllVideos: () => ({ ok: true }),
+    setIdlePowerSaving: () => ({ ok: true }),
     setSharpen: () => ({ ok: true }),
     setSharpenStrength: () => ({ ok: true }),
     setSSimDS: () => ({ ok: true }),
@@ -166,6 +167,7 @@ const COMMAND_CASES = [
   booleanCommand("FSRCNNX_SETIMAGES", "setImages"),
   booleanCommand("FSRCNNX_SETHOVERREVEAL", "setHoverReveal"),
   booleanCommand("FSRCNNX_SETALLVIDEOS", "setAllVideos"),
+  booleanCommand("FSRCNNX_SETIDLEPOWERSAVING", "setIdlePowerSaving"),
   booleanCommand("FSRCNNX_SETSHARPEN", "setSharpen"),
   {
     type: "FSRCNNX_SETSHARPENSTR", method: "setSharpenStrength", field: "strength",
@@ -886,4 +888,28 @@ test("ordinary visibility changes retire and restore document ownership", async 
   bridge.document.emit("visibilitychange");
   await flush();
   assert.deepEqual(calls, ["suspend", "restore", "resume", "suspend"]);
+});
+
+test("an extension message repairs a missed visible-document activation", async () => {
+  const calls = [];
+  const bridge = await loadBridge(async () => completeApi({
+    syncSitePrefs: async () => { calls.push("sync"); return { ok: true }; },
+    resumeDocument: async () => { calls.push("resume"); return { ok: true }; },
+    suspendDocument: async () => { calls.push("suspend"); return { ok: true }; },
+  }));
+  await flush();
+
+  bridge.document.visibilityState = "hidden";
+  bridge.window.emit("pagehide");
+  await flush();
+  assert.deepEqual(calls, ["resume", "suspend"]);
+
+  // Simulate a browser activation that updates visibility but drops the usual
+  // pageshow/resume/visibilitychange signal before the content script runs.
+  bridge.document.visibilityState = "visible";
+  const status = bridge.message({ type: "FSRCNNX_STATUS" });
+  await flush();
+
+  assert.equal(status.responses.length, 1);
+  assert.deepEqual(calls, ["resume", "suspend", "sync", "resume"]);
 });

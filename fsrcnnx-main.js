@@ -295,6 +295,7 @@ function resetPresentedRuntime() {
 // ---- advanced / site-specific options (off by default) -------------------
 let optHoverReveal = false;   // fade overlay out while cursor is over the player
 let optAllVideos = false;     // upscale every qualifying video, not just the main one
+let optIdlePowerSaving = false; // release reusable GPU resources while the document is hidden
 let hoverHidden = false;      // current hover-reveal state for the primary overlay
 let primaryPresentationBoundary = videoPresentationState(null);
 
@@ -338,6 +339,7 @@ function currentSitePreferenceValues() {
     mode, engine: requestedEngine, artVariant, policy: upscalePolicy,
     ssimds: ssimdsEnabled, sharpen: sharpenEnabled, sharpenStrength,
     hoverReveal: optHoverReveal, allVideos: optAllVideos,
+    idlePowerSaving: optIdlePowerSaving,
     images: optImages,
     interpolate: optInterpolate,
     interpEngine: pendingEngine,
@@ -356,7 +358,7 @@ function validateSitePreferencePatch(patch) {
   const invalid = new Set();
   const known = new Set(DEFAULT_SETTING_FIELDS);
   const booleanFields = new Set([
-    "ssimds", "sharpen", "hoverReveal", "allVideos", "images", "interpolate",
+    "ssimds", "sharpen", "hoverReveal", "allVideos", "idlePowerSaving", "images", "interpolate",
     "interpStaticPassthrough", "interpAutoFallback", "interpLadder", "interpInvert",
   ]);
   const hasEngine = Object.prototype.hasOwnProperty.call(patch, "engine");
@@ -3721,7 +3723,7 @@ export async function suspendDocument() {
   detach();
   if (canvas) { canvas.style.display = "none"; canvas.style.opacity = "1"; }
   notifyState();
-  await retireGpuResources("document-hidden");
+  if (optIdlePowerSaving) await retireGpuResources("document-hidden");
   return { ok: true, suspended: true, changed: true };
 }
 
@@ -3977,6 +3979,21 @@ export function setHoverReveal(on, { persist = true } = {}) {
   }
   if (persist) saveSitePrefs(["hoverReveal"]);
   return { ok: true, hoverReveal: optHoverReveal };
+}
+export async function setIdlePowerSaving(on, { persist = true } = {}) {
+  if (persist) cancelPreferenceRestore();
+  optIdlePowerSaving = !!on;
+  if (persist) saveSitePrefs(["idlePowerSaving"]);
+  notifyState();
+  if (optIdlePowerSaving && pageSuspended) {
+    const retirement = await retireGpuResources("document-hidden");
+    return {
+      ok: retirement?.ok !== false,
+      idlePowerSaving: true,
+      resourcesReleased: retirement?.released === true,
+    };
+  }
+  return { ok: true, idlePowerSaving: optIdlePowerSaving, resourcesReleased: false };
 }
 export function setAllVideos(on, { persist = true } = {}) {
   if (persist) cancelPreferenceRestore();
@@ -4558,6 +4575,7 @@ export async function restoreSitePrefs() {
   }
   if (typeof p.hoverReveal === "boolean") optHoverReveal = p.hoverReveal;
   if (typeof p.allVideos === "boolean") optAllVideos = p.allVideos;
+  if (typeof p.idlePowerSaving === "boolean") optIdlePowerSaving = p.idlePowerSaving;
   chainDepth = engine === "artcnn" || engine === "fsrcnnx" || engine === "fsrcnnx-hi"
     ? policyToDepth(upscalePolicy) : 1;
   resetScaleSelection();
@@ -4703,6 +4721,10 @@ async function applyExternalSitePreferences(patch) {
   }
   if (has("hoverReveal")) setHoverReveal(boolean("hoverReveal", false), { persist: false });
   if (has("allVideos")) setAllVideos(boolean("allVideos", false), { persist: false });
+  if (has("idlePowerSaving")) {
+    await setIdlePowerSaving(boolean("idlePowerSaving", false), { persist: false });
+  }
+  if (applyToken !== preferenceRestoreGeneration) return { ok: false, reason: "superseded" };
   if (has("interpResMode")) {
     const next = normalizeInterpolationResMode(deleted("interpResMode") ? DEFAULT_INTERPOLATION_RES_MODE : patch.interpResMode);
     if (!next) invalid.add("interpResMode");
@@ -4862,6 +4884,7 @@ export function getStatus() {
            colorSupport: selectedColorSupport,
            host: siteHost(),
            hoverReveal: optHoverReveal, allVideos: optAllVideos,
+           idlePowerSaving: optIdlePowerSaving,
            images: optImages, imageCount: imageUpscaledCount,
            interpolate: optInterpolate, interpPausedByNeural,
            interpQuarantined: interpolationQuarantineMatches(video),

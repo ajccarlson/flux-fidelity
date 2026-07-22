@@ -82,7 +82,7 @@ async function loadSaveHarness() {
     const deps = globalThis.__mainSettingsContractDeps;
     const DEFAULT_SETTING_FIELDS = ${JSON.stringify([
       "mode", "engine", "artVariant", "policy", "ssimds", "sharpen", "sharpenStrength",
-      "hoverReveal", "allVideos", "images", "interpolate",
+      "hoverReveal", "allVideos", "idlePowerSaving", "images", "interpolate",
       "interpEngine", "interpResMode", "neuralModel", "interpTargetFps", "interpAvOffsetMs",
       "interpStaticPassthrough", "interpAutoFallback", "interpLadder", "interpInvert",
     ])};
@@ -92,7 +92,7 @@ async function loadSaveHarness() {
     const recordPreferenceValidation = () => {};
     let mode = "upscale", requestedEngine = "artcnn", engine = "fsrcnnx", artVariant = "ArtCNN_C4F32_DS";
     let upscalePolicy = "force4", ssimdsEnabled = false, sharpenEnabled = true, sharpenStrength = 1.4;
-    let optHoverReveal = true, optAllVideos = true;
+    let optHoverReveal = true, optAllVideos = true, optIdlePowerSaving = true;
     let optImages = true, optInterpolate = false, neuralModelKey = "span";
     let pendingEngine = "rife_v4.26_fp16", pendingResMode = "half", pendingTargetFps = 144;
     let pendingAvOffsetMs = 35, interpStaticPassthroughPref = false;
@@ -104,6 +104,23 @@ async function loadSaveHarness() {
   return { module, writes };
 }
 
+async function loadIdlePowerSavingHarness({ suspended = false } = {}) {
+  const setter = section("export async function setIdlePowerSaving", "export function setAllVideos");
+  return importHarness(`
+    const deps = globalThis.__mainSettingsContractDeps;
+    let optIdlePowerSaving = false, pageSuspended = ${JSON.stringify(suspended)};
+    const cancelPreferenceRestore = () => { deps.fences++; };
+    const saveSitePrefs = (fields) => { deps.saved.push(fields); };
+    const notifyState = () => { deps.notifications++; };
+    const retireGpuResources = async (reason) => {
+      deps.retirements.push(reason);
+      return { ok: true, released: true, reason };
+    };
+    ${setter}
+    export function state() { return { optIdlePowerSaving, pageSuspended }; }
+  `, { fences: 0, saved: [], notifications: 0, retirements: [] });
+}
+
 async function loadRestoreHarness(prefs, { neuralModels = [{ key: "span" }] } = {}) {
   const restore = section("export async function restoreSitePrefs()", "function cancelPreferenceRestore()");
   const validationHelpers = section("function validateSitePreferencePatch", "function saveSitePrefs");
@@ -111,7 +128,7 @@ async function loadRestoreHarness(prefs, { neuralModels = [{ key: "span" }] } = 
     const deps = globalThis.__mainSettingsContractDeps;
     const DEFAULT_SETTING_FIELDS = ${JSON.stringify([
       "mode", "engine", "artVariant", "policy", "ssimds", "sharpen", "sharpenStrength",
-      "hoverReveal", "allVideos", "images", "interpolate",
+      "hoverReveal", "allVideos", "idlePowerSaving", "images", "interpolate",
       "interpEngine", "interpResMode", "neuralModel", "interpTargetFps", "interpAvOffsetMs",
       "interpStaticPassthrough", "interpAutoFallback", "interpLadder", "interpInvert",
     ])};
@@ -123,7 +140,7 @@ async function loadRestoreHarness(prefs, { neuralModels = [{ key: "span" }] } = 
     let preferenceRestoreGeneration = 0, engineSelectionGeneration = 0;
     let requestedEngine = "fsrcnnx", engine = "fsrcnnx", neuralModelKey = "", artVariant = "ArtCNN_C4F32";
     let upscalePolicy = "display", ssimdsEnabled = true, sharpenEnabled = false, sharpenStrength = 1;
-    let optHoverReveal = false, optAllVideos = false;
+    let optHoverReveal = false, optAllVideos = false, optIdlePowerSaving = false;
     let chainDepth = 1, pendingEngine = "rife_v4.26", pendingResMode = "auto";
     let pendingTargetFps = "auto", pendingAvOffsetMs = 0;
     let interpStaticPassthroughPref = true, interpAutoFallbackPref = true;
@@ -154,6 +171,7 @@ async function loadRestoreHarness(prefs, { neuralModels = [{ key: "span" }] } = 
     export function state() {
       return { engine, neuralModelKey, artVariant, policy: upscalePolicy, chainDepth,
         ssimdsEnabled, sharpenEnabled, sharpenStrength,
+        optIdlePowerSaving,
         pendingEngine, pendingResMode, pendingTargetFps, pendingAvOffsetMs,
         interpStaticPassthroughPref, interpAutoFallbackPref, interpLadderPref, interpInvertPref,
         preferenceValidationFailure };
@@ -247,7 +265,7 @@ async function loadStatusHarness(storeHealth = {
       detail: "No decoded video is selected.",
       colorSpace: { primaries: null, transfer: null, matrix: null, fullRange: null },
     };
-    let optHoverReveal = false, optAllVideos = false;
+    let optHoverReveal = false, optAllVideos = false, optIdlePowerSaving = false;
     let optImages = false, imageUpscaledCount = 0;
     let optInterpolate = deps.runtime.interpolate === true, interpPausedByNeural = false;
     let interpolationTerminalQuarantine = deps.runtime.interpFailure || null, interpolator = null;
@@ -453,7 +471,7 @@ test("site persistence records requested intent and writes only selected fields"
   assert.deepEqual(writes[0], {
     mode: "upscale", engine: "artcnn", artVariant: "ArtCNN_C4F32_DS", policy: "force4",
     ssimds: false, sharpen: true, sharpenStrength: 1.4,
-    hoverReveal: true, allVideos: true,
+    hoverReveal: true, allVideos: true, idlePowerSaving: true,
     images: true, interpolate: false,
     interpEngine: "rife_v4.26_fp16", interpResMode: "half", neuralModel: "span",
     interpTargetFps: 144, interpAvOffsetMs: 35, interpStaticPassthrough: false,
@@ -463,6 +481,23 @@ test("site persistence records requested intent and writes only selected fields"
   await module.saveSitePrefs(["engine", "policy"]);
   assert.deepEqual(writes, [{ engine: "artcnn", policy: "force4" }],
     "an effective fallback must not replace durable requested-engine intent");
+});
+
+test("idle power saving is opt-in and retires an already-hidden document immediately", async () => {
+  const active = await loadIdlePowerSavingHarness();
+  assert.deepEqual(await active.setIdlePowerSaving(true), {
+    ok: true, idlePowerSaving: true, resourcesReleased: false,
+  });
+  assert.deepEqual(globalThis.__mainSettingsContractDeps.retirements, []);
+
+  const hidden = await loadIdlePowerSavingHarness({ suspended: true });
+  assert.deepEqual(await hidden.setIdlePowerSaving(true), {
+    ok: true, idlePowerSaving: true, resourcesReleased: true,
+  });
+  assert.deepEqual(globalThis.__mainSettingsContractDeps.retirements, ["document-hidden"]);
+  assert.deepEqual(globalThis.__mainSettingsContractDeps.saved, [["idlePowerSaving"]]);
+  assert.equal(globalThis.__mainSettingsContractDeps.fences, 1);
+  assert.equal(globalThis.__mainSettingsContractDeps.notifications, 1);
 });
 
 test("preference restore preserves High selections, migrates legacy values, and rejects corrupt fields", async () => {
@@ -510,7 +545,7 @@ test("preference restore preserves High selections, migrates legacy values, and 
 
   const valid = await loadRestoreHarness({
     engine: "artcnn", neuralModel: "span", artVariant: "ArtCNN_C4F32_DN", policy: "force8",
-    mode: "upscale", images: true, interpolate: true,
+    mode: "upscale", idlePowerSaving: true, images: true, interpolate: true,
     interpEngine: "blend", interpResMode: "half", interpTargetFps: "144", interpAvOffsetMs: "25",
     interpStaticPassthrough: false, interpAutoFallback: false, interpLadder: true, interpInvert: false,
   });
@@ -519,6 +554,7 @@ test("preference restore preserves High selections, migrates legacy values, and 
     engine: "artcnn", neuralModelKey: "span", artVariant: "ArtCNN_C4F32_DN",
     policy: "force8", chainDepth: 3,
     ssimdsEnabled: true, sharpenEnabled: false, sharpenStrength: 1,
+    optIdlePowerSaving: true,
     pendingEngine: "blend", pendingResMode: "half", pendingTargetFps: 144, pendingAvOffsetMs: 25,
     interpStaticPassthroughPref: false, interpAutoFallbackPref: false,
     interpLadderPref: true, interpInvertPref: false, preferenceValidationFailure: null,
@@ -537,6 +573,7 @@ test("preference restore preserves High selections, migrates legacy values, and 
     engine: "fsrcnnx", neuralModelKey: "", artVariant: "ArtCNN_C4F32",
     policy: "force4", chainDepth: 2,
     ssimdsEnabled: true, sharpenEnabled: false, sharpenStrength: 1,
+    optIdlePowerSaving: false,
     pendingEngine: "rife_v4.26", pendingResMode: "auto",
     pendingTargetFps: "auto", pendingAvOffsetMs: 0,
     interpStaticPassthroughPref: true, interpAutoFallbackPref: true,
@@ -720,6 +757,7 @@ test("status exposes configured interpolation and neural values without live run
   assert.equal(status.statusVersion, 1);
   assert.equal(status.gpuState, "idle");
   assert.deepEqual(status.runtime.resources, { phase: "idle", reason: null });
+  assert.equal(status.idlePowerSaving, false);
   assert.deepEqual(status.persistence, {
     scope: "https://video.example", schemaVersion: 2,
     state: "ready", operation: null, errorOperation: null, pendingWrites: 0, error: null,
