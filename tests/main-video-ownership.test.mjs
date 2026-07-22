@@ -79,6 +79,7 @@ async function loadSelectionCoordinator(deps) {
     const clearMultiTargets = () => deps.events.push(["clear-multi"]);
     const chainTap = (on) => deps.events.push(["chain-tap", on]);
     const resetScaleSelection = () => deps.events.push(["reset-scale"]);
+    const resetPlaybackPerformanceFallback = () => deps.events.push(["reset-performance"]);
     const probeVideo = (candidate, options) => deps.probe(candidate, options);
     const notifyProtected = () => deps.events.push(["notify-protected", protectedReason]);
     const notifyState = () => deps.events.push(["notify-state", mode, !!primaryController]);
@@ -230,6 +231,7 @@ async function loadEngineSelection(deps) {
     const activateNeuralFallback = () => { engine = "fsrcnnx"; };
     const policyToDepth = () => 1;
     const ensureFsrcnnxStages = async () => {};
+    const ensureHighStages = async () => {};
     const ensureArtStages = async () => {};
     const cancelPreferenceRestore = () => { deps.preferenceFences = (deps.preferenceFences || 0) + 1; };
     const saveSitePrefs = () => deps.events.push("save");
@@ -1270,8 +1272,11 @@ test("main source keeps secondary mutable state and neural completion target-sco
     "activeModel = t.activeModel",
     "dispRGB = t.dispRGB",
     "chainedFsrcnnx = t.chainedFsrcnnx",
+    "highStages = t.highStages",
+    "chainedHigh = t.chainedHigh",
     "_scaleHeld = t.scaleHeld",
     "t.activeModel = activeModel",
+    "t.chainedHigh = chainedHigh",
     "t.scaleHeld = _scaleHeld",
   ]) {
     assert.match(targetSwap, new RegExp(fragment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));

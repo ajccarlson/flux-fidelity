@@ -26,6 +26,7 @@ test("reference definitions cover every numerical path with deterministic struct
   assert.equal(Object.isFrozen(REFERENCE_INPUTS), true);
   assert.deepEqual(REFERENCE_CASES.map(({ id }) => id), [
     "FSRCNNX_x2_16-0-4-1",
+    "FSRCNNX_x2_56-16-4-1",
     "ArtCNN_C4F32",
     "ArtCNN_C4F32_DN",
     "ArtCNN_C4F32_DS",

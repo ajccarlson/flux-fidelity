@@ -1,12 +1,27 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { inspectReleaseClearance } from "../tools/check-release-clearance.mjs";
 
 const root = resolve(import.meta.dirname, "..");
+const highX2Artifacts = new Map([
+  [
+    "shaders/FSRCNNX_x2_56-16-4-1.glsl",
+    "34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6",
+  ],
+  [
+    "model/FSRCNNX_x2_56-16-4-1.wgsl",
+    "267ba203867483a467c535fd03c36c62ff9428116111d4d258dc5c295ef8e0d7",
+  ],
+  [
+    "model/FSRCNNX_x2_56-16-4-1.passes.json",
+    "57395ac668b4cbebea69938a9089c9bea0029ce785f7cc6dad239c4be31d43e7",
+  ],
+]);
+const highX2Mirror = "https://github.com/resc863/Project/blob/0e6bdb96f2845d883ec0131af8598c438c68e30a/mpv-config/FSRCNNX_x2_56-16-4-1.glsl";
 
 test("current release-clearance record is structurally valid and explicitly blocked", () => {
   const result = inspectReleaseClearance({ rootDir: root });
@@ -27,6 +42,19 @@ test("current release-clearance record is structurally valid and explicitly bloc
     assert.ok(gate.artifacts.every((artifact) => artifact.disposition === "removed"));
   }
 
+  const highGate = result.ledger.gates.find((gate) => gate.id === "unknown-high-x2-shader-origin");
+  assert.equal(highGate.status, "blocked");
+  assert.deepEqual(
+    highGate.artifacts.map(({ path, sha256, disposition }) => ({ path, sha256, disposition })),
+    [...highX2Artifacts].map(([path, sha256]) => ({ path, sha256, disposition: "present" })),
+  );
+  assert.ok(highGate.evidence.includes(highX2Mirror));
+  for (const document of ["MODEL_PROVENANCE.md", "shaders/README.md", "THIRD_PARTY_NOTICES.md"]) {
+    const record = readFileSync(join(root, document), "utf8");
+    assert.match(record, /0e6bdb96f2845d883ec0131af8598c438c68e30a/);
+    assert.match(record, /authoritative/i);
+  }
+
   const lgplGate = result.ledger.gates.find((gate) => gate.id === "lgpl-compliance-review");
   const ortGate = result.ledger.gates.find((gate) => gate.id === "onnx-runtime-third-party-review");
   assert.equal(lgplGate.status, "blocked");
@@ -35,6 +63,58 @@ test("current release-clearance record is structurally valid and explicitly bloc
   assert.ok(lgplGate.artifacts.every((artifact) => /^[0-9a-f]{64}$/.test(artifact.sha256)));
   assert.ok(ortGate.evidence.includes("vendor/ort/LICENSE"));
   assert.ok(ortGate.artifacts.every((artifact) => /^[0-9a-f]{64}$/.test(artifact.sha256)));
+});
+
+test("restored high x2 assets remain an explicit current-boundary blocker", () => {
+  const fixture = mkdtempSync(join(tmpdir(), "fsrcnnx-release-clearance-high-x2-"));
+  try {
+    mkdirSync(join(fixture, "model"));
+    mkdirSync(join(fixture, "shaders"));
+    for (const path of highX2Artifacts.keys()) {
+      copyFileSync(join(root, path), join(fixture, path));
+    }
+
+    const makeLedger = ({ status = "blocked", disposition = "present" } = {}) => ({
+      schemaVersion: 1,
+      scope: "test",
+      gates: [{
+        id: "unknown-high-x2-shader-origin",
+        status,
+        artifacts: [...highX2Artifacts].map(([path, sha256]) => ({
+          path,
+          sha256,
+          disposition,
+        })),
+        evidence: [highX2Mirror],
+        resolution: "Obtain authoritative origin and license evidence.",
+      }],
+    });
+
+    writeFileSync(join(fixture, "release-clearance.json"), JSON.stringify(makeLedger()));
+    const valid = inspectReleaseClearance({
+      rootDir: fixture,
+      requiredGateIds: ["unknown-high-x2-shader-origin"],
+    });
+    assert.deepEqual(valid.errors, []);
+    assert.equal(valid.blocked.length, 1);
+
+    writeFileSync(join(fixture, "release-clearance.json"), JSON.stringify(makeLedger({ status: "cleared" })));
+    const accidentallyCleared = inspectReleaseClearance({
+      rootDir: fixture,
+      requiredGateIds: ["unknown-high-x2-shader-origin"],
+    });
+    assert.ok(accidentallyCleared.errors.some((error) =>
+      error.includes("must remain blocked pending authoritative origin and license evidence")));
+
+    writeFileSync(join(fixture, "release-clearance.json"), JSON.stringify(makeLedger({ disposition: "removed" })));
+    const falselyRemoved = inspectReleaseClearance({
+      rootDir: fixture,
+      requiredGateIds: ["unknown-high-x2-shader-origin"],
+    });
+    assert.ok(falselyRemoved.errors.some((error) => error.includes("must be explicitly present")));
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
 });
 
 test("release-clearance validation detects artifact drift", () => {

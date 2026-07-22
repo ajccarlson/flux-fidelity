@@ -143,6 +143,7 @@ async function loadMultiTargetLifecycle(deps) {
     export function register(targetVideo, target) { multiTargets.set(targetVideo, target); }
     export function prime(target, resources) {
       target.models = resources.models || [];
+      target.highStages = resources.highStages || [];
       target.artStages = resources.artStages || {};
       target.lumaTexture = resources.lumaTexture || null;
       target.hiRGB = resources.hiRGB || null;
@@ -150,6 +151,7 @@ async function loadMultiTargetLifecycle(deps) {
       target.sharpenPipeline = resources.sharpenPipeline || null;
       target.activeModel = resources.activeModel || null;
       target.chainedFsrcnnx = resources.chainedFsrcnnx || null;
+      target.chainedHigh = resources.chainedHigh || null;
       target.chainedArt = resources.chainedArt || null;
     }
     export function size() { return multiTargets.size; }
@@ -192,7 +194,8 @@ async function loadIntegratedRetirement(deps) {
     let webGpuInitPromise = null, adoptionPromise = null, deviceRecoveryPromise = null;
     let deviceLossInvalidationPromise = null;
     let primaryAllocationRetirementPromise = null;
-    let modelLoadPromise = null, fsrcnnxStageBuildPromise = null, artStageBuildPromise = null;
+    let modelLoadPromise = null, fsrcnnxStageBuildPromise = null;
+    let highStageBuildPromise = null, artStageBuildPromise = null;
     let imageUpscalerInitPromise = null, interpolatorInitPromise = null;
     const deviceRecoveryRequested = () => false;
     const boundedRuntimeDetail = (error, fallback = "cleanup failed") =>
@@ -207,7 +210,7 @@ async function loadIntegratedRetirement(deps) {
     const interpolator = null;
 
     let multiTargets = new Map();
-    let models = [], artStages = {};
+    let models = [], highStages = [], artStages = {};
     let chainTapTex = null, chainTapFrame = 0;
     let lumaTexture = null, lumaW = 0, lumaH = 0;
     let hiRGB = null, hiRGBW = 0, hiRGBH = 0;
@@ -217,8 +220,8 @@ async function loadIntegratedRetirement(deps) {
     let extractPipelineTex = null, recombinePipelineTex = null, recombine16PipelineTex = null;
     let passthroughPipeline = null, sharpenPipeline = null, sharpenStrengthBuilt = null;
     let sampler = null, modelsDevice = null, activeModel = null;
-    let chainedFsrcnnx = null, chainedArt = null;
-    let fsrcnnxLoadPending = false, artLoadPending = false, _texSource = null;
+    let chainedFsrcnnx = null, chainedHigh = null, chainedArt = null;
+    let fsrcnnxLoadPending = false, highLoadPending = false, artLoadPending = false, _texSource = null;
     const resetScaleSelection = () => {};
     const resetPresentedRuntime = () => {};
 
@@ -234,6 +237,35 @@ async function loadIntegratedRetirement(deps) {
       }));
     }
     export function retire() { return retireGpuResources("all-features-off"); }
+  `;
+  globalThis.__multiTargetLifecycleDeps = deps;
+  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+}
+
+async function loadTargetModelPreparation(deps) {
+  const source = await readFile(mainUrl, "utf8");
+  const production = section(
+    source,
+    "function ensureTargetModels(t)",
+    "// Swap a MultiTarget's state into the globals",
+  );
+  const harness = `
+    const deps = globalThis.__multiTargetLifecycleDeps;
+    let device = deps.device;
+    const lostDevices = new WeakSet();
+    let engine = "fsrcnnx-hi", chainDepth = 3, artVariant = "ArtCNN_C4F32";
+    const STANDARD_MODEL = "model-standard";
+    const HIGH_MODEL = "model-high";
+    const srcCache = {
+      fsrcnnx: {
+        [HIGH_MODEL]: { manifest: { name: HIGH_MODEL }, wgsl: "high-wgsl" },
+      },
+      artcnn: {},
+    };
+    const FsrcnnxModel = deps.FsrcnnxModel;
+    const ArtCnnModel = deps.ArtCnnModel;
+    ${production}
+    export { ensureTargetModels };
   `;
   globalThis.__multiTargetLifecycleDeps = deps;
   return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
@@ -355,6 +387,35 @@ test("MultiTarget startup rollback removes registration and destroys resources",
   }
 });
 
+test("secondary High targets receive an independent depth-matched model pool", async (t) => {
+  const previous = globalThis.__multiTargetLifecycleDeps;
+  t.after(() => { globalThis.__multiTargetLifecycleDeps = previous; });
+  const device = { id: "shared-device" };
+  const created = [];
+  class FakeModel {
+    constructor(owner, manifest, wgsl, options) {
+      Object.assign(this, { owner, manifest, wgsl, options });
+      created.push(this);
+    }
+  }
+  const prep = await loadTargetModelPreparation({
+    device,
+    FsrcnnxModel: FakeModel,
+    ArtCnnModel: FakeModel,
+  });
+  const target = { device, models: [], highStages: [], artStages: {} };
+
+  assert.equal(prep.ensureTargetModels(target), true);
+  assert.equal(target.highStages.length, 3);
+  assert.ok(target.highStages.every((stage) => stage.owner === device));
+  assert.ok(target.highStages.every((stage) => stage.options.expectedName === "model-high"));
+  assert.ok(target.highStages.every((stage) => stage.options.maxWorkingSetBytes === undefined));
+  assert.equal(target.models.length, 0, "High targets do not reuse the standard pool");
+
+  assert.equal(prep.ensureTargetModels(target), true);
+  assert.equal(created.length, 3, "a prepared target reuses its own High stages");
+});
+
 test("clearMultiTargets isolates throwing destructors and removes every map entry", async () => {
   const deps = { events: [], warnings: [], candidates: [] };
   const lifecycle = await loadMultiTargetLifecycle(deps);
@@ -415,6 +476,7 @@ test("MultiTarget destruction unpublishes immediately and retires physical resou
   });
   lifecycle.prime(target, {
     models: [resource("model-a", new Error("model cleanup failed")), resource("model-b")],
+    highStages: [resource("high-model")],
     artStages: { current: [resource("art-model")] },
     lumaTexture: resource("luma", new Error("texture cleanup failed")),
     hiRGB: resource("hi"),
@@ -441,6 +503,7 @@ test("MultiTarget destruction unpublishes immediately and retires physical resou
   for (const expected of [
     "model-a:destroy",
     "model-b:destroy",
+    "high-model:destroy",
     "art-model:destroy",
     "luma:destroy",
     "hi:destroy",

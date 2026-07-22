@@ -252,6 +252,7 @@ async function loadAdoptionInternal(deps) {
     const buildCore = () => deps.buildCore();
     const loadModels = async () => deps.loadModels?.();
     const ensureFsrcnnxStages = async () => deps.ensureFsrcnnxStages?.();
+    const ensureHighStages = async () => deps.ensureHighStages?.();
     const ensureArtStages = async () => deps.ensureArtStages?.();
     const ensureImageUpscaler = async () => deps.ensureImageUpscaler?.() || null;
     const attach = () => {};
@@ -346,6 +347,7 @@ async function loadModelLifecycle(deps) {
   const production = section(original, "const srcCache =", "// Chains N ArtCnnModel stages");
   const harness = `
     const FSRCNNX_STANDARD_MODEL_NAMES = ["model-standard"];
+    const FSRCNNX_HIGH_MODEL_NAME = "model-high";
     const MODEL_FILES = FSRCNNX_STANDARD_MODEL_NAMES;
     let device = globalThis.__mainLifecycleTestDeps.device;
     let models = [], activeModel = null;
@@ -356,9 +358,9 @@ async function loadModelLifecycle(deps) {
     const chrome = { runtime: { getURL: (path) => path } };
     const log = () => {};
     ${production}
-    export { loadModels, ensureFsrcnnxStages, ensureArtStages, reclaimInactiveStageAllocations };
+    export { loadModels, ensureFsrcnnxStages, ensureHighStages, ensureArtStages, reclaimInactiveStageAllocations };
     export function setDevice(next) { device = next; }
-    export function state() { return { models, modelsDevice, artStages }; }
+    export function state() { return { models, modelsDevice, highStages, artStages }; }
   `;
   globalThis.__mainLifecycleTestDeps = deps;
   return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++moduleRevision}`);
@@ -717,7 +719,9 @@ test("a device replacement discards a stale base-model load before construction"
   const created = [];
   let delayFetches = true;
   class FakeModel {
-    constructor(owner, manifest) { this.device = owner; this.name = manifest.name; created.push(this); }
+    constructor(owner, manifest, _wgsl, options = {}) {
+      this.device = owner; this.name = manifest.name; this.options = options; created.push(this);
+    }
     destroy() { this.destroyed = true; }
   }
   const deps = {
@@ -753,7 +757,9 @@ test("chained model builders coalesce concurrent requests and capture their devi
   const device = { name: "shared" };
   const created = [];
   class FakeModel {
-    constructor(owner, manifest) { this.device = owner; this.name = manifest.name; created.push(this); }
+    constructor(owner, manifest, _wgsl, options = {}) {
+      this.device = owner; this.name = manifest.name; this.options = options; created.push(this);
+    }
     destroy() { this.destroyed = true; }
   }
   const fetchCalls = [];
@@ -777,14 +783,24 @@ test("chained model builders coalesce concurrent requests and capture their devi
   assert.equal(fetchCalls.length, 2);
   assert.equal(created.length, 2);
 
+  const [highA, highB] = await Promise.all([
+    lifecycle.ensureHighStages(3),
+    lifecycle.ensureHighStages(3),
+  ]);
+  assert.equal(highA.length, 3);
+  assert.equal(highB.length, 3);
+  assert.equal(fetchCalls.length, 4);
+  assert.equal(created.length, 5);
+  assert.ok(highA.every((model) => model.options.maxWorkingSetBytes === undefined));
+
   const [artA, artB] = await Promise.all([
     lifecycle.ensureArtStages("ArtCNN_Test", 3),
     lifecycle.ensureArtStages("ArtCNN_Test", 3),
   ]);
   assert.equal(artA.length, 3);
   assert.equal(artB.length, 3);
-  assert.equal(fetchCalls.length, 4);
-  assert.equal(created.length, 5);
+  assert.equal(fetchCalls.length, 6);
+  assert.equal(created.length, 8);
   assert.ok(created.every((model) => model.device === device));
 });
 
@@ -817,7 +833,7 @@ test("dropping a cascade to one stage reclaims only the inactive allocation", as
   assert.deepEqual(calls, [1], "a later cascade selection must not reset either active stage");
 });
 
-test("a chained-model source load cannot commit stages after its device changes", async (t) => {
+test("a High-model source load cannot commit stages after its device changes", async (t) => {
   const previousDeps = globalThis.__mainLifecycleTestDeps;
   t.after(() => { globalThis.__mainLifecycleTestDeps = previousDeps; });
   const releaseSource = deferred();
@@ -838,16 +854,16 @@ test("a chained-model source load cannot commit stages after its device changes"
     },
   };
   const lifecycle = await loadModelLifecycle(deps);
-  const staleBuild = lifecycle.ensureFsrcnnxStages(2);
+  const staleBuild = lifecycle.ensureHighStages(2);
   await Promise.resolve();
   lifecycle.setDevice(deviceB);
   releaseSource.resolve();
 
   await assert.rejects(staleBuild, /superseded by device change/);
   assert.equal(created.length, 0);
-  assert.equal(lifecycle.state().models.length, 0);
+  assert.equal(lifecycle.state().highStages.length, 0);
 
-  const current = await lifecycle.ensureFsrcnnxStages(2);
+  const current = await lifecycle.ensureHighStages(2);
   assert.equal(current.length, 2);
   assert.ok(current.every((model) => model.device === deviceB));
 });
@@ -1082,6 +1098,28 @@ test("device adoption pauses every producer before fencing and retiring old reso
   assert.equal(adoption.state().gpu.lastFailure, null);
   assert.deepEqual(deps.gpuReadyCalls, [{ recovered: false }]);
   assert.equal(deps.gpuFailures.length, 0);
+});
+
+test("device adoption rebuilds the selected FSRCNNX High stage pool", async (t) => {
+  const previousDeps = globalThis.__mainLifecycleTestDeps;
+  t.after(() => { globalThis.__mainLifecycleTestDeps = previousDeps; });
+  const events = [];
+  const deps = {
+    engine: "fsrcnnx-hi",
+    warnings: [], logs: [], invalidations: 0, deactivations: 0, events,
+    buildCore() { events.push("build"); },
+    loadModels() { events.push("load-standard-source"); },
+    ensureHighStages() { events.push("build-high-stages"); },
+    ensureFsrcnnxStages() { assert.fail("standard stages must not replace a High selection"); },
+    ensureArtStages() { assert.fail("ArtCNN stages must not replace a High selection"); },
+    watchDeviceLoss() {},
+  };
+  const adoption = await loadAdoptionInternal(deps);
+
+  assert.equal(await adoption.adopt({ addEventListener() {} },
+    { preserveModeOnFailure: true }), true);
+  assert.deepEqual(events, ["invalidate", "build", "load-standard-source", "build-high-stages"]);
+  assert.equal(adoption.state().gpu.device, "ready");
 });
 
 test("hard retirement during adoption invalidation prevents late provider publication", async (t) => {

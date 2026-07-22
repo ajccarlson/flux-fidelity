@@ -106,8 +106,9 @@ async function loadCoordinator(deps) {
     let dispRGB = deps.resources.shift(), dispRGBW = 4, dispRGBH = 4;
     let ssimds = { destroy: deps.onSsimDestroy };
     let models = [{ destroy: deps.onModelDestroy }], modelsDevice = device, activeModel = models[0];
-    let artStages = {}, chainedFsrcnnx = {}, chainedArt = {};
-    let fsrcnnxLoadPending = true, artLoadPending = true;
+    let highStages = [{ destroy: deps.onHighModelDestroy }], artStages = {};
+    let chainedFsrcnnx = {}, chainedHigh = {}, chainedArt = {};
+    let fsrcnnxLoadPending = true, highLoadPending = true, artLoadPending = true;
     let _scaleHeld = {}, _scalePending = {}, _scalePendingSince = 1, _texSource = {};
     function resetScaleSelection() { _scaleHeld = undefined; _scalePending = null; _scalePendingSince = 0; }
     let neuralEng = { invalidateDevice: (...args) => deps.invalidateNeural(...args) };
@@ -129,6 +130,7 @@ async function loadCoordinator(deps) {
     }
     async function loadModels() {}
     async function ensureFsrcnnxStages() {}
+    async function ensureHighStages() {}
     async function ensureArtStages() {}
     async function ensureNeural() { deps.neuralEnsures++; device = deps.replacement; }
     function neuralSelectionCurrent() { return true; }
@@ -162,7 +164,7 @@ async function loadCoordinator(deps) {
         recovering: !!deviceRecoveryPromise || deviceRecoveryTimer != null,
         providerInvalidating: !!deviceLossInvalidationPromise,
         display: canvas.style.display, gpu: snapshotGpu(),
-        chainTapTex, lumaTexture, hiRGB, dispRGB, context, models };
+        chainTapTex, lumaTexture, hiRGB, dispRGB, context, models, highStages };
     }
   `;
   globalThis.__mainDeviceLossDeps = deps;
@@ -322,6 +324,7 @@ function setup({ mode = "passthrough", images = false, interpolate = false, engi
     imageInvalidations: 0,
     multiClears: 0,
     modelDestroys: 0,
+    highModelDestroys: 0,
     ssimDestroys: 0,
     neuralInvalidations: 0,
     rifeInvalidations: 0,
@@ -334,6 +337,7 @@ function setup({ mode = "passthrough", images = false, interpolate = false, engi
     recoveryResults: recoveryResults ? [...recoveryResults] : null,
     timers: [],
     onModelDestroy() { deps.modelDestroys++; },
+    onHighModelDestroy() { deps.highModelDestroys++; },
     onSsimDestroy() { deps.ssimDestroys++; },
     async invalidateNeural() {
       deps.neuralInvalidations++;
@@ -422,6 +426,8 @@ test("current device loss retires stale state and single-flights recovery", asyn
   assert.equal(coordinator.state().display, "none");
   assert.equal(deps.destroyed.count, 4);
   assert.equal(deps.modelDestroys, 1);
+  assert.equal(deps.highModelDestroys, 1);
+  assert.equal(coordinator.state().highStages.length, 0);
   assert.equal(deps.unconfigured, 1);
   assert.equal(deps.imageInvalidations, 1);
   assert.equal(deps.multiClears, 1);

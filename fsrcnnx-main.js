@@ -6,6 +6,7 @@ import { FsrcnnxModel } from "./fsrcnnx-runtime.js";
 import { allocateModelChain, preflightModelChain } from "./fsrcnnx-model-bundle.js";
 import {
   ARTCNN_MODEL_NAMES,
+  FSRCNNX_HIGH_MODEL_NAME,
   FSRCNNX_STANDARD_MODEL_NAMES,
 } from "./fsrcnnx-model-catalog.js";
 import {
@@ -20,6 +21,7 @@ import { buildSharpenShader } from "./fsrcnnx-sharpen.js";
 import { ArtCnnModel } from "./fsrcnnx-artcnn-runtime.js";
 import { VideoController, VideoSelectionMonitor } from "./fsrcnnx-video-controller.js";
 import { createSettingsStore, DEFAULT_SETTING_FIELDS } from "./fsrcnnx-settings-store.js";
+import { PlaybackPerformanceGuard } from "./fsrcnnx-performance.js";
 
 const TAG = "[FSRCNNX]";
 const log = (...a) => console.log(TAG, ...a);
@@ -186,6 +188,9 @@ let engine = "fsrcnnx"; // effective renderer: may fall back without changing re
 let engineSelectionGeneration = 0;
 let neuralEng = null, neuralModelKey = "", neuralBusy = false, neuralFail = 0; // v0.49.0 ONNX engine
 let rendererFallback = null, neuralLastFailure = null;
+const playbackPerformance = new PlaybackPerformanceGuard();
+let performanceObservationGeneration = 0;
+let performanceQueueSamplePending = false;
 let interpPausedByNeural = false;
 let _neuralList = []; // manifest summary for the popup, loaded eagerly
 const neuralCatalogReady = (async () => { try {
@@ -514,12 +519,16 @@ function notifyState() {
 const srcCache = { fsrcnnx: {}, artcnn: {} }; // name -> {manifest, wgsl}
 
 const STANDARD_MODEL = FSRCNNX_STANDARD_MODEL_NAMES[0];
+const HIGH_MODEL = FSRCNNX_HIGH_MODEL_NAME;
 const STANDARD_CASCADE_THRESHOLD = 2.4;
 let fsrcnnxLoadPending = false, chainedFsrcnnx = null;
 let fsrcnnxStageBuildPromise = null;
+let highLoadPending = false, chainedHigh = null;
+let highSourcePromise = null, highStageBuildPromise = null;
+let highStages = [];
 
-// Map an explicit policy to the number of verified 2x stages it needs. FSRCNNX
-// uses at most two stages; ArtCNN additionally supports the explicit 8x policy.
+// Map an explicit policy to the number of native x2 stages it needs. The
+// standard policy set stops at two stages; fixed-x2 engines also expose 8x.
 function policyToDepth(p) {
   if (p === "force8") return 3;
   if (p === "force4" || p === "force3") return 2;
@@ -572,8 +581,7 @@ function upscalePresentationPlan(
 // ---- validated setting contracts ----------------------------------------
 // These values cross both a message boundary and chrome.storage. Treat them as
 // untrusted even though the current popup only emits values from fixed controls.
-const VALID_ENGINES = Object.freeze(["fsrcnnx", "artcnn", "neural"]);
-const LEGACY_HIGH_ENGINE = "fsrcnnx-hi";
+const VALID_ENGINES = Object.freeze(["fsrcnnx", "fsrcnnx-hi", "artcnn", "neural"]);
 const STANDARD_UPSCALE_POLICIES = Object.freeze(["display", "auto", "force2", "force3", "force4"]);
 const FIXED_2X_UPSCALE_POLICIES = Object.freeze(["display", "auto", "force2", "force4", "force8"]);
 const INTERPOLATION_MODEL_KEYS = Object.freeze([
@@ -589,14 +597,13 @@ const DEFAULT_INTERPOLATION_TARGET_FPS = "auto";
 const DEFAULT_INTERPOLATION_AV_OFFSET_MS = 0;
 
 function policyOptionsForEngine(targetEngine) {
-  return targetEngine === "artcnn"
+  return targetEngine === "artcnn" || targetEngine === "fsrcnnx-hi"
     ? FIXED_2X_UPSCALE_POLICIES
     : STANDARD_UPSCALE_POLICIES;
 }
 
 function normalizeStoredEngine(value, fallback = null) {
-  if (VALID_ENGINES.includes(value)) return value;
-  return value === LEGACY_HIGH_ENGINE ? "fsrcnnx" : fallback;
+  return VALID_ENGINES.includes(value) ? value : fallback;
 }
 
 function normalizeUpscalePolicy(value, targetEngine, fallback = null) {
@@ -606,7 +613,8 @@ function normalizeUpscalePolicy(value, targetEngine, fallback = null) {
 }
 
 function normalizeStoredUpscalePolicy(value, targetEngine, fallback = null) {
-  const migrated = value === "force8" && targetEngine !== "artcnn" ? "force4" : value;
+  const fixedScaleEngine = targetEngine === "artcnn" || targetEngine === "fsrcnnx-hi";
+  const migrated = value === "force8" && !fixedScaleEngine ? "force4" : value;
   return normalizeUpscalePolicy(migrated, targetEngine, fallback);
 }
 
@@ -638,6 +646,74 @@ function normalizeInterpolationAvOffset(value) {
   return Number.isFinite(number) && number >= -100 && number <= 300 ? number : null;
 }
 // ---- end validated setting contracts ------------------------------------
+
+async function loadHighModelSource() {
+  if (srcCache.fsrcnnx[HIGH_MODEL]) return srcCache.fsrcnnx[HIGH_MODEL];
+  if (highSourcePromise) return highSourcePromise;
+  const promise = (async () => {
+    const base = chrome.runtime.getURL(`model/${HIGH_MODEL}`);
+    const [manifestResponse, wgslResponse] = await Promise.all([
+      fetch(`${base}.passes.json`),
+      fetch(`${base}.wgsl`),
+    ]);
+    if (!manifestResponse.ok || !wgslResponse.ok) {
+      throw new Error(`${HIGH_MODEL} fetch failed (${manifestResponse.status}/${wgslResponse.status})`);
+    }
+    const source = {
+      name: HIGH_MODEL,
+      manifest: await manifestResponse.json(),
+      wgsl: await wgslResponse.text(),
+    };
+    srcCache.fsrcnnx[HIGH_MODEL] = source;
+    return source;
+  })().finally(() => {
+    if (highSourcePromise === promise) highSourcePromise = null;
+  });
+  highSourcePromise = promise;
+  return promise;
+}
+
+// Build independent instances of the high-capacity x2 network. Keeping this
+// pool separate prevents a High selection from altering the standard cascade
+// or reusing its per-size GPU allocations.
+async function ensureHighStages(depth) {
+  const requestedDepth = Math.max(1, depth | 0);
+  if (highStages.length >= requestedDepth) return highStages.slice(0, requestedDepth);
+  if (highStageBuildPromise) {
+    try { await highStageBuildPromise; } catch {}
+    return ensureHighStages(requestedDepth);
+  }
+  const targetDevice = device;
+  const baseStages = highStages;
+  if (!targetDevice) throw new Error("cannot build FSRCNNX-high stages without a device");
+  const promise = (async () => {
+    const source = await loadHighModelSource();
+    if (device !== targetDevice || highStages !== baseStages) {
+      throw new Error("FSRCNNX-high stage build superseded by device change");
+    }
+    const created = [];
+    try {
+      while (baseStages.length + created.length < requestedDepth) {
+        created.push(new FsrcnnxModel(targetDevice, source.manifest, source.wgsl, {
+          expectedName: HIGH_MODEL,
+        }));
+      }
+    } catch (error) {
+      for (const stage of created) { try { stage.destroy?.(); } catch {} }
+      throw error;
+    }
+    if (device !== targetDevice || highStages !== baseStages) {
+      for (const stage of created) { try { stage.destroy?.(); } catch {} }
+      throw new Error("FSRCNNX-high stage build superseded by device change");
+    }
+    highStages = [...baseStages, ...created];
+    return highStages.slice(0, requestedDepth);
+  })().finally(() => {
+    if (highStageBuildPromise === promise) highStageBuildPromise = null;
+  });
+  highStageBuildPromise = promise;
+  return promise;
+}
 
 // Build enough instances of the verified standard x2 source for cascading.
 // Every stage owns a separate per-size texture cache.
@@ -1262,6 +1338,7 @@ function retireGpuResources(reason = "idle") {
     await Promise.allSettled([
       Promise.resolve(modelLoadPromise),
       Promise.resolve(fsrcnnxStageBuildPromise),
+      Promise.resolve(highStageBuildPromise),
       Promise.resolve(artStageBuildPromise),
       Promise.resolve(imageUpscalerInitPromise),
       Promise.resolve(interpolatorInitPromise),
@@ -1500,6 +1577,7 @@ function invalidateMainDeviceResources() {
   catch (error) { recordCleanupError("secondary-targets", error); }
   const oldModels = new Set([
     ...models,
+    ...highStages,
     ...Object.values(artStages).flat(),
   ]);
   for (const model of oldModels) {
@@ -1531,8 +1609,9 @@ function invalidateMainDeviceResources() {
   sharpenPipeline = null; sharpenStrengthBuilt = null;
   sampler = null; context = null; format = null;
   models = []; modelsDevice = null; activeModel = null;
-  artStages = {}; chainedFsrcnnx = null; chainedArt = null;
-  fsrcnnxLoadPending = false; artLoadPending = false;
+  highStages = []; artStages = {};
+  chainedFsrcnnx = null; chainedHigh = null; chainedArt = null;
+  fsrcnnxLoadPending = false; highLoadPending = false; artLoadPending = false;
   try { resetScaleSelection(); }
   catch (error) { recordCleanupError("scale-selection", error); }
   try { resetPresentedRuntime(); }
@@ -1569,6 +1648,7 @@ function retirePrimaryGpuAllocations(reason = "source-change") {
 
     const stages = new Set([
       ...models,
+      ...highStages,
       ...Object.values(artStages).flat(),
     ]);
     for (const stage of stages) {
@@ -1584,6 +1664,7 @@ function retirePrimaryGpuAllocations(reason = "source-change") {
     try { ssimds?.destroy?.(); } catch {}
     activeModel = null;
     chainedFsrcnnx = null;
+    chainedHigh = null;
     chainedArt = null;
     _texSource = null;
     resetScaleSelection();
@@ -1694,6 +1775,7 @@ async function recoverDevice(generation, lostDevice, attempt, providerInvalidati
       if (mode === "upscale") {
         await loadModels();
         if (engine === "fsrcnnx") await ensureFsrcnnxStages(chainDepth);
+        if (engine === "fsrcnnx-hi") await ensureHighStages(chainDepth);
         if (engine === "artcnn") await ensureArtStages(artVariant, chainDepth);
       }
     }
@@ -2048,6 +2130,7 @@ async function adoptChainDeviceInternal(extDevice, isRequestCurrent, { preserveM
       throw error;
     }
     if (engine === "fsrcnnx") { try { await ensureFsrcnnxStages(chainDepth); } catch (e) { warn("FSRCNNX stages rebuild failed:", e.message); } }
+    if (engine === "fsrcnnx-hi") { try { await ensureHighStages(chainDepth); } catch (e) { warn("FSRCNNX-high stages rebuild failed:", e.message); } }
     if (engine === "artcnn") { try { await ensureArtStages(artVariant, chainDepth); } catch (e) { warn("art stages rebuild failed:", e.message); } }
     if (!attemptCurrent() || device !== extDevice || lostDevices.has(extDevice)) {
       const error = new Error("device adoption superseded");
@@ -2101,6 +2184,10 @@ async function adoptChainDeviceInternal(extDevice, isRequestCurrent, { preserveM
       }
       if (engine === "fsrcnnx") {
         await ensureFsrcnnxStages(chainDepth);
+        if (!rollbackCurrent()) return false;
+      }
+      if (engine === "fsrcnnx-hi") {
+        await ensureHighStages(chainDepth);
         if (!rollbackCurrent()) return false;
       }
       if (engine === "artcnn") {
@@ -2214,7 +2301,49 @@ function renderUpscale() {
     : Math.round(video.getBoundingClientRect().width * dpr);
 
   // Engine + model selection.
-  if (engine === "artcnn") {
+  if (engine === "fsrcnnx-hi") {
+    // The high-capacity network is a fixed x2 model. Forced policies cascade
+    // independent instances to 4x/8x; display and auto use one stage and leave
+    // final display fitting to the existing presentation path.
+    const want = targetW / srcW;
+    const baseThreshold = highStages[0]?.manifest?.whenThreshold ?? 1.4;
+    const shouldRun =
+      upscalePolicy.startsWith("force") ? true :
+      upscalePolicy === "auto" ? want > baseThreshold :
+      want > 1.05;
+    const depth = upscalePolicy.startsWith("force") ? chainDepth : 1;
+    activeModel = null;
+    if (shouldRun) {
+      const stages = highStages.slice(0, depth);
+      if (stages.length === depth) {
+        if (depth === 1) {
+          activeModel = stages[0];
+        } else {
+          if (!chainedHigh || chainedHigh.stages.length !== depth ||
+              chainedHigh.stages[0] !== stages[0]) {
+            chainedHigh = new ChainedFsrcnnx(stages);
+          }
+          activeModel = chainedHigh;
+        }
+      }
+    }
+    if (shouldRun && !activeModel) {
+      if (!highLoadPending) {
+        highLoadPending = true;
+        ensureHighStages(depth)
+          .then(() => {
+            highLoadPending = false;
+            log(`FSRCNNX high ${Math.pow(2, depth)}x ready`);
+          })
+          .catch((error) => {
+            highLoadPending = false;
+            warn("FSRCNNX high load FAILED:", error.message);
+          });
+      }
+      renderFallback();
+      return;
+    }
+  } else if (engine === "artcnn") {
     // ArtCNN is a fixed 2x luma doubler. force* => always run; display/auto gate on ratio.
     const want = targetW / srcW;
     const shouldRun =
@@ -2245,7 +2374,7 @@ function renderUpscale() {
       return;
     }
   } else {
-    // The only distributed FSRCNNX network is the verified standard x2 model.
+    // The standard FSRCNNX selection uses the compact verified x2 model.
     // Explicit 3x/4x requests run two 2x stages; the existing display-fit path
     // downsamples the 4x result to an exact 3x target. Automatic modes stay on
     // one stage until the display ratio clearly exceeds a single doubling.
@@ -2341,7 +2470,9 @@ function renderUpscale() {
     activeModel = null;
   }
 
-  const stagePool = engine === "artcnn" ? (artStages[artVariant] || []) : models;
+  const stagePool = engine === "fsrcnnx-hi"
+    ? highStages
+    : engine === "artcnn" ? (artStages[artVariant] || []) : models;
   reclaimInactiveStageAllocations(stagePool, activeModel);
 
   if (!activeModel) {
@@ -2551,10 +2682,17 @@ function neuralSupersededError() {
   return error;
 }
 
+function resetPlaybackPerformanceMonitoring() {
+  performanceObservationGeneration++;
+  performanceQueueSamplePending = false;
+  playbackPerformance.reset();
+}
+
 function clearNeuralFallback() {
   rendererFallback = null;
   neuralLastFailure = null;
   neuralFail = 0;
+  resetPlaybackPerformanceMonitoring();
 }
 
 function activateNeuralFallback(code, error) {
@@ -2570,6 +2708,87 @@ function activateNeuralFallback(code, error) {
   resumeInterpolationAfterNeural();
   notifyState();
   return rendererFallback;
+}
+
+function performanceFallbackEligible() {
+  return mode === "upscale" && (engine === "fsrcnnx-hi" || engine === "artcnn") &&
+    requestedEngine === engine && !rendererFallback;
+}
+
+function activatePerformanceFallback(signal, error = null) {
+  if (!performanceFallbackEligible()) return null;
+  const from = engine;
+  const detail = signal?.detail || boundedRuntimeDetail(error, "Renderer could not sustain playback");
+  engineSelectionGeneration++;
+  engine = "fsrcnnx";
+  chainDepth = 1;
+  rendererFallback = {
+    category: "performance",
+    from,
+    to: "fsrcnnx",
+    code: signal?.code || "model-render-failed",
+    detail,
+    at: Date.now(),
+    evidence: signal?.evidence || null,
+  };
+  resetScaleSelection();
+  clearMultiTargets();
+  ensureFsrcnnxStages(1).catch((fallbackError) =>
+    warn("standard FSRCNNX fallback preload failed:", fallbackError.message));
+  notifyState();
+  warn(`${from} lowered to standard FSRCNNX for this playback: ${detail}`);
+  return rendererFallback;
+}
+
+function resetPlaybackPerformanceFallback() {
+  if (rendererFallback?.category !== "performance") {
+    resetPlaybackPerformanceMonitoring();
+    return false;
+  }
+  engineSelectionGeneration++;
+  engine = requestedEngine;
+  chainDepth = engine === "artcnn" || engine === "fsrcnnx" || engine === "fsrcnnx-hi"
+    ? policyToDepth(upscalePolicy)
+    : 1;
+  rendererFallback = null;
+  resetPlaybackPerformanceMonitoring();
+  return true;
+}
+
+function observePlaybackPerformance(now, metadata) {
+  if (!performanceFallbackEligible() || presentedRuntimeEngine !== engine) return null;
+  let quality = null;
+  try { quality = video?.getVideoPlaybackQuality?.() || null; } catch {}
+  const signal = playbackPerformance.observeFrame({
+    now: Number.isFinite(now) ? now : performance.now(),
+    metadata,
+    quality,
+  });
+  return signal ? activatePerformanceFallback(signal) : null;
+}
+
+function sampleGpuQueuePerformance() {
+  if (!performanceFallbackEligible() || presentedRuntimeEngine !== engine ||
+      performanceQueueSamplePending || !device?.queue?.onSubmittedWorkDone ||
+      !playbackPerformance.shouldSampleQueue()) return;
+  const generation = performanceObservationGeneration;
+  const observedDevice = device;
+  const observedEngine = engine;
+  const startedAt = performance.now();
+  performanceQueueSamplePending = true;
+  Promise.resolve(observedDevice.queue.onSubmittedWorkDone()).then(() => {
+    if (generation !== performanceObservationGeneration || device !== observedDevice ||
+        engine !== observedEngine || !performanceFallbackEligible()) return;
+    const now = performance.now();
+    const signal = playbackPerformance.observeQueueBacklog(now - startedAt, now);
+    if (signal) activatePerformanceFallback(signal);
+  }).catch((queueError) => {
+    if (generation === performanceObservationGeneration) {
+      warn("GPU backlog observation failed:", queueError?.message || queueError);
+    }
+  }).finally(() => {
+    if (generation === performanceObservationGeneration) performanceQueueSamplePending = false;
+  });
 }
 
 async function ensureNeural(
@@ -2989,7 +3208,7 @@ function suspendSelectedVideo(reason) {
   videoMonitor?.request?.();
 }
 
-function loop(owner) {
+function loop(owner, frameNow = null, frameMetadata = null) {
   if (pageSuspended || owner !== primaryController || owner?.video !== video || mode === "off" || !video) return;
   // A source can switch protection or decoded color metadata without replacing
   // its element (DRM transitions and adaptive streams both do this). Re-check
@@ -3004,6 +3223,7 @@ function loop(owner) {
       return;
     }
   }
+  observePlaybackPerformance(frameNow, frameMetadata);
   const t0 = performance.now();
   try {
     if (adopting) { // device swap in progress — skip this frame, keep the loop alive
@@ -3044,6 +3264,7 @@ function loop(owner) {
     // every ~30 frames) since feed videos appear/disappear as you scroll.
     if (optAllVideos && frameCount % 30 === 0) syncMultiTargets();
     frameCount++;
+    sampleGpuQueuePerformance();
     const dt = performance.now() - t0;
     frameTimes.push(dt);
     if (frameTimes.length > 120) frameTimes.shift();
@@ -3053,7 +3274,7 @@ function loop(owner) {
       const avg = frameTimes.reduce((a, b) => a + b, 0) / frameTimes.length;
       const max = Math.max(...frameTimes);
       log(`mode=${mode} frames=${frameCount} src=${video.videoWidth}x${video.videoHeight}` +
-          (mode === "upscale" && activeModel ? ` ${engine==="artcnn"?artVariant.replace("ArtCNN_",""):"FSRCNNX"} ${activeModel.scale}x out=${video.videoWidth*activeModel.scale}x${video.videoHeight*activeModel.scale}` : "") +
+          (mode === "upscale" && activeModel ? ` ${engine==="artcnn"?artVariant.replace("ArtCNN_",""):engine==="fsrcnnx-hi"?"FSRCNNX-high":"FSRCNNX"} ${activeModel.scale}x out=${video.videoWidth*activeModel.scale}x${video.videoHeight*activeModel.scale}` : "") +
           (mode === "upscale" && engine === "neural" && neuralEng && neuralEng.ready() ? ` NEURAL ${neuralEng.activeEntry()?.label || neuralModelKey} ${neuralEng.activeEntry()?.scale}x mu=${neuralEng.stats().mu.toFixed(1)}ms skip:${neuralEng.stats().skip}` : "") +
           (mode === "upscale" && lastSSimDS ? " +SSimDS" : "") +
           (mode === "upscale" && sharpenEnabled ? ` +Sharpen(${sharpenStrength})` : "") +
@@ -3061,8 +3282,14 @@ function loop(owner) {
     }
   } catch (e) {
     warn("render error:", e.message, "\n", e.stack);
-    void deactivateRendering({ persist: true })
-      .catch((error) => warn("renderer teardown failed:", error.message));
+    if (!activatePerformanceFallback({
+      code: "model-render-failed",
+      detail: boundedRuntimeDetail(e, "Selected model failed while rendering"),
+      evidence: { errorName: e?.name || null, errorCode: e?.code || null },
+    }, e)) {
+      void deactivateRendering({ persist: true })
+        .catch((error) => warn("renderer teardown failed:", error.message));
+    }
   }
   scheduleMainLoop();
 }
@@ -3072,7 +3299,7 @@ function attach() {
   detach();
   if (!video) return;
   const owner = new VideoController(video, {
-    onFrame: (current) => loop(current),
+    onFrame: (current, now, metadata) => loop(current, now, metadata),
     onLayout: (current) => {
       if (current === primaryController && current.video === video) {
         if (!videoPageVisible(current.video)) {
@@ -3313,6 +3540,7 @@ async function applyVideoSelection(
     clearInterpolationTerminalQuarantine();
   }
   if (changed) {
+    resetPlaybackPerformanceFallback();
     cancelMainLoop();
     try { neuralEng?.stop?.(); } catch {}
     try { interpolator?.stop?.(); } catch {}
@@ -3657,10 +3885,14 @@ export function setEngine(e, { persist = true } = {}) {
     try { neuralEng?.stop?.(); } catch {}
     resumeInterpolationAfterNeural();
   }
-  chainDepth = engine === "artcnn" || engine === "fsrcnnx" ? policyToDepth(upscalePolicy) : 1;
+  chainDepth = engine === "artcnn" || engine === "fsrcnnx" || engine === "fsrcnnx-hi"
+    ? policyToDepth(upscalePolicy) : 1;
   artDiagLogged = false;
   if (engine === "fsrcnnx" && device) {
     ensureFsrcnnxStages(chainDepth).catch((er) => warn("FSRCNNX preload failed:", er.message));
+  }
+  if (engine === "fsrcnnx-hi" && device) {
+    ensureHighStages(chainDepth).catch((er) => warn("FSRCNNX-high preload failed:", er.message));
   }
   if (engine === "artcnn" && device) {
     ensureArtStages(artVariant, chainDepth).catch((er) => warn("ArtCNN preload failed:", er.message));
@@ -3769,9 +4001,9 @@ class MultiTarget {
     // thrash (realloc every frame). Each target owns its models, built from the
     // already-fetched manifest+wgsl (construction is cheap; the per-size textures
     // must exist per video anyway). Populated lazily by ensureTargetModels().
-    this.models = []; this.artStages = {};
+    this.models = []; this.highStages = []; this.artStages = {};
     this.activeModel = null;
-    this.chainedFsrcnnx = null; this.chainedArt = null;
+    this.chainedFsrcnnx = null; this.chainedHigh = null; this.chainedArt = null;
     this.lastSSimDS = false;
     this.scaleHeld = undefined; this.scalePending = null; this.scalePendingSince = 0;
     this.scaleHeldSrcW = 0; this.scaleHeldSrcH = 0; this.scaleLockLogged = false;
@@ -3875,6 +4107,7 @@ class MultiTarget {
     // fence settles; only then is physical destruction safe.
     const ownedModels = new Set([
       ...(this.models || []),
+      ...(this.highStages || []),
       ...Object.values(this.artStages || {}).flat(),
     ]);
     const ownedTextures = new Set([this.lumaTexture, this.hiRGB, this.dispRGB].filter(Boolean));
@@ -3884,15 +4117,17 @@ class MultiTarget {
       this.sharpenPipeline,
       this.activeModel,
       this.chainedFsrcnnx,
+      this.chainedHigh,
       this.chainedArt,
     ].filter(Boolean));
     this.device = null;
-    this.models = []; this.artStages = {};
+    this.models = []; this.highStages = []; this.artStages = {};
     this.lumaTexture = this.hiRGB = this.dispRGB = null;
     this.ssimds = null;
     this.context = null;
     this.sharpenPipeline = null; this.sharpenStrengthBuilt = null;
-    this.activeModel = null; this.chainedFsrcnnx = null; this.chainedArt = null;
+    this.activeModel = null;
+    this.chainedFsrcnnx = null; this.chainedHigh = null; this.chainedArt = null;
 
     let queueFence;
     try { queueFence = ownerDevice?.queue?.onSubmittedWorkDone?.(); }
@@ -3952,6 +4187,14 @@ function ensureTargetModels(t) {
     while (t.models.length < 2) {
       t.models.push(new FsrcnnxModel(device, s.manifest, s.wgsl, { expectedName: STANDARD_MODEL }));
     }
+  } else if (engine === "fsrcnnx-hi") {
+    const s = srcCache.fsrcnnx[HIGH_MODEL];
+    if (!s) return false; // primary path triggers the fetch
+    while (t.highStages.length < chainDepth) {
+      t.highStages.push(new FsrcnnxModel(device, s.manifest, s.wgsl, {
+        expectedName: HIGH_MODEL,
+      }));
+    }
   } else if (engine === "artcnn") {
     const s = srcCache.artcnn[artVariant];
     if (!s) return false; // not loaded yet; primary path will have triggered the fetch
@@ -3975,7 +4218,7 @@ function withTarget(t, fn) {
     lumaTexture, lumaW, lumaH, hiRGB, hiRGBW, hiRGBH,
     dispRGB, dispRGBW, dispRGBH,
     ssimds, sharpenPipeline, sharpenStrengthBuilt, hoverHidden,
-    models, artStages, activeModel, chainedFsrcnnx, chainedArt, lastSSimDS,
+    models, highStages, artStages, activeModel, chainedFsrcnnx, chainedHigh, chainedArt, lastSSimDS,
     _scaleHeld, _scalePending, _scalePendingSince, _scaleHeldSrcW, _scaleHeldSrcH, _scaleLockLogged,
     chainTapOn, _texSource,
   };
@@ -3986,8 +4229,9 @@ function withTarget(t, fn) {
   dispRGB = t.dispRGB; dispRGBW = t.dispRGBW; dispRGBH = t.dispRGBH;
   ssimds = t.ssimds; sharpenPipeline = t.sharpenPipeline; sharpenStrengthBuilt = t.sharpenStrengthBuilt;
   hoverHidden = t.hoverHidden;
-  models = t.models; artStages = t.artStages; activeModel = t.activeModel;
-  chainedFsrcnnx = t.chainedFsrcnnx; chainedArt = t.chainedArt; lastSSimDS = t.lastSSimDS;
+  models = t.models; highStages = t.highStages; artStages = t.artStages; activeModel = t.activeModel;
+  chainedFsrcnnx = t.chainedFsrcnnx; chainedHigh = t.chainedHigh;
+  chainedArt = t.chainedArt; lastSSimDS = t.lastSSimDS;
   _scaleHeld = t.scaleHeld; _scalePending = t.scalePending; _scalePendingSince = t.scalePendingSince;
   _scaleHeldSrcW = t.scaleHeldSrcW; _scaleHeldSrcH = t.scaleHeldSrcH; _scaleLockLogged = t.scaleLockLogged;
   chainTapOn = false; _texSource = null;
@@ -3998,7 +4242,7 @@ function withTarget(t, fn) {
     t.hiRGB = hiRGB; t.hiRGBW = hiRGBW; t.hiRGBH = hiRGBH;
     t.dispRGB = dispRGB; t.dispRGBW = dispRGBW; t.dispRGBH = dispRGBH;
     t.sharpenPipeline = sharpenPipeline; t.sharpenStrengthBuilt = sharpenStrengthBuilt;
-    t.activeModel = activeModel; t.chainedFsrcnnx = chainedFsrcnnx;
+    t.activeModel = activeModel; t.chainedFsrcnnx = chainedFsrcnnx; t.chainedHigh = chainedHigh;
     t.chainedArt = chainedArt; t.lastSSimDS = lastSSimDS;
     t.scaleHeld = _scaleHeld; t.scalePending = _scalePending; t.scalePendingSince = _scalePendingSince;
     t.scaleHeldSrcW = _scaleHeldSrcW; t.scaleHeldSrcH = _scaleHeldSrcH; t.scaleLockLogged = _scaleLockLogged;
@@ -4007,7 +4251,7 @@ function withTarget(t, fn) {
       lumaTexture, lumaW, lumaH, hiRGB, hiRGBW, hiRGBH,
       dispRGB, dispRGBW, dispRGBH,
       ssimds, sharpenPipeline, sharpenStrengthBuilt, hoverHidden,
-      models, artStages, activeModel, chainedFsrcnnx, chainedArt, lastSSimDS,
+      models, highStages, artStages, activeModel, chainedFsrcnnx, chainedHigh, chainedArt, lastSSimDS,
       _scaleHeld, _scalePending, _scalePendingSince, _scaleHeldSrcW, _scaleHeldSrcH, _scaleLockLogged,
       chainTapOn, _texSource,
     } = saved);
@@ -4154,13 +4398,17 @@ export function setPolicy(p, { persist = true } = {}) {
   upscalePolicy = normalized;
   resetScaleSelection();
   clearMultiTargets();
-  // Both distributed engines use verified 2x stages. FSRCNNX force3/force4 use
-  // two stages, while ArtCNN additionally permits three stages for force8.
-  chainDepth = requestedEngine === "artcnn" || requestedEngine === "fsrcnnx"
+  // Distributed fixed-x2 engines encode forced scale via cascade depth. The
+  // standard engine also uses two stages for its force3/force4 policies.
+  chainDepth = requestedEngine === "artcnn" || requestedEngine === "fsrcnnx" ||
+      requestedEngine === "fsrcnnx-hi"
     ? policyToDepth(upscalePolicy) : 1;
   artDiagLogged = false;
   if (engine === "fsrcnnx" && device) {
     ensureFsrcnnxStages(chainDepth).catch(() => {});
+  }
+  if (engine === "fsrcnnx-hi" && device) {
+    ensureHighStages(chainDepth).catch(() => {});
   }
   if (engine === "artcnn" && device) {
     ensureArtStages(artVariant, chainDepth).catch(() => {});
@@ -4183,20 +4431,20 @@ export async function restoreSitePrefs() {
       : { ok: true, restored: false };
   }
   if (restoreToken !== preferenceRestoreGeneration) return { ok: false, restored: false, reason: "superseded" };
-  const migratedLegacyEngine = p.engine === LEGACY_HIGH_ENGINE;
   const migratedUnavailableNeural = p.engine === "neural" && _neuralList.length === 0;
   const replacementNeuralModel = _neuralList[0]?.key || null;
   const migratedUnavailableNeuralModel = isValidNeuralModelKey(p.neuralModel) &&
     !_neuralList.some((entry) => entry.key === p.neuralModel);
   const restoredEngine = migratedUnavailableNeural ? "fsrcnnx" : normalizeStoredEngine(p.engine, "fsrcnnx");
-  const migratedForce8Policy = restoredEngine !== "artcnn" && p.policy === "force8";
+  const migratedForce8Policy = restoredEngine !== "artcnn" && restoredEngine !== "fsrcnnx-hi" &&
+    p.policy === "force8";
   const restoredPolicy = migratedForce8Policy ? "force4" : p.policy;
   const migratedLegacyInterpolation = p.interpEngine === LEGACY_INTERPOLATION_MODEL;
-  const validationPatch = migratedLegacyEngine || migratedUnavailableNeural ||
-      migratedUnavailableNeuralModel || migratedForce8Policy || migratedLegacyInterpolation
+  const validationPatch = migratedUnavailableNeural || migratedUnavailableNeuralModel ||
+      migratedForce8Policy || migratedLegacyInterpolation
     ? {
         ...p,
-        ...(migratedLegacyEngine || migratedUnavailableNeural ? { engine: restoredEngine } : {}),
+        ...(migratedUnavailableNeural ? { engine: restoredEngine } : {}),
         ...(migratedUnavailableNeuralModel || migratedUnavailableNeural
           ? { neuralModel: replacementNeuralModel }
           : {}),
@@ -4221,13 +4469,14 @@ export async function restoreSitePrefs() {
   }
   if (typeof p.hoverReveal === "boolean") optHoverReveal = p.hoverReveal;
   if (typeof p.allVideos === "boolean") optAllVideos = p.allVideos;
-  chainDepth = engine === "artcnn" || engine === "fsrcnnx" ? policyToDepth(upscalePolicy) : 1;
+  chainDepth = engine === "artcnn" || engine === "fsrcnnx" || engine === "fsrcnnx-hi"
+    ? policyToDepth(upscalePolicy) : 1;
   resetScaleSelection();
 
-  if (migratedLegacyEngine || migratedUnavailableNeural || migratedUnavailableNeuralModel ||
-      migratedForce8Policy || migratedLegacyInterpolation) {
+  if (migratedUnavailableNeural || migratedUnavailableNeuralModel || migratedForce8Policy ||
+      migratedLegacyInterpolation) {
     const migrationPatch = {};
-    if (migratedLegacyEngine || migratedUnavailableNeural) migrationPatch.engine = requestedEngine;
+    if (migratedUnavailableNeural) migrationPatch.engine = requestedEngine;
     if (migratedUnavailableNeural || migratedUnavailableNeuralModel) {
       migrationPatch.neuralModel = replacementNeuralModel;
     }
@@ -4327,7 +4576,7 @@ async function applyExternalSitePreferences(patch) {
     const next = unavailableNeural ? "fsrcnnx" : normalizeStoredEngine(stored);
     if (!next) invalid.add("engine");
     setEngine(next || "fsrcnnx", { persist: false });
-    if (stored === LEGACY_HIGH_ENGINE || unavailableNeural) {
+    if (unavailableNeural) {
       const migration = siteSettingsStore.write({
         engine: next,
         ...(unavailableNeural ? { neuralModel: null } : {}),
@@ -4345,7 +4594,8 @@ async function applyExternalSitePreferences(patch) {
   }
   if (has("policy")) {
     const next = deleted("policy") ? "display" : patch.policy;
-    const migratedForce8 = next === "force8" && requestedEngine !== "artcnn";
+    const migratedForce8 = next === "force8" && requestedEngine !== "artcnn" &&
+      requestedEngine !== "fsrcnnx-hi";
     const normalized = normalizeStoredUpscalePolicy(next, requestedEngine, "display");
     if (normalized !== next && !migratedForce8) invalid.add("policy");
     setPolicy(normalized, { persist: false });
@@ -4569,6 +4819,7 @@ export function getStatus() {
              framesPresented: primaryPresentationGeneration,
              presentation,
              fallback: rendererFallback,
+             performance: playbackPerformance.snapshot(),
            },
            imagesRuntime: {
              requested: optImages,
