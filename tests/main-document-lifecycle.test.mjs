@@ -20,6 +20,7 @@ async function loadLifecycle(deps) {
     const deps = globalThis.__documentLifecycleDeps;
     let pageSuspended = false;
     let mode = "upscale", optInterpolate = true, optImages = true;
+    let optIdlePowerSaving = deps.idlePowerSaving === true;
     let adoptionGeneration = 2, modeSelectionGeneration = 3, videoSelectionGeneration = 4;
     let interpolationSelectionGeneration = 5, imagesSelectionGeneration = 6;
     let imageUpscalerInitGeneration = 7;
@@ -64,6 +65,7 @@ async function loadLifecycle(deps) {
         colorCacheReplaced: videoColorSupportCache !== initialColorCache,
         colorSupport: selectedColorSupport };
     }
+    export function enableIdlePowerSaving() { optIdlePowerSaving = true; }
   `;
   globalThis.__documentLifecycleDeps = deps;
   return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
@@ -102,6 +104,27 @@ test("document suspension is idempotent and invalidates every asynchronous produ
   for (const event of ["loop-cancel", "neural-stop", "interp-stop", "image-stop", "multi-clear", "monitor-stop", "detach"]) {
     assert.ok(deps.events.includes(event), `missing teardown event ${event}`);
   }
+  assert.equal(
+    deps.events.some((event) => Array.isArray(event) && event[0] === "gpu-retire"),
+    false,
+    "default suspension keeps reusable GPU resources warm",
+  );
+});
+
+test("opt-in idle power saving retires GPU resources while preserving requested intent", async (t) => {
+  const previous = globalThis.__documentLifecycleDeps;
+  t.after(() => { globalThis.__documentLifecycleDeps = previous; });
+  const deps = { video: { id: "power-save" }, events: [], idlePowerSaving: true };
+  const lifecycle = await loadLifecycle(deps);
+
+  assert.deepEqual(await lifecycle.suspendDocument(), { ok: true, suspended: true, changed: true });
+  assert.deepEqual(
+    deps.events.filter((event) => Array.isArray(event) && event[0] === "gpu-retire"),
+    [["gpu-retire", "document-hidden"]],
+  );
+  assert.equal(lifecycle.state().mode, "upscale");
+  assert.equal(lifecycle.state().optImages, true);
+  assert.equal(lifecycle.state().optInterpolate, true);
 });
 
 test("document resume restores current intent once and reconciles the current video", async (t) => {
