@@ -87,4 +87,10 @@ The source module retains the preceding notice verbatim before its local port de
 
 ## Unresolved material
 
-No license is asserted here for the removed high-quality x2, x3, or x4 FSRCNNX artifacts, unidentified generic RIFE model, unreproducible SPAN smoke model, or unresolved deband port. They are absent from the current tree and extension package, but their bytes remain in private Git history and block publication of that history until it is purged. The LGPL and ONNX Runtime applicability reviews also remain blocked in `release-clearance.json`; merely bundling complete upstream texts and notices does not clear them.
+### FSRCNNX High (`FSRCNNX_x2_56-16-4-1`)
+
+The high-quality x2 source and generated runtime pair are present and functional, but no license is asserted for them here. The exact GLSL bytes are corroborated by [`resc863/Project` commit `0e6bdb96f2845d883ec0131af8598c438c68e30a`](https://github.com/resc863/Project/blob/0e6bdb96f2845d883ec0131af8598c438c68e30a/mpv-config/FSRCNNX_x2_56-16-4-1.glsl). That downstream mirror neither authored the model nor supplies authoritative permission for it, and its repository-level license cannot license third-party model weights. The source has no embedded license notice. The FSRCNN-TensorFlow 1.1 tag and licenses attached to different, currently published shaders therefore must not be treated as permission for these exact bytes.
+
+Public repository publication and extension-package distribution remain blocked by `unknown-high-x2-shader-origin` until the author or another authoritative source identifies this exact artifact and confirms its applicable license.
+
+No license is asserted here for the removed x3 or x4 FSRCNNX artifacts, unidentified generic RIFE model, unreproducible SPAN smoke model, or unresolved deband port. They are absent from the current tree and extension package, but their bytes remain in private Git history and block publication of that history until it is purged. The LGPL and ONNX Runtime applicability reviews also remain blocked in `release-clearance.json`; merely bundling complete upstream texts and notices does not clear them.

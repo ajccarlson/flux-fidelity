@@ -20,7 +20,7 @@ const complianceHashes = Object.freeze({
   "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl": standardSourceSha,
   "shaders/upstream/SSimDownscaler.glsl": "f46f4710a162d17058b9d82ed8610588b0c04d7be07cef6bf2a8c4077828f804",
   "shaders/upstream/adaptive-sharpen.glsl": "827fb3d662ac9a91b4075e9117fe6e1dbc1c06d85959ba719cdb954dfb7fb8e4",
-  "transpile.js": "2ad45126cd36d52ce1064e8da1e189e10b5d256d8edc28a9dec3737957f4f631",
+  "transpile.js": "58b7cf1ff4749a3845348ba90b41647d9fc3d8b7a78e0a2bbd8fcd36bd88a817",
   "vendor/ort/LICENSE": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
 });
 
@@ -64,19 +64,31 @@ test("standard FSRCNN generated files retain exact LGPL source metadata", () => 
   }
 });
 
-test("the standard transpiler rejects altered bytes under the verified source name", () => {
+test("the transpiler rejects altered bytes under every pinned FSRCNNX source name", () => {
   const fixture = mkdtempSync(join(tmpdir(), "fsrcnnx-lgpl-source-"));
   try {
-    const source = resolve(root, "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl");
-    const altered = join(fixture, basename(source));
-    writeFileSync(altered, Buffer.concat([readFileSync(source), Buffer.from("\n// altered\n")]));
-    const result = spawnSync(process.execPath, [
-      resolve(root, "transpile.js"),
-      altered,
-      "--out", join(fixture, "model"),
-    ], { cwd: root, encoding: "utf8" });
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /SHA-256 [0-9a-f]{64}, expected d5a24a271e5d9a3f/);
+    for (const [path, expected] of [
+      ["shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl", standardSourceSha],
+      [
+        "shaders/FSRCNNX_x2_56-16-4-1.glsl",
+        "34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6",
+      ],
+    ]) {
+      const source = resolve(root, path);
+      const altered = join(fixture, basename(source));
+      writeFileSync(altered, Buffer.concat([readFileSync(source), Buffer.from("\n// altered\n")]));
+      const result = spawnSync(process.execPath, [
+        resolve(root, "transpile.js"),
+        altered,
+        "--out", join(fixture, "model"),
+      ], { cwd: root, encoding: "utf8" });
+      assert.notEqual(result.status, 0, path);
+      assert.match(
+        result.stderr,
+        new RegExp(`SHA-256 [0-9a-f]{64}, expected ${expected.slice(0, 16)}`),
+        path,
+      );
+    }
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }

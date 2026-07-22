@@ -35,6 +35,20 @@ const VERIFIED_STANDARD_SOURCE = Object.freeze({
     "Transpiled in 2026 from the mpv/libplacebo GLSL hook format to WGSL compute passes and a JSON pass manifest for FSRCNNX-EXT; model weights and pass order are preserved.",
 });
 
+// This legacy High model is intentionally pinned by bytes without assigning
+// source or license metadata that has not been independently verified. Its
+// unresolved distribution clearance is enforced by the release gate; the
+// transpiler still rejects accidental or silent weight substitution.
+const PINNED_LEGACY_HIGH_SOURCE = Object.freeze({
+  file: "FSRCNNX_x2_56-16-4-1.glsl",
+  sourceSha256: "34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6",
+});
+
+const PINNED_SOURCE_BY_FILE = new Map([
+  VERIFIED_STANDARD_SOURCE,
+  PINNED_LEGACY_HIGH_SOURCE,
+].map((entry) => [entry.file, entry]));
+
 // ---- arg parsing ----------------------------------------------------------
 const args = process.argv.slice(2);
 const outIdx = args.indexOf("--out");
@@ -411,22 +425,25 @@ for (const input of inputs) {
   const sourceBytes = fs.readFileSync(input);
   const src = sourceBytes.toString("utf8");
   const base = path.basename(input).replace(/\.glsl$/i, "");
-  const isVerifiedStandard = path.basename(input) === VERIFIED_STANDARD_SOURCE.file;
+  const sourceFile = path.basename(input);
+  const pinnedSource = PINNED_SOURCE_BY_FILE.get(sourceFile) ?? null;
   let sourceMetadata = null;
-  if (isVerifiedStandard) {
+  if (pinnedSource) {
     const sourceSha256 = createHash("sha256").update(sourceBytes).digest("hex");
-    if (sourceSha256 !== VERIFIED_STANDARD_SOURCE.sourceSha256) {
+    if (sourceSha256 !== pinnedSource.sourceSha256) {
       throw new Error(
-        `${VERIFIED_STANDARD_SOURCE.file}: SHA-256 ${sourceSha256}, ` +
-        `expected ${VERIFIED_STANDARD_SOURCE.sourceSha256}`,
+        `${pinnedSource.file}: SHA-256 ${sourceSha256}, ` +
+        `expected ${pinnedSource.sourceSha256}`,
       );
     }
-    sourceMetadata = {
-      license: VERIFIED_STANDARD_SOURCE.license,
-      sourcePath: VERIFIED_STANDARD_SOURCE.sourcePath,
-      sourceSha256,
-      modificationNotice: VERIFIED_STANDARD_SOURCE.modificationNotice,
-    };
+    if (pinnedSource === VERIFIED_STANDARD_SOURCE) {
+      sourceMetadata = {
+        license: VERIFIED_STANDARD_SOURCE.license,
+        sourcePath: VERIFIED_STANDARD_SOURCE.sourcePath,
+        sourceSha256,
+        modificationNotice: VERIFIED_STANDARD_SOURCE.modificationNotice,
+      };
+    }
   }
   const rawPasses = splitPasses(src);
 

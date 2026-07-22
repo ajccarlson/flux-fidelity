@@ -38,6 +38,7 @@
         "fsrcnnx-main.js",
         "fsrcnnx-model-bundle.js",
         "fsrcnnx-model-catalog.js",
+        "fsrcnnx-performance.js",
         "fsrcnnx-runtime.js",
         "fsrcnnx-settings-store.js",
         "fsrcnnx-color-support.js",

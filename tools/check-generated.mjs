@@ -20,10 +20,11 @@ try {
   const fsrcnnxOut = resolve(temp, "fsrcnnx");
   await runScript("transpile.js", [
     "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl",
+    "shaders/FSRCNNX_x2_56-16-4-1.glsl",
     "--out", fsrcnnxOut,
   ], "fsrcnnx");
 
-  for (const name of ["FSRCNNX_x2_16-0-4-1"]) {
+  for (const name of ["FSRCNNX_x2_16-0-4-1", "FSRCNNX_x2_56-16-4-1"]) {
     for (const suffix of ["passes.json", "wgsl"]) {
       const actual = resolve(fsrcnnxOut, `${name}.${suffix}`);
       const expected = resolve(root, "model", `${name}.${suffix}`);

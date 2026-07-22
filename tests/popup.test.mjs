@@ -463,6 +463,27 @@ test("controller replaces the neural placeholder and notices a same-size model c
   assert.equal(select.value, "span4x_b");
 });
 
+test("controller presents FSRCNNX High with its fixed-scale policies and model label", () => {
+  const { controller, document } = controllerHarness();
+  controller.render(readyStatus({
+    engine: "fsrcnnx-hi",
+    activeEngine: "fsrcnnx-hi",
+    model: "FSRCNNX_x2_56-16-4-1",
+    policy: "force8",
+    scale: 8,
+  }));
+
+  const engine = document.getElementById("engine");
+  const policy = document.getElementById("policy");
+  assert.equal(engine.value, "fsrcnnx-hi");
+  assert.equal(engine.children.find(({ value }) => value === "fsrcnnx-hi")?.textContent,
+    "FSRCNNX high");
+  assert.deepEqual(policy.children.map(({ value }) => value),
+    ["display", "auto", "force2", "force4", "force8"]);
+  assert.equal(policy.value, "force8");
+  assert.equal(document.getElementById("s-model").textContent, "8× x2 high");
+});
+
 test("controller disables every command while loading or failed and enables only applicable ready controls", () => {
   const { controller, document } = controllerHarness();
 

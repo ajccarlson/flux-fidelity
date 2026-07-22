@@ -1,6 +1,6 @@
 import { GENERATED_MODEL_ASSET_PATHS } from "../fsrcnnx-model-catalog.js";
 
-export const EXPECTED_PACKAGE_FILE_COUNT = 71;
+export const EXPECTED_PACKAGE_FILE_COUNT = 76;
 
 // These files let recipients inspect, rebuild, and substitute the LGPL-covered
 // shader portions and retain the exact license for the vendored ONNX Runtime.
@@ -45,6 +45,7 @@ export const PACKAGE_FILES = Object.freeze([
   "fsrcnnx-model-bundle.js",
   "fsrcnnx-model-catalog.js",
   "fsrcnnx-neural.js",
+  "fsrcnnx-performance.js",
   "fsrcnnx-reference-validation.js",
   "fsrcnnx-rife-gpu.js",
   "fsrcnnx-rife.js",
@@ -72,6 +73,8 @@ export const PACKAGE_FILES = Object.freeze([
   "model/ArtCNN_C4F32_DS.artcnn.wgsl",
   "model/FSRCNNX_x2_16-0-4-1.passes.json",
   "model/FSRCNNX_x2_16-0-4-1.wgsl",
+  "model/FSRCNNX_x2_56-16-4-1.passes.json",
+  "model/FSRCNNX_x2_56-16-4-1.wgsl",
   "model/neural/manifest.json",
   "model/rife_v4.26.onnx",
   "model/rife_v4.26_fp16.onnx",
@@ -79,6 +82,7 @@ export const PACKAGE_FILES = Object.freeze([
   "popup.js",
   "reference-fixtures.js",
   "release-clearance.json",
+  "shaders/FSRCNNX_x2_56-16-4-1.glsl",
   "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl",
   "shaders/upstream/SSimDownscaler.glsl",
   "shaders/upstream/adaptive-sharpen.glsl",
@@ -91,6 +95,7 @@ export const PACKAGE_FILES = Object.freeze([
   "validation/references/ArtCNN_C4F32_DN.rgb16le",
   "validation/references/ArtCNN_C4F32_DS.rgb16le",
   "validation/references/FSRCNNX_x2_16-0-4-1.rgb16le",
+  "validation/references/FSRCNNX_x2_56-16-4-1.rgb16le",
   "validation/references/sharpen.rgb16le",
   "validation/references/ssimds.rgb16le",
   "vendor/ort/LICENSE",

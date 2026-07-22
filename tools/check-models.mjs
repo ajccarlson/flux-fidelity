@@ -25,6 +25,7 @@ const pinnedArtifacts = {
   "vendor/ort/ort-wasm-simd-threaded.asyncify.mjs": "7236653b8565da4046e459cd0e274123419a1d9f1f8f18fd36c28058346ca655",
   "vendor/ort/ort-wasm-simd-threaded.asyncify.wasm": "7e83cd6cee77e478bc96a7e91b198144fb5e4126287daf1f9b54bb195ebcd55a",
   "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl": "d5a24a271e5d9a3f7f7a053b150c460a44c25b3cf7f770857d57cc3a2e1c9965",
+  "shaders/FSRCNNX_x2_56-16-4-1.glsl": "34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6",
   "shaders/upstream/SSimDownscaler.glsl": "f46f4710a162d17058b9d82ed8610588b0c04d7be07cef6bf2a8c4077828f804",
   "shaders/upstream/adaptive-sharpen.glsl": "827fb3d662ac9a91b4075e9117fe6e1dbc1c06d85959ba719cdb954dfb7fb8e4",
   "shaders/upstream/ArtCNN_C4F32.glsl": "f773bce6cf5fe7e5e5d599a695edd40df5cd7a20c3d08c4d164d07591d5bead3",
@@ -32,6 +33,8 @@ const pinnedArtifacts = {
   "shaders/upstream/ArtCNN_C4F32_DS.glsl": "a04c9cba6fbb8e6db9239d61848390208aedf8e348ef116e12174c803d22077e",
   "model/FSRCNNX_x2_16-0-4-1.wgsl": "2b005b9c4e60c59445708b2f503c9afb01fd70ee9efb1615782274e7b7707f26",
   "model/FSRCNNX_x2_16-0-4-1.passes.json": "1378fc336deb2588f75ddf8b9ed6ec70109256f2c3fa0477ca742adf830fb3e0",
+  "model/FSRCNNX_x2_56-16-4-1.wgsl": "267ba203867483a467c535fd03c36c62ff9428116111d4d258dc5c295ef8e0d7",
+  "model/FSRCNNX_x2_56-16-4-1.passes.json": "57395ac668b4cbebea69938a9089c9bea0029ce785f7cc6dad239c4be31d43e7",
   "model/ArtCNN_C4F32.artcnn.wgsl": "ab6fe4c88e88eb0cc3b5482e68ca9279c802c0b7844699c40f9f15eb3aac8138",
   "model/ArtCNN_C4F32.artcnn.json": "4ab29b29a6121e0fa3d3880b890bedabb3ea1f49356ef46704ad1770b143077a",
   "model/ArtCNN_C4F32_DN.artcnn.wgsl": "c319ff51ff358558cd4daa1fc897da4bfc0064c175cca3f9fd29052ac29af280",
@@ -40,7 +43,7 @@ const pinnedArtifacts = {
   "model/ArtCNN_C4F32_DS.artcnn.json": "f98bbd5e834cbfb2ed66ba07865889f76466279e356bfbd62c33df73e95b30cb",
   "fsrcnnx-ssimds.js": "0f55f8f2b49bea3cb8ee2e4c801a663f21d4dfabb88efaf2de23b709c6ade3c6",
   "fsrcnnx-sharpen.js": "9312f5445791792634679bac74f01d3292e8e776c6fc7e3be348435f2913ef8a",
-  "transpile.js": "2ad45126cd36d52ce1064e8da1e189e10b5d256d8edc28a9dec3737957f4f631",
+  "transpile.js": "58b7cf1ff4749a3845348ba90b41647d9fc3d8b7a78e0a2bbd8fcd36bd88a817",
 };
 
 for (const [path, expected] of Object.entries(pinnedArtifacts)) {
