@@ -2,7 +2,7 @@
 
 FSRCNNX-EXT is a pre-release Chromium extension for real-time WebGPU video enhancement. It supports FSRCNNX and ArtCNN upscaling, optional SSimDownscaler and sharpening, RIFE or blend interpolation, and an experimental ONNX super-resolution path.
 
-Public distribution is not cleared because some bundled artifacts still have unresolved provenance or licensing records. Review [Model provenance](docs/compliance/MODEL_PROVENANCE.md) before packaging or publishing.
+Public distribution is not cleared while the release ledger still has blocking history and legal-review gates. Review [Model provenance](docs/compliance/MODEL_PROVENANCE.md) before packaging or publishing.
 
 ## Requirements
 

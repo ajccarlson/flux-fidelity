@@ -20,20 +20,36 @@ export const REQUIRED_RELEASE_GATE_IDS = Object.freeze([
   "onnx-runtime-third-party-review",
 ]);
 const HIGH_X2_GATE_ID = "unknown-high-x2-shader-origin";
+const LGPL_GATE_ID = "lgpl-compliance-review";
 const HIGH_X2_ARTIFACTS = Object.freeze(new Map([
   [
-    "shaders/FSRCNNX_x2_56-16-4-1.glsl",
+    "shaders/upstream/FSRCNNX_x2_56-16-4-1.glsl",
     "34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6",
   ],
   [
     "model/FSRCNNX_x2_56-16-4-1.wgsl",
-    "267ba203867483a467c535fd03c36c62ff9428116111d4d258dc5c295ef8e0d7",
+    "19a5327c8f96b7cb0593512f846f75ef266a3d857a84532c4dc5a374296e3d11",
   ],
   [
     "model/FSRCNNX_x2_56-16-4-1.passes.json",
-    "57395ac668b4cbebea69938a9089c9bea0029ce785f7cc6dad239c4be31d43e7",
+    "4b7512ca17fd9788f4876f2681207fa8fb3b10c46d314ea2b3ce684864fb4d70",
   ],
 ]));
+const HIGH_X2_EVIDENCE = Object.freeze([
+  PROVENANCE_FILE,
+  "shaders/README.md",
+  "docs/compliance/LGPL_REBUILDING.md",
+  "https://web.archive.org/web/20190330194401/https://github.com/igv/FSRCNN-TensorFlow/releases",
+  "https://web.archive.org/web/20201011050553id_/https://github.com/igv/FSRCNN-TensorFlow/releases/download/1.1/checkpoints_params.7z",
+  "https://github.com/igv/FSRCNN-TensorFlow/blob/1aa11ab0e1fc12741fdb84cef31da5619a478670/gen.py",
+]);
+const HIGH_X2_PROVENANCE_MARKERS = Object.freeze([
+  "28167f74341256054c790e94c30a10964818f6bdbe7aedb97c6507208123fc10",
+  "a27f732e1609a0d26e768d63447a42b04acd71918386026e1ca18a937ceea290",
+  "aa99254fd8001f2d0ac99e93a71f7225d78227e282b727b9c4bf7e5901e601ca",
+  "b507e0ec6c0d9ab22d440736677cd2ccb8a8b5441e190889ca7ec762d53ca063",
+  "34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6",
+]);
 
 function safeRelativePath(path) {
   return typeof path === "string"
@@ -206,15 +222,13 @@ export function inspectReleaseClearance({
     if (!requiredIds.has(id)) errors.push(`release clearance: unexpected gate ${id}`);
   }
 
-  // The restored high x2 model is intentionally a current-boundary blocker.
-  // Keep this invariant explicit so a missing disposition, hash drift, or an
-  // accidental status flip cannot silently turn byte identity into a license
-  // claim. Once authoritative origin and permission are established, updating
-  // this guard must be part of the deliberate gate-clearance change.
+  // High's origin is cleared by an archived official release and exact
+  // reproduction chain. Keep that evidence and its separate LGPL review
+  // inventory explicit so provenance clearance cannot imply legal clearance.
   if (requiredIds.has(HIGH_X2_GATE_ID)) {
     const highGate = ledger.gates.find((gate) => gate?.id === HIGH_X2_GATE_ID);
-    if (highGate?.status !== "blocked") {
-      errors.push(`release clearance: ${HIGH_X2_GATE_ID} must remain blocked pending authoritative origin and license evidence`);
+    if (highGate?.status !== "cleared") {
+      errors.push(`release clearance: ${HIGH_X2_GATE_ID} must remain cleared by the official release and reproduction evidence`);
     }
 
     const highArtifacts = Array.isArray(highGate?.artifacts) ? highGate.artifacts : [];
@@ -232,6 +246,37 @@ export function inspectReleaseClearance({
       }
       if (artifact.sha256 !== sha256) {
         errors.push(`release clearance: ${HIGH_X2_GATE_ID} artifact ${path} must retain SHA-256 ${sha256}`);
+      }
+    }
+
+    const highEvidence = new Set(Array.isArray(highGate?.evidence) ? highGate.evidence : []);
+    for (const reference of HIGH_X2_EVIDENCE) {
+      if (!highEvidence.has(reference)) {
+        errors.push(`release clearance: ${HIGH_X2_GATE_ID} is missing authoritative evidence ${reference}`);
+      }
+    }
+
+    let provenance = "";
+    try {
+      provenance = readFileSync(resolve(rootDir, PROVENANCE_FILE), "utf8");
+    } catch {
+      // The generic evidence check reports the missing file.
+    }
+    for (const marker of HIGH_X2_PROVENANCE_MARKERS) {
+      if (provenance && !provenance.includes(marker)) {
+        errors.push(`release clearance: ${HIGH_X2_GATE_ID} provenance is missing ${marker}`);
+      }
+    }
+
+    if (requiredIds.has(LGPL_GATE_ID)) {
+      const lgplGate = ledger.gates.find((gate) => gate?.id === LGPL_GATE_ID);
+      const lgplArtifacts = Array.isArray(lgplGate?.artifacts) ? lgplGate.artifacts : [];
+      for (const [path, sha256] of HIGH_X2_ARTIFACTS) {
+        const artifact = lgplArtifacts.find((entry) => entry?.path === path);
+        if (!artifact || artifact.sha256 !== sha256 ||
+            (artifact.disposition !== undefined && artifact.disposition !== "present")) {
+          errors.push(`release clearance: ${LGPL_GATE_ID} must retain High artifact ${path} at SHA-256 ${sha256}`);
+        }
       }
     }
   }

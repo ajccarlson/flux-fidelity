@@ -62,6 +62,7 @@ test("the package retains legal notices and provenance while the release ledger 
     "docs/compliance/LGPL_REBUILDING.md",
     "docs/compliance/MODEL_PROVENANCE.md",
     "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl",
+    "shaders/upstream/FSRCNNX_x2_56-16-4-1.glsl",
     "shaders/upstream/SSimDownscaler.glsl",
     "shaders/upstream/adaptive-sharpen.glsl",
     "tools/transpile.js",

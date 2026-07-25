@@ -10,19 +10,33 @@ const root = resolve(import.meta.dirname, "..");
 const provenanceFile = "docs/compliance/MODEL_PROVENANCE.md";
 const highX2Artifacts = new Map([
   [
-    "shaders/FSRCNNX_x2_56-16-4-1.glsl",
+    "shaders/upstream/FSRCNNX_x2_56-16-4-1.glsl",
     "34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6",
   ],
   [
     "model/FSRCNNX_x2_56-16-4-1.wgsl",
-    "267ba203867483a467c535fd03c36c62ff9428116111d4d258dc5c295ef8e0d7",
+    "19a5327c8f96b7cb0593512f846f75ef266a3d857a84532c4dc5a374296e3d11",
   ],
   [
     "model/FSRCNNX_x2_56-16-4-1.passes.json",
-    "57395ac668b4cbebea69938a9089c9bea0029ce785f7cc6dad239c4be31d43e7",
+    "4b7512ca17fd9788f4876f2681207fa8fb3b10c46d314ea2b3ce684864fb4d70",
   ],
 ]);
-const highX2Mirror = "https://github.com/resc863/Project/blob/0e6bdb96f2845d883ec0131af8598c438c68e30a/mpv-config/FSRCNNX_x2_56-16-4-1.glsl";
+const highX2Evidence = [
+  provenanceFile,
+  "shaders/README.md",
+  "docs/compliance/LGPL_REBUILDING.md",
+  "https://web.archive.org/web/20190330194401/https://github.com/igv/FSRCNN-TensorFlow/releases",
+  "https://web.archive.org/web/20201011050553id_/https://github.com/igv/FSRCNN-TensorFlow/releases/download/1.1/checkpoints_params.7z",
+  "https://github.com/igv/FSRCNN-TensorFlow/blob/1aa11ab0e1fc12741fdb84cef31da5619a478670/gen.py",
+];
+const highX2ProvenanceMarkers = [
+  "28167f74341256054c790e94c30a10964818f6bdbe7aedb97c6507208123fc10",
+  "a27f732e1609a0d26e768d63447a42b04acd71918386026e1ca18a937ceea290",
+  "aa99254fd8001f2d0ac99e93a71f7225d78227e282b727b9c4bf7e5901e601ca",
+  "b507e0ec6c0d9ab22d440736677cd2ccb8a8b5441e190889ca7ec762d53ca063",
+  "34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6",
+];
 
 function writeComplianceFile(rootDir, name, contents) {
   const directory = join(rootDir, "docs", "compliance");
@@ -54,38 +68,52 @@ test("current release-clearance record is structurally valid and explicitly bloc
   }
 
   const highGate = result.ledger.gates.find((gate) => gate.id === "unknown-high-x2-shader-origin");
-  assert.equal(highGate.status, "blocked");
+  assert.equal(highGate.status, "cleared");
   assert.deepEqual(
     highGate.artifacts.map(({ path, sha256, disposition }) => ({ path, sha256, disposition })),
     [...highX2Artifacts].map(([path, sha256]) => ({ path, sha256, disposition: "present" })),
   );
-  assert.ok(highGate.evidence.includes(highX2Mirror));
-  for (const document of [provenanceFile, "shaders/README.md", "THIRD_PARTY_NOTICES.md"]) {
-    const record = readFileSync(join(root, document), "utf8");
-    assert.match(record, /0e6bdb96f2845d883ec0131af8598c438c68e30a/);
-    assert.match(record, /authoritative/i);
-  }
+  for (const reference of highX2Evidence) assert.ok(highGate.evidence.includes(reference));
+  const provenance = readFileSync(join(root, provenanceFile), "utf8");
+  for (const marker of highX2ProvenanceMarkers) assert.ok(provenance.includes(marker));
 
   const lgplGate = result.ledger.gates.find((gate) => gate.id === "lgpl-compliance-review");
   const ortGate = result.ledger.gates.find((gate) => gate.id === "onnx-runtime-third-party-review");
   assert.equal(lgplGate.status, "blocked");
   assert.equal(ortGate.status, "blocked");
   assert.ok(lgplGate.evidence.includes("docs/compliance/LGPL_REBUILDING.md"));
+  for (const [path, sha256] of highX2Artifacts) {
+    assert.ok(lgplGate.artifacts.some((artifact) =>
+      artifact.path === path && artifact.sha256 === sha256));
+  }
   assert.ok(lgplGate.artifacts.every((artifact) => /^[0-9a-f]{64}$/.test(artifact.sha256)));
   assert.ok(ortGate.evidence.includes("vendor/ort/LICENSE"));
   assert.ok(ortGate.artifacts.every((artifact) => /^[0-9a-f]{64}$/.test(artifact.sha256)));
 });
 
-test("restored high x2 assets remain an explicit current-boundary blocker", () => {
+test("cleared high x2 provenance retains official evidence and exact LGPL inventory", () => {
   const fixture = mkdtempSync(join(tmpdir(), "fsrcnnx-release-clearance-high-x2-"));
   try {
-    mkdirSync(join(fixture, "model"));
-    mkdirSync(join(fixture, "shaders"));
+    mkdirSync(join(fixture, "model"), { recursive: true });
+    mkdirSync(join(fixture, "shaders", "upstream"), { recursive: true });
     for (const path of highX2Artifacts.keys()) {
       copyFileSync(join(root, path), join(fixture, path));
     }
+    for (const document of [
+      provenanceFile,
+      "shaders/README.md",
+      "docs/compliance/LGPL_REBUILDING.md",
+    ]) {
+      const target = join(fixture, document);
+      mkdirSync(resolve(target, ".."), { recursive: true });
+      writeFileSync(target, highX2ProvenanceMarkers.join("\n"));
+    }
 
-    const makeLedger = ({ status = "blocked", disposition = "present" } = {}) => ({
+    const makeLedger = ({
+      status = "cleared",
+      disposition = "present",
+      evidence = highX2Evidence,
+    } = {}) => ({
       schemaVersion: 1,
       scope: "test",
       gates: [{
@@ -96,8 +124,8 @@ test("restored high x2 assets remain an explicit current-boundary blocker", () =
           sha256,
           disposition,
         })),
-        evidence: [highX2Mirror],
-        resolution: "Obtain authoritative origin and license evidence.",
+        evidence,
+        resolution: "Retain the official release and exact reproduction evidence.",
       }],
     });
 
@@ -107,15 +135,23 @@ test("restored high x2 assets remain an explicit current-boundary blocker", () =
       requiredGateIds: ["unknown-high-x2-shader-origin"],
     });
     assert.deepEqual(valid.errors, []);
-    assert.equal(valid.blocked.length, 1);
+    assert.equal(valid.blocked.length, 0);
 
-    writeLedger(fixture, makeLedger({ status: "cleared" }));
-    const accidentallyCleared = inspectReleaseClearance({
+    writeLedger(fixture, makeLedger({ status: "blocked" }));
+    const accidentallyBlocked = inspectReleaseClearance({
       rootDir: fixture,
       requiredGateIds: ["unknown-high-x2-shader-origin"],
     });
-    assert.ok(accidentallyCleared.errors.some((error) =>
-      error.includes("must remain blocked pending authoritative origin and license evidence")));
+    assert.ok(accidentallyBlocked.errors.some((error) =>
+      error.includes("must remain cleared by the official release and reproduction evidence")));
+
+    writeLedger(fixture, makeLedger({ evidence: highX2Evidence.slice(1) }));
+    const missingEvidence = inspectReleaseClearance({
+      rootDir: fixture,
+      requiredGateIds: ["unknown-high-x2-shader-origin"],
+    });
+    assert.ok(missingEvidence.errors.some((error) =>
+      error.includes(`is missing authoritative evidence ${provenanceFile}`)));
 
     writeLedger(fixture, makeLedger({ disposition: "removed" }));
     const falselyRemoved = inspectReleaseClearance({

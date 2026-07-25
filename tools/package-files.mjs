@@ -8,6 +8,7 @@ export const EXPECTED_PACKAGE_FILE_COUNT = 77;
 export const REQUIRED_COMPLIANCE_FILES = Object.freeze([
   "docs/compliance/LGPL_REBUILDING.md",
   "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl",
+  "shaders/upstream/FSRCNNX_x2_56-16-4-1.glsl",
   "shaders/upstream/SSimDownscaler.glsl",
   "shaders/upstream/adaptive-sharpen.glsl",
   "tools/transpile.js",
@@ -58,8 +59,8 @@ export const PACKAGE_FILES = Object.freeze([
   "model/rife_v4.26.onnx",
   "model/rife_v4.26_fp16.onnx",
   "popup.html",
-  "shaders/FSRCNNX_x2_56-16-4-1.glsl",
   "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl",
+  "shaders/upstream/FSRCNNX_x2_56-16-4-1.glsl",
   "shaders/upstream/SSimDownscaler.glsl",
   "shaders/upstream/adaptive-sharpen.glsl",
   "src/background.js",

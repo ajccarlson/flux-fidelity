@@ -25,28 +25,30 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+const FSRCNNX_MODIFICATION_NOTICE =
+  "Transpiled in 2026 from the mpv/libplacebo GLSL hook format to WGSL compute passes and a JSON pass manifest for FSRCNNX-EXT; model weights and pass order are preserved.";
+
 const VERIFIED_STANDARD_SOURCE = Object.freeze({
   file: "FSRCNNX_x2_16-0-4-1.glsl",
   sourcePath: "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl",
   sourceSha256: "d5a24a271e5d9a3f7f7a053b150c460a44c25b3cf7f770857d57cc3a2e1c9965",
   upstream: "https://github.com/igv/FSRCNN-TensorFlow/releases/download/1.1/FSRCNNX_x2_16-0-4-1.glsl",
   license: "LGPL-3.0-or-later",
-  modificationNotice:
-    "Transpiled in 2026 from the mpv/libplacebo GLSL hook format to WGSL compute passes and a JSON pass manifest for FSRCNNX-EXT; model weights and pass order are preserved.",
+  modificationNotice: FSRCNNX_MODIFICATION_NOTICE,
 });
 
-// This legacy High model is intentionally pinned by bytes without assigning
-// source or license metadata that has not been independently verified. Its
-// unresolved distribution clearance is enforced by the release gate; the
-// transpiler still rejects accidental or silent weight substitution.
-const PINNED_LEGACY_HIGH_SOURCE = Object.freeze({
+const VERIFIED_HIGH_SOURCE = Object.freeze({
   file: "FSRCNNX_x2_56-16-4-1.glsl",
+  sourcePath: "shaders/upstream/FSRCNNX_x2_56-16-4-1.glsl",
   sourceSha256: "34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6",
+  upstream: "https://github.com/igv/FSRCNN-TensorFlow/releases/download/1.1/FSRCNNX_x2_56-16-4-1.glsl",
+  license: "LGPL-3.0-or-later",
+  modificationNotice: FSRCNNX_MODIFICATION_NOTICE,
 });
 
 const PINNED_SOURCE_BY_FILE = new Map([
   VERIFIED_STANDARD_SOURCE,
-  PINNED_LEGACY_HIGH_SOURCE,
+  VERIFIED_HIGH_SOURCE,
 ].map((entry) => [entry.file, entry]));
 
 // ---- arg parsing ----------------------------------------------------------
@@ -436,14 +438,12 @@ for (const input of inputs) {
         `expected ${pinnedSource.sourceSha256}`,
       );
     }
-    if (pinnedSource === VERIFIED_STANDARD_SOURCE) {
-      sourceMetadata = {
-        license: VERIFIED_STANDARD_SOURCE.license,
-        sourcePath: VERIFIED_STANDARD_SOURCE.sourcePath,
-        sourceSha256,
-        modificationNotice: VERIFIED_STANDARD_SOURCE.modificationNotice,
-      };
-    }
+    sourceMetadata = {
+      license: pinnedSource.license,
+      sourcePath: pinnedSource.sourcePath,
+      sourceSha256,
+      modificationNotice: pinnedSource.modificationNotice,
+    };
   }
   const rawPasses = splitPasses(src);
 
@@ -476,7 +476,7 @@ for (const input of inputs) {
 
   const sourceHeader = sourceMetadata
     ? `// License: ${sourceMetadata.license}\n` +
-      `// Upstream: ${VERIFIED_STANDARD_SOURCE.upstream}\n` +
+      `// Upstream: ${pinnedSource.upstream}\n` +
       `// Source path: ${sourceMetadata.sourcePath}\n` +
       `// Source SHA-256: ${sourceMetadata.sourceSha256}\n` +
       `// Modification notice: ${sourceMetadata.modificationNotice}\n`

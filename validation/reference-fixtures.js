@@ -128,7 +128,7 @@ export const REFERENCE_CASES = deepFreeze([
     id: "FSRCNNX_x2_56-16-4-1",
     label: "FSRCNNX High x2 numerical reference",
     source: {
-      path: "shaders/FSRCNNX_x2_56-16-4-1.glsl",
+      path: "shaders/upstream/FSRCNNX_x2_56-16-4-1.glsl",
       sha256: "34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6",
     },
     inputs: [{ role: "source", id: "model" }],

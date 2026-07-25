@@ -50,13 +50,15 @@ Copyright (C) 2017-2021 igv
 
 Upstream asset: <https://github.com/igv/FSRCNN-TensorFlow/releases/download/1.1/FSRCNNX_x2_16-0-4-1.glsl>
 
+The High x2 source `FSRCNNX_x2_56-16-4-1.glsl` was also an official FSRCNN-TensorFlow release-1.1 asset. Archived release pages list it from [2018-08-26](https://web.archive.org/web/20180826101521/https://github.com/igv/FSRCNN-TensorFlow/releases) through [2019-10-21](https://web.archive.org/web/20191021180715/https://github.com/igv/FSRCNN-TensorFlow/releases); it was absent by [2020-10-11](https://web.archive.org/web/20201011050558/https://github.com/igv/FSRCNN-TensorFlow/releases/tag/1.1). The archived parameter bundle, SHA-256 `28167f74341256054c790e94c30a10964818f6bdbe7aedb97c6507208123fc10`, contains the 56-16-4-1 weights, and tag-1.1 `gen.py` deterministically reproduces the checked-in source after CRLF-to-LF normalization. The resulting source SHA-256 is `34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6`; full hashes are recorded in `docs/compliance/MODEL_PROVENANCE.md`.
+
 The SSimDownscaler WebGPU port derives from the packaged `shaders/upstream/SSimDownscaler.glsl`, gist revision `38992bce7f9ff844f800820df0908692b65bb74a`, SHA-256 `f46f4710a162d17058b9d82ed8610588b0c04d7be07cef6bf2a8c4077828f804`.
 
 Upstream: <https://gist.github.com/igv/36508af3ffc84410fe39761d6969be10/38992bce7f9ff844f800820df0908692b65bb74a>
 
-Both upstream files state that they may be redistributed and/or modified under the GNU Lesser General Public License, version 3 or, at the recipient's option, any later version; they disclaim warranty.
+The Standard and SSim upstream files state that they may be redistributed and/or modified under the GNU Lesser General Public License, version 3 or, at the recipient's option, any later version; they disclaim warranty. The High source has no embedded header. This project classifies that officially released source and its deterministic generated pair as LGPL-3.0-or-later consistently with Standard, without assigning unsupported copyright years. Qualified review of that classification and the distribution plan remains pending.
 
-The package includes the exact FSRCNNX and SSim upstream sources, complete official [`LGPL-3.0.txt`](LICENSES/LGPL-3.0.txt) text and [`GPL-3.0.txt`](LICENSES/GPL-3.0.txt) companion, the FSRCNNX transformation script, generated source metadata, and [`LGPL_REBUILDING.md`](docs/compliance/LGPL_REBUILDING.md) with offline rebuilding and Chromium substitution instructions. The checked-in sources retain their upstream license headers, and the generated/ported files identify local modifications. The Apache-2.0 license for project-authored material does not restrict modification, reverse engineering, or recombination needed to exercise LGPL rights in these portions. These materials do not clear public distribution: qualified review must still confirm that the plan satisfies every applicable obligation.
+The package includes the exact FSRCNNX and SSim upstream sources, complete official [`LGPL-3.0.txt`](LICENSES/LGPL-3.0.txt) text and [`GPL-3.0.txt`](LICENSES/GPL-3.0.txt) companion, the FSRCNNX transformation script, generated source metadata, and [`LGPL_REBUILDING.md`](docs/compliance/LGPL_REBUILDING.md) with offline rebuilding and Chromium substitution instructions. Sources with embedded notices retain them, and the generated/ported files identify local modifications. The Apache-2.0 license for project-authored material does not restrict modification, reverse engineering, or recombination needed to exercise LGPL rights in these portions. These materials do not clear public distribution: qualified review must still confirm that the plan satisfies every applicable obligation.
 
 ## Adaptive Sharpen redistribution notice
 
@@ -75,12 +77,6 @@ Upstream: <https://gist.github.com/igv/8a77e4eb8276753b54bb94c1c50c317e/572f5909
 
 The source module retains the preceding notice verbatim before its local port description.
 
-## Unresolved material
-
-### FSRCNNX High (`FSRCNNX_x2_56-16-4-1`)
-
-The high-quality x2 source and generated runtime pair are present and functional, but no license is asserted for them here. The exact GLSL bytes are corroborated by [`resc863/Project` commit `0e6bdb96f2845d883ec0131af8598c438c68e30a`](https://github.com/resc863/Project/blob/0e6bdb96f2845d883ec0131af8598c438c68e30a/mpv-config/FSRCNNX_x2_56-16-4-1.glsl). That downstream mirror neither authored the model nor supplies authoritative permission for it, and its repository-level license cannot license third-party model weights. The source has no embedded license notice. The FSRCNN-TensorFlow 1.1 tag and licenses attached to different, currently published shaders therefore must not be treated as permission for these exact bytes.
-
-Public repository publication and extension-package distribution remain blocked by `unknown-high-x2-shader-origin` until the author or another authoritative source identifies this exact artifact and confirms its applicable license.
+## Removed and pending material
 
 No license is asserted here for the removed x3 or x4 FSRCNNX artifacts, unidentified generic RIFE model, unreproducible SPAN smoke model, or unresolved deband port. They are absent from the current tree, extension package, and writable branch history, but GitHub's four retained pull-request refs still expose the pre-rewrite objects pending Support removal and garbage collection. The LGPL and ONNX Runtime applicability reviews also remain blocked in [`release-clearance.json`](https://github.com/ajccarlson/fsrcnnx-ext/blob/main/docs/compliance/release-clearance.json); merely bundling complete upstream texts and notices does not clear them.

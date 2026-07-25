@@ -17,7 +17,7 @@ const pinnedArtifacts = {
   "LICENSES/GPL-3.0.txt": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
   "LICENSES/LGPL-3.0.txt": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118",
   "NOTICE": "42dfd832a3c91892045eb6a2c5f76df4aa185c794145f0c3726fa20054c5daaa",
-  "docs/compliance/LGPL_REBUILDING.md": "83447340dfc9d247061545a544541beb0fe15bd000e4e2df56843e809808b78a",
+  "docs/compliance/LGPL_REBUILDING.md": "cb63e0a154fe1b9696f3de4771cde762f006ab06aa391434e8f4dc2fbf767c17",
   "model/rife_v4.26.onnx": "af25762dfec02a4bbb949decea63988b01fa56c46c0ff9dc66ac8e2f12cbb661",
   "model/rife_v4.26_fp16.onnx": "d5672f39b493609220c95c709542d6b99204145a67d9ca496d4500cd8895301f",
   "vendor/ort/LICENSE": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
@@ -26,7 +26,7 @@ const pinnedArtifacts = {
   "vendor/ort/ort-wasm-simd-threaded.asyncify.mjs": "7236653b8565da4046e459cd0e274123419a1d9f1f8f18fd36c28058346ca655",
   "vendor/ort/ort-wasm-simd-threaded.asyncify.wasm": "7e83cd6cee77e478bc96a7e91b198144fb5e4126287daf1f9b54bb195ebcd55a",
   "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl": "d5a24a271e5d9a3f7f7a053b150c460a44c25b3cf7f770857d57cc3a2e1c9965",
-  "shaders/FSRCNNX_x2_56-16-4-1.glsl": "34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6",
+  "shaders/upstream/FSRCNNX_x2_56-16-4-1.glsl": "34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6",
   "shaders/upstream/SSimDownscaler.glsl": "f46f4710a162d17058b9d82ed8610588b0c04d7be07cef6bf2a8c4077828f804",
   "shaders/upstream/adaptive-sharpen.glsl": "827fb3d662ac9a91b4075e9117fe6e1dbc1c06d85959ba719cdb954dfb7fb8e4",
   "shaders/upstream/ArtCNN_C4F32.glsl": "f773bce6cf5fe7e5e5d599a695edd40df5cd7a20c3d08c4d164d07591d5bead3",
@@ -34,8 +34,8 @@ const pinnedArtifacts = {
   "shaders/upstream/ArtCNN_C4F32_DS.glsl": "a04c9cba6fbb8e6db9239d61848390208aedf8e348ef116e12174c803d22077e",
   "model/FSRCNNX_x2_16-0-4-1.wgsl": "2b005b9c4e60c59445708b2f503c9afb01fd70ee9efb1615782274e7b7707f26",
   "model/FSRCNNX_x2_16-0-4-1.passes.json": "1378fc336deb2588f75ddf8b9ed6ec70109256f2c3fa0477ca742adf830fb3e0",
-  "model/FSRCNNX_x2_56-16-4-1.wgsl": "267ba203867483a467c535fd03c36c62ff9428116111d4d258dc5c295ef8e0d7",
-  "model/FSRCNNX_x2_56-16-4-1.passes.json": "57395ac668b4cbebea69938a9089c9bea0029ce785f7cc6dad239c4be31d43e7",
+  "model/FSRCNNX_x2_56-16-4-1.wgsl": "19a5327c8f96b7cb0593512f846f75ef266a3d857a84532c4dc5a374296e3d11",
+  "model/FSRCNNX_x2_56-16-4-1.passes.json": "4b7512ca17fd9788f4876f2681207fa8fb3b10c46d314ea2b3ce684864fb4d70",
   "model/ArtCNN_C4F32.artcnn.wgsl": "ab6fe4c88e88eb0cc3b5482e68ca9279c802c0b7844699c40f9f15eb3aac8138",
   "model/ArtCNN_C4F32.artcnn.json": "4ab29b29a6121e0fa3d3880b890bedabb3ea1f49356ef46704ad1770b143077a",
   "model/ArtCNN_C4F32_DN.artcnn.wgsl": "c319ff51ff358558cd4daa1fc897da4bfc0064c175cca3f9fd29052ac29af280",
@@ -44,7 +44,7 @@ const pinnedArtifacts = {
   "model/ArtCNN_C4F32_DS.artcnn.json": "f98bbd5e834cbfb2ed66ba07865889f76466279e356bfbd62c33df73e95b30cb",
   "src/core/fsrcnnx-ssimds.js": "0f55f8f2b49bea3cb8ee2e4c801a663f21d4dfabb88efaf2de23b709c6ade3c6",
   "src/core/fsrcnnx-sharpen.js": "9312f5445791792634679bac74f01d3292e8e776c6fc7e3be348435f2913ef8a",
-  "tools/transpile.js": "58b7cf1ff4749a3845348ba90b41647d9fc3d8b7a78e0a2bbd8fcd36bd88a817",
+  "tools/transpile.js": "6abd739bc5356ea9fc151c754f6c4d9e017c39283d5e5ba477a70aafe814003a",
 };
 
 for (const [path, expected] of Object.entries(pinnedArtifacts)) {
@@ -56,36 +56,57 @@ for (const [path, expected] of Object.entries(pinnedArtifacts)) {
   }
 }
 
-const standardSourceMetadata = Object.freeze({
-  license: "LGPL-3.0-or-later",
-  sourcePath: "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl",
-  sourceSha256: "d5a24a271e5d9a3f7f7a053b150c460a44c25b3cf7f770857d57cc3a2e1c9965",
-  modificationNotice:
-    "Transpiled in 2026 from the mpv/libplacebo GLSL hook format to WGSL compute passes and a JSON pass manifest for FSRCNNX-EXT; model weights and pass order are preserved.",
-});
-try {
-  const manifest = JSON.parse(readFileSync(
-    resolve(modelDir, "FSRCNNX_x2_16-0-4-1.passes.json"),
-    "utf8",
-  ));
-  for (const [field, expected] of Object.entries(standardSourceMetadata)) {
-    if (manifest[field] !== expected) {
-      errors.push(`FSRCNNX standard manifest: ${field} does not match the pinned source record`);
+const modificationNotice =
+  "Transpiled in 2026 from the mpv/libplacebo GLSL hook format to WGSL compute passes and a JSON pass manifest for FSRCNNX-EXT; model weights and pass order are preserved.";
+const fsrcnnxSources = Object.freeze([
+  Object.freeze({
+    label: "standard",
+    name: "FSRCNNX_x2_16-0-4-1",
+    upstream: "https://github.com/igv/FSRCNN-TensorFlow/releases/download/1.1/FSRCNNX_x2_16-0-4-1.glsl",
+    license: "LGPL-3.0-or-later",
+    sourcePath: "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl",
+    sourceSha256: "d5a24a271e5d9a3f7f7a053b150c460a44c25b3cf7f770857d57cc3a2e1c9965",
+  }),
+  Object.freeze({
+    label: "High",
+    name: "FSRCNNX_x2_56-16-4-1",
+    upstream: "https://github.com/igv/FSRCNN-TensorFlow/releases/download/1.1/FSRCNNX_x2_56-16-4-1.glsl",
+    license: "LGPL-3.0-or-later",
+    sourcePath: "shaders/upstream/FSRCNNX_x2_56-16-4-1.glsl",
+    sourceSha256: "34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6",
+  }),
+]);
+for (const source of fsrcnnxSources) {
+  try {
+    const manifest = JSON.parse(readFileSync(
+      resolve(modelDir, `${source.name}.passes.json`),
+      "utf8",
+    ));
+    for (const [field, expected] of Object.entries({
+      license: source.license,
+      sourcePath: source.sourcePath,
+      sourceSha256: source.sourceSha256,
+      modificationNotice,
+    })) {
+      if (manifest[field] !== expected) {
+        errors.push(`FSRCNNX ${source.label} manifest: ${field} does not match the pinned source record`);
+      }
     }
-  }
-  const wgsl = readFileSync(resolve(modelDir, "FSRCNNX_x2_16-0-4-1.wgsl"), "utf8");
-  for (const line of [
-    `// License: ${standardSourceMetadata.license}`,
-    `// Source path: ${standardSourceMetadata.sourcePath}`,
-    `// Source SHA-256: ${standardSourceMetadata.sourceSha256}`,
-    `// Modification notice: ${standardSourceMetadata.modificationNotice}`,
-  ]) {
-    if (!wgsl.startsWith("// License:") || !wgsl.includes(`${line}\n`)) {
-      errors.push(`FSRCNNX standard WGSL: missing pinned metadata line ${line}`);
+    const wgsl = readFileSync(resolve(modelDir, `${source.name}.wgsl`), "utf8");
+    for (const line of [
+      `// License: ${source.license}`,
+      `// Upstream: ${source.upstream}`,
+      `// Source path: ${source.sourcePath}`,
+      `// Source SHA-256: ${source.sourceSha256}`,
+      `// Modification notice: ${modificationNotice}`,
+    ]) {
+      if (!wgsl.startsWith("// License:") || !wgsl.includes(`${line}\n`)) {
+        errors.push(`FSRCNNX ${source.label} WGSL: missing pinned metadata line ${line}`);
+      }
     }
+  } catch (error) {
+    errors.push(`FSRCNNX ${source.label} metadata: cannot verify generated record (${error.message})`);
   }
-} catch (error) {
-  errors.push(`FSRCNNX standard metadata: cannot verify generated record (${error.message})`);
 }
 
 for (const name of readdirSync(modelDir).filter((file) => /\.(?:passes|artcnn)\.json$/.test(file)).sort()) {
