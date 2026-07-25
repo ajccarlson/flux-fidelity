@@ -193,13 +193,23 @@ export function validatePackage({ rootDir = root, packageFiles = PACKAGE_FILES }
   }
 
   const popupHtmlPath = manifest?.action?.default_popup;
-  const popupJsPath = popupHtmlPath?.replace(/\.html$/i, ".js");
-  if (fileSet.has(popupJsPath) && fileSet.has(popupHtmlPath)) {
-    const popupSource = readText(rootDir, popupJsPath, errors);
+  if (fileSet.has(popupHtmlPath)) {
     const popupHtml = readText(rootDir, popupHtmlPath, errors);
-    if (popupSource !== null && popupHtml !== null) {
+    if (popupHtml !== null) {
+      const popupScriptPaths = [
+        ...popupHtml.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi),
+      ]
+        .map((match) => match[1])
+        .filter((reference) => !/^(?:https?:|data:|#)/.test(reference))
+        .map((reference) => normalizedRelativePath(rootDir, popupHtmlPath, reference))
+        .filter((path) => fileSet.has(path));
+      const popupSources = popupScriptPaths
+        .map((path) => readText(rootDir, path, errors))
+        .filter((source) => source !== null);
       const requiredPopupIds = new Set(
-        [...popupSource.matchAll(/\$\(["']([^"']+)["']\)/g)].map((match) => match[1]),
+        popupSources.flatMap((source) =>
+          [...source.matchAll(/\$\(["']([^"']+)["']\)/g)].map((match) => match[1])
+        ),
       );
       const popupIds = [...popupHtml.matchAll(/\bid=["']([^"']+)["']/g)].map((match) => match[1]);
       const popupIdSet = new Set(popupIds);

@@ -43,7 +43,7 @@ Run packaged-extension and GPU smoke checks in a temporary Chromium profile:
 npm run validate:browser
 ```
 
-Set `FSRCNNX_BROWSER` if no browser is found automatically. The manually loaded GPU suite is at `chrome-extension://<extension-id>/validation/validate.html`.
+Set `FSRCNNX_BROWSER` if no browser is found automatically. The manually loaded GPU suite is at `chrome-extension://<extension-id>/validate.html`.
 
 `npm run package:internal` creates a deterministic validation archive under `dist/`. `npm run package` also enforces the public-release gate and currently stops on unresolved items in [Model provenance](MODEL_PROVENANCE.md).
 
