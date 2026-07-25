@@ -61,7 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     env:
-      CHROME_DEVEL_SANDBOX: /opt/google/chrome/chrome-sandbox
+      CHROME_DEVEL_SANDBOX: /usr/local/sbin/fsrcnnx-chrome-sandbox
       FSRCNNX_BROWSER: chromium
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -73,6 +73,8 @@ jobs:
       - name: Verify browser prerequisites
         run: |
           "$FSRCNNX_BROWSER" --version
+          sudo install --owner=root --group=root --mode=4755 \
+            /opt/google/chrome/chrome-sandbox "$CHROME_DEVEL_SANDBOX"
           test -x "$CHROME_DEVEL_SANDBOX"
           test -u "$CHROME_DEVEL_SANDBOX"
           test "$(stat -c '%u' "$CHROME_DEVEL_SANDBOX")" -eq 0
