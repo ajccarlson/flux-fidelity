@@ -664,7 +664,7 @@ async function initializeGpuCandidate(descriptor, generation, { log, warn } = {}
       warning("[RIFE] no ORT device for GPU path");
       return false;
     }
-    const mod = await import(chrome.runtime.getURL("fsrcnnx-rife-gpu.js"));
+    const mod = await import(chrome.runtime.getURL("src/core/fsrcnnx-rife-gpu.js"));
     if (!isCurrent()) return false;
     candidate = new mod.GpuInterp({
       log,

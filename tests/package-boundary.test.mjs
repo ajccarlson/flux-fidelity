@@ -64,7 +64,7 @@ test("the package retains every legal notice and the machine-readable release ga
     "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl",
     "shaders/upstream/SSimDownscaler.glsl",
     "shaders/upstream/adaptive-sharpen.glsl",
-    "transpile.js",
+    "tools/transpile.js",
     "vendor/ort/LICENSE",
     "vendor/ort/ThirdPartyNotices.txt",
   ]) {
@@ -151,9 +151,9 @@ test("internal validation files and off-state icons stay packaged but private", 
     "icons/icon-off-32.png",
     "icons/icon-off-48.png",
     "icons/icon-off-128.png",
-    "validate.html",
-    "validate.js",
-    "fsrcnnx-validation.js",
+    "validation/fsrcnnx-validation.js",
+    "validation/validate.html",
+    "validation/validate.js",
   ];
 
   for (const file of internalFiles) {

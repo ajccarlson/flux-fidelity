@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { Interpolator } from "../fsrcnnx-interpolate.js";
-import { listModels, setModel } from "../fsrcnnx-rife.js";
+import { Interpolator } from "../src/core/fsrcnnx-interpolate.js";
+import { listModels, setModel } from "../src/core/fsrcnnx-rife.js";
 
 function makeInterpolator() {
   return new Interpolator({

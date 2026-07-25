@@ -5,7 +5,7 @@ import {
   VideoController,
   VideoSelectionMonitor,
   videoPresentationState,
-} from "../fsrcnnx-video-controller.js";
+} from "../src/core/fsrcnnx-video-controller.js";
 
 function eventTarget() {
   const listeners = new Map();

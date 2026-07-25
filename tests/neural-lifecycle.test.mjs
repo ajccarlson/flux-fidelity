@@ -11,7 +11,7 @@ function deferred() {
 }
 
 async function loadNeuralEngine(deps) {
-  const url = new URL("../fsrcnnx-neural.js", import.meta.url);
+  const url = new URL("../src/core/fsrcnnx-neural.js", import.meta.url);
   const original = await readFile(url, "utf8");
   const dependencyImport = "import { createOrtSession, ensureOrt, getOrtSessionDevice } " +
     `from ${JSON.stringify("./fsrcnnx-rife.js")};`;

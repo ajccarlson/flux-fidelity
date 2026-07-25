@@ -1,51 +1,52 @@
 # FSRCNNX-EXT
 
-FSRCNNX-EXT is a pre-release Chromium extension for real-time WebGPU video enhancement. It provides standard and High FSRCNNX upscaling, ArtCNN upscaling, optional SSimDownscaler and sharpening, RIFE or blend frame interpolation, and an experimental ONNX super-resolution path.
+FSRCNNX-EXT is a pre-release Chromium extension for real-time WebGPU video enhancement. It supports FSRCNNX and ArtCNN upscaling, optional SSimDownscaler and sharpening, RIFE or blend interpolation, and an experimental ONNX super-resolution path.
 
-Public distribution is not yet cleared. Several bundled artifacts still have unresolved provenance or licensing records; see [Model provenance](MODEL_PROVENANCE.md) before packaging or publishing the extension.
+Public distribution is not cleared because some bundled artifacts still have unresolved provenance or licensing records. Review [Model provenance](MODEL_PROVENANCE.md) before packaging or publishing.
 
 ## Requirements
 
-- A current Chromium-based browser with WebGPU enabled and a compatible GPU driver.
-- A readable, non-DRM BT.709/sRGB SDR HTML5 video in the top-level page. HDR, wide-gamut, or unverified color metadata remains on the browser's native renderer; cross-origin restrictions, iframes, and page-specific rendering can also prevent capture.
-- Node.js 20.11 or newer only for repository validation and packaging. Runtime use has no npm dependency.
+- A current Chromium-based browser with WebGPU and a compatible GPU.
+- A readable, non-DRM BT.709/sRGB SDR video in the top-level page. HDR, wide-gamut, cross-origin, iframe, and page-specific restrictions may leave a video on the browser's native renderer.
+- Node.js 20.11 or newer for repository checks and packaging. The extension itself has no npm dependency.
 
-The extension runs its content script on user-allowed sites so it can find and process eligible page videos. Processing stays on the device; see [Privacy](PRIVACY.md) for the data and permission boundaries.
+Processing stays on the device. See [Privacy](PRIVACY.md) for the data and permission boundaries.
 
-## Install locally
+## Install and use
 
-1. Open `chrome://extensions` in Chromium.
-2. Enable **Developer mode**.
-3. Choose **Load unpacked** and select this directory.
-4. Reload the extension from that page after updating the checkout.
+1. Open `chrome://extensions`, enable **Developer mode**, and choose **Load unpacked**.
+2. Select this repository's root directory.
+3. Play a supported video, open the extension popup, choose an engine and policy, then select **Upscale**.
+4. Select **Off** to restore native rendering. Reload the extension after changing the checkout.
 
-## Use
+Settings are stored per origin. Available combinations depend on browser support, GPU memory, source resolution, and model cost. The ONNX super-resolution option remains unavailable until a compatible licensed model is added to `model/neural/manifest.json`.
 
-1. Open a page containing a video and start playback.
-2. Open the extension popup.
-3. Select an upscaling engine and policy, then choose **Upscale**. Optional filters and interpolation can be enabled separately.
-4. Choose **Off** to restore normal page rendering.
+## Repository layout
 
-Settings are stored per origin. GPU memory, source resolution, browser support, and model cost determine which combinations can sustain real-time playback. No ONNX super-resolution model is bundled, so that engine remains unavailable unless a compatible, licensed model is added to the neural manifest.
+- `src/` — extension entry points, popup, and runtime modules.
+- `model/`, `shaders/`, and `vendor/` — runtime assets and pinned third-party sources.
+- `validation/` — browser validation page and numerical reference fixtures.
+- `tests/` — deterministic Node and browser fixtures.
+- `tools/` — checks, packaging, reproduction utilities, and transpilers.
 
-## Validate
+## Validate and package
 
-Run the complete repository check with:
+Run the complete offline check:
 
 ```sh
 npm run check
 ```
 
-Run the production-pipeline and model-inference smoke checks in a temporary local Edge/Chrome/Chromium profile with:
+Run packaged-extension and GPU smoke checks in a temporary Chromium profile:
 
 ```sh
 npm run validate:browser
 ```
 
-Set `FSRCNNX_BROWSER` to an executable path when no supported browser is found automatically. After loading the extension manually, the GPU validation suite is available at `chrome-extension://<extension-id>/validate.html`; the ID is shown on `chrome://extensions`.
+Set `FSRCNNX_BROWSER` if no browser is found automatically. The manually loaded GPU suite is at `chrome-extension://<extension-id>/validation/validate.html`.
 
-`npm run package:internal` creates a deterministic, versioned validation archive and `SHA256SUMS` under `dist/` after running the technical checks. `npm run package` additionally enforces the public-release gate and currently stops on the unresolved items in [Model provenance](MODEL_PROVENANCE.md).
+`npm run package:internal` creates a deterministic validation archive under `dist/`. `npm run package` also enforces the public-release gate and currently stops on unresolved items in [Model provenance](MODEL_PROVENANCE.md).
 
 ## Licensing
 
-The project-owned source is all rights reserved; see [LICENSE](LICENSE). Bundled and derived third-party material remains under its own terms, recorded in [Third-party notices](THIRD_PARTY_NOTICES.md) and [Model provenance](MODEL_PROVENANCE.md).
+Project-owned source is covered by [LICENSE](LICENSE). Third-party and derived material retains its own terms; see [Third-party notices](THIRD_PARTY_NOTICES.md), [Model provenance](MODEL_PROVENANCE.md), and [LGPL rebuilding instructions](LGPL_REBUILDING.md).

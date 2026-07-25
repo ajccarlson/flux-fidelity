@@ -192,23 +192,27 @@ export function validatePackage({ rootDir = root, packageFiles = PACKAGE_FILES }
     }
   }
 
-  if (fileSet.has("popup.js") && fileSet.has("popup.html")) {
-    const popupSource = readText(rootDir, "popup.js", errors);
-    const popupHtml = readText(rootDir, "popup.html", errors);
+  const popupHtmlPath = manifest?.action?.default_popup;
+  const popupJsPath = popupHtmlPath?.replace(/\.html$/i, ".js");
+  if (fileSet.has(popupJsPath) && fileSet.has(popupHtmlPath)) {
+    const popupSource = readText(rootDir, popupJsPath, errors);
+    const popupHtml = readText(rootDir, popupHtmlPath, errors);
     if (popupSource !== null && popupHtml !== null) {
       const requiredPopupIds = new Set(
         [...popupSource.matchAll(/\$\(["']([^"']+)["']\)/g)].map((match) => match[1]),
       );
       const popupIds = [...popupHtml.matchAll(/\bid=["']([^"']+)["']/g)].map((match) => match[1]);
       const popupIdSet = new Set(popupIds);
-      for (const id of requiredPopupIds) if (!popupIdSet.has(id)) errors.push(`popup.html: missing #${id}`);
+      for (const id of requiredPopupIds) {
+        if (!popupIdSet.has(id)) errors.push(`${popupHtmlPath}: missing #${id}`);
+      }
       for (const id of popupIdSet) {
         if (popupIds.filter((candidate) => candidate === id).length > 1) {
-          errors.push(`popup.html: duplicate #${id}`);
+          errors.push(`${popupHtmlPath}: duplicate #${id}`);
         }
       }
       if (/<script\b(?![^>]*\bsrc=)[^>]*>/i.test(popupHtml)) {
-        errors.push("popup.html: inline scripts violate MV3 CSP");
+        errors.push(`${popupHtmlPath}: inline scripts violate MV3 CSP`);
       }
     }
   }

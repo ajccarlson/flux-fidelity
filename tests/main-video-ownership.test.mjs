@@ -2,8 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const mainUrl = new URL("../fsrcnnx-main.js", import.meta.url);
-const videoControllerUrl = new URL("../fsrcnnx-video-controller.js", import.meta.url);
+const mainUrl = new URL("../src/core/fsrcnnx-main.js", import.meta.url);
+const videoControllerUrl = new URL(
+  "../src/core/fsrcnnx-video-controller.js",
+  import.meta.url,
+);
 let revision = 0;
 
 function deferred() {
@@ -1386,7 +1389,10 @@ test("interpolation dimensions require a successful frame from the current prima
 
 test("production overlays expose stable primary, secondary, and interpolation markers", async () => {
   const mainSource = await readFile(mainUrl, "utf8");
-  const interpolationSource = await readFile(new URL("../fsrcnnx-interpolate.js", import.meta.url), "utf8");
+  const interpolationSource = await readFile(
+    new URL("../src/core/fsrcnnx-interpolate.js", import.meta.url),
+    "utf8",
+  );
   assert.match(
     section(mainSource, "function ensureCanvas()", "// True if"),
     /setAttribute\?\.\("data-fsrcnnx-overlay", "primary"\)/,

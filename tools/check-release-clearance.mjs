@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync } from "node:fs";
-import { isAbsolute, normalize, relative, resolve } from "node:path";
+import { isAbsolute, posix, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(import.meta.dirname, "..");
@@ -38,7 +38,7 @@ function safeRelativePath(path) {
     && path.length > 0
     && !isAbsolute(path)
     && !path.includes("\\")
-    && normalize(path) === path
+    && posix.normalize(path) === path
     && !path.split("/").includes("..");
 }
 

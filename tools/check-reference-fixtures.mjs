@@ -9,7 +9,7 @@ import {
   REFERENCE_INPUTS,
   REFERENCE_INPUT_VERSION,
   REFERENCE_TOOLCHAIN,
-} from "../reference-fixtures.js";
+} from "../validation/reference-fixtures.js";
 import { PACKAGE_FILES } from "./package-files.mjs";
 
 const root = resolve(import.meta.dirname, "..");
@@ -227,7 +227,7 @@ if (metadata) {
 }
 
 for (const path of [
-  "reference-fixtures.js",
+  "validation/reference-fixtures.js",
   "validation/README.md",
   "validation/reference-fixtures.json",
   ...REFERENCE_CASES.filter((entry) => entry.output.kind === "fixture").map((entry) => entry.output.path),

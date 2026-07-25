@@ -1,13 +1,13 @@
 // Browser-validation primitives shared by the extension page and unit tests.
 
-import { LUMA_EXTRACT_WGSL, RECOMBINE_WGSL } from "./fsrcnnx-color.js";
-import { buildSharpenShader } from "./fsrcnnx-sharpen.js";
+import { LUMA_EXTRACT_WGSL, RECOMBINE_WGSL } from "../src/core/fsrcnnx-color.js";
+import { buildSharpenShader } from "../src/core/fsrcnnx-sharpen.js";
 import {
   buildL2Shader,
   buildMeanShader,
   SSIMDS_FINAL_WGSL,
   SSIMDS_MR_WGSL,
-} from "./fsrcnnx-ssimds.js";
+} from "../src/core/fsrcnnx-ssimds.js";
 
 export const VALIDATION_TIMEOUT_MS = 30_000;
 

@@ -8,7 +8,7 @@ import {
   FSRCNNX_STANDARD_MODEL_NAMES,
   GENERATED_MODEL_ASSET_PATHS,
   GENERATED_MODEL_CATALOG,
-} from "../fsrcnnx-model-catalog.js";
+} from "../src/core/fsrcnnx-model-catalog.js";
 import {
   acquireValidationDevice,
   alignedBytesPerRow,
@@ -23,7 +23,7 @@ import {
   summarizeValidation,
   withGpuErrorScopes,
   withTimeout,
-} from "../fsrcnnx-validation.js";
+} from "../validation/fsrcnnx-validation.js";
 
 test("the shared generated-model catalog is complete, immutable, and backed by files", () => {
   assert.equal(GENERATED_MODEL_CATALOG.length, 5);

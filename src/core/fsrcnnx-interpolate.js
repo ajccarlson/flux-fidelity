@@ -2300,7 +2300,7 @@ export class Interpolator {
       try {
         await this._waitForCpuGrabberTeardown();
         if (!this._isCurrent(generation)) return false;
-        const gm = await import(chrome.runtime.getURL("fsrcnnx-grab.js"));
+        const gm = await import(chrome.runtime.getURL("src/core/fsrcnnx-grab.js"));
         if (!this._isCurrent(generation)) return false;
         grabber = new gm.WebGPUGrabber({
           log: this.log,
@@ -2438,7 +2438,7 @@ export class Interpolator {
     // Load the interp module. If the user picked the Blend engine, bring up the
     // STANDALONE blend GPU path (own device, NO RIFE/ONNX model load). Otherwise
     // load RIFE (ORT + model) as usual; if that fails, tweens fall back to blend.
-    const pipelinePromise = import(chrome.runtime.getURL("fsrcnnx-rife.js")).then(async (m) => {
+    const pipelinePromise = import(chrome.runtime.getURL("src/core/fsrcnnx-rife.js")).then(async (m) => {
       if (!this._isCurrent(generation)) return false;
       rife = m;
       this._rifeMod = m; // expose for getStats (timing breakdown)

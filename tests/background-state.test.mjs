@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import vm from "node:vm";
 
-const backgroundUrl = new URL("../background.js", import.meta.url);
+const backgroundUrl = new URL("../src/background.js", import.meta.url);
 const manifestUrl = new URL("../manifest.json", import.meta.url);
 
 async function flush(turns = 4) {
