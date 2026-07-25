@@ -2134,12 +2134,24 @@ async function main(signal, options) {
     launched = await startBrowser(browser, profile, extensionRoot, signal);
     const browserWebSocket = await launched.endpoint;
     const httpBase = httpBaseFromWebSocket(browserWebSocket);
-    const discovery = await discoverExtension(
-      httpBase,
-      manifest.name,
-      manifest.background.service_worker,
-      signal,
-    );
+    // Loading an MV3 extension does not guarantee that its event worker is
+    // already running. A local fixture page injects the packaged content script;
+    // its normal startup ownership message provides a deterministic,
+    // extension-authored service-worker bootstrap.
+    const bootstrapUrl = new URL("video.html", fixtureServer.baseUrl).href;
+    const bootstrapPage = await createPageTarget(httpBase, bootstrapUrl, signal);
+    await waitForDocument(bootstrapPage.client, bootstrapUrl, signal);
+    let discovery;
+    try {
+      discovery = await discoverExtension(
+        httpBase,
+        manifest.name,
+        manifest.background.service_worker,
+        signal,
+      );
+    } finally {
+      await closePageTarget(httpBase, bootstrapPage);
+    }
     extensionControl = discovery.controlClient;
     await runPopupSmoke(
       httpBase,
