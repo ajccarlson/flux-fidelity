@@ -658,19 +658,24 @@ function requireCondition(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-async function createPageTarget(httpBase, url, signal, onEvent = null) {
-  const targetUrl = new URL(`/json/new?${encodeURIComponent("about:blank")}`, httpBase);
+async function requestPageTarget(httpBase, url, signal) {
+  // Create the target at its final URL. Chromium blocks Page.navigate from a
+  // normal about:blank target into a private chrome-extension:// page.
+  const targetUrl = new URL(`/json/new?${encodeURIComponent(url)}`, httpBase);
   const target = await requestJson(targetUrl, { method: "PUT", signal });
   if (!target.id || !target.webSocketDebuggerUrl) {
     throw new Error("new page target is missing its ID or DevTools WebSocket URL");
   }
+  return target;
+}
+
+async function createPageTarget(httpBase, url, signal, onEvent = null) {
+  const target = await requestPageTarget(httpBase, url, signal);
   const client = await CdpClient.connect(target.webSocketDebuggerUrl, { signal });
   try {
     if (onEvent) client.onEvent(onEvent);
     await client.send("Runtime.enable");
     await client.send("Page.enable");
-    const navigation = await client.send("Page.navigate", { url });
-    if (navigation.errorText) throw new Error(`navigation failed: ${navigation.errorText}`);
     return { target, client };
   } catch (error) {
     client.close();
@@ -1003,11 +1008,7 @@ function assertValidationResult(state, events) {
 
 async function runValidation(httpBase, extensionId, expectedName, signal) {
   const extensionUrl = `chrome-extension://${extensionId}/validate.html?autorun=1`;
-  // Attach before navigation so import failures and synchronous startup
-  // exceptions cannot occur before the Runtime event stream is enabled.
-  const targetUrl = new URL(`/json/new?${encodeURIComponent("about:blank")}`, httpBase);
-  const target = await requestJson(targetUrl, { method: "PUT", signal });
-  if (!target.webSocketDebuggerUrl) throw new Error("validation target has no DevTools WebSocket URL");
+  const target = await requestPageTarget(httpBase, extensionUrl, signal);
   const events = [];
   let client = null;
   try {
@@ -1016,8 +1017,6 @@ async function runValidation(httpBase, extensionId, expectedName, signal) {
     await client.send("Runtime.enable");
     await client.send("Page.enable");
     await client.send("Page.bringToFront");
-    const navigation = await client.send("Page.navigate", { url: extensionUrl });
-    if (navigation.errorText) throw new Error(`validation navigation failed: ${navigation.errorText}`);
     const deadline = Date.now() + VALIDATION_TIMEOUT_MS;
     let state = null;
     while (Date.now() < deadline) {
@@ -1080,9 +1079,7 @@ async function runValidation(httpBase, extensionId, expectedName, signal) {
 
 async function runPopupSmoke(httpBase, extensionId, expectedName, signal) {
   const popupUrl = `chrome-extension://${extensionId}/popup.html`;
-  const targetUrl = new URL(`/json/new?${encodeURIComponent("about:blank")}`, httpBase);
-  const target = await requestJson(targetUrl, { method: "PUT", signal });
-  if (!target.webSocketDebuggerUrl) throw new Error("popup smoke target has no DevTools WebSocket URL");
+  const target = await requestPageTarget(httpBase, popupUrl, signal);
   const events = [];
   let client = null;
   try {
@@ -1091,8 +1088,6 @@ async function runPopupSmoke(httpBase, extensionId, expectedName, signal) {
     await client.send("Runtime.enable");
     await client.send("Page.enable");
     await client.send("Page.bringToFront");
-    const navigation = await client.send("Page.navigate", { url: popupUrl });
-    if (navigation.errorText) throw new Error(`popup navigation failed: ${navigation.errorText}`);
 
     const deadline = Date.now() + CDP_TIMEOUT_MS;
     let state = null;
