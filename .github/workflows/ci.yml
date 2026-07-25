@@ -61,7 +61,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     env:
-      CHROME_DEVEL_SANDBOX: /usr/local/sbin/fsrcnnx-chrome-sandbox
       FSRCNNX_BROWSER: chromium
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -73,11 +72,18 @@ jobs:
       - name: Verify browser prerequisites
         run: |
           "$FSRCNNX_BROWSER" --version
-          sudo install --owner=root --group=root --mode=4755 \
-            /opt/google/chrome/chrome-sandbox "$CHROME_DEVEL_SANDBOX"
-          test -x "$CHROME_DEVEL_SANDBOX"
-          test -u "$CHROME_DEVEL_SANDBOX"
-          test "$(stat -c '%u' "$CHROME_DEVEL_SANDBOX")" -eq 0
+          chromium_path="$(readlink -f "$(command -v "$FSRCNNX_BROWSER")")"
+          test -x "$chromium_path"
+          printf '%s\n' \
+            'abi <abi/4.0>,' \
+            'include <tunables/global>' \
+            '' \
+            "profile fsrcnnx-chromium-ci $chromium_path flags=(unconfined) {" \
+            '  userns,' \
+            '}' \
+            | sudo tee /etc/apparmor.d/fsrcnnx-chromium-ci >/dev/null
+          sudo apparmor_parser -r /etc/apparmor.d/fsrcnnx-chromium-ci
+          sudo apparmor_status | grep -F 'fsrcnnx-chromium-ci'
           xvfb-run --help >/dev/null
       - name: Build packaged extension
         run: npm run package:internal
