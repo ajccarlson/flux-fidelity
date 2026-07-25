@@ -6,10 +6,10 @@ import {
   SRGB_COLOR_SPACE,
   classifyVideoColorSpace,
   probeVideoColorSupport,
-} from "../fsrcnnx-color-support.js";
+} from "../src/core/fsrcnnx-color-support.js";
 
-const projectUrl = new URL("../", import.meta.url);
-const mainUrl = new URL("../fsrcnnx-main.js", import.meta.url);
+const runtimeUrl = new URL("../src/core/", import.meta.url);
+const mainUrl = new URL("../src/core/fsrcnnx-main.js", import.meta.url);
 let revision = 0;
 
 function metadata(overrides = {}) {
@@ -295,11 +295,11 @@ test("DRM and taint checks short-circuit frame metadata probing", async (t) => {
 });
 
 test("every runtime WebGPU color boundary explicitly requests sRGB", async () => {
-  const entries = await readdir(projectUrl, { withFileTypes: true });
+  const entries = await readdir(runtimeUrl, { withFileTypes: true });
   const sources = [];
   for (const entry of entries) {
     if (entry.isFile() && entry.name.endsWith(".js")) {
-      sources.push({ name: entry.name, source: await readFile(new URL(entry.name, projectUrl), "utf8") });
+      sources.push({ name: entry.name, source: await readFile(new URL(entry.name, runtimeUrl), "utf8") });
     }
   }
 
@@ -354,7 +354,10 @@ test("every runtime WebGPU color boundary explicitly requests sRGB", async () =>
     "secondary media-resource boundaries must invalidate decoded color metadata",
   );
 
-  const colorShader = await readFile(new URL("../fsrcnnx-color.js", import.meta.url), "utf8");
+  const colorShader = await readFile(
+    new URL("../src/core/fsrcnnx-color.js", import.meta.url),
+    "utf8",
+  );
   assert.doesNotMatch(colorShader, /limited\s*->\s*full handled implicitly/i);
   assert.match(colorShader, /source primaries, transfer, YUV matrix/);
   assert.match(colorShader, /does not perform source YUV range or primary conversion/);

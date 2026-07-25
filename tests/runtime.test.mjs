@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { selectModel } from "../fsrcnnx-runtime.js";
-import { LUMA_EXTRACT_WGSL, RECOMBINE_WGSL } from "../fsrcnnx-color.js";
+import { selectModel } from "../src/core/fsrcnnx-runtime.js";
+import { LUMA_EXTRACT_WGSL, RECOMBINE_WGSL } from "../src/core/fsrcnnx-color.js";
 
 test("model selection chooses the highest eligible threshold", () => {
   const models = [

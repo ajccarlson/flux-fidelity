@@ -10,8 +10,8 @@ import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { GENERATED_MODEL_CATALOG } from "../fsrcnnx-model-catalog.js";
-import { createValidationPlan, REFERENCE_VALIDATION_CHECKS } from "../fsrcnnx-validation.js";
+import { GENERATED_MODEL_CATALOG } from "../src/core/fsrcnnx-model-catalog.js";
+import { createValidationPlan, REFERENCE_VALIDATION_CHECKS } from "../validation/fsrcnnx-validation.js";
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const FIXTURE_ROOT = join(PROJECT_ROOT, "tests", "fixtures", "browser");
@@ -1002,7 +1002,7 @@ function assertValidationResult(state, events) {
 }
 
 async function runValidation(httpBase, extensionId, expectedName, signal) {
-  const extensionUrl = `chrome-extension://${extensionId}/validate.html?autorun=1`;
+  const extensionUrl = `chrome-extension://${extensionId}/validation/validate.html?autorun=1`;
   // Attach before navigation so import failures and synchronous startup
   // exceptions cannot occur before the Runtime event stream is enabled.
   const targetUrl = new URL(`/json/new?${encodeURIComponent("about:blank")}`, httpBase);
@@ -1043,7 +1043,7 @@ async function runValidation(httpBase, extensionId, expectedName, signal) {
         await delay(100, signal);
         continue;
       }
-      if (!probe?.href?.startsWith(`chrome-extension://${extensionId}/validate.html`)) {
+      if (!probe?.href?.startsWith(`chrome-extension://${extensionId}/validation/validate.html`)) {
         throw new Error(`validation page failed to load (current URL: ${probe?.href || "unknown"})`);
       }
       if (probe.runtimeId !== extensionId || probe.manifestName !== expectedName) {
@@ -1079,7 +1079,7 @@ async function runValidation(httpBase, extensionId, expectedName, signal) {
 }
 
 async function runPopupSmoke(httpBase, extensionId, expectedName, signal) {
-  const popupUrl = `chrome-extension://${extensionId}/popup.html`;
+  const popupUrl = `chrome-extension://${extensionId}/src/popup.html`;
   const targetUrl = new URL(`/json/new?${encodeURIComponent("about:blank")}`, httpBase);
   const target = await requestJson(targetUrl, { method: "PUT", signal });
   if (!target.webSocketDebuggerUrl) throw new Error("popup smoke target has no DevTools WebSocket URL");
@@ -1700,7 +1700,7 @@ async function waitForBadge(client, tabId, expected, signal) {
 
 async function runRealVideoIntegration(httpBase, fixtureBase, extensionId, expectedName, signal) {
   const fixtureUrl = new URL("video.html", fixtureBase).href;
-  const popupUrl = `chrome-extension://${extensionId}/popup.html`;
+  const popupUrl = `chrome-extension://${extensionId}/src/popup.html`;
   let fixturePage = null;
   let popupPage = null;
   const fixtureEvents = [];
@@ -2084,8 +2084,9 @@ async function main(signal, options) {
       browserVersion(browser, signal),
     ]);
     const manifest = JSON.parse(manifestSource);
-    if (manifest.manifest_version !== 3 || manifest.background?.service_worker !== "background.js") {
-      throw new Error("browser validator requires the project's MV3 background.js service worker");
+    if (manifest.manifest_version !== 3 ||
+        manifest.background?.service_worker !== "src/background.js") {
+      throw new Error("browser validator requires the project's MV3 src/background.js service worker");
     }
     fixtureServer = await startFixtureServer(signal);
     launched = await startBrowser(browser, profile, extensionRoot, signal);

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ImageUpscaler } from "../fsrcnnx-images.js";
+import { ImageUpscaler } from "../src/core/fsrcnnx-images.js";
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 

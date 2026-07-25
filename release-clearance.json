@@ -13,7 +13,7 @@
         }
       ],
       "evidence": [
-        "fsrcnnx-rife.js",
+        "src/core/fsrcnnx-rife.js",
         "tools/package-files.mjs",
         "MODEL_PROVENANCE.md"
       ],
@@ -59,7 +59,7 @@
         }
       ],
       "evidence": [
-        "fsrcnnx-model-catalog.js",
+        "src/core/fsrcnnx-model-catalog.js",
         "tools/package-files.mjs",
         "MODEL_PROVENANCE.md",
         "shaders/README.md",
@@ -94,7 +94,7 @@
         }
       ],
       "evidence": [
-        "fsrcnnx-model-catalog.js",
+        "src/core/fsrcnnx-model-catalog.js",
         "tools/package-files.mjs",
         "MODEL_PROVENANCE.md"
       ],
@@ -154,16 +154,16 @@
           "sha256": "f46f4710a162d17058b9d82ed8610588b0c04d7be07cef6bf2a8c4077828f804"
         },
         {
-          "path": "fsrcnnx-ssimds.js",
+          "path": "src/core/fsrcnnx-ssimds.js",
           "sha256": "0f55f8f2b49bea3cb8ee2e4c801a663f21d4dfabb88efaf2de23b709c6ade3c6"
         },
         {
-          "path": "transpile.js",
+          "path": "tools/transpile.js",
           "sha256": "58b7cf1ff4749a3845348ba90b41647d9fc3d8b7a78e0a2bbd8fcd36bd88a817"
         },
         {
           "path": "LGPL_REBUILDING.md",
-          "sha256": "b23f3a64a3db81248f1fe99dc1138d4b55aace39b162cfaefaa667836240effe"
+          "sha256": "6bc947a5c6ed959c084abd3028e969c19979d0da3a144d28308949c4b6a0ce29"
         },
         {
           "path": "LICENSE",

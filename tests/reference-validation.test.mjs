@@ -8,7 +8,7 @@ import {
   REFERENCE_INPUT_VERSION,
   createReferenceInput,
   getReferenceCase,
-} from "../reference-fixtures.js";
+} from "../validation/reference-fixtures.js";
 import {
   assertReferenceMetrics,
   buildBt709ExtractOracle,
@@ -18,8 +18,8 @@ import {
   rgb16ReferenceValues,
   rgba16ReadbackValues,
   validateReferenceManifest,
-} from "../fsrcnnx-reference-validation.js";
-import { float16ToNumber, numberToFloat16 } from "../fsrcnnx-validation.js";
+} from "../validation/fsrcnnx-reference-validation.js";
+import { float16ToNumber, numberToFloat16 } from "../validation/fsrcnnx-validation.js";
 
 test("reference definitions cover every numerical path with deterministic structured inputs", () => {
   assert.equal(Object.isFrozen(REFERENCE_CASES), true);

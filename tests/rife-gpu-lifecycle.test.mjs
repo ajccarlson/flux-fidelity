@@ -7,7 +7,7 @@ import {
   DEFAULT_GPU_POOL_BUDGET_BYTES,
   GpuInterp,
   GpuResourceLimitError,
-} from "../fsrcnnx-rife-gpu.js";
+} from "../src/core/fsrcnnx-rife-gpu.js";
 
 function deferred() {
   let resolve;
