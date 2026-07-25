@@ -57,11 +57,11 @@ jobs:
           unzip -t dist/fsrcnnx-ext-*.zip
 
   browser-integration:
-    name: Validate packaged extension in Chrome
+    name: Validate packaged extension in Chromium
     runs-on: ubuntu-latest
     timeout-minutes: 12
     env:
-      FSRCNNX_BROWSER: google-chrome
+      FSRCNNX_BROWSER: chromium
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -71,7 +71,7 @@ jobs:
           node-version: 20.11.1
       - name: Verify browser prerequisites
         run: |
-          google-chrome --version
+          "$FSRCNNX_BROWSER" --version
           xvfb-run --help >/dev/null
       - name: Build packaged extension
         run: npm run package:internal

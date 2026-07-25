@@ -62,6 +62,10 @@ test("browser validation is release-blocking without slowing internal packaging"
 
 test("CI validates the staged package under Xvfb without disabling the sandbox", () => {
   assert.match(workflow, /browser-integration:/);
+  assert.match(workflow, /name: Validate packaged extension in Chromium/);
+  assert.match(workflow, /FSRCNNX_BROWSER: chromium/);
+  assert.match(workflow, /"\$FSRCNNX_BROWSER" --version/);
+  assert.doesNotMatch(workflow, /FSRCNNX_BROWSER: google-chrome/);
   assert.match(workflow, /npm run package:internal/);
   assert.match(workflow, /--extension-root dist\/fsrcnnx-ext/);
   assert.match(workflow, /xvfb-run/);
