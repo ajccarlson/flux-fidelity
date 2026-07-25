@@ -910,6 +910,31 @@ function httpBaseFromWebSocket(address) {
   return new URL(`http://${endpoint.host}/`);
 }
 
+async function waitForDevToolsHttp(httpBase, signal) {
+  const deadline = Date.now() + STARTUP_TIMEOUT_MS;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    if (signal?.aborted) throw abortReason(signal);
+    const remaining = Math.max(1, deadline - Date.now());
+    try {
+      const version = await requestJson(new URL("json/version", httpBase), {
+        signal,
+        timeoutMs: Math.min(HTTP_TIMEOUT_MS, remaining),
+      });
+      if (typeof version?.webSocketDebuggerUrl !== "string") {
+        throw new Error("DevTools HTTP version response omitted webSocketDebuggerUrl");
+      }
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+    const retryDelay = Math.min(200, deadline - Date.now());
+    if (retryDelay > 0) await delay(retryDelay, signal);
+  }
+  const detail = lastError instanceof Error ? `: ${lastError.message}` : "";
+  throw new Error(`DevTools HTTP endpoint did not become ready after ${STARTUP_TIMEOUT_MS} ms${detail}`);
+}
+
 async function listTargets(httpBase, signal) {
   return requestJson(new URL("json/list", httpBase), { signal });
 }
@@ -2134,6 +2159,7 @@ async function main(signal, options) {
     launched = await startBrowser(browser, profile, extensionRoot, signal);
     const browserWebSocket = await launched.endpoint;
     const httpBase = httpBaseFromWebSocket(browserWebSocket);
+    await waitForDevToolsHttp(httpBase, signal);
     // Loading an MV3 extension does not guarantee that its event worker is
     // already running. A local fixture page injects the packaged content script;
     // its normal startup ownership message provides a deterministic,
