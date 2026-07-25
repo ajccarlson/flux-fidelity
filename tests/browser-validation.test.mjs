@@ -26,6 +26,10 @@ test("browser validator covers the packaged extension and real-video runtime", (
   assert.match(validator, /framesPresented >= interpolationGeneration/);
   assert.match(validator, /\/json\/new\?\$\{encodeURIComponent\(url\)\}/);
   assert.doesNotMatch(validator, /encodeURIComponent\("about:blank"\)/);
+  assert.match(validator, /async function waitForDevToolsHttp/);
+  assert.match(validator, /new URL\("json\/version", httpBase\)/);
+  assert.match(validator, /await waitForDevToolsHttp\(httpBase, signal\)/);
+  assert.match(validator, /deadline = Date\.now\(\) \+ STARTUP_TIMEOUT_MS/);
   assert.match(validator, /chrome\.tabs\.create/);
   assert.match(validator, /manifest\.background\.service_worker/);
   assert.match(validator, /service-worker bootstrap/);
