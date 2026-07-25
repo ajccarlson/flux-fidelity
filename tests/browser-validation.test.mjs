@@ -63,15 +63,15 @@ test("browser validation is release-blocking without slowing internal packaging"
 test("CI validates the staged package under Xvfb without disabling the sandbox", () => {
   assert.match(workflow, /browser-integration:/);
   assert.match(workflow, /name: Validate packaged extension in Chromium/);
-  assert.match(workflow, /CHROME_DEVEL_SANDBOX: \/usr\/local\/sbin\/fsrcnnx-chrome-sandbox/);
   assert.match(workflow, /FSRCNNX_BROWSER: chromium/);
   assert.match(workflow, /"\$FSRCNNX_BROWSER" --version/);
-  assert.match(
-    workflow,
-    /sudo install --owner=root --group=root --mode=4755[\s\S]+\/opt\/google\/chrome\/chrome-sandbox/,
-  );
-  assert.match(workflow, /test -u "\$CHROME_DEVEL_SANDBOX"/);
-  assert.match(workflow, /stat -c '%u' "\$CHROME_DEVEL_SANDBOX"/);
+  assert.match(workflow, /readlink -f "\$\(command -v "\$FSRCNNX_BROWSER"\)"/);
+  assert.match(workflow, /profile fsrcnnx-chromium-ci \$chromium_path flags=\(unconfined\)/);
+  assert.match(workflow, /'  userns,'/);
+  assert.match(workflow, /apparmor_parser -r \/etc\/apparmor\.d\/fsrcnnx-chromium-ci/);
+  assert.match(workflow, /apparmor_status \| grep -F 'fsrcnnx-chromium-ci'/);
+  assert.doesNotMatch(workflow, /CHROME_DEVEL_SANDBOX/);
+  assert.doesNotMatch(workflow, /apparmor_restrict_unprivileged_userns=0/);
   assert.doesNotMatch(workflow, /FSRCNNX_BROWSER: google-chrome/);
   assert.match(workflow, /npm run package:internal/);
   assert.match(workflow, /--extension-root dist\/fsrcnnx-ext/);
