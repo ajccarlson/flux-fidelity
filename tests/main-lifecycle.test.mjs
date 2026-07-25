@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const mainUrl = new URL("../fsrcnnx-main.js", import.meta.url);
+const mainUrl = new URL("../src/core/fsrcnnx-main.js", import.meta.url);
 let moduleRevision = 0;
 
 function deferred() {
@@ -45,7 +45,8 @@ async function loadInterpolationLifecycle(deps) {
     "let interpolator = null, interpolatorInitPromise = null;",
     "// ===== INVERTED CHAIN",
   );
-  const dynamicImport = 'import(chrome.runtime.getURL("fsrcnnx-interpolate.js"))';
+  const dynamicImport =
+    'import(chrome.runtime.getURL("src/core/fsrcnnx-interpolate.js"))';
   const injected = production.replace(
     dynamicImport,
     "globalThis.__mainLifecycleTestDeps.loadInterpolatorModule()",

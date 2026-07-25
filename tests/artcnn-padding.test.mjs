@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
 
-import { splitModelEntries } from "../fsrcnnx-model-bundle.js";
+import { splitModelEntries } from "../src/core/fsrcnnx-model-bundle.js";
 
 const root = resolve(import.meta.dirname, "..");
 const modelNames = ["ArtCNN_C4F32", "ArtCNN_C4F32_DN", "ArtCNN_C4F32_DS"];

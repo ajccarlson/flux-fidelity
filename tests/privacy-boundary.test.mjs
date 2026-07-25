@@ -16,7 +16,7 @@ test("manifest requests only the capabilities used by the local media pipeline",
   assert.equal(Object.hasOwn(manifest, "externally_connectable"), false);
   assert.deepEqual(manifest.content_scripts, [{
     matches: ["<all_urls>"],
-    js: ["content.js"],
+    js: ["src/content.js"],
     run_at: "document_idle",
     all_frames: false,
   }]);
@@ -41,7 +41,9 @@ test("privacy disclosure is packaged and describes local handling, retention, an
 });
 
 test("project-authored packaged runtime has no external endpoint or hidden network API", () => {
-  const runtimeFiles = PACKAGE_FILES.filter((file) => file.endsWith(".js") && file !== "transpile.js");
+  const runtimeFiles = PACKAGE_FILES.filter(
+    (file) => file.endsWith(".js") && file !== "tools/transpile.js",
+  );
   const fetchFiles = [];
   for (const file of runtimeFiles) {
     const source = readFileSync(resolve(root, file), "utf8");
@@ -56,11 +58,11 @@ test("project-authored packaged runtime has no external endpoint or hidden netwo
     if (/\bfetch\s*\(/.test(source)) fetchFiles.push(file);
   }
   assert.deepEqual(fetchFiles, [
-    "fsrcnnx-main.js",
-    "fsrcnnx-neural.js",
-    "fsrcnnx-reference-validation.js",
-    "fsrcnnx-rife.js",
-    "validate.js",
+    "src/core/fsrcnnx-main.js",
+    "src/core/fsrcnnx-neural.js",
+    "src/core/fsrcnnx-rife.js",
+    "validation/fsrcnnx-reference-validation.js",
+    "validation/validate.js",
   ]);
   for (const file of fetchFiles) {
     const source = readFileSync(resolve(root, file), "utf8");

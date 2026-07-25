@@ -1,8 +1,8 @@
-import { ArtCnnModel } from "./fsrcnnx-artcnn-runtime.js";
-import { GENERATED_MODEL_CATALOG } from "./fsrcnnx-model-catalog.js";
-import { validateModelBundle } from "./fsrcnnx-model-bundle.js";
-import { createOrtSession, ensureOrt, getOrtSessionDevice } from "./fsrcnnx-rife.js";
-import { FsrcnnxModel } from "./fsrcnnx-runtime.js";
+import { ArtCnnModel } from "../src/core/fsrcnnx-artcnn-runtime.js";
+import { GENERATED_MODEL_CATALOG } from "../src/core/fsrcnnx-model-catalog.js";
+import { validateModelBundle } from "../src/core/fsrcnnx-model-bundle.js";
+import { createOrtSession, ensureOrt, getOrtSessionDevice } from "../src/core/fsrcnnx-rife.js";
+import { FsrcnnxModel } from "../src/core/fsrcnnx-runtime.js";
 import {
   formatReferenceMetrics,
   loadReferenceManifest,

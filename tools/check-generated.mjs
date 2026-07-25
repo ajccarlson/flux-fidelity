@@ -18,7 +18,7 @@ async function runScript(script, args, token) {
 
 try {
   const fsrcnnxOut = resolve(temp, "fsrcnnx");
-  await runScript("transpile.js", [
+  await runScript("tools/transpile.js", [
     "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl",
     "shaders/FSRCNNX_x2_56-16-4-1.glsl",
     "--out", fsrcnnxOut,
@@ -33,7 +33,7 @@ try {
   }
 
   const artcnnOut = resolve(temp, "artcnn");
-  await runScript("transpile-artcnn.js", [
+  await runScript("tools/transpile-artcnn.js", [
     "shaders/upstream/ArtCNN_C4F32.glsl",
     "shaders/upstream/ArtCNN_C4F32_DN.glsl",
     "shaders/upstream/ArtCNN_C4F32_DS.glsl",

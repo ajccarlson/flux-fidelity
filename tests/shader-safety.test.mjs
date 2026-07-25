@@ -1,17 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildSharpenShader } from "../fsrcnnx-sharpen.js";
+import { buildSharpenShader } from "../src/core/fsrcnnx-sharpen.js";
 import {
   buildL2Shader,
   buildMeanShader,
   SSIMDS_MR_WGSL,
-} from "../fsrcnnx-ssimds.js";
+} from "../src/core/fsrcnnx-ssimds.js";
 import {
   estimateSsimWork,
   SsimDownscaler,
   SSIMDS_WORK_BUDGET,
-} from "../fsrcnnx-ssimds-runtime.js";
+} from "../src/core/fsrcnnx-ssimds-runtime.js";
 
 const EPS = 1e-6;
 
