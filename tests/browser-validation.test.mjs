@@ -38,6 +38,15 @@ test("browser validator covers the packaged extension and real-video runtime", (
   assert.doesNotMatch(validator, /--no-sandbox/);
 });
 
+test("browser validator accepts configured paths on Windows and POSIX", () => {
+  assert.match(validator, /isAbsolute\(candidate\)/);
+  assert.ok(validator.includes('candidate.includes("\\\\")'));
+  assert.match(validator, /process\.platform !== "win32" && !process\.env\.DISPLAY/);
+  assert.match(validator, /softwareGpuArguments = process\.platform === "linux"/);
+  assert.match(validator, /--disable-backgrounding-occluded-windows/);
+  assert.doesNotMatch(validator, /state\.readyState === "complete" && state\.operationText\) break/);
+});
+
 test("browser fixture server pins a fail-closed content security policy", () => {
   const expected =
     "default-src 'none'; script-src 'self'; style-src 'self'; media-src 'self'; " +

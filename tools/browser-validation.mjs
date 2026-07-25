@@ -7,7 +7,7 @@ import { access, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
 import { tmpdir } from "node:os";
-import { basename, delimiter, dirname, join, resolve } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { GENERATED_MODEL_CATALOG } from "../src/core/fsrcnnx-model-catalog.js";
@@ -107,7 +107,9 @@ async function executable(path) {
 
 async function resolveExecutable(candidate) {
   if (!candidate) return null;
-  if (candidate.includes("/")) return (await executable(candidate)) ? resolve(candidate) : null;
+  if (isAbsolute(candidate) || candidate.includes("/") || candidate.includes("\\")) {
+    return (await executable(candidate)) ? resolve(candidate) : null;
+  }
   for (const directory of (process.env.PATH || "").split(delimiter)) {
     if (!directory) continue;
     const path = join(directory, candidate);
@@ -782,6 +784,14 @@ function assertRuntimeClean(events, context) {
 }
 
 function spawnBrowser(browser, profile, extensionRoot) {
+  const softwareGpuArguments = process.platform === "linux"
+    ? [
+        "--use-angle=swiftshader",
+        "--use-vulkan=swiftshader",
+        "--enable-features=Vulkan,DefaultANGLEVulkan,VulkanFromANGLE",
+        "--disable-vulkan-surface",
+      ]
+    : [];
   const browserArguments = [
     `--user-data-dir=${profile}`,
     "--remote-debugging-port=0",
@@ -791,19 +801,17 @@ function spawnBrowser(browser, profile, extensionRoot) {
     "--no-first-run",
     "--no-default-browser-check",
     "--disable-sync",
+    "--disable-backgrounding-occluded-windows",
     "--autoplay-policy=no-user-gesture-required",
     "--disable-features=msEdgeSidebarV2",
     "--window-size=1280,900",
     "--enable-unsafe-webgpu",
-    "--use-angle=swiftshader",
-    "--use-vulkan=swiftshader",
-    "--enable-features=Vulkan,DefaultANGLEVulkan,VulkanFromANGLE",
-    "--disable-vulkan-surface",
+    ...softwareGpuArguments,
     "about:blank",
   ];
   let command = browser;
   let args = browserArguments;
-  if (!process.env.DISPLAY) {
+  if (process.platform !== "win32" && !process.env.DISPLAY) {
     command = null;
     args = null;
   }
@@ -1186,7 +1194,11 @@ async function runPopupSmoke(httpBase, controlClient, extensionId, expectedName,
         }
         throw error;
       }
-      if (state?.href === popupUrl && state.readyState === "complete" && state.operationText) break;
+      if (state?.href === popupUrl && state.readyState === "complete" &&
+          new Set(["unavailable", "disconnected"]).has(state.webgpuText) &&
+          /(?:open an http, https, or permitted local file page|reload this page)/i.test(
+            state.operationText,
+          )) break;
       await delay(100, signal);
     }
 

@@ -277,7 +277,9 @@ export const REFERENCE_CASES = deepFreeze([
       comparison: "rgb",
     },
     oracle: { kind: "cpu-bt709-f32-f16", operation: "recombine" },
-    tolerances: { rmse: 0.001, max: 0.003 },
+    // Native D3D12 filtering can differ from the f32 oracle by one 1/256
+    // interpolation step; keep the full-frame RMSE bound strict.
+    tolerances: { rmse: 0.001, max: 0.004 },
   },
 ]);
 
