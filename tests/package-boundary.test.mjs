@@ -152,7 +152,7 @@ test("internal validation files and off-state icons stay packaged but private", 
     "icons/icon-off-48.png",
     "icons/icon-off-128.png",
     "validation/fsrcnnx-validation.js",
-    "validation/validate.html",
+    "validate.html",
     "validation/validate.js",
   ];
 
@@ -299,6 +299,38 @@ test("repository-only HTML and JavaScript references are not treated as packaged
     ]) {
       assert.ok(errors.includes(expected), errors.join("\n"));
     }
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("popup DOM validation follows a nested script reference", () => {
+  const fixture = mkdtempSync(join(tmpdir(), "fsrcnnx-popup-contract-"));
+  try {
+    writeFixture(fixture, "package.json", JSON.stringify({ version: "1.0.0" }));
+    writeFixture(fixture, "manifest.json", JSON.stringify({
+      manifest_version: 3,
+      version: "1.0.0",
+      action: { default_popup: "popup.html" },
+      background: { service_worker: "background.js" },
+    }));
+    writeFixture(fixture, "background.js", "void 0;");
+    writeFixture(fixture, "popup.html", '<div id="present"></div><script src="src/popup.js"></script>');
+    writeFixture(fixture, "src/popup.js", '$("present"); $("missing");');
+    for (const file of REQUIRED_RUNTIME_MODEL_FILES) writeFixture(fixture, file, "fixture model");
+
+    const errors = validatePackage({
+      rootDir: fixture,
+      packageFiles: [
+        ...REQUIRED_RUNTIME_MODEL_FILES,
+        "background.js",
+        "manifest.json",
+        "popup.html",
+        "src/popup.js",
+      ].sort(),
+    });
+
+    assert.ok(errors.includes("popup.html: missing #missing"), errors.join("\n"));
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }

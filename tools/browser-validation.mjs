@@ -1002,7 +1002,7 @@ function assertValidationResult(state, events) {
 }
 
 async function runValidation(httpBase, extensionId, expectedName, signal) {
-  const extensionUrl = `chrome-extension://${extensionId}/validation/validate.html?autorun=1`;
+  const extensionUrl = `chrome-extension://${extensionId}/validate.html?autorun=1`;
   // Attach before navigation so import failures and synchronous startup
   // exceptions cannot occur before the Runtime event stream is enabled.
   const targetUrl = new URL(`/json/new?${encodeURIComponent("about:blank")}`, httpBase);
@@ -1043,7 +1043,7 @@ async function runValidation(httpBase, extensionId, expectedName, signal) {
         await delay(100, signal);
         continue;
       }
-      if (!probe?.href?.startsWith(`chrome-extension://${extensionId}/validation/validate.html`)) {
+      if (!probe?.href?.startsWith(`chrome-extension://${extensionId}/validate.html`)) {
         throw new Error(`validation page failed to load (current URL: ${probe?.href || "unknown"})`);
       }
       if (probe.runtimeId !== extensionId || probe.manifestName !== expectedName) {
@@ -1079,7 +1079,7 @@ async function runValidation(httpBase, extensionId, expectedName, signal) {
 }
 
 async function runPopupSmoke(httpBase, extensionId, expectedName, signal) {
-  const popupUrl = `chrome-extension://${extensionId}/src/popup.html`;
+  const popupUrl = `chrome-extension://${extensionId}/popup.html`;
   const targetUrl = new URL(`/json/new?${encodeURIComponent("about:blank")}`, httpBase);
   const target = await requestJson(targetUrl, { method: "PUT", signal });
   if (!target.webSocketDebuggerUrl) throw new Error("popup smoke target has no DevTools WebSocket URL");
@@ -1106,7 +1106,7 @@ async function runPopupSmoke(httpBase, extensionId, expectedName, signal) {
             readyState: document.readyState,
             runtimeId: globalThis.chrome?.runtime?.id || null,
             manifestName: globalThis.chrome?.runtime?.getManifest?.().name || null,
-            scriptType: document.querySelector('script[src="popup.js"]')?.type || null,
+            scriptType: document.querySelector('script[src="src/popup.js"]')?.type || null,
             webgpuText: document.getElementById("s-webgpu")?.textContent || "",
             operationText: document.getElementById("operation-status")?.textContent || "",
             controlCount: controls.length,
@@ -1700,7 +1700,7 @@ async function waitForBadge(client, tabId, expected, signal) {
 
 async function runRealVideoIntegration(httpBase, fixtureBase, extensionId, expectedName, signal) {
   const fixtureUrl = new URL("video.html", fixtureBase).href;
-  const popupUrl = `chrome-extension://${extensionId}/src/popup.html`;
+  const popupUrl = `chrome-extension://${extensionId}/popup.html`;
   let fixturePage = null;
   let popupPage = null;
   const fixtureEvents = [];
