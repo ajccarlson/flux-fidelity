@@ -2,7 +2,7 @@
 
 FSRCNNX-EXT is a pre-release Chromium extension for real-time WebGPU video enhancement. It supports FSRCNNX and ArtCNN upscaling, optional SSimDownscaler and sharpening, RIFE or blend interpolation, and an experimental ONNX super-resolution path.
 
-Public distribution is not cleared because some bundled artifacts still have unresolved provenance or licensing records. Review [Model provenance](MODEL_PROVENANCE.md) before packaging or publishing.
+Public distribution is not cleared because some bundled artifacts still have unresolved provenance or licensing records. Review [Model provenance](docs/compliance/MODEL_PROVENANCE.md) before packaging or publishing.
 
 ## Requirements
 
@@ -25,6 +25,7 @@ Settings are stored per origin. Available combinations depend on browser support
 
 - `src/` — extension entry points, popup, and runtime modules.
 - `model/`, `shaders/`, and `vendor/` — runtime assets and pinned third-party sources.
+- `docs/compliance/` and `LICENSES/` — release records, rebuilding guidance, and license texts.
 - `validation/` — browser validation page and numerical reference fixtures.
 - `tests/` — deterministic Node and browser fixtures.
 - `tools/` — checks, packaging, reproduction utilities, and transpilers.
@@ -37,7 +38,7 @@ Run the complete offline check:
 npm run check
 ```
 
-Run packaged-extension and GPU smoke checks in a temporary Chromium profile:
+Run browser and GPU smoke checks against the checkout in a temporary Chromium profile:
 
 ```sh
 npm run validate:browser
@@ -45,8 +46,16 @@ npm run validate:browser
 
 Set `FSRCNNX_BROWSER` if no browser is found automatically. The manually loaded GPU suite is at `chrome-extension://<extension-id>/validate.html`.
 
-`npm run package:internal` creates a deterministic validation archive under `dist/`. `npm run package` also enforces the public-release gate and currently stops on unresolved items in [Model provenance](MODEL_PROVENANCE.md).
+`npm run package:internal` creates a deterministic validation archive and staged extension under `dist/`. Validate that exact staged package with:
+
+```sh
+npm run validate:browser -- --extension-root dist/fsrcnnx-ext
+```
+
+`npm run package` also enforces the public-release gate and currently stops on unresolved items in [Model provenance](docs/compliance/MODEL_PROVENANCE.md).
 
 ## Licensing
 
-Project-owned source is covered by [LICENSE](LICENSE). Third-party and derived material retains its own terms; see [Third-party notices](THIRD_PARTY_NOTICES.md), [Model provenance](MODEL_PROVENANCE.md), and [LGPL rebuilding instructions](LGPL_REBUILDING.md).
+Project-owned source is covered by [LICENSE](LICENSE). Third-party and derived material retains its own terms; see [Third-party notices](THIRD_PARTY_NOTICES.md), [Model provenance](docs/compliance/MODEL_PROVENANCE.md), and [LGPL rebuilding instructions](docs/compliance/LGPL_REBUILDING.md).
+
+Before opening a pull request, read [Contributing](.github/CONTRIBUTING.md). Report vulnerabilities through the [security policy](.github/SECURITY.md).

@@ -7,6 +7,7 @@ import test from "node:test";
 import { inspectReleaseClearance } from "../tools/check-release-clearance.mjs";
 
 const root = resolve(import.meta.dirname, "..");
+const provenanceFile = "docs/compliance/MODEL_PROVENANCE.md";
 const highX2Artifacts = new Map([
   [
     "shaders/FSRCNNX_x2_56-16-4-1.glsl",
@@ -23,6 +24,16 @@ const highX2Artifacts = new Map([
 ]);
 const highX2Mirror = "https://github.com/resc863/Project/blob/0e6bdb96f2845d883ec0131af8598c438c68e30a/mpv-config/FSRCNNX_x2_56-16-4-1.glsl";
 
+function writeComplianceFile(rootDir, name, contents) {
+  const directory = join(rootDir, "docs", "compliance");
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, name), contents);
+}
+
+function writeLedger(rootDir, ledger) {
+  writeComplianceFile(rootDir, "release-clearance.json", JSON.stringify(ledger));
+}
+
 test("current release-clearance record is structurally valid and explicitly blocked", () => {
   const result = inspectReleaseClearance({ rootDir: root });
   assert.deepEqual(result.errors, []);
@@ -33,7 +44,7 @@ test("current release-clearance record is structurally valid and explicitly bloc
     (artifact) => artifact.path === "model/rife_v4.26_fp16.onnx",
   );
   assert.equal(fp16Gate.status, "cleared");
-  assert.match(readFileSync(join(root, "MODEL_PROVENANCE.md"), "utf8"),
+  assert.match(readFileSync(join(root, provenanceFile), "utf8"),
     new RegExp(fp16Artifact.sha256));
 
   for (const id of ["unidentified-rife-model", "unreproducible-span-smoke-model"]) {
@@ -49,7 +60,7 @@ test("current release-clearance record is structurally valid and explicitly bloc
     [...highX2Artifacts].map(([path, sha256]) => ({ path, sha256, disposition: "present" })),
   );
   assert.ok(highGate.evidence.includes(highX2Mirror));
-  for (const document of ["MODEL_PROVENANCE.md", "shaders/README.md", "THIRD_PARTY_NOTICES.md"]) {
+  for (const document of [provenanceFile, "shaders/README.md", "THIRD_PARTY_NOTICES.md"]) {
     const record = readFileSync(join(root, document), "utf8");
     assert.match(record, /0e6bdb96f2845d883ec0131af8598c438c68e30a/);
     assert.match(record, /authoritative/i);
@@ -59,7 +70,7 @@ test("current release-clearance record is structurally valid and explicitly bloc
   const ortGate = result.ledger.gates.find((gate) => gate.id === "onnx-runtime-third-party-review");
   assert.equal(lgplGate.status, "blocked");
   assert.equal(ortGate.status, "blocked");
-  assert.ok(lgplGate.evidence.includes("LGPL_REBUILDING.md"));
+  assert.ok(lgplGate.evidence.includes("docs/compliance/LGPL_REBUILDING.md"));
   assert.ok(lgplGate.artifacts.every((artifact) => /^[0-9a-f]{64}$/.test(artifact.sha256)));
   assert.ok(ortGate.evidence.includes("vendor/ort/LICENSE"));
   assert.ok(ortGate.artifacts.every((artifact) => /^[0-9a-f]{64}$/.test(artifact.sha256)));
@@ -90,7 +101,7 @@ test("restored high x2 assets remain an explicit current-boundary blocker", () =
       }],
     });
 
-    writeFileSync(join(fixture, "release-clearance.json"), JSON.stringify(makeLedger()));
+    writeLedger(fixture, makeLedger());
     const valid = inspectReleaseClearance({
       rootDir: fixture,
       requiredGateIds: ["unknown-high-x2-shader-origin"],
@@ -98,7 +109,7 @@ test("restored high x2 assets remain an explicit current-boundary blocker", () =
     assert.deepEqual(valid.errors, []);
     assert.equal(valid.blocked.length, 1);
 
-    writeFileSync(join(fixture, "release-clearance.json"), JSON.stringify(makeLedger({ status: "cleared" })));
+    writeLedger(fixture, makeLedger({ status: "cleared" }));
     const accidentallyCleared = inspectReleaseClearance({
       rootDir: fixture,
       requiredGateIds: ["unknown-high-x2-shader-origin"],
@@ -106,7 +117,7 @@ test("restored high x2 assets remain an explicit current-boundary blocker", () =
     assert.ok(accidentallyCleared.errors.some((error) =>
       error.includes("must remain blocked pending authoritative origin and license evidence")));
 
-    writeFileSync(join(fixture, "release-clearance.json"), JSON.stringify(makeLedger({ disposition: "removed" })));
+    writeLedger(fixture, makeLedger({ disposition: "removed" }));
     const falselyRemoved = inspectReleaseClearance({
       rootDir: fixture,
       requiredGateIds: ["unknown-high-x2-shader-origin"],
@@ -121,7 +132,7 @@ test("release-clearance validation detects artifact drift", () => {
   const fixture = mkdtempSync(join(tmpdir(), "fsrcnnx-release-clearance-"));
   try {
     writeFileSync(join(fixture, "artifact.bin"), "changed");
-    writeFileSync(join(fixture, "release-clearance.json"), JSON.stringify({
+    writeLedger(fixture, {
       schemaVersion: 1,
       scope: "test",
       gates: [{
@@ -133,7 +144,7 @@ test("release-clearance validation detects artifact drift", () => {
         }],
         resolution: "Replace the fixture.",
       }],
-    }));
+    });
 
     const result = inspectReleaseClearance({ rootDir: fixture, requiredGateIds: ["fixture-gate"] });
     assert.equal(result.errors.length, 1);
@@ -146,11 +157,11 @@ test("release-clearance validation detects artifact drift", () => {
 test("release-clearance validation rejects a deleted gate inventory", () => {
   const fixture = mkdtempSync(join(tmpdir(), "fsrcnnx-release-clearance-empty-"));
   try {
-    writeFileSync(join(fixture, "release-clearance.json"), JSON.stringify({
+    writeLedger(fixture, {
       schemaVersion: 1,
       scope: "test",
       gates: [],
-    }));
+    });
 
     const result = inspectReleaseClearance({ rootDir: fixture, requiredGateIds: ["required-gate"] });
     assert.deepEqual(result.errors, ["release clearance: missing required gate required-gate"]);
@@ -164,7 +175,7 @@ test("cleared gates require meaningful evidence references", () => {
   const fixture = mkdtempSync(join(tmpdir(), "fsrcnnx-release-clearance-evidence-"));
   try {
     writeFileSync(join(fixture, "artifact.bin"), "fixture");
-    writeFileSync(join(fixture, "release-clearance.json"), JSON.stringify({
+    writeLedger(fixture, {
       schemaVersion: 1,
       scope: "test",
       gates: [{
@@ -174,7 +185,7 @@ test("cleared gates require meaningful evidence references", () => {
         evidence: [null],
         resolution: "Retain the evidence.",
       }],
-    }));
+    });
 
     const result = inspectReleaseClearance({ rootDir: fixture, requiredGateIds: ["required-gate"] });
     assert.deepEqual(result.errors, [
@@ -189,7 +200,7 @@ test("blocked and cleared gates require repository-local evidence files to exist
   const fixture = mkdtempSync(join(tmpdir(), "fsrcnnx-release-clearance-missing-evidence-"));
   try {
     writeFileSync(join(fixture, "artifact.bin"), "fixture");
-    writeFileSync(join(fixture, "release-clearance.json"), JSON.stringify({
+    writeLedger(fixture, {
       schemaVersion: 1,
       scope: "test",
       gates: [{
@@ -199,7 +210,7 @@ test("blocked and cleared gates require repository-local evidence files to exist
         evidence: ["missing-evidence.md"],
         resolution: "Retain the evidence.",
       }],
-    }));
+    });
 
     const result = inspectReleaseClearance({ rootDir: fixture, requiredGateIds: ["required-gate"] });
     assert.deepEqual(result.errors, [
@@ -217,25 +228,25 @@ test("cleared FP16 gate requires its artifact hash in the provenance record", ()
     const bytes = "reproduced FP16 fixture";
     const hash = createHash("sha256").update(bytes).digest("hex");
     writeFileSync(join(fixture, "model", "rife_v4.26_fp16.onnx"), bytes);
-    writeFileSync(join(fixture, "MODEL_PROVENANCE.md"), "# Missing the artifact digest\n");
-    writeFileSync(join(fixture, "release-clearance.json"), JSON.stringify({
+    writeComplianceFile(fixture, "MODEL_PROVENANCE.md", "# Missing the artifact digest\n");
+    writeLedger(fixture, {
       schemaVersion: 1,
       scope: "test",
       gates: [{
         id: "unproven-rife-fp16-conversion",
         status: "cleared",
         artifacts: [{ path: "model/rife_v4.26_fp16.onnx", sha256: hash }],
-        evidence: ["MODEL_PROVENANCE.md"],
+        evidence: [provenanceFile],
         resolution: "Retain deterministic reproduction evidence.",
       }],
-    }));
+    });
 
     const result = inspectReleaseClearance({
       rootDir: fixture,
       requiredGateIds: ["unproven-rife-fp16-conversion"],
     });
     assert.deepEqual(result.errors, [
-      "release clearance: cleared FP16 artifact hash is absent from MODEL_PROVENANCE.md",
+      `release clearance: cleared FP16 artifact hash is absent from ${provenanceFile}`,
     ]);
   } finally {
     rmSync(fixture, { recursive: true, force: true });
@@ -261,7 +272,7 @@ test("cleared removal records retain historical hashes and enforce absence", () 
       }],
     };
     writeFileSync(join(fixture, "evidence.txt"), "The artifact was removed from the release boundary.\n");
-    writeFileSync(join(fixture, "release-clearance.json"), JSON.stringify(ledger));
+    writeLedger(fixture, ledger);
 
     const absent = inspectReleaseClearance({
       rootDir: fixture,

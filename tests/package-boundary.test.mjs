@@ -41,9 +41,9 @@ function manifestGlob(pattern) {
   return new RegExp(`^${escaped}$`);
 }
 
-test("the package boundary is an exact, sorted 77-file allowlist", () => {
+test("the package boundary is an exact, sorted 76-file allowlist", () => {
   assert.equal(PACKAGE_FILES.length, EXPECTED_PACKAGE_FILE_COUNT);
-  assert.equal(EXPECTED_PACKAGE_FILE_COUNT, 77);
+  assert.equal(EXPECTED_PACKAGE_FILE_COUNT, 76);
   assert.equal(new Set(PACKAGE_FILES).size, PACKAGE_FILES.length);
   assert.deepEqual(PACKAGE_FILES, [...PACKAGE_FILES].sort());
   assert.equal(PACKAGE_FILES.includes("fsrcnnx-development-only.js"), false);
@@ -51,16 +51,15 @@ test("the package boundary is an exact, sorted 77-file allowlist", () => {
   assert.equal(PACKAGE_FILES.includes("model/neural/span2x_smoke.fp16.onnx"), false);
 });
 
-test("the package retains every legal notice and the machine-readable release gate", () => {
+test("the package retains legal notices and provenance while the release ledger stays repository-only", () => {
   for (const file of [
-    "GPL-3.0.txt",
-    "LGPL-3.0.txt",
-    "LGPL_REBUILDING.md",
     "LICENSE",
-    "MODEL_PROVENANCE.md",
+    "LICENSES/GPL-3.0.txt",
+    "LICENSES/LGPL-3.0.txt",
     "PRIVACY.md",
     "THIRD_PARTY_NOTICES.md",
-    "release-clearance.json",
+    "docs/compliance/LGPL_REBUILDING.md",
+    "docs/compliance/MODEL_PROVENANCE.md",
     "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl",
     "shaders/upstream/SSimDownscaler.glsl",
     "shaders/upstream/adaptive-sharpen.glsl",
@@ -70,6 +69,7 @@ test("the package retains every legal notice and the machine-readable release ga
   ]) {
     assert.equal(PACKAGE_FILES.includes(file), true, `${file} must remain in the package`);
   }
+  assert.equal(PACKAGE_FILES.includes("docs/compliance/release-clearance.json"), false);
 });
 
 test("every required rebuilding and substitution file is packaged exactly", () => {
@@ -90,7 +90,7 @@ test("package creation never discovers an extra runtime-looking local file", () 
 
     const result = buildPackage({ rootDir: fixture, distDir: join(fixture, "output") });
 
-    assert.equal(result.fileCount, 77);
+    assert.equal(result.fileCount, 76);
     assert.equal(basename(result.archive), "fsrcnnx-ext-1.2.3.zip");
     assert.equal(
       readFileSync(result.checksums, "utf8"),

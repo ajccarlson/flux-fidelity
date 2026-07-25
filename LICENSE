@@ -5,7 +5,7 @@ sublicense, or sell copies of this software without prior written permission
 from the copyright holder.
 
 Third-party components and model artifacts remain subject to their respective
-licenses. See THIRD_PARTY_NOTICES.md and MODEL_PROVENANCE.md.
+licenses. See THIRD_PARTY_NOTICES.md and docs/compliance/MODEL_PROVENANCE.md.
 
 Notwithstanding the project terms above, recipients may use and modify project
 files, and reverse engineer or recombine this package, solely as needed to

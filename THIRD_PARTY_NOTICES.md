@@ -1,6 +1,6 @@
 # Third-party notices
 
-FSRCNNX-EXT includes or derives from the components below. Exact artifact hashes and unresolved release gates are recorded in [MODEL_PROVENANCE.md](MODEL_PROVENANCE.md) and the machine-readable [`release-clearance.json`](release-clearance.json). `npm run release:check` remains the authoritative pre-publication gate. This file records verified notices; it does not assign a license to artifacts whose origin remains unknown.
+FSRCNNX-EXT includes or derives from the components below. Exact artifact hashes and unresolved release gates are recorded in [MODEL_PROVENANCE.md](docs/compliance/MODEL_PROVENANCE.md) and the machine-readable [`release-clearance.json`](https://github.com/ajccarlson/fsrcnnx-ext/blob/main/docs/compliance/release-clearance.json). `npm run release:check` remains the authoritative pre-publication gate. This file records verified notices; it does not assign a license to artifacts whose origin remains unknown.
 
 ## MIT-licensed components
 
@@ -25,24 +25,14 @@ Upstream: <https://github.com/Artoriuz/ArtCNN/tree/a20445ca420ed9f0c2a807e2d0c18
 
 ### Practical-RIFE 4.26
 
-The verified FP32 `model/rife_v4.26.onnx` is an ONNX export of the Practical-RIFE 4.26 trained model associated with commit `de9a989bb7b8a71d94f058297e603633aaa43ad6`. That revision explicitly states that content linked under “Trained Model” is under the project's MIT License. The bundled `model/rife_v4.26_fp16.onnx` is a deterministically reproduced FP16 derivative of that exact FP32 artifact; its parent and output hashes, pinned conversion environment, structural checks, and numerical validation are recorded in `MODEL_PROVENANCE.md`.
+The verified FP32 `model/rife_v4.26.onnx` is an ONNX export of the Practical-RIFE 4.26 trained model associated with commit `de9a989bb7b8a71d94f058297e603633aaa43ad6`. That revision explicitly states that content linked under “Trained Model” is under the project's MIT License. The bundled `model/rife_v4.26_fp16.onnx` is a deterministically reproduced FP16 derivative of that exact FP32 artifact; its parent and output hashes, pinned conversion environment, structural checks, and numerical validation are recorded in `docs/compliance/MODEL_PROVENANCE.md`.
 
 Copyright (c) 2021 hzwer
 
 Upstream: <https://github.com/hzwer/Practical-RIFE/tree/de9a989bb7b8a71d94f058297e603633aaa43ad6><br>
 Verified export archive: <https://github.com/AmusementClub/vs-mlrt/releases/download/external-models/rife_v4.26.7z>
 
-This notice does not cover the unidentified historical `model/rife.onnx`. That file is absent from the current tree and package, but its private-history tombstone remains blocked as described in `MODEL_PROVENANCE.md`.
-
-### Spandrel 0.4.2
-
-The neural export tool is configured to use Spandrel 0.4.2, including its SPAN architecture implementation, at commit `724cca389f28c38e1050689d4862a452fd644484`.
-
-Copyright (c) 2024 The ChaiNNer Organization
-
-Upstream: <https://github.com/chaiNNer-org/spandrel/tree/724cca389f28c38e1050689d4862a452fd644484>
-
-The export tool remains available for locally supplied, appropriately licensed checkpoints. The former random-weight SPAN smoke model was removed because its generation environment was not retained; this attribution does not establish the origin or licensing of those historical bytes.
+This notice does not cover the unidentified historical `model/rife.onnx`. That file is absent from the current tree, package, and writable branch history, but GitHub's retained pull-request refs still expose its tombstone as described in `docs/compliance/MODEL_PROVENANCE.md`.
 
 ### MIT License text
 
@@ -66,7 +56,7 @@ Upstream: <https://gist.github.com/igv/36508af3ffc84410fe39761d6969be10/38992bce
 
 Both upstream files state that they may be redistributed and/or modified under the GNU Lesser General Public License, version 3 or, at the recipient's option, any later version; they disclaim warranty.
 
-The package includes the exact FSRCNNX and SSim upstream sources, complete official [`LGPL-3.0.txt`](LGPL-3.0.txt) text and [`GPL-3.0.txt`](GPL-3.0.txt) companion, the FSRCNNX transformation script, generated source metadata, and [`LGPL_REBUILDING.md`](LGPL_REBUILDING.md) with offline rebuilding and Chromium substitution instructions. The checked-in sources retain their upstream license headers, and the generated/ported files identify local modifications. The project license also expressly avoids restricting modification, reverse engineering, or recombination needed to exercise LGPL rights in these portions. These materials do not clear public distribution: qualified review must still confirm that the plan satisfies every applicable obligation.
+The package includes the exact FSRCNNX and SSim upstream sources, complete official [`LGPL-3.0.txt`](LICENSES/LGPL-3.0.txt) text and [`GPL-3.0.txt`](LICENSES/GPL-3.0.txt) companion, the FSRCNNX transformation script, generated source metadata, and [`LGPL_REBUILDING.md`](docs/compliance/LGPL_REBUILDING.md) with offline rebuilding and Chromium substitution instructions. The checked-in sources retain their upstream license headers, and the generated/ported files identify local modifications. The project license also expressly avoids restricting modification, reverse engineering, or recombination needed to exercise LGPL rights in these portions. These materials do not clear public distribution: qualified review must still confirm that the plan satisfies every applicable obligation.
 
 ## Adaptive Sharpen redistribution notice
 
@@ -93,4 +83,4 @@ The high-quality x2 source and generated runtime pair are present and functional
 
 Public repository publication and extension-package distribution remain blocked by `unknown-high-x2-shader-origin` until the author or another authoritative source identifies this exact artifact and confirms its applicable license.
 
-No license is asserted here for the removed x3 or x4 FSRCNNX artifacts, unidentified generic RIFE model, unreproducible SPAN smoke model, or unresolved deband port. They are absent from the current tree and extension package, but their bytes remain in private Git history and block publication of that history until it is purged. The LGPL and ONNX Runtime applicability reviews also remain blocked in `release-clearance.json`; merely bundling complete upstream texts and notices does not clear them.
+No license is asserted here for the removed x3 or x4 FSRCNNX artifacts, unidentified generic RIFE model, unreproducible SPAN smoke model, or unresolved deband port. They are absent from the current tree, extension package, and writable branch history, but GitHub's four retained pull-request refs still expose the pre-rewrite objects pending Support removal and garbage collection. The LGPL and ONNX Runtime applicability reviews also remain blocked in [`release-clearance.json`](https://github.com/ajccarlson/fsrcnnx-ext/blob/main/docs/compliance/release-clearance.json); merely bundling complete upstream texts and notices does not clear them.

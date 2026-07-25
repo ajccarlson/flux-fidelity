@@ -1,12 +1,12 @@
 import { GENERATED_MODEL_ASSET_PATHS } from "../src/core/fsrcnnx-model-catalog.js";
 
-export const EXPECTED_PACKAGE_FILE_COUNT = 77;
+export const EXPECTED_PACKAGE_FILE_COUNT = 76;
 
 // These files let recipients inspect, rebuild, and substitute the LGPL-covered
 // shader portions and retain the exact license for the vendored ONNX Runtime.
 // Keep the inventory separate so package tests can enforce it explicitly.
 export const REQUIRED_COMPLIANCE_FILES = Object.freeze([
-  "LGPL_REBUILDING.md",
+  "docs/compliance/LGPL_REBUILDING.md",
   "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl",
   "shaders/upstream/SSimDownscaler.glsl",
   "shaders/upstream/adaptive-sharpen.glsl",
@@ -27,13 +27,13 @@ export const REQUIRED_RUNTIME_MODEL_FILES = Object.freeze([
 // This list is the package boundary. Additions and removals must be deliberate:
 // package creation and package reference validation both consume this exact set.
 export const PACKAGE_FILES = Object.freeze([
-  "GPL-3.0.txt",
-  "LGPL-3.0.txt",
-  "LGPL_REBUILDING.md",
   "LICENSE",
-  "MODEL_PROVENANCE.md",
+  "LICENSES/GPL-3.0.txt",
+  "LICENSES/LGPL-3.0.txt",
   "PRIVACY.md",
   "THIRD_PARTY_NOTICES.md",
+  "docs/compliance/LGPL_REBUILDING.md",
+  "docs/compliance/MODEL_PROVENANCE.md",
   "icons/icon-128.png",
   "icons/icon-16.png",
   "icons/icon-32.png",
@@ -57,7 +57,6 @@ export const PACKAGE_FILES = Object.freeze([
   "model/rife_v4.26.onnx",
   "model/rife_v4.26_fp16.onnx",
   "popup.html",
-  "release-clearance.json",
   "shaders/FSRCNNX_x2_56-16-4-1.glsl",
   "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl",
   "shaders/upstream/SSimDownscaler.glsl",

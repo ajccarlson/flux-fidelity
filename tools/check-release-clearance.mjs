@@ -4,6 +4,8 @@ import { isAbsolute, posix, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(import.meta.dirname, "..");
+const DEFAULT_LEDGER_FILE = "docs/compliance/release-clearance.json";
+const PROVENANCE_FILE = "docs/compliance/MODEL_PROVENANCE.md";
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const STATUS_VALUES = new Set(["blocked", "cleared"]);
 const ARTIFACT_DISPOSITIONS = new Set(["present", "removed"]);
@@ -75,7 +77,7 @@ function isExternalEvidenceReference(reference) {
 
 export function inspectReleaseClearance({
   rootDir = root,
-  ledgerFile = "release-clearance.json",
+  ledgerFile = DEFAULT_LEDGER_FILE,
   requiredGateIds = REQUIRED_RELEASE_GATE_IDS,
 } = {}) {
   const errors = [];
@@ -244,12 +246,12 @@ export function inspectReleaseClearance({
     } else {
       let provenance = "";
       try {
-        provenance = readFileSync(resolve(rootDir, "MODEL_PROVENANCE.md"), "utf8");
+        provenance = readFileSync(resolve(rootDir, PROVENANCE_FILE), "utf8");
       } catch (error) {
-        errors.push(`release clearance: cannot read MODEL_PROVENANCE.md (${error.code || error.message})`);
+        errors.push(`release clearance: cannot read ${PROVENANCE_FILE} (${error.code || error.message})`);
       }
       if (provenance && !provenance.includes(fp16Artifact.sha256)) {
-        errors.push("release clearance: cleared FP16 artifact hash is absent from MODEL_PROVENANCE.md");
+        errors.push(`release clearance: cleared FP16 artifact hash is absent from ${PROVENANCE_FILE}`);
       }
     }
   }
