@@ -41,9 +41,9 @@ function manifestGlob(pattern) {
   return new RegExp(`^${escaped}$`);
 }
 
-test("the package boundary is an exact, sorted 76-file allowlist", () => {
+test("the package boundary is an exact, sorted 77-file allowlist", () => {
   assert.equal(PACKAGE_FILES.length, EXPECTED_PACKAGE_FILE_COUNT);
-  assert.equal(EXPECTED_PACKAGE_FILE_COUNT, 76);
+  assert.equal(EXPECTED_PACKAGE_FILE_COUNT, 77);
   assert.equal(new Set(PACKAGE_FILES).size, PACKAGE_FILES.length);
   assert.deepEqual(PACKAGE_FILES, [...PACKAGE_FILES].sort());
   assert.equal(PACKAGE_FILES.includes("fsrcnnx-development-only.js"), false);
@@ -56,6 +56,7 @@ test("the package retains legal notices and provenance while the release ledger 
     "LICENSE",
     "LICENSES/GPL-3.0.txt",
     "LICENSES/LGPL-3.0.txt",
+    "NOTICE",
     "PRIVACY.md",
     "THIRD_PARTY_NOTICES.md",
     "docs/compliance/LGPL_REBUILDING.md",
@@ -90,7 +91,7 @@ test("package creation never discovers an extra runtime-looking local file", () 
 
     const result = buildPackage({ rootDir: fixture, distDir: join(fixture, "output") });
 
-    assert.equal(result.fileCount, 76);
+    assert.equal(result.fileCount, 77);
     assert.equal(basename(result.archive), "fsrcnnx-ext-1.2.3.zip");
     assert.equal(
       readFileSync(result.checksums, "utf8"),

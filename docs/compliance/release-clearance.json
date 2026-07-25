@@ -167,7 +167,11 @@
         },
         {
           "path": "LICENSE",
-          "sha256": "a561421701a7d1d458cdbc638336963dc268612e32a9fbe4fd6e46ce67d7b8fb"
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        },
+        {
+          "path": "NOTICE",
+          "sha256": "42dfd832a3c91892045eb6a2c5f76df4aa185c794145f0c3726fa20054c5daaa"
         }
       ],
       "evidence": [
@@ -175,6 +179,7 @@
         "LICENSES/LGPL-3.0.txt",
         "docs/compliance/LGPL_REBUILDING.md",
         "LICENSE",
+        "NOTICE",
         "docs/compliance/MODEL_PROVENANCE.md",
         "THIRD_PARTY_NOTICES.md"
       ],

@@ -1,6 +1,6 @@
 import { GENERATED_MODEL_ASSET_PATHS } from "../src/core/fsrcnnx-model-catalog.js";
 
-export const EXPECTED_PACKAGE_FILE_COUNT = 76;
+export const EXPECTED_PACKAGE_FILE_COUNT = 77;
 
 // These files let recipients inspect, rebuild, and substitute the LGPL-covered
 // shader portions and retain the exact license for the vendored ONNX Runtime.
@@ -30,6 +30,7 @@ export const PACKAGE_FILES = Object.freeze([
   "LICENSE",
   "LICENSES/GPL-3.0.txt",
   "LICENSES/LGPL-3.0.txt",
+  "NOTICE",
   "PRIVACY.md",
   "THIRD_PARTY_NOTICES.md",
   "docs/compliance/LGPL_REBUILDING.md",

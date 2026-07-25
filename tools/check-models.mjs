@@ -13,9 +13,10 @@ const errors = [];
 // package never silently substitutes different material while retaining the
 // same provenance and compliance record.
 const pinnedArtifacts = {
-  "LICENSE": "a561421701a7d1d458cdbc638336963dc268612e32a9fbe4fd6e46ce67d7b8fb",
+  "LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
   "LICENSES/GPL-3.0.txt": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
   "LICENSES/LGPL-3.0.txt": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118",
+  "NOTICE": "42dfd832a3c91892045eb6a2c5f76df4aa185c794145f0c3726fa20054c5daaa",
   "docs/compliance/LGPL_REBUILDING.md": "83447340dfc9d247061545a544541beb0fe15bd000e4e2df56843e809808b78a",
   "model/rife_v4.26.onnx": "af25762dfec02a4bbb949decea63988b01fa56c46c0ff9dc66ac8e2f12cbb661",
   "model/rife_v4.26_fp16.onnx": "d5672f39b493609220c95c709542d6b99204145a67d9ca496d4500cd8895301f",

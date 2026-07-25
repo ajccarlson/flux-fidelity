@@ -17,5 +17,10 @@ exact upstream source, version or commit, SHA-256 digest, license, local
 changes, and reproduction procedure. Artifacts with unknown or incompatible
 provenance cannot be accepted.
 
+Unless explicitly stated otherwise, contributions intentionally submitted for
+inclusion are licensed under Apache-2.0 without additional terms, as described
+in section 5 of [LICENSE](../LICENSE). Do not submit material you do not have
+the right to license.
+
 Report security-sensitive findings through the process in
 [SECURITY.md](SECURITY.md), not a public issue.

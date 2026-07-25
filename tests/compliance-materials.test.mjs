@@ -36,6 +36,17 @@ test("the package retains every exact rebuilding and license artifact", () => {
   }
 });
 
+test("Apache-2.0 metadata remains scoped to project-authored material", () => {
+  const packageMetadata = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
+  const readme = readFileSync(resolve(root, "README.md"), "utf8");
+  const notice = readFileSync(resolve(root, "NOTICE"), "utf8");
+
+  assert.equal(packageMetadata.license, "Apache-2.0");
+  assert.match(readme, /Project-authored source code and documentation are licensed under/);
+  assert.match(readme, /This does not relicense third-party or derived\s+material/);
+  assert.match(notice, /third-party and derived material under\s+separate terms/);
+});
+
 test("standard FSRCNN generated files retain exact LGPL source metadata", () => {
   const manifest = JSON.parse(readFileSync(
     resolve(root, "model/FSRCNNX_x2_16-0-4-1.passes.json"),

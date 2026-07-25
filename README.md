@@ -56,6 +56,10 @@ npm run validate:browser -- --extension-root dist/fsrcnnx-ext
 
 ## Licensing
 
-Project-owned source is covered by [LICENSE](LICENSE). Third-party and derived material retains its own terms; see [Third-party notices](THIRD_PARTY_NOTICES.md), [Model provenance](docs/compliance/MODEL_PROVENANCE.md), and [LGPL rebuilding instructions](docs/compliance/LGPL_REBUILDING.md).
+Project-authored source code and documentation are licensed under
+[Apache-2.0](LICENSE). This does not relicense third-party or derived
+material; see [NOTICE](NOTICE), [Third-party notices](THIRD_PARTY_NOTICES.md),
+[Model provenance](docs/compliance/MODEL_PROVENANCE.md), and
+[LGPL rebuilding instructions](docs/compliance/LGPL_REBUILDING.md).
 
 Before opening a pull request, read [Contributing](.github/CONTRIBUTING.md). Report vulnerabilities through the [security policy](.github/SECURITY.md).

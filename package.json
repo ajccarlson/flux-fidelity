@@ -7,7 +7,7 @@
     "node": ">=20.11"
   },
   "description": "Real-time WebGPU video upscaling and frame interpolation for Chromium",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ajccarlson/fsrcnnx-ext.git"
