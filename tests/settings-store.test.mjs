@@ -4,7 +4,7 @@ import test from "node:test";
 import {
   SETTINGS_SCHEMA_VERSION,
   createSettingsStore,
-} from "../fsrcnnx-settings-store.js";
+} from "../src/core/fsrcnnx-settings-store.js";
 
 function deferred() {
   let resolve;

@@ -192,23 +192,37 @@ export function validatePackage({ rootDir = root, packageFiles = PACKAGE_FILES }
     }
   }
 
-  if (fileSet.has("popup.js") && fileSet.has("popup.html")) {
-    const popupSource = readText(rootDir, "popup.js", errors);
-    const popupHtml = readText(rootDir, "popup.html", errors);
-    if (popupSource !== null && popupHtml !== null) {
+  const popupHtmlPath = manifest?.action?.default_popup;
+  if (fileSet.has(popupHtmlPath)) {
+    const popupHtml = readText(rootDir, popupHtmlPath, errors);
+    if (popupHtml !== null) {
+      const popupScriptPaths = [
+        ...popupHtml.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi),
+      ]
+        .map((match) => match[1])
+        .filter((reference) => !/^(?:https?:|data:|#)/.test(reference))
+        .map((reference) => normalizedRelativePath(rootDir, popupHtmlPath, reference))
+        .filter((path) => fileSet.has(path));
+      const popupSources = popupScriptPaths
+        .map((path) => readText(rootDir, path, errors))
+        .filter((source) => source !== null);
       const requiredPopupIds = new Set(
-        [...popupSource.matchAll(/\$\(["']([^"']+)["']\)/g)].map((match) => match[1]),
+        popupSources.flatMap((source) =>
+          [...source.matchAll(/\$\(["']([^"']+)["']\)/g)].map((match) => match[1])
+        ),
       );
       const popupIds = [...popupHtml.matchAll(/\bid=["']([^"']+)["']/g)].map((match) => match[1]);
       const popupIdSet = new Set(popupIds);
-      for (const id of requiredPopupIds) if (!popupIdSet.has(id)) errors.push(`popup.html: missing #${id}`);
+      for (const id of requiredPopupIds) {
+        if (!popupIdSet.has(id)) errors.push(`${popupHtmlPath}: missing #${id}`);
+      }
       for (const id of popupIdSet) {
         if (popupIds.filter((candidate) => candidate === id).length > 1) {
-          errors.push(`popup.html: duplicate #${id}`);
+          errors.push(`${popupHtmlPath}: duplicate #${id}`);
         }
       }
       if (/<script\b(?![^>]*\bsrc=)[^>]*>/i.test(popupHtml)) {
-        errors.push("popup.html: inline scripts violate MV3 CSP");
+        errors.push(`${popupHtmlPath}: inline scripts violate MV3 CSP`);
       }
     }
   }

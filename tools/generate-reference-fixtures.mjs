@@ -18,7 +18,7 @@ import {
   REFERENCE_INPUTS,
   REFERENCE_INPUT_VERSION,
   REFERENCE_TOOLCHAIN,
-} from "../reference-fixtures.js";
+} from "../validation/reference-fixtures.js";
 
 const root = resolve(import.meta.dirname, "..");
 const metadataPath = resolve(root, "validation", "reference-fixtures.json");

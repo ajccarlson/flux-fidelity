@@ -2,7 +2,7 @@
 
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
-import { isAbsolute, normalize, relative, resolve } from "node:path";
+import { isAbsolute, posix, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(import.meta.dirname, "..");
@@ -61,7 +61,7 @@ function objectRecord(value) {
 
 function safeRelativePath(path) {
   return typeof path === "string" && path.length > 0 && !isAbsolute(path) &&
-    !path.includes("\\") && normalize(path) === path && !path.split("/").includes("..");
+    !path.includes("\\") && posix.normalize(path) === path && !path.split("/").includes("..");
 }
 
 function regularFile(path, label, errors) {

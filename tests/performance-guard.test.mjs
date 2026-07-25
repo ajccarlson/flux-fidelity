@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { PlaybackPerformanceGuard } from "../fsrcnnx-performance.js";
+import { PlaybackPerformanceGuard } from "../src/core/fsrcnnx-performance.js";
 
 function feedWindow(guard, { start, frames = 30, skippedEvery = 0, qualityDrops = 0 }) {
   let presentedFrames = guard.lastPresentedFrames ?? 0;

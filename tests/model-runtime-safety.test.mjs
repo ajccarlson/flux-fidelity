@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { ArtCnnModel } from "../fsrcnnx-artcnn-runtime.js";
+import { ArtCnnModel } from "../src/core/fsrcnnx-artcnn-runtime.js";
 import {
   allocateModelChain,
   DEFAULT_MODEL_WORKING_SET_BYTES,
@@ -10,9 +10,9 @@ import {
   preflightModelChain,
   splitModelEntries,
   validateModelBundle,
-} from "../fsrcnnx-model-bundle.js";
-import { FsrcnnxModel } from "../fsrcnnx-runtime.js";
-import { GENERATED_MODEL_CATALOG } from "../fsrcnnx-model-catalog.js";
+} from "../src/core/fsrcnnx-model-bundle.js";
+import { FsrcnnxModel } from "../src/core/fsrcnnx-runtime.js";
+import { GENERATED_MODEL_CATALOG } from "../src/core/fsrcnnx-model-catalog.js";
 
 globalThis.GPUTextureUsage = {
   STORAGE_BINDING: 1,

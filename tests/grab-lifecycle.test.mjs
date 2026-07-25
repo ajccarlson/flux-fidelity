@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { GrabResourceLimitError, WebGPUGrabber } from "../fsrcnnx-grab.js";
+import { GrabResourceLimitError, WebGPUGrabber } from "../src/core/fsrcnnx-grab.js";
 
 function deferred() {
   let resolve, reject;

@@ -10,8 +10,8 @@ import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { GENERATED_MODEL_CATALOG } from "../fsrcnnx-model-catalog.js";
-import { createValidationPlan, REFERENCE_VALIDATION_CHECKS } from "../fsrcnnx-validation.js";
+import { GENERATED_MODEL_CATALOG } from "../src/core/fsrcnnx-model-catalog.js";
+import { createValidationPlan, REFERENCE_VALIDATION_CHECKS } from "../validation/fsrcnnx-validation.js";
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const FIXTURE_ROOT = join(PROJECT_ROOT, "tests", "fixtures", "browser");
@@ -658,19 +658,75 @@ function requireCondition(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-async function createPageTarget(httpBase, url, signal, onEvent = null) {
-  const targetUrl = new URL(`/json/new?${encodeURIComponent("about:blank")}`, httpBase);
+async function requestPageTarget(httpBase, url, signal) {
+  if (new URL(url).protocol === "chrome-extension:") {
+    throw new Error("private extension pages must be opened by the extension service worker");
+  }
+  const targetUrl = new URL(`/json/new?${encodeURIComponent(url)}`, httpBase);
   const target = await requestJson(targetUrl, { method: "PUT", signal });
   if (!target.id || !target.webSocketDebuggerUrl) {
     throw new Error("new page target is missing its ID or DevTools WebSocket URL");
   }
+  return target;
+}
+
+async function requestExtensionPageTarget(httpBase, controlClient, url, signal) {
+  if (new URL(url).protocol !== "chrome-extension:") {
+    throw new Error("trusted extension target creation requires a chrome-extension:// URL");
+  }
+  const priorTargetIds = new Set((await listTargets(httpBase, signal)).map((target) => target.id));
+  const openedTab = await evaluate(controlClient, `chrome.tabs.create({
+    url: ${JSON.stringify(url)},
+    active: true,
+  }).then((tab) => ({ id: tab.id, url: tab.pendingUrl || tab.url || null }))`);
+  if (!Number.isInteger(openedTab?.id)) throw new Error("extension page opener returned no tab ID");
+  try {
+    return await waitFor("trusted extension page target", async () =>
+      (await listTargets(httpBase, signal)).find((target) =>
+        !priorTargetIds.has(target.id) &&
+        target.type === "page" &&
+        target.url === url &&
+        target.webSocketDebuggerUrl
+      ) || null, Boolean, {
+        timeoutMs: CDP_TIMEOUT_MS,
+        intervalMs: 50,
+        signal,
+      });
+  } catch (error) {
+    try {
+      await evaluate(controlClient, `chrome.tabs.remove(${openedTab.id})`);
+    } catch {}
+    throw error;
+  }
+}
+
+async function createPageTarget(httpBase, url, signal, onEvent = null) {
+  const target = await requestPageTarget(httpBase, url, signal);
   const client = await CdpClient.connect(target.webSocketDebuggerUrl, { signal });
   try {
     if (onEvent) client.onEvent(onEvent);
     await client.send("Runtime.enable");
     await client.send("Page.enable");
-    const navigation = await client.send("Page.navigate", { url });
-    if (navigation.errorText) throw new Error(`navigation failed: ${navigation.errorText}`);
+    return { target, client };
+  } catch (error) {
+    client.close();
+    throw error;
+  }
+}
+
+async function createExtensionPageTarget(
+  httpBase,
+  controlClient,
+  url,
+  signal,
+  onEvent = null,
+) {
+  const target = await requestExtensionPageTarget(httpBase, controlClient, url, signal);
+  const client = await CdpClient.connect(target.webSocketDebuggerUrl, { signal });
+  try {
+    if (onEvent) client.onEvent(onEvent);
+    await client.send("Runtime.enable");
+    await client.send("Page.enable");
     return { target, client };
   } catch (error) {
     client.close();
@@ -854,21 +910,36 @@ function httpBaseFromWebSocket(address) {
   return new URL(`http://${endpoint.host}/`);
 }
 
+async function waitForDevToolsHttp(httpBase, signal) {
+  const deadline = Date.now() + STARTUP_TIMEOUT_MS;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    if (signal?.aborted) throw abortReason(signal);
+    const remaining = Math.max(1, deadline - Date.now());
+    try {
+      const version = await requestJson(new URL("json/version", httpBase), {
+        signal,
+        timeoutMs: Math.min(HTTP_TIMEOUT_MS, remaining),
+      });
+      if (typeof version?.webSocketDebuggerUrl !== "string") {
+        throw new Error("DevTools HTTP version response omitted webSocketDebuggerUrl");
+      }
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+    const retryDelay = Math.min(200, deadline - Date.now());
+    if (retryDelay > 0) await delay(retryDelay, signal);
+  }
+  const detail = lastError instanceof Error ? `: ${lastError.message}` : "";
+  throw new Error(`DevTools HTTP endpoint did not become ready after ${STARTUP_TIMEOUT_MS} ms${detail}`);
+}
+
 async function listTargets(httpBase, signal) {
   return requestJson(new URL("json/list", httpBase), { signal });
 }
 
-function extensionIdFromPath(extensionRoot) {
-  const digest = createHash("sha256").update(extensionRoot).digest().subarray(0, 16);
-  let id = "";
-  for (const byte of digest) {
-    id += String.fromCharCode(97 + (byte >>> 4));
-    id += String.fromCharCode(97 + (byte & 0x0f));
-  }
-  return id;
-}
-
-async function discoverExtension(httpBase, expectedName, extensionRoot, manifestKey, signal) {
+async function discoverExtension(httpBase, expectedName, serviceWorkerPath, signal) {
   const deadline = Date.now() + DISCOVERY_TIMEOUT_MS;
   let lastError = null;
   while (Date.now() < deadline) {
@@ -881,9 +952,17 @@ async function discoverExtension(httpBase, expectedName, extensionRoot, manifest
       await delay(200, signal);
       continue;
     }
-    const candidates = targets.filter((target) => target.type === "service_worker" &&
-      /^chrome-extension:\/\/[a-p]{32}\/background\.js(?:[?#]|$)/.test(target.url || "") &&
-      target.webSocketDebuggerUrl);
+    const candidates = targets.filter((target) => {
+      if (target.type !== "service_worker" || !target.webSocketDebuggerUrl) return false;
+      try {
+        const url = new URL(target.url);
+        return url.protocol === "chrome-extension:" &&
+          /^[a-p]{32}$/.test(url.hostname) &&
+          url.pathname === `/${serviceWorkerPath}`;
+      } catch {
+        return false;
+      }
+    });
     for (const target of candidates) {
       let client = null;
       try {
@@ -901,7 +980,9 @@ async function discoverExtension(httpBase, expectedName, extensionRoot, manifest
         if (name !== expectedName) continue;
         const extensionId = new URL(target.url).hostname;
         if (!/^[a-p]{32}$/.test(extensionId)) throw new Error(`invalid extension ID ${extensionId}`);
-        return { extensionId, source: "service worker" };
+        const controlClient = client;
+        client = null;
+        return { controlClient, extensionId, source: "service worker" };
       } catch (error) {
         lastError = error;
       } finally {
@@ -910,21 +991,8 @@ async function discoverExtension(httpBase, expectedName, extensionRoot, manifest
     }
     await delay(200, signal);
   }
-  // MV3 workers are allowed to stop before the first target query. Chromium
-  // deterministically assigns an unpacked extension ID from the canonical
-  // extension path when the manifest has no explicit key. The opened extension
-  // page independently verifies this fallback ID and the manifest name before
-  // any validation state is trusted.
-  if (manifestKey) {
-    const suffix = lastError ? `: ${lastError.message}` : "";
-    throw new Error(`the service worker was unavailable and path-derived IDs do not apply to keyed manifests${suffix}`);
-  }
-  const extensionId = extensionIdFromPath(extensionRoot);
-  if (!/^[a-p]{32}$/.test(extensionId)) {
-    const suffix = lastError ? `: ${lastError.message}` : "";
-    throw new Error(`could not discover or derive the unpacked extension ID${suffix}`);
-  }
-  return { extensionId, source: "canonical path" };
+  const suffix = lastError ? `: ${lastError.message}` : "";
+  throw new Error(`could not discover the verified ${serviceWorkerPath} service worker${suffix}`);
 }
 
 function remoteObjectText(object) {
@@ -1001,13 +1069,9 @@ function assertValidationResult(state, events) {
   }
 }
 
-async function runValidation(httpBase, extensionId, expectedName, signal) {
+async function runValidation(httpBase, controlClient, extensionId, expectedName, signal) {
   const extensionUrl = `chrome-extension://${extensionId}/validate.html?autorun=1`;
-  // Attach before navigation so import failures and synchronous startup
-  // exceptions cannot occur before the Runtime event stream is enabled.
-  const targetUrl = new URL(`/json/new?${encodeURIComponent("about:blank")}`, httpBase);
-  const target = await requestJson(targetUrl, { method: "PUT", signal });
-  if (!target.webSocketDebuggerUrl) throw new Error("validation target has no DevTools WebSocket URL");
+  const target = await requestExtensionPageTarget(httpBase, controlClient, extensionUrl, signal);
   const events = [];
   let client = null;
   try {
@@ -1016,8 +1080,6 @@ async function runValidation(httpBase, extensionId, expectedName, signal) {
     await client.send("Runtime.enable");
     await client.send("Page.enable");
     await client.send("Page.bringToFront");
-    const navigation = await client.send("Page.navigate", { url: extensionUrl });
-    if (navigation.errorText) throw new Error(`validation navigation failed: ${navigation.errorText}`);
     const deadline = Date.now() + VALIDATION_TIMEOUT_MS;
     let state = null;
     while (Date.now() < deadline) {
@@ -1078,11 +1140,9 @@ async function runValidation(httpBase, extensionId, expectedName, signal) {
   }
 }
 
-async function runPopupSmoke(httpBase, extensionId, expectedName, signal) {
+async function runPopupSmoke(httpBase, controlClient, extensionId, expectedName, signal) {
   const popupUrl = `chrome-extension://${extensionId}/popup.html`;
-  const targetUrl = new URL(`/json/new?${encodeURIComponent("about:blank")}`, httpBase);
-  const target = await requestJson(targetUrl, { method: "PUT", signal });
-  if (!target.webSocketDebuggerUrl) throw new Error("popup smoke target has no DevTools WebSocket URL");
+  const target = await requestExtensionPageTarget(httpBase, controlClient, popupUrl, signal);
   const events = [];
   let client = null;
   try {
@@ -1091,8 +1151,6 @@ async function runPopupSmoke(httpBase, extensionId, expectedName, signal) {
     await client.send("Runtime.enable");
     await client.send("Page.enable");
     await client.send("Page.bringToFront");
-    const navigation = await client.send("Page.navigate", { url: popupUrl });
-    if (navigation.errorText) throw new Error(`popup navigation failed: ${navigation.errorText}`);
 
     const deadline = Date.now() + CDP_TIMEOUT_MS;
     let state = null;
@@ -1106,7 +1164,7 @@ async function runPopupSmoke(httpBase, extensionId, expectedName, signal) {
             readyState: document.readyState,
             runtimeId: globalThis.chrome?.runtime?.id || null,
             manifestName: globalThis.chrome?.runtime?.getManifest?.().name || null,
-            scriptType: document.querySelector('script[src="popup.js"]')?.type || null,
+            scriptType: document.querySelector('script[src="src/popup.js"]')?.type || null,
             webgpuText: document.getElementById("s-webgpu")?.textContent || "",
             operationText: document.getElementById("operation-status")?.textContent || "",
             controlCount: controls.length,
@@ -1698,7 +1756,14 @@ async function waitForBadge(client, tabId, expected, signal) {
     (snapshot) => snapshot.badge === expected, { timeoutMs: CDP_TIMEOUT_MS, signal });
 }
 
-async function runRealVideoIntegration(httpBase, fixtureBase, extensionId, expectedName, signal) {
+async function runRealVideoIntegration(
+  httpBase,
+  controlClient,
+  fixtureBase,
+  extensionId,
+  expectedName,
+  signal,
+) {
   const fixtureUrl = new URL("video.html", fixtureBase).href;
   const popupUrl = `chrome-extension://${extensionId}/popup.html`;
   let fixturePage = null;
@@ -1725,8 +1790,9 @@ async function runRealVideoIntegration(httpBase, fixtureBase, extensionId, expec
     await evaluate(fixturePage.client, "window.__FSRCNNX_VIDEO_FIXTURE__.ready()", CDP_TIMEOUT_MS);
     await loadFixtureSource(fixturePage.client, "bt709-a");
 
-    popupPage = await createPageTarget(
+    popupPage = await createExtensionPageTarget(
       httpBase,
+      controlClient,
       popupUrl,
       signal,
       (message) => collectRuntimeEvent(popupEvents, message),
@@ -2073,6 +2139,7 @@ async function main(signal, options) {
   const profile = await mkdtemp(join(tmpdir(), "fsrcnnx-browser-validation-"));
   let launched = null;
   let fixtureServer = null;
+  let extensionControl = null;
   let primaryError = null;
   try {
     const [browser, extensionRoot] = await Promise.all([
@@ -2084,18 +2151,51 @@ async function main(signal, options) {
       browserVersion(browser, signal),
     ]);
     const manifest = JSON.parse(manifestSource);
-    if (manifest.manifest_version !== 3 || manifest.background?.service_worker !== "background.js") {
-      throw new Error("browser validator requires the project's MV3 background.js service worker");
+    if (manifest.manifest_version !== 3 ||
+        manifest.background?.service_worker !== "src/background.js") {
+      throw new Error("browser validator requires the project's MV3 src/background.js service worker");
     }
     fixtureServer = await startFixtureServer(signal);
     launched = await startBrowser(browser, profile, extensionRoot, signal);
     const browserWebSocket = await launched.endpoint;
     const httpBase = httpBaseFromWebSocket(browserWebSocket);
-    const discovery = await discoverExtension(httpBase, manifest.name, extensionRoot, manifest.key, signal);
-    await runPopupSmoke(httpBase, discovery.extensionId, manifest.name, signal);
-    const { state } = await runValidation(httpBase, discovery.extensionId, manifest.name, signal);
+    await waitForDevToolsHttp(httpBase, signal);
+    // Loading an MV3 extension does not guarantee that its event worker is
+    // already running. A local fixture page injects the packaged content script;
+    // its normal startup ownership message provides a deterministic,
+    // extension-authored service-worker bootstrap.
+    const bootstrapUrl = new URL("video.html", fixtureServer.baseUrl).href;
+    const bootstrapPage = await createPageTarget(httpBase, bootstrapUrl, signal);
+    await waitForDocument(bootstrapPage.client, bootstrapUrl, signal);
+    let discovery;
+    try {
+      discovery = await discoverExtension(
+        httpBase,
+        manifest.name,
+        manifest.background.service_worker,
+        signal,
+      );
+    } finally {
+      await closePageTarget(httpBase, bootstrapPage);
+    }
+    extensionControl = discovery.controlClient;
+    await runPopupSmoke(
+      httpBase,
+      extensionControl,
+      discovery.extensionId,
+      manifest.name,
+      signal,
+    );
+    const { state } = await runValidation(
+      httpBase,
+      extensionControl,
+      discovery.extensionId,
+      manifest.name,
+      signal,
+    );
     const integration = await runRealVideoIntegration(
       httpBase,
+      extensionControl,
       fixtureServer.baseUrl,
       discovery.extensionId,
       manifest.name,
@@ -2121,6 +2221,7 @@ async function main(signal, options) {
     if (launched?.output()) error.browserOutput = launched.output();
     throw error;
   } finally {
+    extensionControl?.close();
     try {
       await terminateBrowser(launched?.child);
     } catch (error) {

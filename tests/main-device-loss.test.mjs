@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const mainUrl = new URL("../fsrcnnx-main.js", import.meta.url);
+const mainUrl = new URL("../src/core/fsrcnnx-main.js", import.meta.url);
 let revision = 0;
 
 function deferred() {

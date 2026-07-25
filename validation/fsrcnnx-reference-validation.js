@@ -1,7 +1,7 @@
 // Numerical-reference validation shared by the extension validation page and
 // deterministic unit tests. The ordinary extension runtime does not import it.
 
-import { LUMA_EXTRACT_WGSL, RECOMBINE_WGSL } from "./fsrcnnx-color.js";
+import { LUMA_EXTRACT_WGSL, RECOMBINE_WGSL } from "../src/core/fsrcnnx-color.js";
 import {
   REFERENCE_CASES,
   REFERENCE_FIXTURE_SCHEMA_VERSION,
@@ -9,8 +9,8 @@ import {
   createReferenceInput,
   getReferenceCase,
 } from "./reference-fixtures.js";
-import { buildSharpenShader } from "./fsrcnnx-sharpen.js";
-import { SsimDownscaler } from "./fsrcnnx-ssimds-runtime.js";
+import { buildSharpenShader } from "../src/core/fsrcnnx-sharpen.js";
+import { SsimDownscaler } from "../src/core/fsrcnnx-ssimds-runtime.js";
 import {
   alignedBytesPerRow,
   float16ToNumber,

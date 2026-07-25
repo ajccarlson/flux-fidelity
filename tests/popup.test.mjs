@@ -8,7 +8,7 @@ import {
   describeCommandFailure,
   isSupportedPageUrl,
   reconcileSelectOptions,
-} from "../popup.js";
+} from "../src/popup.js";
 
 function deferred() {
   let resolve;

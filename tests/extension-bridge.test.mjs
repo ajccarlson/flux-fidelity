@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import vm from "node:vm";
 
-const contentUrl = new URL("../content.js", import.meta.url);
+const contentUrl = new URL("../src/content.js", import.meta.url);
 
 function deferred() {
   let resolve;

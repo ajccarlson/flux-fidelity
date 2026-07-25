@@ -16,11 +16,11 @@ const modificationNotice =
   "Transpiled in 2026 from the mpv/libplacebo GLSL hook format to WGSL compute passes and a JSON pass manifest for FSRCNNX-EXT; model weights and pass order are preserved.";
 
 const complianceHashes = Object.freeze({
-  "LGPL_REBUILDING.md": "b23f3a64a3db81248f1fe99dc1138d4b55aace39b162cfaefaa667836240effe",
+  "LGPL_REBUILDING.md": "6bc947a5c6ed959c084abd3028e969c19979d0da3a144d28308949c4b6a0ce29",
   "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl": standardSourceSha,
   "shaders/upstream/SSimDownscaler.glsl": "f46f4710a162d17058b9d82ed8610588b0c04d7be07cef6bf2a8c4077828f804",
   "shaders/upstream/adaptive-sharpen.glsl": "827fb3d662ac9a91b4075e9117fe6e1dbc1c06d85959ba719cdb954dfb7fb8e4",
-  "transpile.js": "58b7cf1ff4749a3845348ba90b41647d9fc3d8b7a78e0a2bbd8fcd36bd88a817",
+  "tools/transpile.js": "58b7cf1ff4749a3845348ba90b41647d9fc3d8b7a78e0a2bbd8fcd36bd88a817",
   "vendor/ort/LICENSE": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
 });
 
@@ -78,7 +78,7 @@ test("the transpiler rejects altered bytes under every pinned FSRCNNX source nam
       const altered = join(fixture, basename(source));
       writeFileSync(altered, Buffer.concat([readFileSync(source), Buffer.from("\n// altered\n")]));
       const result = spawnSync(process.execPath, [
-        resolve(root, "transpile.js"),
+        resolve(root, "tools/transpile.js"),
         altered,
         "--out", join(fixture, "model"),
       ], { cwd: root, encoding: "utf8" });
