@@ -24,6 +24,16 @@ test("browser validator covers the packaged extension and real-video runtime", (
   assert.match(validator, /brightness\(0\)/);
   assert.match(validator, /element !== target/);
   assert.match(validator, /framesPresented >= interpolationGeneration/);
+  assert.match(validator, /\/json\/new\?\$\{encodeURIComponent\(url\)\}/);
+  assert.doesNotMatch(validator, /encodeURIComponent\("about:blank"\)/);
+  assert.match(validator, /async function waitForDevToolsHttp/);
+  assert.match(validator, /new URL\("json\/version", httpBase\)/);
+  assert.match(validator, /await waitForDevToolsHttp\(httpBase, signal\)/);
+  assert.match(validator, /deadline = Date\.now\(\) \+ STARTUP_TIMEOUT_MS/);
+  assert.match(validator, /chrome\.tabs\.create/);
+  assert.match(validator, /manifest\.background\.service_worker/);
+  assert.match(validator, /service-worker bootstrap/);
+  assert.doesNotMatch(validator, /extensionIdFromPath/);
   assert.match(validator, /127\.0\.0\.1/);
   assert.doesNotMatch(validator, /--no-sandbox/);
 });
@@ -56,6 +66,17 @@ test("browser validation is release-blocking without slowing internal packaging"
 
 test("CI validates the staged package under Xvfb without disabling the sandbox", () => {
   assert.match(workflow, /browser-integration:/);
+  assert.match(workflow, /name: Validate packaged extension in Chromium/);
+  assert.match(workflow, /FSRCNNX_BROWSER: chromium/);
+  assert.match(workflow, /"\$FSRCNNX_BROWSER" --version/);
+  assert.match(workflow, /readlink -f "\$\(command -v "\$FSRCNNX_BROWSER"\)"/);
+  assert.match(workflow, /profile fsrcnnx-chromium-ci \$chromium_path flags=\(unconfined\)/);
+  assert.match(workflow, /'  userns,'/);
+  assert.match(workflow, /apparmor_parser -r \/etc\/apparmor\.d\/fsrcnnx-chromium-ci/);
+  assert.match(workflow, /apparmor_status \| grep -F 'fsrcnnx-chromium-ci'/);
+  assert.doesNotMatch(workflow, /CHROME_DEVEL_SANDBOX/);
+  assert.doesNotMatch(workflow, /apparmor_restrict_unprivileged_userns=0/);
+  assert.doesNotMatch(workflow, /FSRCNNX_BROWSER: google-chrome/);
   assert.match(workflow, /npm run package:internal/);
   assert.match(workflow, /--extension-root dist\/fsrcnnx-ext/);
   assert.match(workflow, /xvfb-run/);

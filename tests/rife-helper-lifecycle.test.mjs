@@ -97,14 +97,14 @@ test("module GPU-helper lifecycle serializes RIFE, blend, and teardown", async (
     runtime: {
       getURL(path) {
         if (path === "vendor/ort/ort.webgpu.min.mjs") return runtimeUrl;
-        if (path === "fsrcnnx-rife-gpu.js") return gpuUrl;
+        if (path === "src/core/fsrcnnx-rife-gpu.js") return gpuUrl;
         return `https://extension.test/${path}`;
       },
     },
   };
   globalThis.fetch = async () => ({ ok: true, status: 200 });
 
-  const rife = await import(`../fsrcnnx-rife.js?helper-lifecycle=${Date.now()}`);
+  const rife = await import(`../src/core/fsrcnnx-rife.js?helper-lifecycle=${Date.now()}`);
   t.after(async () => {
     try { await rife.disposeRife(); } catch {}
     if (chromeDescriptor) Object.defineProperty(globalThis, "chrome", chromeDescriptor);

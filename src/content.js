@@ -28,7 +28,7 @@ function restoreOnce() {
 }
 
 const moduleLoaded = (async () => {
-  const url = chrome.runtime.getURL("fsrcnnx-main.js");
+  const url = chrome.runtime.getURL("src/core/fsrcnnx-main.js");
   api = await import(url);
   return api;
 })();

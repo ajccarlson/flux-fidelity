@@ -5051,7 +5051,7 @@ async function createImageUpscaler(
   if (!initializationCurrent()) throw superseded();
   const imageSource = srcCache.fsrcnnx[STANDARD_MODEL];
   if (!imageSource) throw new Error(`verified image model ${STANDARD_MODEL} is unavailable`);
-  const mod = await import(chrome.runtime.getURL("fsrcnnx-images.js"));
+  const mod = await import(chrome.runtime.getURL("src/core/fsrcnnx-images.js"));
   if (!initializationCurrent()) throw superseded();
   const created = new mod.ImageUpscaler({
     device: initDevice, format: initFormat, sampler: initSampler,
@@ -5255,7 +5255,7 @@ function scheduleInterpolatorGpuRestart() {
 async function ensureInterpolatorInstance() {
   if (interpolator) return interpolator;
   if (interpolatorInitPromise) return interpolatorInitPromise;
-  const promise = import(chrome.runtime.getURL("fsrcnnx-interpolate.js")).then((mod) => {
+  const promise = import(chrome.runtime.getURL("src/core/fsrcnnx-interpolate.js")).then((mod) => {
     if (!interpolator) {
       interpolator = new mod.Interpolator({ findVideo, log, warn,
         onTerminalFailure: handleInterpolationTerminalFailure,

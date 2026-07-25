@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, isAbsolute, relative, resolve } from "node:path";
-import { validateModelBundle } from "../fsrcnnx-model-bundle.js";
-import { validateNeuralManifest } from "../fsrcnnx-neural.js";
+import { validateModelBundle } from "../src/core/fsrcnnx-model-bundle.js";
+import { validateNeuralManifest } from "../src/core/fsrcnnx-neural.js";
 import { PACKAGE_FILES } from "./package-files.mjs";
 
 const root = resolve(import.meta.dirname, "..");
@@ -15,7 +15,7 @@ const errors = [];
 const pinnedArtifacts = {
   "GPL-3.0.txt": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
   "LGPL-3.0.txt": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118",
-  "LGPL_REBUILDING.md": "b23f3a64a3db81248f1fe99dc1138d4b55aace39b162cfaefaa667836240effe",
+  "LGPL_REBUILDING.md": "6bc947a5c6ed959c084abd3028e969c19979d0da3a144d28308949c4b6a0ce29",
   "LICENSE": "29018b491588ba5338f7cceb3eec504a7958985ed69bf1a91c03daac4c2e3fbf",
   "model/rife_v4.26.onnx": "af25762dfec02a4bbb949decea63988b01fa56c46c0ff9dc66ac8e2f12cbb661",
   "model/rife_v4.26_fp16.onnx": "d5672f39b493609220c95c709542d6b99204145a67d9ca496d4500cd8895301f",
@@ -41,9 +41,9 @@ const pinnedArtifacts = {
   "model/ArtCNN_C4F32_DN.artcnn.json": "b5911c707c83462c79dcf954bcaf422efd2d6b42efd4d08228361ab8ea52fe79",
   "model/ArtCNN_C4F32_DS.artcnn.wgsl": "41a1e37c67bfb76a74ce07b52324d961fb4e9351eee44581fba783f8d69341af",
   "model/ArtCNN_C4F32_DS.artcnn.json": "f98bbd5e834cbfb2ed66ba07865889f76466279e356bfbd62c33df73e95b30cb",
-  "fsrcnnx-ssimds.js": "0f55f8f2b49bea3cb8ee2e4c801a663f21d4dfabb88efaf2de23b709c6ade3c6",
-  "fsrcnnx-sharpen.js": "9312f5445791792634679bac74f01d3292e8e776c6fc7e3be348435f2913ef8a",
-  "transpile.js": "58b7cf1ff4749a3845348ba90b41647d9fc3d8b7a78e0a2bbd8fcd36bd88a817",
+  "src/core/fsrcnnx-ssimds.js": "0f55f8f2b49bea3cb8ee2e4c801a663f21d4dfabb88efaf2de23b709c6ade3c6",
+  "src/core/fsrcnnx-sharpen.js": "9312f5445791792634679bac74f01d3292e8e776c6fc7e3be348435f2913ef8a",
+  "tools/transpile.js": "58b7cf1ff4749a3845348ba90b41647d9fc3d8b7a78e0a2bbd8fcd36bd88a817",
 };
 
 for (const [path, expected] of Object.entries(pinnedArtifacts)) {

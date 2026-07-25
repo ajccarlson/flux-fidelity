@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import * as rife from "../fsrcnnx-rife.js";
+import * as rife from "../src/core/fsrcnnx-rife.js";
 
 let runtimeRevision = 0;
 
@@ -77,7 +77,7 @@ test("RIFE initialization rejects an already-lost ORT device", async (t) => {
     },
   };
   installRuntimeMocks(t, state);
-  const isolated = await import(`../fsrcnnx-rife.js?already-lost=${Date.now()}`);
+  const isolated = await import(`../src/core/fsrcnnx-rife.js?already-lost=${Date.now()}`);
 
   assert.equal(await isolated.initRife(), false);
   assert.equal(isolated.isReady(), false);
@@ -386,7 +386,7 @@ test("RIFE loss failures survive duplicate, unrelated, and settled recovery barr
   };
   installRuntimeMocks(t, state);
   const isolated = await import(
-    `../fsrcnnx-rife.js?release-failure=${Date.now()}-${runtimeRevision}`
+    `../src/core/fsrcnnx-rife.js?release-failure=${Date.now()}-${runtimeRevision}`
   );
   assert.equal(await isolated.initRife(), true);
 
