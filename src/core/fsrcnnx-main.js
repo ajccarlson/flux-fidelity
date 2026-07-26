@@ -3339,7 +3339,7 @@ function renderNeuralFrame() {
     : undefined;
   neuralBusy = true;
   runEngine.run(runVideo, srcW, srcH, presentation, temporal).then((res) => {
-    if (temporalResetReason &&
+    if (res && temporalResetReason &&
         neuralTemporalResetGeneration === temporalResetGeneration &&
         neuralTemporalResetReason === temporalResetReason) {
       neuralTemporalResetReason = null;

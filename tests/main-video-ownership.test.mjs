@@ -1354,6 +1354,26 @@ test("a seek reset survives failed capture and failed child inference", async (t
   }
 });
 
+test("a seek reset survives an empty child response", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  const empty = deferred();
+  const deps = { run: empty, runArguments: [], events: [] };
+  const renderer = await loadNeuralPresentation(deps);
+
+  renderer.seek();
+  renderer.render({ mediaTime: 5, presentedFrames: 25 });
+  empty.resolve(null);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const retry = deferred();
+  deps.run = retry;
+  renderer.render({ mediaTime: 5.04, presentedFrames: 26 });
+  assert.equal(deps.runArguments[1][4].resetReason, "seek");
+  retry.resolve(successfulNeuralRun());
+  await new Promise((resolve) => setImmediate(resolve));
+});
+
 test("a second seek during a successful reset run remains pending", async (t) => {
   const previous = globalThis.__videoOwnershipDeps;
   t.after(() => { globalThis.__videoOwnershipDeps = previous; });
