@@ -46,6 +46,17 @@ python -m venv .venv
 On Windows, use `.venv\Scripts\python.exe`. Dependencies are version-pinned but
 their wheels are not hash-locked.
 
+FP32 remains the default. The opt-in mixed profile halves weights, features, and
+recurrent state while retaining FP32 public frames, decoded priors, RGB output,
+motion coordinates, and all five `GridSample` operations:
+
+```sh
+.venv/bin/python tools/cda-vsr/cda_tool.py export \
+  --source ../CDA-VSR \
+  --checkpoint ../CDA-VSR/pretrained_models/best.pth \
+  --precision mixed-fp16
+```
+
 Dynamic height and width are the default. `--height` and `--width` select the
 capture and first parity fixture, not a resolution ceiling. Export validates a
 second odd, non-square size to catch accidental shape specialization. Use
@@ -57,6 +68,13 @@ a sandbox, loads the checkpoint in PyTorch's tensor-only mode, lowers the
 released kernel=1 MMCV operation to standard ONNX, validates both graphs, runs
 recurrent CPU parity, and writes the input, tool, graph, and parity identities
 to `cda-vsr-export.json`. No MMCV installation is needed.
+
+Parity compares the emitted graph directly with the canonical FP32 PyTorch
+network while each side evolves its own recurrent states. It covers two spatial
+shapes, provider-realistic integer motion, a separate fractional-motion stress
+sequence, and the upstream 25-frame recurrent reset interval by default. Output
+and state limits are distinct; every tensor record also includes its p99.9
+absolute error.
 
 To work with another source/checkpoint pair that you have independently
 reviewed, add `--source-sha256 <exact-hash>`,
@@ -151,13 +169,15 @@ benefit.
 
 ## Current boundary
 
-These are FP32 feasibility graphs—not extension assets. Dynamic shapes remove
+These are feasibility graphs, not extension assets. Dynamic shapes remove
 exact-size specialization, not physical WebGPU limits. At a 1280×720 source,
-each 64-channel FP32 state is 225 MiB and the 4× RGB output is 168.75 MiB, so
-individual tensors exceed the common 128 MiB storage-binding limit. A validated
-tiling/state strategy, FP16 conversion, or model redesign—and representative
-browser-provider tests—is therefore required before catalog inclusion. This is
-a hardware/runtime blocker, not an artificial source-resolution policy.
+each 64-channel state is 225 MiB in FP32 or 112.5 MiB in FP16, while the 4×
+FP32 RGB output is 168.75 MiB. The mixed profile therefore reduces persistent
+state and model bytes but does not make full-frame execution generally safe: a
+large recurrent FP16 activation still exceeds common storage-binding limits.
+A validated tiled state strategy and representative browser-provider tests are
+required before catalog inclusion. This is a hardware/runtime blocker, not an
+artificial source-resolution policy.
 
 Regular parity checks sampled numerical agreement between the graphs and the
 lowered PyTorch network; `dcn-parity` separately samples the lowering against

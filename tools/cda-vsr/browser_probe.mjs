@@ -22,14 +22,33 @@ import { buildPackage } from "../build-package.mjs";
 const PROJECT_ROOT = resolve(import.meta.dirname, "../..");
 const BROWSER_VALIDATOR = resolve(PROJECT_ROOT, "tools/browser-validation.mjs");
 const RECEIPT_FILENAME = "cda-vsr-export.json";
-const RECEIPT_FORMAT = 2;
+const LEGACY_RECEIPT_FORMAT = 2;
+const RECEIPT_FORMAT = 3;
 const RECEIPT_TOOL = "FSRCNNX-EXT CDA-VSR conversion toolkit";
 const RECEIPT_OPSET = 17;
 const PRIOR_PROVIDER = "decoded-cda-v1";
+const PARITY_SEED = 20260726;
+const MINIMUM_PARITY_FRAMES = 25;
+const FP32_PRECISION = "float32";
+const MIXED_FP16_PRECISION = "mixed-fp16";
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const GRAPH_FILES = Object.freeze({
   initializer: "cda-vsr-initializer.onnx",
   recurrent: "cda-vsr-recurrent.onnx",
+});
+const GRAPH_GRID_SAMPLE_NODES = Object.freeze({
+  initializer: 0,
+  recurrent: 5,
+});
+const DEFAULT_PARITY_LIMITS = Object.freeze({
+  [FP32_PRECISION]: Object.freeze({
+    output: Object.freeze({ max_abs: 2e-4, max_mean: 2e-5 }),
+    state: Object.freeze({ max_abs: 2e-4, max_mean: 2e-5 }),
+  }),
+  [MIXED_FP16_PRECISION]: Object.freeze({
+    output: Object.freeze({ max_abs: 5e-3, max_mean: 5e-4 }),
+    state: Object.freeze({ max_abs: 2e-2, max_mean: 2e-3 }),
+  }),
 });
 const REFERENCE_SOURCE_SHA256 =
   "0defb80e5fcbaa2abd0eb9cbc4f4f2050a68e94fa6f743aa48a785cc734fd87b";
@@ -63,6 +82,13 @@ function requireFiniteNonnegative(value, at) {
   return value;
 }
 
+function requireFinitePositive(value, at) {
+  if (!Number.isFinite(value) || value <= 0) {
+    receiptError(`${at} must be a finite positive number`);
+  }
+  return value;
+}
+
 function requireSha256(value, at) {
   if (typeof value !== "string" || !SHA256_PATTERN.test(value)) {
     receiptError(`${at} must be a lowercase SHA-256 digest`);
@@ -75,7 +101,69 @@ function sameStringArray(value, expected) {
     value.every((item, index) => item === expected[index]);
 }
 
-function validateInputIdentity(receipt) {
+function requireExactValue(value, expected, at) {
+  if (Array.isArray(expected)) {
+    if (!Array.isArray(value) || value.length !== expected.length) {
+      receiptError(`${at} does not match the exact expected contract`);
+    }
+    expected.forEach((item, index) => {
+      requireExactValue(value[index], item, `${at}[${index}]`);
+    });
+    return value;
+  }
+  if (expected && typeof expected === "object") {
+    const record = requireRecord(value, at);
+    const actualKeys = Object.keys(record).sort();
+    const expectedKeys = Object.keys(expected).sort();
+    if (!sameStringArray(actualKeys, expectedKeys)) {
+      receiptError(`${at} does not have the exact expected fields`);
+    }
+    for (const key of expectedKeys) {
+      requireExactValue(record[key], expected[key], `${at}.${key}`);
+    }
+    return record;
+  }
+  if (value !== expected) {
+    receiptError(`${at} must be ${JSON.stringify(expected)}`);
+  }
+  return value;
+}
+
+function precisionContract(profile) {
+  if (profile !== FP32_PRECISION && profile !== MIXED_FP16_PRECISION) {
+    receiptError(`precision.profile must be ${FP32_PRECISION} or ${MIXED_FP16_PRECISION}`);
+  }
+  const computeDtype = profile === MIXED_FP16_PRECISION ? "float16" : "float32";
+  return {
+    profile,
+    weight_dtype: computeDtype,
+    feature_dtype: computeDtype,
+    state_dtype: computeDtype,
+    coordinate_dtype: "float32",
+    grid_sample_dtype: "float32",
+    public_inputs: {
+      frame: "float32",
+      motion: "float32",
+      residual: "float32",
+      state_low: computeDtype,
+      state_high: computeDtype,
+    },
+    public_outputs: {
+      output: "float32",
+      next_state_low: computeDtype,
+      next_state_high: computeDtype,
+    },
+  };
+}
+
+function validatePrecision(receipt) {
+  const recorded = requireRecord(receipt.precision, "precision");
+  const expected = precisionContract(recorded.profile);
+  requireExactValue(recorded, expected, "precision");
+  return expected;
+}
+
+function validateInputIdentity(receipt, { canonicalOnly = false } = {}) {
   const inputs = requireRecord(receipt.inputs, "inputs");
   const source = requireRecord(inputs.source, "inputs.source");
   const checkpoint = requireRecord(inputs.checkpoint, "inputs.checkpoint");
@@ -90,6 +178,9 @@ function validateInputIdentity(receipt) {
   const identity = requireRecord(receipt.input_identity, "input_identity");
   const canonical = sourceSha256 === REFERENCE_SOURCE_SHA256 &&
     checkpointSha256 === REFERENCE_CHECKPOINT_SHA256;
+  if (canonicalOnly && !canonical) {
+    receiptError("browser probing format 3 requires the canonical source and checkpoint");
+  }
   const expectedPolicy = canonical
     ? "canonical-reference"
     : "explicit-unpinned-acknowledgement";
@@ -103,9 +194,10 @@ function validateInputIdentity(receipt) {
   if (identity.architecture_execution !== "trusted-python-code") {
     receiptError("input_identity must record trusted architecture execution");
   }
+  return Object.freeze({ sourceSha256, checkpointSha256, canonical });
 }
 
-function validateParityEvidence(receipt, captureFixture) {
+function validateLegacyParityEvidence(receipt, captureFixture) {
   const policy = requireRecord(receipt.parity_policy, "parity_policy");
   if (policy.skipped !== false || policy.dynamic_shape_runtime_validated !== true) {
     receiptError("browser probing requires completed dynamic-shape parity");
@@ -152,6 +244,267 @@ function validateParityEvidence(receipt, captureFixture) {
   }
 }
 
+function dynamicProbeShape({ height, width }) {
+  const probe = {
+    height: height + (height % 2 === 1 ? 2 : 3),
+    width: width + (width % 2 === 1 ? 4 : 5),
+  };
+  if (probe.height === probe.width) probe.width += 2;
+  return probe;
+}
+
+function requireSameNumber(value, expected, at) {
+  requireFiniteNonnegative(value, at);
+  if (value !== expected) {
+    receiptError(`${at} does not match its recorded evidence`);
+  }
+  return value;
+}
+
+function validateTensorLimits(value, precision, at) {
+  const limits = requireRecord(value, at);
+  const classes = Object.keys(limits).sort();
+  if (!sameStringArray(classes, ["output", "state"])) {
+    receiptError(`${at} must contain exactly output and state`);
+  }
+  const validated = {};
+  for (const tensorClass of ["output", "state"]) {
+    const itemAt = `${at}.${tensorClass}`;
+    const item = requireRecord(limits[tensorClass], itemAt);
+    if (!sameStringArray(Object.keys(item).sort(), ["max_abs", "max_mean"])) {
+      receiptError(`${itemAt} must contain exactly max_abs and max_mean`);
+    }
+    const maxAbs = requireFinitePositive(item.max_abs, `${itemAt}.max_abs`);
+    const maxMean = requireFinitePositive(item.max_mean, `${itemAt}.max_mean`);
+    const defaults = DEFAULT_PARITY_LIMITS[precision][tensorClass];
+    if (maxAbs > defaults.max_abs || maxMean > defaults.max_mean) {
+      receiptError(
+        `${itemAt} is looser than the ${precision} browser-probe defaults`,
+      );
+    }
+    validated[tensorClass] = { max_abs: maxAbs, max_mean: maxMean };
+  }
+  return validated;
+}
+
+function validateParitySequence(
+  value,
+  {
+    at,
+    expectedShape,
+    frames,
+    motionFixture,
+    tensorLimits,
+    maxAbs,
+    maxMean,
+  },
+) {
+  const result = requireRecord(value, at);
+  if (result.height !== expectedShape.height ||
+      result.width !== expectedShape.width ||
+      result.frames !== frames ||
+      result.seed !== PARITY_SEED ||
+      result.motion_fixture !== motionFixture) {
+    receiptError(`${at} fixture identity is inconsistent`);
+  }
+  requireSameNumber(result.max_abs_limit, maxAbs, `${at}.max_abs_limit`);
+  requireSameNumber(result.max_mean_limit, maxMean, `${at}.max_mean_limit`);
+  requireExactValue(result.tensor_limits, tensorLimits, `${at}.tensor_limits`);
+
+  if (!Array.isArray(result.records) || result.records.length !== frames) {
+    receiptError(`${at}.records must contain exactly ${frames} frames`);
+  }
+  const measured = { output: [], state: [] };
+  const tensorNames = ["next_state_high", "next_state_low", "output"];
+  result.records.forEach((recordValue, frameIndex) => {
+    const recordAt = `${at}.records[${frameIndex}]`;
+    const record = requireRecord(recordValue, recordAt);
+    const expectedRole = frameIndex === 0 ? "initializer" : "recurrent";
+    if (record.frame !== frameIndex || record.role !== expectedRole) {
+      receiptError(`${recordAt} frame role is inconsistent`);
+    }
+    const tensors = requireRecord(record.tensors, `${recordAt}.tensors`);
+    if (!sameStringArray(Object.keys(tensors).sort(), tensorNames)) {
+      receiptError(`${recordAt}.tensors does not match the temporal output ABI`);
+    }
+    for (const tensorName of tensorNames) {
+      const metricAt = `${recordAt}.tensors.${tensorName}`;
+      const metrics = requireRecord(tensors[tensorName], metricAt);
+      const meanAbs = requireFiniteNonnegative(metrics.mean_abs, `${metricAt}.mean_abs`);
+      const p99_9Abs = requireFiniteNonnegative(
+        metrics.p99_9_abs,
+        `${metricAt}.p99_9_abs`,
+      );
+      const tensorMaxAbs = requireFiniteNonnegative(
+        metrics.max_abs,
+        `${metricAt}.max_abs`,
+      );
+      if (meanAbs > tensorMaxAbs || p99_9Abs > tensorMaxAbs) {
+        receiptError(`${metricAt} contains impossible error summaries`);
+      }
+      const tensorClass = tensorName === "output" ? "output" : "state";
+      measured[tensorClass].push({
+        max_abs: tensorMaxAbs,
+        max_mean: meanAbs,
+        p99_9_abs: p99_9Abs,
+      });
+    }
+  });
+
+  const expectedWorst = {};
+  for (const tensorClass of ["output", "state"]) {
+    const values = measured[tensorClass];
+    const summary = {
+      worst_max_abs: Math.max(...values.map(({ max_abs: value }) => value)),
+      worst_mean_abs: Math.max(...values.map(({ max_mean: value }) => value)),
+      worst_p99_9_abs: Math.max(...values.map(({ p99_9_abs: value }) => value)),
+    };
+    const limit = tensorLimits[tensorClass];
+    if (summary.worst_max_abs > limit.max_abs ||
+        summary.worst_mean_abs > limit.max_mean) {
+      receiptError(`${at} ${tensorClass} evidence exceeds its parity limits`);
+    }
+    expectedWorst[tensorClass] = summary;
+  }
+
+  const recordedWorst = requireRecord(
+    result.worst_by_tensor_class,
+    `${at}.worst_by_tensor_class`,
+  );
+  if (!sameStringArray(Object.keys(recordedWorst).sort(), ["output", "state"])) {
+    receiptError(`${at}.worst_by_tensor_class has an invalid schema`);
+  }
+  for (const tensorClass of ["output", "state"]) {
+    const item = requireRecord(
+      recordedWorst[tensorClass],
+      `${at}.worst_by_tensor_class.${tensorClass}`,
+    );
+    for (const [metric, expected] of Object.entries(expectedWorst[tensorClass])) {
+      requireSameNumber(
+        item[metric],
+        expected,
+        `${at}.worst_by_tensor_class.${tensorClass}.${metric}`,
+      );
+    }
+  }
+
+  const summary = {
+    worst_max_abs: Math.max(
+      expectedWorst.output.worst_max_abs,
+      expectedWorst.state.worst_max_abs,
+    ),
+    worst_mean_abs: Math.max(
+      expectedWorst.output.worst_mean_abs,
+      expectedWorst.state.worst_mean_abs,
+    ),
+    worst_p99_9_abs: Math.max(
+      expectedWorst.output.worst_p99_9_abs,
+      expectedWorst.state.worst_p99_9_abs,
+    ),
+  };
+  for (const [metric, expected] of Object.entries(summary)) {
+    requireSameNumber(result[metric], expected, `${at}.${metric}`);
+  }
+  return summary;
+}
+
+function validateParityEvidenceV3(receipt, captureFixture, precision) {
+  const policy = requireRecord(receipt.parity_policy, "parity_policy");
+  if (policy.skipped !== false || policy.dynamic_shape_runtime_validated !== true) {
+    receiptError("browser probing requires completed dynamic-shape parity");
+  }
+  const frames = requirePositiveInteger(policy.frames, "parity_policy.frames");
+  if (frames < MINIMUM_PARITY_FRAMES) {
+    receiptError(
+      `parity_policy.frames must cover at least ${MINIMUM_PARITY_FRAMES} frames`,
+    );
+  }
+  if (policy.reference_precision !== FP32_PRECISION) {
+    receiptError("parity_policy.reference_precision must be float32");
+  }
+  if (policy.state_chains !== "independent") {
+    receiptError("parity_policy.state_chains must be independent");
+  }
+  if (!sameStringArray(
+    policy.motion_fixtures,
+    ["decoded-integer", "fractional-stress"],
+  )) {
+    receiptError(
+      "parity_policy.motion_fixtures must cover decoded-integer and fractional-stress",
+    );
+  }
+  const tensorLimits = validateTensorLimits(
+    policy.tensor_limits,
+    precision,
+    "parity_policy.tensor_limits",
+  );
+  const maxAbs = Math.max(
+    tensorLimits.output.max_abs,
+    tensorLimits.state.max_abs,
+  );
+  const maxMean = Math.max(
+    tensorLimits.output.max_mean,
+    tensorLimits.state.max_mean,
+  );
+  requireSameNumber(policy.max_abs, maxAbs, "parity_policy.max_abs");
+  requireSameNumber(policy.max_mean, maxMean, "parity_policy.max_mean");
+
+  const parity = requireRecord(receipt.parity, "parity");
+  if (parity.spatial_shape !== "dynamic" ||
+      parity.reference_precision !== FP32_PRECISION ||
+      parity.state_chains !== "independent" ||
+      parity.primary_motion_fixture !== "decoded-integer") {
+    receiptError("parity must record dynamic independent FP32-reference evidence");
+  }
+  if (parity.frames_per_shape !== frames || parity.seed !== PARITY_SEED) {
+    receiptError("parity fixture identity does not match parity_policy");
+  }
+  requireSameNumber(parity.max_abs_limit, maxAbs, "parity.max_abs_limit");
+  requireSameNumber(parity.max_mean_limit, maxMean, "parity.max_mean_limit");
+  requireExactValue(parity.tensor_limits, tensorLimits, "parity.tensor_limits");
+
+  const expectedShapes = [
+    { ...captureFixture },
+    dynamicProbeShape(captureFixture),
+  ];
+  requireExactValue(parity.tested_shapes, expectedShapes, "parity.tested_shapes");
+  if (!Array.isArray(parity.shape_results) ||
+      parity.shape_results.length !== expectedShapes.length) {
+    receiptError("parity.shape_results must cover both dynamic shapes");
+  }
+
+  const summaries = parity.shape_results.map((result, index) =>
+    validateParitySequence(result, {
+      at: `parity.shape_results[${index}]`,
+      expectedShape: expectedShapes[index],
+      frames,
+      motionFixture: "decoded-integer",
+      tensorLimits,
+      maxAbs,
+      maxMean,
+    }));
+  summaries.push(validateParitySequence(parity.fractional_motion_stress, {
+    at: "parity.fractional_motion_stress",
+    expectedShape: expectedShapes[0],
+    frames,
+    motionFixture: "fractional-stress",
+    tensorLimits,
+    maxAbs,
+    maxMean,
+  }));
+
+  const aggregate = {
+    worst_max_abs: Math.max(...summaries.map(({ worst_max_abs: value }) => value)),
+    worst_mean_abs: Math.max(...summaries.map(({ worst_mean_abs: value }) => value)),
+    worst_p99_9_abs: Math.max(
+      ...summaries.map(({ worst_p99_9_abs: value }) => value),
+    ),
+  };
+  for (const [metric, expected] of Object.entries(aggregate)) {
+    requireSameNumber(parity[metric], expected, `parity.${metric}`);
+  }
+}
+
 function makeProbeEntry(contract) {
   return {
     key: CDA_BROWSER_PROBE_MODEL_KEY,
@@ -163,22 +516,200 @@ function makeProbeEntry(contract) {
   };
 }
 
+function validateManifestPrecision(contract, precision) {
+  const expected = precisionContract(precision);
+  const initialize = contract.graphs.initialize;
+  const recurrent = contract.graphs.recurrent;
+  const checks = [
+    [initialize.inputs.frame, "float32", "initialize.inputs.frame"],
+    [initialize.outputs.output, "float32", "initialize.outputs.output"],
+    [
+      initialize.outputs.next_state_low,
+      expected.state_dtype,
+      "initialize.outputs.next_state_low",
+    ],
+    [
+      initialize.outputs.next_state_high,
+      expected.state_dtype,
+      "initialize.outputs.next_state_high",
+    ],
+    [recurrent.inputs.frame, "float32", "recurrent.inputs.frame"],
+    [recurrent.inputs.motion, "float32", "recurrent.inputs.motion"],
+    [recurrent.inputs.residual, "float32", "recurrent.inputs.residual"],
+    [recurrent.inputs.state_low, expected.state_dtype, "recurrent.inputs.state_low"],
+    [recurrent.inputs.state_high, expected.state_dtype, "recurrent.inputs.state_high"],
+    [recurrent.outputs.output, "float32", "recurrent.outputs.output"],
+    [
+      recurrent.outputs.next_state_low,
+      expected.state_dtype,
+      "recurrent.outputs.next_state_low",
+    ],
+    [
+      recurrent.outputs.next_state_high,
+      expected.state_dtype,
+      "recurrent.outputs.next_state_high",
+    ],
+  ];
+  for (const [descriptor, dtype, at] of checks) {
+    if (descriptor?.dtype !== dtype) {
+      receiptError(`runtime_contract.manifest_v2_template.${at}.dtype must be ${dtype}`);
+    }
+  }
+}
+
+function expectedGraphShapes(role) {
+  const spatial = ["height", "width"];
+  const inputs = role === "initializer"
+    ? { frame: [1, 3, ...spatial] }
+    : {
+      frame: [1, 3, ...spatial],
+      motion: [1, 2, ...spatial],
+      residual: [1, 1, ...spatial],
+      state_low: [1, 64, ...spatial],
+      state_high: [1, 64, ...spatial],
+    };
+  return {
+    inputs,
+    outputs: {
+      output: [1, 3, "output_height_x4", "output_width_x4"],
+      next_state_low: [1, 64, ...spatial],
+      next_state_high: [1, 64, ...spatial],
+    },
+  };
+}
+
+function validateGraphEvidenceV3(
+  graph,
+  role,
+  precision,
+  captureFixture,
+) {
+  const at = `graphs.${role}`;
+  const profile = precisionContract(precision);
+  if (graph.precision_profile !== precision) {
+    receiptError(`${at}.precision_profile must be ${precision}`);
+  }
+  requireExactValue(graph.capture_fixture, captureFixture, `${at}.capture_fixture`);
+  const shapes = expectedGraphShapes(role);
+  requireExactValue(graph.inputs, shapes.inputs, `${at}.inputs`);
+  requireExactValue(graph.outputs, shapes.outputs, `${at}.outputs`);
+
+  const expectedPublicInputs = role === "initializer"
+    ? { frame: profile.public_inputs.frame }
+    : profile.public_inputs;
+  requireExactValue(
+    graph.public_dtypes,
+    {
+      inputs: expectedPublicInputs,
+      outputs: profile.public_outputs,
+    },
+    `${at}.public_dtypes`,
+  );
+
+  const expectedGridSamples = GRAPH_GRID_SAMPLE_NODES[role];
+  if (graph.grid_sample_nodes !== expectedGridSamples) {
+    receiptError(`${at}.grid_sample_nodes must be ${expectedGridSamples}`);
+  }
+  requireExactValue(
+    graph.precision_islands,
+    {
+      coordinate_dtype: "float32",
+      grid_sample_dtype: "float32",
+      grid_sample_nodes: expectedGridSamples,
+    },
+    `${at}.precision_islands`,
+  );
+
+  if (!Array.isArray(graph.operators) ||
+      graph.operators.some((operator) => typeof operator !== "string")) {
+    receiptError(`${at}.operators must be a string array`);
+  }
+  const hasGridSample = graph.operators.includes("GridSample");
+  if (hasGridSample !== (expectedGridSamples > 0)) {
+    receiptError(`${at}.operators is inconsistent with its GridSample count`);
+  }
+  requirePositiveInteger(graph.nodes, `${at}.nodes`);
+
+  const initializerDtypes = requireRecord(
+    graph.initializer_dtypes,
+    `${at}.initializer_dtypes`,
+  );
+  for (const [dtype, count] of Object.entries(initializerDtypes)) {
+    requirePositiveInteger(count, `${at}.initializer_dtypes.${dtype}`);
+  }
+  const initializerCount = requirePositiveInteger(
+    initializerDtypes[profile.weight_dtype],
+    `${at}.initializer_dtypes.${profile.weight_dtype}`,
+  );
+  const otherFloatDtype = profile.weight_dtype === "float16" ? "float32" : "float16";
+  if (Object.hasOwn(initializerDtypes, otherFloatDtype)) {
+    receiptError(`${at}.initializer_dtypes contains ${otherFloatDtype} weights`);
+  }
+  requireExactValue(
+    graph.weight_derivation,
+    {
+      source_dtype: "float32",
+      target_dtype: profile.weight_dtype,
+      method: precision === MIXED_FP16_PRECISION
+        ? "ieee-754-binary16-round-to-nearest"
+        : "identity",
+      initializer_count: initializerCount,
+    },
+    `${at}.weight_derivation`,
+  );
+
+  const castTargets = requireRecord(graph.cast_targets, `${at}.cast_targets`);
+  for (const [dtype, count] of Object.entries(castTargets)) {
+    requirePositiveInteger(count, `${at}.cast_targets.${dtype}`);
+  }
+  if (precision === MIXED_FP16_PRECISION) {
+    if (!graph.operators.includes("Cast") ||
+        (castTargets.float16 ?? 0) < Math.max(1, expectedGridSamples) ||
+        (castTargets.float32 ?? 0) < 1) {
+      receiptError(
+        `${at} must record explicit float16/float32 mixed-precision casts`,
+      );
+    }
+  } else if (Object.hasOwn(castTargets, "float16")) {
+    receiptError(`${at}.cast_targets must not introduce float16 in the FP32 profile`);
+  }
+}
+
 export function validateCdaExportReceipt(receipt) {
   requireRecord(receipt, "receipt");
-  if (receipt.format !== RECEIPT_FORMAT) {
-    receiptError(`format must be ${RECEIPT_FORMAT}`);
+  const legacy = receipt.format === LEGACY_RECEIPT_FORMAT;
+  if (!legacy && receipt.format !== RECEIPT_FORMAT) {
+    receiptError(
+      `format must be ${LEGACY_RECEIPT_FORMAT} or ${RECEIPT_FORMAT}`,
+    );
   }
   if (receipt.tool !== RECEIPT_TOOL) receiptError("tool identity is not recognized");
   if (receipt.opset !== RECEIPT_OPSET) {
     receiptError(`opset must be ${RECEIPT_OPSET}`);
   }
+  const precision = legacy ? FP32_PRECISION : validatePrecision(receipt).profile;
+  if (legacy && receipt.precision != null) {
+    const legacyPrecision = requireRecord(receipt.precision, "precision");
+    if (legacyPrecision.profile !== FP32_PRECISION) {
+      receiptError("format 2 receipts are legacy FP32 exports");
+    }
+  }
 
   const distribution = requireRecord(receipt.distribution, "distribution");
-  if (distribution.architecture_license_status !== "not-established" ||
-      distribution.checkpoint_license_status !== "not-established" ||
-      distribution.checkpoint_redistribution_clearance !== false ||
-      distribution.generated_assets !== "experimental-local-only" ||
-      distribution.shipping_catalog !== false) {
+  const expectedDistribution = {
+    architecture_license_status: "not-established",
+    checkpoint_license_status: "not-established",
+    checkpoint_redistribution_clearance: false,
+    generated_assets: "experimental-local-only",
+    shipping_catalog: false,
+  };
+  if (!legacy) {
+    requireExactValue(distribution, expectedDistribution, "distribution");
+  } else if (distribution.architecture_license_status !== "not-established" ||
+             distribution.checkpoint_license_status !== "not-established" ||
+             distribution.checkpoint_redistribution_clearance !== false ||
+             distribution.generated_assets !== "experimental-local-only" ||
+             distribution.shipping_catalog !== false) {
     receiptError("distribution must retain the experimental local-only boundary");
   }
 
@@ -204,8 +735,12 @@ export function validateCdaExportReceipt(receipt) {
     receiptError("spatial_shape.source_resolution_ceiling must remain null");
   }
 
-  validateInputIdentity(receipt);
-  validateParityEvidence(receipt, captureFixture);
+  validateInputIdentity(receipt, { canonicalOnly: !legacy });
+  if (legacy) {
+    validateLegacyParityEvidence(receipt, captureFixture);
+  } else {
+    validateParityEvidenceV3(receipt, captureFixture, precision);
+  }
 
   const runtime = requireRecord(receipt.runtime_contract, "runtime_contract");
   if (runtime.prior_provider !== PRIOR_PROVIDER ||
@@ -214,6 +749,11 @@ export function validateCdaExportReceipt(receipt) {
       runtime.catalog_compatible_at_graph_shape_level !== true ||
       runtime.shipping_catalog !== false) {
     receiptError("runtime_contract is not a compatible non-shipping CDA contract");
+  }
+  if ((!legacy && runtime.precision_profile !== precision) ||
+      (legacy && runtime.precision_profile != null &&
+       runtime.precision_profile !== FP32_PRECISION)) {
+    receiptError(`runtime_contract.precision_profile must be ${precision}`);
   }
   const contract = requireRecord(
     runtime.manifest_v2_template,
@@ -231,6 +771,7 @@ export function validateCdaExportReceipt(receipt) {
       normalizedEntry.contract.recurrentGraph !== "recurrent") {
     receiptError("manifest_v2_template must expose the CDA temporal graph pair");
   }
+  validateManifestPrecision(normalizedEntry.contract, precision);
 
   const graphs = requireRecord(receipt.graphs, "graphs");
   const roles = Object.keys(graphs).sort();
@@ -250,6 +791,12 @@ export function validateCdaExportReceipt(receipt) {
     if (contract.graphs?.[contractGraphName]?.file !== filename) {
       receiptError(`manifest graph ${contractGraphName} does not match graphs.${role}`);
     }
+    if (!legacy) {
+      validateGraphEvidenceV3(graph, role, precision, captureFixture);
+    } else if (graph.precision_profile != null &&
+               graph.precision_profile !== FP32_PRECISION) {
+      receiptError(`graphs.${role}.precision_profile must be float32 for format 2`);
+    }
     verifiedGraphs[role] = Object.freeze({
       file: filename,
       bytes: requirePositiveInteger(graph.bytes, `graphs.${role}.bytes`),
@@ -258,6 +805,7 @@ export function validateCdaExportReceipt(receipt) {
   }
 
   return Object.freeze({
+    precision,
     contract: structuredClone(contract),
     graphs: Object.freeze(verifiedGraphs),
   });
@@ -329,6 +877,7 @@ export async function verifyCdaExportDirectory(onnxDir) {
       path: receiptPath,
       sha256: await sha256File(receiptPath),
     }),
+    precision: validated.precision,
     contract: validated.contract,
     graphs: Object.freeze(verifiedGraphs),
   });
@@ -402,6 +951,7 @@ export async function stageCdaBrowserProbe({
     return Object.freeze({
       extensionRoot,
       modelKey: CDA_BROWSER_PROBE_MODEL_KEY,
+      precision: verified.precision,
       receipt: verified.receipt,
       graphs: verified.graphs,
       async cleanup() {
@@ -485,6 +1035,7 @@ async function main(options, signal) {
   const staged = await stageCdaBrowserProbe({ onnxDir: options.onnxDir });
   try {
     console.log(`Verified CDA-VSR export receipt: ${staged.receipt.sha256}`);
+    console.log(`Verified precision profile: ${staged.precision}`);
     for (const [role, graph] of Object.entries(staged.graphs)) {
       console.log(`Verified ${role} graph: ${graph.bytes} bytes, SHA-256 ${graph.sha256}`);
     }

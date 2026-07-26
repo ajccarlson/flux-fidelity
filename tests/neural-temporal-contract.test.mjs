@@ -92,12 +92,12 @@ function temporalEntry() {
   };
 }
 
-function cdaTemporalEntry() {
+function cdaTemporalEntry(stateDtype = "float32") {
   const stateOutput = (name, state) => ({
     [name]: {
       role: "state-out",
       state,
-      dtype: "float32",
+      dtype: stateDtype,
       channels: 64,
     },
   });
@@ -142,14 +142,14 @@ function cdaTemporalEntry() {
               role: "state-in",
               state: "low",
               reset: "required",
-              dtype: "float32",
+              dtype: stateDtype,
               channels: 64,
             },
             state_high: {
               role: "state-in",
               state: "high",
               reset: "required",
-              dtype: "float32",
+              dtype: stateDtype,
               channels: 64,
             },
           },
@@ -188,6 +188,56 @@ test("the exported CDA two-graph ABI is manifest-compatible and enumerates both 
     "cda-vsr-initializer.onnx",
     "cda-vsr-recurrent.onnx",
   ]);
+});
+
+test("the mixed CDA ABI keeps RGB and priors FP32 while accepting FP16 recurrent state", async (t) => {
+  const previous = globalThis.__neuralTemporalTestDeps;
+  t.after(() => { globalThis.__neuralTemporalTestDeps = previous; });
+  const {
+    validateNeuralManifest,
+    validateNeuralSessionContract,
+  } = await loadNeuralEngine(noOpDeps());
+
+  const [entry] = validateNeuralManifest([cdaTemporalEntry("float16")]);
+  const recurrent = entry.contract.graphs.recurrent;
+  assert.equal(recurrent.inputs.frame.dtype, "float32");
+  assert.equal(recurrent.inputs.motion.dtype, "float32");
+  assert.equal(recurrent.inputs.residual.dtype, "float32");
+  assert.equal(recurrent.inputs.state_low.dtype, "float16");
+  assert.equal(recurrent.inputs.state_high.dtype, "float16");
+  assert.equal(recurrent.outputs.output.dtype, "float32");
+  assert.equal(recurrent.outputs.next_state_low.dtype, "float16");
+  assert.equal(recurrent.outputs.next_state_high.dtype, "float16");
+
+  const metadata = (name, type, channels, output = false) => ({
+    name,
+    isTensor: true,
+    type,
+    shape: [
+      1,
+      channels,
+      output ? "output_height_x4" : "height",
+      output ? "output_width_x4" : "width",
+    ],
+  });
+  const resolved = validateNeuralSessionContract({
+    inputNames: ["frame", "motion", "residual", "state_low", "state_high"],
+    outputNames: ["output", "next_state_low", "next_state_high"],
+    inputMetadata: [
+      metadata("frame", "float32", 3),
+      metadata("motion", "float32", 2),
+      metadata("residual", "float32", 1),
+      metadata("state_low", "float16", 64),
+      metadata("state_high", "float16", 64),
+    ],
+    outputMetadata: [
+      metadata("output", "float32", 3, true),
+      metadata("next_state_low", "float16", 64),
+      metadata("next_state_high", "float16", 64),
+    ],
+  }, entry, "recurrent");
+  assert.equal(resolved.inputName, "frame");
+  assert.equal(resolved.outputName, "output");
 });
 
 test("v2 temporal manifests normalize named graphs, providers, and paired state", async (t) => {
