@@ -8,6 +8,31 @@ import { inspectReleaseClearance } from "../tools/check-release-clearance.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const provenanceFile = "docs/compliance/MODEL_PROVENANCE.md";
+const neuralModelArtifacts = new Map([
+  [
+    "LICENSES/Real-ESRGAN-BSD-3-Clause.txt",
+    "4a699ec4863d96a91fc265948a0c90033f7e8735d515524dcf3444736406e0c2",
+  ],
+  [
+    "model/neural/realesrganv2_animevideo_xsx2.fp16.onnx",
+    "f674a410b528aec55bb9f9f594cb1aaea580237adb29abd9dc32296d34b690a0",
+  ],
+]);
+const neuralModelEvidence = [
+  provenanceFile,
+  "LICENSES/Real-ESRGAN-BSD-3-Clause.txt",
+  "tools/neural-export/README.md",
+  "tools/neural-export/export.py",
+  "tools/neural-export/requirements.txt",
+  "https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.2.3.0",
+  "https://github.com/xinntao/Real-ESRGAN/blob/f07aaffda04c7e69f11e6bfaf8023a6435471459/LICENSE",
+];
+const neuralModelProvenanceMarkers = [
+  "27985aa2198711ecd72f9bb274ec7b164e018fc9ce2933daaa7c7ab36a2bd3fe",
+  "f674a410b528aec55bb9f9f594cb1aaea580237adb29abd9dc32296d34b690a0",
+  "f07aaffda04c7e69f11e6bfaf8023a6435471459",
+  "4a699ec4863d96a91fc265948a0c90033f7e8735d515524dcf3444736406e0c2",
+];
 const highX2Artifacts = new Map([
   [
     "shaders/upstream/FSRCNNX_x2_56-16-4-1.glsl",
@@ -76,6 +101,15 @@ test("current release-clearance record is structurally valid and explicitly bloc
   for (const reference of highX2Evidence) assert.ok(highGate.evidence.includes(reference));
   const provenance = readFileSync(join(root, provenanceFile), "utf8");
   for (const marker of highX2ProvenanceMarkers) assert.ok(provenance.includes(marker));
+
+  const neuralGate = result.ledger.gates.find((gate) => gate.id === "neural-model-provenance");
+  assert.equal(neuralGate.status, "cleared");
+  assert.deepEqual(
+    neuralGate.artifacts.map(({ path, sha256, disposition }) => ({ path, sha256, disposition })),
+    [...neuralModelArtifacts].map(([path, sha256]) => ({ path, sha256, disposition: "present" })),
+  );
+  for (const reference of neuralModelEvidence) assert.ok(neuralGate.evidence.includes(reference));
+  for (const marker of neuralModelProvenanceMarkers) assert.ok(provenance.includes(marker));
 
   const lgplGate = result.ledger.gates.find((gate) => gate.id === "lgpl-compliance-review");
   const ortGate = result.ledger.gates.find((gate) => gate.id === "onnx-runtime-third-party-review");

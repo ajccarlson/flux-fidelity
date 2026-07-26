@@ -53,7 +53,7 @@ async function loadSelectionCoordinator(deps) {
     let interpolationTerminalQuarantine = null, interpolationStartFailureStreak = null;
     let pendingEngine = "rife_v4.26", pendingResMode = "auto";
     let pendingTargetFps = "auto", pendingAvOffsetMs = 0;
-    let interpAutoFallbackPref = true, interpLadderPref = false, interpInvertPref = true;
+    let interpAutoFallbackPref = false, interpLadderPref = false, interpInvertPref = true;
     let interpStaticPassthroughPref = true;
     let engineSelectionGeneration = 0;
     let engine = deps.engine || "fsrcnnx";
@@ -67,6 +67,11 @@ async function loadSelectionCoordinator(deps) {
     let primaryAllocationRetirementPromise = null;
     let canvas = { style: {} };
     let neuralEng = { stop: () => deps.events.push(["neural-stop", video]) };
+    const stopNeuralEngine = () => Promise.resolve(neuralEng?.stop?.());
+    const hidePrimaryOverlays = () => {
+      canvas.style.display = "none";
+      canvas.style.opacity = "1";
+    };
     class VideoSelectionMonitor {}
     const findVideo = () => deps.selected;
     const log = (...args) => deps.events.push(["log", ...args]);
@@ -139,6 +144,7 @@ async function loadPresentationBoundary() {
     let presentedCanvasVideo = null, presentedSourceW = 0, presentedSourceH = 0;
     let primaryPresentationGeneration = 0;
     let presentedVideoSource = null, presentedRuntimeMode = "off", presentedRuntimeEngine = null;
+    let presentedCanvas = null;
     let presentedPresentation = null;
     let pageSuspended = false, device = {}, engine = "fsrcnnx";
     const document = { fullscreenElement: null, pictureInPictureElement: null };
@@ -149,6 +155,12 @@ async function loadPresentationBoundary() {
     const notifyState = () => {};
     const videoPageVisible = (candidate) => candidate?.pageVisible !== false;
     const videoMonitor = { request() { reconcileRequests++; } };
+    const hidePrimaryOverlays = () => {
+      if (canvas) canvas.style.display = "none";
+      presentedCanvas = null;
+    };
+    const hideNeuralOverlay = () => {};
+    const setPrimaryOverlayCanvas = () => {};
     ${targetDimensions}
     ${resetPresentation}
     ${presentation}
@@ -236,6 +248,8 @@ async function loadEngineSelection(deps) {
     };
     const clearNeuralFallback = () => {};
     const activateNeuralFallback = () => { engine = "fsrcnnx"; };
+    const stopNeuralEngine = () => Promise.resolve();
+    const hidePrimaryOverlays = () => deps.events.push("hide-primary");
     const policyToDepth = () => 1;
     const ensureFsrcnnxStages = async () => {};
     const ensureHighStages = async () => {};
@@ -283,6 +297,7 @@ async function loadNeuralModelSelection(deps) {
     const activateNeuralFallback = () => { engine = "fsrcnnx"; };
     const boundedRuntimeDetail = (error) => error?.message || String(error);
     const ensureNeural = (selection, options) => deps.ensureNeural(selection, options);
+    const hidePrimaryOverlays = () => deps.events.push("hide-primary");
     const cancelPreferenceRestore = () => { deps.preferenceFences = (deps.preferenceFences || 0) + 1; };
     const saveSitePrefs = () => deps.events.push("save");
     const warn = (...args) => deps.events.push(["warn", ...args]);
@@ -314,7 +329,7 @@ async function loadPreferenceRestore(deps) {
     let optHoverReveal = false, optAllVideos = false;
     let chainDepth = 1, pendingEngine = "rife_v4.26", pendingResMode = "auto";
     let pendingTargetFps = "auto", pendingAvOffsetMs = 0;
-    let interpAutoFallbackPref = true, interpLadderPref = false, interpInvertPref = true;
+    let interpAutoFallbackPref = false, interpLadderPref = false, interpInvertPref = true;
     let interpStaticPassthroughPref = true;
     const loadSitePrefs = async () => deps.prefs;
     const policyToDepth = () => 1;
@@ -347,25 +362,31 @@ async function loadNeuralPresentation(deps) {
     let device = {}, mode = "upscale", requestedEngine = "neural", engine = "neural", adopting = false;
     let neuralBusy = false, neuralFail = 0, videoSelectionGeneration = 3;
     let engineSelectionGeneration = 0;
+    let lastSSimDS = false;
     const video = { videoWidth: 640, videoHeight: 360, currentSrc: "a", src: "a" };
     const primaryController = { active: true, video };
+    const outputCanvas = { style: {} };
     const neuralEng = {
       ready: () => true,
-      device: () => device,
       activeEntry: () => ({ scale: 2, padMultiple: 1 }),
       run: () => deps.run.promise,
+      canvas: () => outputCanvas,
       bumpSkip() {},
       stop() {},
     };
-    const textureSizeAllowed = () => true;
-    const storageBufferSizeAllowed = () => true;
-    const safeImportExternal = () => ({});
+    const neuralFramePresentation = () => ({
+      width: 1280, height: 720, ssimdsEnabled: true,
+      sharpenEnabled: false, sharpenStrength: 1,
+    });
+    const positionVideoCanvas = () => true;
+    const showPresentedCanvas = (...args) => {
+      deps.events.push(["present", ...args]);
+      return true;
+    };
     const renderPassthrough = () => {};
-    const adoptChainDevice = async () => true;
     const warn = (...args) => deps.events.push(["warn", ...args]);
     const resumeInterpolationAfterNeural = () => {};
     const activateNeuralFallback = () => { engine = "fsrcnnx"; };
-    const presentHiRGBTexture = (...args) => { deps.events.push(["present", ...args]); return true; };
     ${sourceIdentity}
     ${production}
     export function render() { renderNeuralFrame(); }
@@ -392,6 +413,7 @@ async function loadRuntimeNotifications(deps) {
     const device = {};
     const lostDevices = new WeakSet();
     const canvas = { isConnected: true, style: { display: "block" } };
+    let presentedCanvas = canvas;
     let pageSuspended = false;
     let presentedRuntimeMode = "upscale", presentedRuntimeEngine = "fsrcnnx";
     let presentedCanvasVideo = video, presentedSourceW = 640, presentedSourceH = 360;
@@ -1226,7 +1248,14 @@ test("neural completion cannot present across adoption or same-element source re
     const renderer = await loadNeuralPresentation(deps);
     renderer.render();
     invalidate(renderer);
-    run.resolve({ tex: {}, outW: 1280, outH: 720 });
+    run.resolve({
+      presentation: {
+        source: { width: 640, height: 360 },
+        output: { width: 1280, height: 720 },
+        ssimds: null,
+        sharpen: null,
+      },
+    });
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(deps.events.some(([type]) => type === "present"), false);
   }
@@ -1405,6 +1434,21 @@ test("production overlays expose stable primary, secondary, and interpolation ma
     interpolationSource,
     /setAttribute\?\.\("data-fsrcnnx-overlay", "interpolation"\)/,
   );
+});
+
+test("Neural activation resolves an empty saved selection to the bundled default", async () => {
+  const source = await readFile(mainUrl, "utf8");
+  const activation = section(
+    source,
+    "async function ensureNeural(",
+    "export async function setNeuralModel",
+  );
+
+  assert.match(
+    activation,
+    /modelKey \|\| neuralModelKey \|\| _neuralList\[0\]\?\.key/,
+  );
+  assert.match(activation, /neuralEng\.init\(requestedModelKey\)/);
 });
 
 test("main canvas mounting respects direct and container fullscreen inside shadow DOM", async () => {

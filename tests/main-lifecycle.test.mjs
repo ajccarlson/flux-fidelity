@@ -28,6 +28,24 @@ function section(source, startMarker, endMarker) {
   return source.slice(start, end);
 }
 
+async function loadTextureSizeBoundary({ limit = 8192, warnings = [] } = {}) {
+  const original = await readFile(mainUrl, "utf8");
+  const production = section(
+    original,
+    "const sizeWarningAt = new Map();",
+    "function modelFitsProcessingBudget",
+  );
+  const harness = `
+    const device = { limits: { maxTextureDimension2D: ${limit} } };
+    const performance = { now: () => 10000 };
+    const warn = (...args) => globalThis.__mainSizeWarnings.push(args);
+    ${production}
+    export { textureSizeAllowed };
+  `;
+  globalThis.__mainSizeWarnings = warnings;
+  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++moduleRevision}`);
+}
+
 async function loadInterpolationLifecycle(deps) {
   const original = await readFile(mainUrl, "utf8");
   const settingsContract = section(
@@ -90,7 +108,7 @@ async function loadInterpolationLifecycle(deps) {
     let interpolationTerminalQuarantine = null, interpolationStartFailureStreak = null;
     let preferenceRestoreGeneration = 0;
     let interpPausedByNeural = false;
-    let interpAutoFallbackPref = true;
+    let interpAutoFallbackPref = false;
     let interpLadderPref = false;
     let interpInvertPref = true;
     let interpStaticPassthroughPref = true;
@@ -972,6 +990,20 @@ test("scale selection reset clears held models across configuration changes", as
     true,
     "the final hysteresis-selected model must receive a second budget preflight",
   );
+});
+
+test("renderer dimensions have no fixed pixel-area ceiling below the adapter limit", async (t) => {
+  const previousWarnings = globalThis.__mainSizeWarnings;
+  t.after(() => { globalThis.__mainSizeWarnings = previousWarnings; });
+  const warnings = [];
+  const boundary = await loadTextureSizeBoundary({ warnings });
+
+  assert.equal(boundary.textureSizeAllowed(8192, 8192, "large texture"), true,
+    "an adapter-supported square must not be rejected by a fixed area policy");
+  assert.equal(boundary.textureSizeAllowed(8193, 1, "too wide"), false);
+  assert.equal(boundary.textureSizeAllowed(Number.MAX_SAFE_INTEGER + 1, 1, "unsafe"), false);
+  assert.equal(warnings.length, 2);
+  assert.match(warnings[0].join(" "), /max dimension 8192/);
 });
 
 test("chain texture presentation catches pipeline construction failures and retries", async (t) => {

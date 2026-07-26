@@ -26,6 +26,7 @@ let activeCpuRuns = 0;
 let cpuIdleResolvers = [];
 let cpuInterpolateTail = Promise.resolve();
 let ortLoadPromise = null;
+let ortWasmBinaryPromise = null;
 let ortSessionCreateTail = Promise.resolve();
 const ortSessionDevices = new WeakMap();
 const deviceLossListeners = new Set();
@@ -162,7 +163,7 @@ const MODELS = {
 let currentModelKey = "rife_v4.26"; // default: verified FP32 model with broad WebGPU support
 
 const MODEL_IO = {
-  url: () => chrome.runtime.getURL(MODELS[currentModelKey].file),
+  url: () => resolvePackagedAssetUrl(MODELS[currentModelKey].file),
   channels: () => MODELS[currentModelKey].channels,
   timestepPlane: () => MODELS[currentModelKey].timestepPlane,
   inputName: null,
@@ -202,67 +203,193 @@ export function setModel(key) {
   return true;
 }
 
-// EXPERIMENT #2 — JSPI: the asyncify build instruments EVERY function for stack
-// unwinding (24.3MB wasm vs 15.0MB jspi — the 9MB delta IS the instrumentation)
-// and stack-copies on every GPU suspend point. JSPI uses the browser's native
-// WebAssembly.Suspending instead. Same ORT 1.27.0, same WebGPU EP, same API;
-// only the suspend mechanism differs. Falls back to asyncify automatically if the
-// bundle fails to load OR the first session creation fails under it.
-// EXPERIMENT #2 VERDICT: JSPI measured 20% SLOWER than asyncify at the clean
-// comparator (480p@100%: mu7.8 vs mu6.5ms; 1080p directionally agreed). Thousands
-// of SHALLOW suspends per inference: asyncify's memcpy beats JSPI's per-suspend
-// promise/microtask round-trip on this workload. Concluded; jspi files removed.
-const ENABLE_JSPI_EXPERIMENT = false;
-let ortIsJspi = false;
-export function usingJspi() { return ortIsJspi; }
+export const ORT_WEBGPU_MODULE_FILE = "ort.webgpu.min.mjs";
+export const ORT_WASM_MODULE_FILE = "ort-wasm-simd.asyncify.mjs";
+export const ORT_WASM_FILE = "ort-wasm-simd.asyncify.wasm";
+export const ORT_WASM_BYTE_LENGTH = 21_873_246;
+const WASM_MAGIC = Object.freeze([0x00, 0x61, 0x73, 0x6d]);
 
-async function loadORTImpl(forceAsyncify = false) {
-  if (ort) return ort;
-  const jspiSupported = typeof WebAssembly !== "undefined" && "Suspending" in WebAssembly;
-  const tryOrder = (!forceAsyncify && ENABLE_JSPI_EXPERIMENT && jspiSupported)
-    ? ["ort.jspi.min.mjs", "ort.webgpu.min.mjs"]
-    : ["ort.webgpu.min.mjs"];
-  let lastErr = null;
-  for (const file of tryOrder) {
-    try {
-      const mod = await import(chrome.runtime.getURL("vendor/ort/" + file));
-      if (!mod.InferenceSession) throw new Error("module missing InferenceSession");
-      ort = { InferenceSession: mod.InferenceSession, Tensor: mod.Tensor, env: mod.env };
-      ort.env.wasm.wasmPaths = chrome.runtime.getURL("vendor/ort/");
-      ort.env.wasm.numThreads = 1;
-      // Session creation temporarily overrides this through createOrtSession().
-      // Keep the shared process-wide baseline deterministic between creations.
-      try { ort.env.webgpu.enableFp16 = false; } catch {}
-      ortIsJspi = file.includes("jspi");
-      console.log(`[RIFE] ORT loaded: ${file}${ortIsJspi ? " (JSPI suspend)" : " (asyncify suspend)"}`);
-      return ort;
-    } catch (e) { lastErr = e; console.warn(`[RIFE] ORT bundle ${file} failed to load:`, e.message); }
+export function resolvePackagedAssetUrl(
+  path,
+  { runtime = globalThis.chrome?.runtime, location = globalThis.location } = {},
+) {
+  if (typeof path !== "string" || path.length < 1 || path.length > 512 ||
+      !/^[A-Za-z0-9._/-]+$/.test(path) || path.startsWith("/") ||
+      path.split("/").some((part) => !part || part === "." || part === "..")) {
+    throw new TypeError(`Invalid packaged asset path '${String(path)}'`);
   }
-  throw lastErr || new Error("no ORT bundle loaded");
+  if (typeof runtime?.getURL !== "function") {
+    throw new Error("Extension runtime URL resolver is unavailable");
+  }
+
+  let staticBase;
+  try {
+    staticBase = new URL(runtime.getURL(""));
+  } catch (error) {
+    throw new Error("Extension runtime base URL is invalid", { cause: error });
+  }
+
+  // Keep extension-owned imports on the static extension host. In particular,
+  // runtime.getURL() can return a different WAR host even when an extension
+  // page (such as validate.html) is on the static extension host; Edge rejects
+  // an ES-module import across those two hosts. Content-page callers retain
+  // the browser-selected runtime.getURL(path). The manifest intentionally
+  // exposes ordinary content dependencies through static URLs for Edge
+  // compatibility; only the capability-gated Neural frame resources rotate.
+  const staticOrigin = `${staticBase.protocol}//${staticBase.host}`;
+  if (staticBase.protocol === "chrome-extension:" &&
+      location?.origin === staticOrigin) {
+    return new URL(path, staticBase).href;
+  }
+
+  const resolved = runtime.getURL(path);
+  if (typeof resolved !== "string" || !resolved) {
+    throw new Error(`Extension runtime did not resolve packaged asset '${path}'`);
+  }
+  return resolved;
 }
 
-async function loadORT(forceAsyncify = false) {
+export function resolveOrtAssetUrl(file, options) {
+  switch (file) {
+    case ORT_WEBGPU_MODULE_FILE:
+      return resolvePackagedAssetUrl("vendor/ort/ort.webgpu.min.mjs", options);
+    case ORT_WASM_MODULE_FILE:
+      return resolvePackagedAssetUrl("vendor/ort/ort-wasm-simd.asyncify.mjs", options);
+    case ORT_WASM_FILE:
+      return resolvePackagedAssetUrl("vendor/ort/ort-wasm-simd.asyncify.wasm", options);
+    default:
+      throw new TypeError(`Unsupported ORT asset '${String(file)}'`);
+  }
+}
+
+export function validateOrtWasmBinary(value) {
+  let bytes;
+  if (value instanceof Uint8Array) {
+    bytes = value;
+  } else if (value instanceof ArrayBuffer) {
+    bytes = new Uint8Array(value);
+  } else if (ArrayBuffer.isView(value)) {
+    bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  } else {
+    throw new TypeError("ORT WebAssembly asset did not produce binary bytes");
+  }
+  if (bytes.byteLength !== ORT_WASM_BYTE_LENGTH) {
+    throw new Error(
+      `ORT WebAssembly asset has ${bytes.byteLength} bytes; expected ${ORT_WASM_BYTE_LENGTH}`,
+    );
+  }
+  if (WASM_MAGIC.some((byte, index) => bytes[index] !== byte)) {
+    const shown = [...bytes.subarray(0, WASM_MAGIC.length)]
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join(" ");
+    throw new Error(`ORT WebAssembly asset has invalid magic bytes (${shown || "empty"})`);
+  }
+  return bytes;
+}
+
+export async function fetchOrtWasmBinary(url, fetchImpl = globalThis.fetch) {
+  if (typeof url !== "string" || !url) {
+    throw new TypeError("ORT WebAssembly asset URL is required");
+  }
+  if (typeof fetchImpl !== "function") {
+    throw new TypeError("ORT WebAssembly asset fetch implementation is unavailable");
+  }
+  const response = await fetchImpl(url);
+  if (!response.ok) {
+    throw new Error(`ORT WebAssembly asset HTTP ${response.status} (${url})`);
+  }
+  const advertisedLength = Number(response.headers?.get?.("Content-Length"));
+  if (Number.isSafeInteger(advertisedLength) &&
+      advertisedLength > 0 && advertisedLength !== ORT_WASM_BYTE_LENGTH) {
+    throw new Error(
+      `ORT WebAssembly asset advertised ${advertisedLength} bytes; ` +
+      `expected ${ORT_WASM_BYTE_LENGTH} (${url})`,
+    );
+  }
+  let buffer;
+  try {
+    buffer = await response.arrayBuffer();
+  } catch (error) {
+    throw new Error(`ORT WebAssembly asset body failed to load (${url}): ${error.message}`, {
+      cause: error,
+    });
+  }
+  try {
+    return validateOrtWasmBinary(buffer);
+  } catch (error) {
+    throw new Error(`${error.message} (${url})`, { cause: error });
+  }
+}
+
+function loadOrtWasmBinary() {
+  if (!ortWasmBinaryPromise) {
+    const url = resolveOrtAssetUrl(ORT_WASM_FILE);
+    const pending = fetchOrtWasmBinary(url).catch((error) => {
+      if (ortWasmBinaryPromise === pending) ortWasmBinaryPromise = null;
+      throw error;
+    });
+    ortWasmBinaryPromise = pending;
+  }
+  return ortWasmBinaryPromise;
+}
+
+function releaseOrtWasmBootstrap(runtime) {
+  try {
+    if (runtime?.env?.wasm) runtime.env.wasm.wasmBinary = undefined;
+  } catch {}
+  ortWasmBinaryPromise = null;
+}
+
+async function loadORTImpl() {
+  if (ort) return ort;
+  try {
+    const [mod, wasmBinary] = await Promise.all([
+      import(resolveOrtAssetUrl(ORT_WEBGPU_MODULE_FILE)),
+      loadOrtWasmBinary(),
+    ]);
+    if (!mod.InferenceSession) throw new Error("module missing InferenceSession");
+    ort = { InferenceSession: mod.InferenceSession, Tensor: mod.Tensor, env: mod.env };
+    // The npm bundle defaults to its threaded module. Explicitly select the
+    // source-built single-thread pair so arbitrary non-cross-origin-isolated
+    // content-script worlds do not require SharedArrayBuffer.
+    ort.env.wasm.wasmPaths = {
+      mjs: resolveOrtAssetUrl(ORT_WASM_MODULE_FILE),
+      wasm: resolveOrtAssetUrl(ORT_WASM_FILE),
+    };
+    // Supplying verified packaged bytes also avoids extension-scheme
+    // WebAssembly streaming differences.
+    ort.env.wasm.wasmBinary = wasmBinary;
+    ort.env.wasm.numThreads = 1;
+    // Session creation temporarily overrides this through createOrtSession().
+    // Keep the shared process-wide baseline deterministic between creations.
+    try { ort.env.webgpu.enableFp16 = false; } catch {}
+    console.log("[RIFE] ORT loaded: ort.webgpu.min.mjs (asyncify suspend)");
+    return ort;
+  } catch (error) {
+    ortWasmBinaryPromise = null;
+    console.warn("[RIFE] ORT bundle ort.webgpu.min.mjs failed to load:", error.message);
+    throw error;
+  }
+}
+
+async function loadORT() {
   if (ort) return ort;
   if (ortLoadPromise) return ortLoadPromise;
-  const promise = loadORTImpl(forceAsyncify).finally(() => {
+  const promise = loadORTImpl().finally(() => {
     if (ortLoadPromise === promise) ortLoadPromise = null;
   });
   ortLoadPromise = promise;
   return promise;
 }
 
-// v0.49.0: the neural upscaler engine shares this ORT instance — one env, one
-// WebGPU device across the RIFE and neural sessions (device lifetime follows
-// total session refcount; see fsrcnnx-neural.js init-before-release ordering).
-export async function ensureOrt() { return loadORT(true); }
+export async function ensureOrt() { return loadORT(); }
 
-// ORT's WebGPU FP16 switch is process-global, not session-local. Every RIFE and
-// neural session creation goes through this queue so one engine cannot change the
-// flag while the other is compiling. The previous baseline is restored even when
-// creation rejects, which also makes fallback attempts deterministic.
+// ORT's WebGPU FP16 switch is global within this JavaScript realm. Serialize
+// session creation so model switches or another colocated consumer cannot change
+// it during compilation. Restore the baseline even when creation rejects.
 export function createOrtSession(url, options, { enableFp16 = false } = {}) {
   const operation = ortSessionCreateTail.catch(() => {}).then(async () => {
-    const runtime = await loadORT(true);
+    const runtime = await loadORT();
     const webgpuEnv = runtime?.env?.webgpu;
     const previous = webgpuEnv ? webgpuEnv.enableFp16 : undefined;
     try {
@@ -275,6 +402,9 @@ export function createOrtSession(url, options, { enableFp16 = false } = {}) {
       return created;
     } finally {
       try { if (webgpuEnv) webgpuEnv.enableFp16 = previous === undefined ? false : previous; } catch {}
+      // The initialized Emscripten module owns everything it needs after the
+      // first create attempt. Drop our extra 24 MB bootstrap reference.
+      releaseOrtWasmBootstrap(runtime);
     }
   });
   ortSessionCreateTail = operation.then(() => undefined, () => undefined);
@@ -354,7 +484,7 @@ export async function initRife(pinW = 0, pinH = 0) {
 
 async function initRifeGeneration(pinW, pinH, generation, modelKey) {
   const model = MODELS[modelKey];
-  const modelUrl = chrome.runtime.getURL(model.file);
+  const modelUrl = resolvePackagedAssetUrl(model.file);
   const isCurrent = () => generation === modelGeneration && modelKey === currentModelKey;
   const assertCurrent = () => {
     if (!isCurrent()) {
@@ -465,37 +595,18 @@ async function initRifeGeneration(pinW, pinH, generation, modelKey) {
       }
     } catch (epErr) {
       if (epErr.staleModelInit || !isCurrent()) throw epErr;
-      // JSPI runtime failure (bundle loaded but sessions won't create/run under
-      // it) → reload the proven asyncify build and retry ONCE before any other
-      // fallback. Load-time reload is safe: nothing is bound to a device yet.
-      if (ortIsJspi) {
-        console.warn("[RIFE] session failed under JSPI — reloading asyncify build:", epErr.message);
-        ort = null; ortIsJspi = false;
-        await loadORT(true);
-        assertCurrent();
-        try {
-          candidateSession = await createOrtSession(modelUrl, buildOpts(false), { enableFp16: false });
-          assertCurrent();
-          console.log("[RIFE] session created on asyncify fallback");
-        } catch (e2) {
-          if (e2.staleModelInit || !isCurrent()) throw e2;
-          console.warn("[RIFE] asyncify retry also failed:", e2.message);
-        }
-      }
       // WebGPU EP failed entirely — retry on wasm so we at least learn if it's an
       // EP issue vs a model/runtime issue. (wasm will be slow but proves the path.)
-      if (!candidateSession) {
-        console.warn("[RIFE] WebGPU EP failed, trying wasm:", epErr.message);
-        stage = "create-session-wasm";
-        nextFp16Active = false;
-        candidateSession = await createOrtSession(modelUrl, {
-          executionProviders: ["wasm"],
-          graphOptimizationLevel: "all",
-        }, { enableFp16: false });
-        assertCurrent();
-        nextLastError = "webgpu-unavailable-using-wasm";
-        nextUsingWasmEp = true;
-      }
+      console.warn("[RIFE] WebGPU EP failed, trying wasm:", epErr.message);
+      stage = "create-session-wasm";
+      nextFp16Active = false;
+      candidateSession = await createOrtSession(modelUrl, {
+        executionProviders: ["wasm"],
+        graphOptimizationLevel: "all",
+      }, { enableFp16: false });
+      assertCurrent();
+      nextLastError = "webgpu-unavailable-using-wasm";
+      nextUsingWasmEp = true;
     }
 
     if (!candidateSession) throw new Error("session creation returned no session");
@@ -664,7 +775,7 @@ async function initializeGpuCandidate(descriptor, generation, { log, warn } = {}
       warning("[RIFE] no ORT device for GPU path");
       return false;
     }
-    const mod = await import(chrome.runtime.getURL("src/core/fsrcnnx-rife-gpu.js"));
+    const mod = await import(resolvePackagedAssetUrl("src/core/fsrcnnx-rife-gpu.js"));
     if (!isCurrent()) return false;
     candidate = new mod.GpuInterp({
       log,

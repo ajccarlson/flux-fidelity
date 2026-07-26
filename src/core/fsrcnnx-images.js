@@ -63,7 +63,6 @@ struct VsOut { @builtin(position) pos:vec4f, @location(0) uv:vec2f };
 
 const MIN_SOURCE_EDGE = 64;
 const MIN_SOURCE_PIXELS = 96 * 96;
-const MAX_PROCESSING_PIXELS = 7680 * 4320;
 const MAX_PENDING = 32;
 const MAX_DEFERRED = 128;
 const IMAGE_LOAD_TIMEOUT_MS = 15000;
@@ -217,9 +216,7 @@ export class ImageUpscaler {
     const outW = nw * scale, outH = nh * scale;
     const limit = Math.max(1, Number(this.device?.limits?.maxTextureDimension2D) || 8192);
     const values = [nw, nh, outW, outH, finalW, finalH];
-    const valid = values.every((v) => Number.isSafeInteger(v) && v > 0 && v <= limit) &&
-      outW * outH <= Math.min(MAX_PROCESSING_PIXELS, limit * limit) &&
-      finalW * finalH <= Math.min(MAX_PROCESSING_PIXELS, limit * limit);
+    const valid = values.every((v) => Number.isSafeInteger(v) && v > 0 && v <= limit);
     let modelValid = valid;
     if (modelValid && typeof this.model?.preflight === "function") {
       try { this.model.preflight(nw, nh); }
@@ -231,7 +228,7 @@ export class ImageUpscaler {
     }
     if (!modelValid && valid && report) return false;
     if (!valid && report) {
-      this._reportFailure("limits", `Skipped dimensions ${nw}x${nh} -> ${outW}x${outH}; adapter limit is ${limit}px per edge and ${Math.min(MAX_PROCESSING_PIXELS, limit * limit)} pixels.`);
+      this._reportFailure("limits", `Skipped dimensions ${nw}x${nh} -> ${outW}x${outH}; adapter texture limit is ${limit}px per edge.`);
     }
     return modelValid;
   }

@@ -8,12 +8,12 @@ This package provides the source and practical replacement information below for
 - `shaders/upstream/FSRCNNX_x2_56-16-4-1.glsl` and its transformed outputs, `model/FSRCNNX_x2_56-16-4-1.wgsl` and `model/FSRCNNX_x2_56-16-4-1.passes.json`. Archived release-1.1 pages list the High source through 2019-10-21, and the archived parameter bundle plus tag-1.1 generator reproduce the checked-in 362,441-byte LF source exactly. The source SHA-256 is `34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6`; the full reproduction record is in [`MODEL_PROVENANCE.md`](MODEL_PROVENANCE.md).
 - `shaders/upstream/SSimDownscaler.glsl` and its hand port, `src/core/fsrcnnx-ssimds.js`. The source is gist revision `38992bce7f9ff844f800820df0908692b65bb74a` at <https://gist.githubusercontent.com/igv/36508af3ffc84410fe39761d6969be10/raw/38992bce7f9ff844f800820df0908692b65bb74a/SSimDownscaler.glsl>, SHA-256 `f46f4710a162d17058b9d82ed8610588b0c04d7be07cef6bf2a8c4077828f804`.
 
-The Standard and SSim sources state LGPL-3.0-or-later. The High source has no embedded header; this project classifies the officially released High source and its generated pair as LGPL-3.0-or-later consistently with Standard. That classification and the distribution plan remain subject to qualified review. [`LICENSES/LGPL-3.0.txt`](../../LICENSES/LGPL-3.0.txt) and its GPL-3.0 companion, [`LICENSES/GPL-3.0.txt`](../../LICENSES/GPL-3.0.txt), are included in this package.
+The Standard and SSim sources state LGPL-3.0-or-later. The High source has no embedded header; this project treats the officially released High source and its generated pair as LGPL-3.0-or-later consistently with Standard. The overall distribution plan remains subject to qualified review. [`LICENSES/LGPL-3.0.txt`](../../LICENSES/LGPL-3.0.txt) and its GPL-3.0 companion, [`LICENSES/GPL-3.0.txt`](../../LICENSES/GPL-3.0.txt), are included in this package.
 
 ## Local modifications
 
 - On 2026-07-21, FSRCNNX-EXT translated the Standard and High FSRCNNX mpv/libplacebo GLSL hook passes into WGSL compute passes plus JSON pass manifests. The model weights and pass order are preserved. `tools/transpile.js` is the complete offline transformation script and records source/license metadata in the outputs.
-- In 2026, FSRCNNX-EXT hand-ported SSimDownscaler to WebGPU/WGSL, reorganized the original hook operations into explicit separable passes, and added finite-ratio, work-budget, and zero-weight numerical guards. The port's header and `src/core/fsrcnnx-ssimds.js` identify these changes.
+- In 2026, FSRCNNX-EXT hand-ported SSimDownscaler to WebGPU/WGSL, reorganized the original hook operations into explicit separable passes, and added finite-ratio validation, bounded multistage moment prefiltering, and zero-weight numerical guards. The port's header and `src/core/fsrcnnx-ssimds.js` identify these changes.
 
 ## Offline FSRCNNX regeneration
 

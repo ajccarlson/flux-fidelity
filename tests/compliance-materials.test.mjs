@@ -1,9 +1,16 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import test from "node:test";
 import {
   PACKAGE_FILES,
@@ -31,11 +38,13 @@ const fsrcnnxSources = Object.freeze([
 ]);
 
 const complianceHashes = Object.freeze({
-  "docs/compliance/LGPL_REBUILDING.md": "cb63e0a154fe1b9696f3de4771cde762f006ab06aa391434e8f4dc2fbf767c17",
+  "LICENSES/Real-ESRGAN-BSD-3-Clause.txt": "4a699ec4863d96a91fc265948a0c90033f7e8735d515524dcf3444736406e0c2",
+  "docs/compliance/LGPL_REBUILDING.md": "e1948c021281cdf7420c4fb881b30a93ac7f53937a47d38af1939111eeaf52eb",
   "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl": standardSourceSha,
   "shaders/upstream/FSRCNNX_x2_56-16-4-1.glsl": highSourceSha,
   "shaders/upstream/SSimDownscaler.glsl": "f46f4710a162d17058b9d82ed8610588b0c04d7be07cef6bf2a8c4077828f804",
   "shaders/upstream/adaptive-sharpen.glsl": "827fb3d662ac9a91b4075e9117fe6e1dbc1c06d85959ba719cdb954dfb7fb8e4",
+  "tools/package.json": "609158e6c5fbc237939fa3ddf7faab80ab690bdc0c8d584414a885130103c4e8",
   "tools/transpile.js": "6abd739bc5356ea9fc151c754f6c4d9e017c39283d5e5ba477a70aafe814003a",
   "vendor/ort/LICENSE": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
 });
@@ -111,6 +120,33 @@ test("the transpiler rejects altered bytes under every pinned FSRCNNX source nam
         result.stderr,
         new RegExp(`SHA-256 [0-9a-f]{64}, expected ${expected.slice(0, 16)}`),
         path,
+      );
+    }
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("the packaged ESM boundary runs the transpiler outside the repository", () => {
+  const fixture = mkdtempSync(join(tmpdir(), "fsrcnnx-lgpl-standalone-"));
+  const sourcePath = "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl";
+  try {
+    for (const path of ["tools/package.json", "tools/transpile.js", sourcePath]) {
+      const target = join(fixture, path);
+      mkdirSync(dirname(target), { recursive: true });
+      copyFileSync(resolve(root, path), target);
+    }
+    const result = spawnSync(process.execPath, [
+      "tools/transpile.js",
+      sourcePath,
+      "--out",
+      "model",
+    ], { cwd: fixture, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    for (const suffix of [".passes.json", ".wgsl"]) {
+      assert.deepEqual(
+        readFileSync(join(fixture, `model/FSRCNNX_x2_16-0-4-1${suffix}`)),
+        readFileSync(resolve(root, `model/FSRCNNX_x2_16-0-4-1${suffix}`)),
       );
     }
   } finally {

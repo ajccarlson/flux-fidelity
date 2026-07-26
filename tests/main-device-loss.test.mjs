@@ -139,6 +139,10 @@ async function loadCoordinator(deps) {
     function attach() { deps.attaches++; }
     function scheduleMainLoop() { deps.schedules++; }
     function cancelMainLoop() {}
+    function hidePrimaryOverlays() {
+      canvas.style.display = "none";
+      canvas.style.opacity = "1";
+    }
     function findVideo() { return { id: "selected-video" }; }
     async function queueVideoSelection() {
       deps.selections++;
@@ -466,11 +470,11 @@ test("device recovery cannot create either renderer provider until neural and RI
   t.after(() => { globalThis.__mainDeviceLossDeps = previous; });
 
   for (const scenario of [
-    { label: "WebGPU", options: {}, starts: "recoveries" },
+    { label: "WebGPU", options: {} },
     {
       label: "neural",
       options: { mode: "upscale", engine: "neural" },
-      starts: "neuralEnsures",
+      neural: true,
     },
   ]) {
     const deps = setup(scenario.options);
@@ -497,7 +501,7 @@ test("device recovery cannot create either renderer provider until neural and RI
 
     deps.rifeInvalidationGate.resolve();
     await flush();
-    assert.equal(deps[scenario.starts], 1,
+    assert.equal(deps.recoveries, 1,
       `${scenario.label} recovery did not start after the combined barrier settled`);
     assert.equal(coordinator.state().providerInvalidating, false, scenario.label);
     assert.equal(deps.neuralInvalidations, 1,
@@ -507,6 +511,10 @@ test("device recovery cannot create either renderer provider until neural and RI
 
     deps.recoveryGate.resolve();
     await flush();
+    if (scenario.neural) {
+      assert.equal(deps.neuralEnsures, 1,
+        "neural recovery did not resume after the main presentation device was restored");
+    }
   }
 });
 

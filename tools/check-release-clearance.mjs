@@ -12,6 +12,7 @@ const ARTIFACT_DISPOSITIONS = new Set(["present", "removed"]);
 export const REQUIRED_RELEASE_GATE_IDS = Object.freeze([
   "unidentified-rife-model",
   "unproven-rife-fp16-conversion",
+  "neural-model-provenance",
   "unknown-high-x2-shader-origin",
   "missing-x3-x4-shader-sources",
   "unreproducible-span-smoke-model",
@@ -21,6 +22,32 @@ export const REQUIRED_RELEASE_GATE_IDS = Object.freeze([
 ]);
 const HIGH_X2_GATE_ID = "unknown-high-x2-shader-origin";
 const LGPL_GATE_ID = "lgpl-compliance-review";
+const NEURAL_MODEL_GATE_ID = "neural-model-provenance";
+const NEURAL_MODEL_ARTIFACTS = Object.freeze(new Map([
+  [
+    "LICENSES/Real-ESRGAN-BSD-3-Clause.txt",
+    "4a699ec4863d96a91fc265948a0c90033f7e8735d515524dcf3444736406e0c2",
+  ],
+  [
+    "model/neural/realesrganv2_animevideo_xsx2.fp16.onnx",
+    "f674a410b528aec55bb9f9f594cb1aaea580237adb29abd9dc32296d34b690a0",
+  ],
+]));
+const NEURAL_MODEL_EVIDENCE = Object.freeze([
+  PROVENANCE_FILE,
+  "LICENSES/Real-ESRGAN-BSD-3-Clause.txt",
+  "tools/neural-export/README.md",
+  "tools/neural-export/export.py",
+  "tools/neural-export/requirements.txt",
+  "https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.2.3.0",
+  "https://github.com/xinntao/Real-ESRGAN/blob/f07aaffda04c7e69f11e6bfaf8023a6435471459/LICENSE",
+]);
+const NEURAL_MODEL_PROVENANCE_MARKERS = Object.freeze([
+  "27985aa2198711ecd72f9bb274ec7b164e018fc9ce2933daaa7c7ab36a2bd3fe",
+  "f674a410b528aec55bb9f9f594cb1aaea580237adb29abd9dc32296d34b690a0",
+  "f07aaffda04c7e69f11e6bfaf8023a6435471459",
+  "4a699ec4863d96a91fc265948a0c90033f7e8735d515524dcf3444736406e0c2",
+]);
 const HIGH_X2_ARTIFACTS = Object.freeze(new Map([
   [
     "shaders/upstream/FSRCNNX_x2_56-16-4-1.glsl",
@@ -277,6 +304,50 @@ export function inspectReleaseClearance({
             (artifact.disposition !== undefined && artifact.disposition !== "present")) {
           errors.push(`release clearance: ${LGPL_GATE_ID} must retain High artifact ${path} at SHA-256 ${sha256}`);
         }
+      }
+    }
+  }
+
+  if (requiredIds.has(NEURAL_MODEL_GATE_ID)) {
+    const neuralGate = ledger.gates.find((gate) => gate?.id === NEURAL_MODEL_GATE_ID);
+    if (neuralGate?.status !== "cleared") {
+      errors.push(`release clearance: ${NEURAL_MODEL_GATE_ID} must remain cleared by the official release, license, and reproduction evidence`);
+    }
+
+    const artifacts = Array.isArray(neuralGate?.artifacts) ? neuralGate.artifacts : [];
+    if (artifacts.length !== NEURAL_MODEL_ARTIFACTS.size) {
+      errors.push(`release clearance: ${NEURAL_MODEL_GATE_ID} must inventory exactly ${NEURAL_MODEL_ARTIFACTS.size} artifacts`);
+    }
+    for (const [path, sha256] of NEURAL_MODEL_ARTIFACTS) {
+      const artifact = artifacts.find((entry) => entry?.path === path);
+      if (!artifact) {
+        errors.push(`release clearance: ${NEURAL_MODEL_GATE_ID} is missing ${path}`);
+        continue;
+      }
+      if (artifact.disposition !== "present") {
+        errors.push(`release clearance: ${NEURAL_MODEL_GATE_ID} artifact ${path} must be explicitly present`);
+      }
+      if (artifact.sha256 !== sha256) {
+        errors.push(`release clearance: ${NEURAL_MODEL_GATE_ID} artifact ${path} must retain SHA-256 ${sha256}`);
+      }
+    }
+
+    const evidence = new Set(Array.isArray(neuralGate?.evidence) ? neuralGate.evidence : []);
+    for (const reference of NEURAL_MODEL_EVIDENCE) {
+      if (!evidence.has(reference)) {
+        errors.push(`release clearance: ${NEURAL_MODEL_GATE_ID} is missing authoritative evidence ${reference}`);
+      }
+    }
+
+    let provenance = "";
+    try {
+      provenance = readFileSync(resolve(rootDir, PROVENANCE_FILE), "utf8");
+    } catch {
+      // The generic evidence check reports the missing file.
+    }
+    for (const marker of NEURAL_MODEL_PROVENANCE_MARKERS) {
+      if (provenance && !provenance.includes(marker)) {
+        errors.push(`release clearance: ${NEURAL_MODEL_GATE_ID} provenance is missing ${marker}`);
       }
     }
   }

@@ -39,6 +39,32 @@
       "resolution": "Retain the hash-locked reproduction environment, full ONNX and numerical validation, and byte-for-byte CI check."
     },
     {
+      "id": "neural-model-provenance",
+      "status": "cleared",
+      "artifacts": [
+        {
+          "path": "LICENSES/Real-ESRGAN-BSD-3-Clause.txt",
+          "sha256": "4a699ec4863d96a91fc265948a0c90033f7e8735d515524dcf3444736406e0c2",
+          "disposition": "present"
+        },
+        {
+          "path": "model/neural/realesrganv2_animevideo_xsx2.fp16.onnx",
+          "sha256": "f674a410b528aec55bb9f9f594cb1aaea580237adb29abd9dc32296d34b690a0",
+          "disposition": "present"
+        }
+      ],
+      "evidence": [
+        "docs/compliance/MODEL_PROVENANCE.md",
+        "LICENSES/Real-ESRGAN-BSD-3-Clause.txt",
+        "tools/neural-export/README.md",
+        "tools/neural-export/export.py",
+        "tools/neural-export/requirements.txt",
+        "https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.2.3.0",
+        "https://github.com/xinntao/Real-ESRGAN/blob/f07aaffda04c7e69f11e6bfaf8023a6435471459/LICENSE"
+      ],
+      "resolution": "Retain the exact official checkpoint record, deterministic checked export, FP32 dynamic RGB ABI, bundled upstream BSD-3-Clause license, and browser inference validation."
+    },
+    {
       "id": "unknown-high-x2-shader-origin",
       "status": "cleared",
       "artifacts": [
@@ -168,15 +194,19 @@
         },
         {
           "path": "src/core/fsrcnnx-ssimds.js",
-          "sha256": "0f55f8f2b49bea3cb8ee2e4c801a663f21d4dfabb88efaf2de23b709c6ade3c6"
+          "sha256": "5bec6c839d512e504e44789765c0fb1edba3b9888755a8625becde09e6386101"
         },
         {
           "path": "tools/transpile.js",
           "sha256": "6abd739bc5356ea9fc151c754f6c4d9e017c39283d5e5ba477a70aafe814003a"
         },
         {
+          "path": "tools/package.json",
+          "sha256": "609158e6c5fbc237939fa3ddf7faab80ab690bdc0c8d584414a885130103c4e8"
+        },
+        {
           "path": "docs/compliance/LGPL_REBUILDING.md",
-          "sha256": "cb63e0a154fe1b9696f3de4771cde762f006ab06aa391434e8f4dc2fbf767c17"
+          "sha256": "e1948c021281cdf7420c4fb881b30a93ac7f53937a47d38af1939111eeaf52eb"
         },
         {
           "path": "LICENSE",
@@ -191,6 +221,7 @@
         "LICENSES/GPL-3.0.txt",
         "LICENSES/LGPL-3.0.txt",
         "docs/compliance/LGPL_REBUILDING.md",
+        "tools/package.json",
         "LICENSE",
         "NOTICE",
         "docs/compliance/MODEL_PROVENANCE.md",
@@ -207,12 +238,12 @@
           "sha256": "46988a5a025f49449850f39f95eb0d21e40e67b3beb13a0b54efd3ab5d83f60e"
         },
         {
-          "path": "vendor/ort/ort-wasm-simd-threaded.asyncify.mjs",
-          "sha256": "7236653b8565da4046e459cd0e274123419a1d9f1f8f18fd36c28058346ca655"
+          "path": "vendor/ort/ort-wasm-simd.asyncify.mjs",
+          "sha256": "457bb6e6fc849b7c18fd39b75812e4ccf41f3ec482a4eb486c76ad6f2d43c811"
         },
         {
-          "path": "vendor/ort/ort-wasm-simd-threaded.asyncify.wasm",
-          "sha256": "7e83cd6cee77e478bc96a7e91b198144fb5e4126287daf1f9b54bb195ebcd55a"
+          "path": "vendor/ort/ort-wasm-simd.asyncify.wasm",
+          "sha256": "c425ba45af30512459007c34c536aa43ea9e3367c5e765baee3d1a19c28e46d1"
         },
         {
           "path": "vendor/ort/LICENSE",

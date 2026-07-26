@@ -41,9 +41,9 @@ function manifestGlob(pattern) {
   return new RegExp(`^${escaped}$`);
 }
 
-test("the package boundary is an exact, sorted 77-file allowlist", () => {
+test("the package boundary is an exact, sorted 83-file allowlist", () => {
   assert.equal(PACKAGE_FILES.length, EXPECTED_PACKAGE_FILE_COUNT);
-  assert.equal(EXPECTED_PACKAGE_FILE_COUNT, 77);
+  assert.equal(EXPECTED_PACKAGE_FILE_COUNT, 83);
   assert.equal(new Set(PACKAGE_FILES).size, PACKAGE_FILES.length);
   assert.deepEqual(PACKAGE_FILES, [...PACKAGE_FILES].sort());
   assert.equal(PACKAGE_FILES.includes("fsrcnnx-development-only.js"), false);
@@ -56,6 +56,7 @@ test("the package retains legal notices and provenance while the release ledger 
     "LICENSE",
     "LICENSES/GPL-3.0.txt",
     "LICENSES/LGPL-3.0.txt",
+    "LICENSES/Real-ESRGAN-BSD-3-Clause.txt",
     "NOTICE",
     "PRIVACY.md",
     "THIRD_PARTY_NOTICES.md",
@@ -65,6 +66,7 @@ test("the package retains legal notices and provenance while the release ledger 
     "shaders/upstream/FSRCNNX_x2_56-16-4-1.glsl",
     "shaders/upstream/SSimDownscaler.glsl",
     "shaders/upstream/adaptive-sharpen.glsl",
+    "tools/package.json",
     "tools/transpile.js",
     "vendor/ort/LICENSE",
     "vendor/ort/ThirdPartyNotices.txt",
@@ -92,7 +94,7 @@ test("package creation never discovers an extra runtime-looking local file", () 
 
     const result = buildPackage({ rootDir: fixture, distDir: join(fixture, "output") });
 
-    assert.equal(result.fileCount, 77);
+    assert.equal(result.fileCount, 83);
     assert.equal(basename(result.archive), "fsrcnnx-ext-1.2.3.zip");
     assert.equal(
       readFileSync(result.checksums, "utf8"),
@@ -169,7 +171,7 @@ test("internal validation files and off-state icons stay packaged but private", 
   assert.deepEqual(validatePackage(), []);
 });
 
-test("every transitive content-script import and runtime URL must be web-accessible", () => {
+test("every transitive content-script import and runtime URL must be statically web-accessible", () => {
   const fixture = mkdtempSync(join(tmpdir(), "fsrcnnx-content-closure-"));
   try {
     writeFixture(fixture, "package.json", JSON.stringify({ version: "1.0.0" }));
@@ -180,6 +182,7 @@ test("every transitive content-script import and runtime URL must be web-accessi
         'import "./static.js";',
         'void import("./dynamic.js");',
         'chrome.runtime.getURL("asset.bin");',
+        'resolvePackagedAssetUrl("helper-asset.bin");',
       ].join("\n"),
     );
     writeFixture(fixture, "static.js", 'export { marker } from "./nested/transitive.js";');
@@ -187,7 +190,11 @@ test("every transitive content-script import and runtime URL must be web-accessi
     writeFixture(
       fixture,
       "nested/transitive.js",
-      'chrome.runtime.getURL("transitive.bin");\nexport const marker = true;',
+      [
+        'chrome.runtime.getURL("transitive.bin");',
+        'resolvePackagedAssetUrl("helper-runtime/" + selected);',
+        "export const marker = true;",
+      ].join("\n"),
     );
     writeFixture(
       fixture,
@@ -196,7 +203,15 @@ test("every transitive content-script import and runtime URL must be web-accessi
     );
     writeFixture(fixture, "background.js", "void 0;");
     writeFixture(fixture, "popup.html", "<!doctype html><title>Fixture</title>");
-    for (const file of ["asset.bin", "transitive.bin", "runtime/a.bin", "runtime/b.bin"]) {
+    for (const file of [
+      "asset.bin",
+      "helper-asset.bin",
+      "helper-runtime/a.bin",
+      "helper-runtime/b.bin",
+      "transitive.bin",
+      "runtime/a.bin",
+      "runtime/b.bin",
+    ]) {
       writeFixture(fixture, file, "fixture asset");
     }
     for (const file of REQUIRED_RUNTIME_MODEL_FILES) writeFixture(fixture, file, "fixture model");
@@ -204,6 +219,8 @@ test("every transitive content-script import and runtime URL must be web-accessi
     const exposed = [
       "asset.bin",
       "dynamic.js",
+      "helper-asset.bin",
+      "helper-runtime/*",
       "nested/dynamic-transitive.js",
       "nested/transitive.js",
       "runtime/*",
@@ -224,6 +241,9 @@ test("every transitive content-script import and runtime URL must be web-accessi
       "background.js",
       "content.js",
       "dynamic.js",
+      "helper-asset.bin",
+      "helper-runtime/a.bin",
+      "helper-runtime/b.bin",
       "manifest.json",
       "nested/dynamic-transitive.js",
       "nested/transitive.js",
@@ -243,6 +263,8 @@ test("every transitive content-script import and runtime URL must be web-accessi
       ["nested/transitive.js", "static.js: content-script dependency nested/transitive.js"],
       ["nested/dynamic-transitive.js", "dynamic.js: content-script dependency nested/dynamic-transitive.js"],
       ["asset.bin", "content.js: content-script dependency asset.bin"],
+      ["helper-asset.bin", "content.js: content-script dependency helper-asset.bin"],
+      ["helper-runtime/*", "nested/transitive.js: content-script dependency helper-runtime/a.bin"],
       ["transitive.bin", "nested/transitive.js: content-script dependency transitive.bin"],
       ["runtime/*", "nested/dynamic-transitive.js: content-script dependency runtime/a.bin"],
     ]);
@@ -255,10 +277,37 @@ test("every transitive content-script import and runtime URL must be web-accessi
       const errors = validatePackage({ rootDir: fixture, packageFiles });
       assert.ok(
         errors.some((error) => error.startsWith(expectedPrefix) &&
-          error.endsWith("is not declared in web_accessible_resources")),
+          error.endsWith("is not declared in a static web_accessible_resources group")),
         `${omitted} omission was not rejected:\n${errors.join("\n")}`,
       );
     }
+
+    const dynamicOnlyManifest = manifestFor(exposed);
+    dynamicOnlyManifest.web_accessible_resources[0].use_dynamic_url = true;
+    writeFixture(fixture, "manifest.json", JSON.stringify(dynamicOnlyManifest));
+    const dynamicOnlyErrors = validatePackage({ rootDir: fixture, packageFiles });
+    assert.ok(
+      dynamicOnlyErrors.includes(
+        "content.js: content-script dependency dynamic.js is not declared in a static " +
+        "web_accessible_resources group",
+      ),
+      `dynamic-only content dependencies were not rejected:\n${dynamicOnlyErrors.join("\n")}`,
+    );
+
+    const overlappingManifest = manifestFor(exposed);
+    overlappingManifest.web_accessible_resources.push({
+      resources: ["dynamic.js"],
+      matches: ["<all_urls>"],
+      use_dynamic_url: true,
+    });
+    writeFixture(fixture, "manifest.json", JSON.stringify(overlappingManifest));
+    const overlappingErrors = validatePackage({ rootDir: fixture, packageFiles });
+    assert.ok(
+      overlappingErrors.includes(
+        "dynamic.js: matches both static and dynamic web_accessible_resources groups",
+      ),
+      `ambiguous static/dynamic exposure was not rejected:\n${overlappingErrors.join("\n")}`,
+    );
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }
@@ -278,11 +327,16 @@ test("repository-only HTML and JavaScript references are not treated as packaged
     writeFixture(
       fixture,
       "background.js",
-      'import "./repository-only-import.js";\nchrome.runtime.getURL("repository-only-model.onnx");',
+      [
+        'import "./repository-only-import.js";',
+        'chrome.runtime.getURL("repository-only-model.onnx");',
+        'resolvePackagedAssetUrl("repository-only-helper.onnx");',
+      ].join("\n"),
     );
     for (const file of [
       "repository-only-html.js",
       "repository-only-import.js",
+      "repository-only-helper.onnx",
       "repository-only-model.onnx",
     ]) {
       writeFixture(fixture, file, "repository-only fixture");
@@ -297,6 +351,7 @@ test("repository-only HTML and JavaScript references are not treated as packaged
     for (const expected of [
       "popup.html: missing repository-only-html.js from package",
       "background.js: missing repository-only-import.js from package",
+      "background.js: missing repository-only-helper.onnx from package",
       "background.js: missing repository-only-model.onnx from package",
     ]) {
       assert.ok(errors.includes(expected), errors.join("\n"));

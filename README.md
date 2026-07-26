@@ -1,6 +1,6 @@
 # FSRCNNX-EXT
 
-FSRCNNX-EXT is a pre-release Chromium extension for real-time WebGPU video enhancement. It supports FSRCNNX and ArtCNN upscaling, optional SSimDownscaler and sharpening, RIFE or blend interpolation, and an experimental ONNX super-resolution path.
+FSRCNNX-EXT is a pre-release Chromium extension for local, real-time WebGPU video enhancement. It supports FSRCNNX, ArtCNN, and bundled Real-ESRGAN ONNX upscaling; optional SSimDownscaler and sharpening; and RIFE or blend frame interpolation.
 
 Public distribution is not cleared while the release ledger still has blocking history and legal-review gates. Review [Model provenance](docs/compliance/MODEL_PROVENANCE.md) before packaging or publishing.
 
@@ -8,6 +8,7 @@ Public distribution is not cleared while the release ledger still has blocking h
 
 - A current Chromium-based browser with WebGPU and a compatible GPU.
 - A readable, non-DRM BT.709/sRGB SDR video in the top-level page. HDR, wide-gamut, cross-origin, iframe, and page-specific restrictions may leave a video on the browser's native renderer.
+- A strict host Content Security Policy can prevent RIFE from starting. Neural runs in an extension-owned frame to avoid that specific restriction.
 - Node.js 20.11 or newer for repository checks and packaging. The extension itself has no npm dependency.
 
 Processing stays on the device. See [Privacy](PRIVACY.md) for the data and permission boundaries.
@@ -16,17 +17,19 @@ Processing stays on the device. See [Privacy](PRIVACY.md) for the data and permi
 
 1. Open `chrome://extensions`, enable **Developer mode**, and choose **Load unpacked**.
 2. Select this repository's root directory.
-3. Play a supported video, open the extension popup, choose an engine and policy, then select **Upscale**.
+3. Play a supported video, open the extension popup, choose an engine and its available options, then select **Upscale**.
 4. Select **Off** to restore native rendering. Reload the extension after changing the checkout.
 
-Settings are stored per origin. Available combinations depend on browser support, GPU memory, source resolution, and model cost. The ONNX super-resolution option remains unavailable until a compatible licensed model is added to `model/neural/manifest.json`.
+Settings are stored per site; local-file pages share one local-file scope. The extension has no configured source-resolution or pixel-area ceiling. Requested inputs, outputs, and model resources must still fit the browser's and GPU adapter's actual limits. Neural uses the bundled Real-ESRGAN AnimeVideo XS 2× model with tiled inference and pauses frame interpolation while selected.
+
+Performance-driven fallbacks are advanced per-site settings and are off by default. **Automatic quality fallback** lowers FSRCNNX High, ArtCNN, or Neural to standard FSRCNNX after sustained frame drops or GPU backlog; **Automatic blend fallback** replaces RIFE when it cannot maintain a useful frame rate.
 
 ## Repository layout
 
 - `src/` — extension entry points, popup, and runtime modules.
 - `model/`, `shaders/`, and `vendor/` — runtime assets and pinned third-party sources.
 - `docs/compliance/` and `LICENSES/` — release records, rebuilding guidance, and license texts.
-- `validation/` — browser validation page and numerical reference fixtures.
+- `validate.html` and `validation/` — browser validation entry point and numerical reference fixtures.
 - `tests/` — deterministic Node and browser fixtures.
 - `tools/` — checks, packaging, reproduction utilities, and transpilers.
 

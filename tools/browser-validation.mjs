@@ -11,7 +11,11 @@ import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:pa
 import { fileURLToPath } from "node:url";
 
 import { GENERATED_MODEL_CATALOG } from "../src/core/fsrcnnx-model-catalog.js";
-import { createValidationPlan, REFERENCE_VALIDATION_CHECKS } from "../validation/fsrcnnx-validation.js";
+import {
+  createValidationPlan,
+  ONNX_VALIDATION_CHECKS,
+  REFERENCE_VALIDATION_CHECKS,
+} from "../validation/fsrcnnx-validation.js";
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const FIXTURE_ROOT = join(PROJECT_ROOT, "tests", "fixtures", "browser");
@@ -21,6 +25,7 @@ const EXPECTED_VALIDATION_IDS = Object.freeze(
 const EXPECTED_CHECK_COUNT = EXPECTED_VALIDATION_IDS.length;
 const NUMERICAL_VALIDATION_IDS = Object.freeze([
   ...REFERENCE_VALIDATION_CHECKS.map(({ id }) => id),
+  ...ONNX_VALIDATION_CHECKS.map(({ id }) => id),
   ...GENERATED_MODEL_CATALOG.map(({ name }) => `${name}:inference`),
 ]);
 const STARTUP_TIMEOUT_MS = 30_000;
@@ -132,10 +137,41 @@ async function findBrowser() {
   throw new Error("no supported Edge/Chrome/Chromium executable found; set FSRCNNX_BROWSER");
 }
 
-async function browserVersion(browser, signal) {
+export async function browserVersion(browser, signal, {
+  platform = process.platform,
+  spawnProcess = spawn,
+  environment = process.env,
+} = {}) {
   if (signal?.aborted) throw abortReason(signal);
+  const windows = platform === "win32";
+  const command = windows ? "powershell.exe" : browser;
+  const args = windows
+    ? [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "$info = (Get-Item -LiteralPath $env:FSRCNNX_BROWSER_VERSION_TARGET).VersionInfo; " +
+          "if ($info.ProductVersion) { $info.ProductVersion } " +
+          "elseif ($info.FileVersion) { $info.FileVersion } else { exit 2 }",
+      ]
+    : ["--version"];
+  const spawnOptions = {
+    stdio: ["ignore", "pipe", "pipe"],
+    ...(windows
+      ? {
+          env: {
+            ...environment,
+            FSRCNNX_BROWSER_VERSION_TARGET: browser,
+          },
+        }
+      : {}),
+  };
   return new Promise((resolveVersion, rejectVersion) => {
-    const child = spawn(browser, ["--version"], { stdio: ["ignore", "pipe", "pipe"] });
+    // Chromium-family Windows executables do not reliably implement a
+    // console-style --version command. Read the PE version resource through
+    // PowerShell instead, so the probe never starts an Edge browser process.
+    const child = spawnProcess(command, args, spawnOptions);
     let output = "";
     const append = (chunk) => { output = (output + chunk.toString("utf8")).slice(-8 * 1024); };
     child.stdout.on("data", append);
@@ -220,9 +256,9 @@ async function startFixtureServer(signal) {
       response.writeHead(partial ? 206 : 200, {
         "Accept-Ranges": "bytes",
         "Cache-Control": "no-store",
+        "Content-Security-Policy": FIXTURE_CONTENT_SECURITY_POLICY,
         "Content-Length": body.length,
         ...(partial ? { "Content-Range": `bytes ${range.start}-${range.end}/${fixture.bytes.length}` } : {}),
-        "Content-Security-Policy": FIXTURE_CONTENT_SECURITY_POLICY,
         "Content-Type": fixture.type,
         "Cross-Origin-Resource-Policy": "same-origin",
         "Referrer-Policy": "no-referrer",
@@ -1317,17 +1353,45 @@ async function loadFixtureSource(client, name) {
   })()`, INTEGRATION_TIMEOUT_MS);
 }
 
+export function fixtureDisplayDimensions(videoWidth, videoHeight, scale, devicePixelRatio = 1) {
+  if (!Number.isFinite(videoWidth) || videoWidth <= 0 ||
+      !Number.isFinite(videoHeight) || videoHeight <= 0) {
+    throw new Error("fixture video dimensions must be positive");
+  }
+  if (!Number.isFinite(scale) || scale <= 0) {
+    throw new Error("fixture display scale must be positive");
+  }
+  const dpr = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0
+    ? devicePixelRatio
+    : 1;
+  const physicalWidth = Math.max(96, Math.round(videoWidth * scale));
+  const physicalHeight = Math.max(72, Math.round(physicalWidth * videoHeight / videoWidth));
+  return {
+    width: physicalWidth / dpr,
+    height: physicalHeight / dpr,
+    physicalWidth,
+    physicalHeight,
+    devicePixelRatio: dpr,
+  };
+}
+
 async function setFixtureDisplayScale(client, scale) {
   requireCondition(Number.isFinite(scale) && scale > 0, "fixture display scale must be positive");
+  const calculateDimensions = fixtureDisplayDimensions.toString();
   return evaluate(client, `(() => {
     const video = document.querySelector("video");
     if (!video?.videoWidth || !video.videoHeight) throw new Error("decoded fixture video is unavailable");
-    const width = Math.max(96, Math.round(video.videoWidth * ${Number(scale)}));
-    const height = Math.max(72, Math.round(width * video.videoHeight / video.videoWidth));
+    const { width, height, physicalWidth, physicalHeight, devicePixelRatio } =
+      (${calculateDimensions})(
+        video.videoWidth,
+        video.videoHeight,
+        ${Number(scale)},
+        window.devicePixelRatio,
+      );
     video.style.width = width + "px";
     video.style.height = height + "px";
     window.dispatchEvent(new Event("resize"));
-    return { width, height };
+    return { width, height, physicalWidth, physicalHeight, devicePixelRatio };
   })()`);
 }
 
@@ -1799,6 +1863,15 @@ async function runRealVideoIntegration(
       fixturePage.client,
       "typeof window.__FSRCNNX_VIDEO_FIXTURE__?.loadSource === 'function'",
     ), Boolean, { timeoutMs: CDP_TIMEOUT_MS, signal });
+    const hostIsolation = await evaluate(fixturePage.client, `({
+      crossOriginIsolated: globalThis.crossOriginIsolated === true,
+      sharedArrayBuffer: typeof globalThis.SharedArrayBuffer,
+    })`);
+    requireCondition(
+      hostIsolation?.crossOriginIsolated === false &&
+        hostIsolation?.sharedArrayBuffer === "undefined",
+      `video fixture unexpectedly permits shared-memory WebAssembly: ${JSON.stringify(hostIsolation)}`,
+    );
     await evaluate(fixturePage.client, "window.__FSRCNNX_VIDEO_FIXTURE__.ready()", CDP_TIMEOUT_MS);
     await loadFixtureSource(fixturePage.client, "bt709-a");
 
@@ -1820,13 +1893,16 @@ async function runRealVideoIntegration(
     await fixturePage.client.send("Page.bringToFront");
 
     const initial = await waitForStatus(popupPage.client, fixtureTab.id, "content-script startup", (status) =>
-      status.loading !== true && status.failed !== true && status.hasVideo === true, signal);
+      status.loading !== true && status.failed !== true && status.hasVideo === true &&
+      status.mode === "off" && status.activeMode === "off" &&
+      status.renderer?.phase === "off", signal);
     const initialPage = await fixtureSnapshot(fixturePage.client);
     requireCondition(initial.tab?.id === fixtureTab.id,
       `popup transport selected tab ${initial.tab?.id ?? "none"}; expected ${fixtureTab.id}`);
     requireCondition(initial.status.mode === "off" && initial.status.activeMode === "off",
       "fresh fixture did not start with renderer off");
-    requireCondition(initial.status.renderer?.phase === "off", "fresh fixture renderer phase is not off");
+    requireCondition(initial.status.renderer?.phase === "off",
+      `fresh fixture renderer phase is not off (${initial.status.renderer?.phase || "missing"})`);
     requireCondition(initial.status.webgpu === true, "real fixture page does not expose WebGPU");
     requireCondition(initial.status.colorSupport?.code === "color-not-checked",
       "mode-off startup unexpectedly probed decoded video color");
@@ -1905,6 +1981,115 @@ async function runRealVideoIntegration(
     requirePixelProgression(upscaledFirstPixels, upscaledPixels, "FSRCNNX compositor");
     await waitForBadge(popupPage.client, fixtureTab.id, "ON", signal);
     checkpoint("FSRCNNX force2 presentation");
+
+    await changePopupControl(popupPage.client, "engine", "neural");
+    const neuralIsReady = (status) => {
+      const scale = status.neural?.scale;
+      return status.mode === "upscale" && status.activeMode === "upscale" &&
+        status.engine === "neural" && status.activeEngine === "neural" &&
+        status.renderer?.requestedEngine === "neural" &&
+        status.renderer?.effectiveEngine === "neural" &&
+        status.renderer?.activeEngine === "neural" &&
+        status.renderer?.phase === "active" && status.renderer?.fallback == null &&
+        status.neuralRuntime?.requested === true &&
+        status.neuralRuntime?.phase === "active" &&
+        typeof status.neuralRuntime?.activeModel === "string" &&
+        status.neuralRuntime.activeModel.length > 0 &&
+        status.neural?.ready === true && status.neural?.model === status.neuralRuntime.activeModel &&
+        Number.isInteger(scale) && scale > 0 &&
+        status.neural?.n > 0 && status.presentation?.committed === true &&
+        status.presentation?.source?.width > 0 && status.presentation?.source?.height > 0 &&
+        status.presentation.output.width === status.presentation.source.width * scale &&
+        status.presentation.output.height === status.presentation.source.height * scale;
+    };
+    const neural = await waitForStatus(
+      popupPage.client,
+      fixtureTab.id,
+      "Neural ONNX presentation",
+      (status) => neuralIsReady(status) ||
+        status.renderer?.fallback?.from === "neural" ||
+        ["fallback", "failed"].includes(status.neuralRuntime?.phase),
+      signal,
+    );
+    requireCondition(
+      neuralIsReady(neural.status),
+      `Neural ONNX activation failed: ${JSON.stringify({
+        fallback: neural.status.renderer?.fallback || null,
+        runtime: neural.status.neuralRuntime || null,
+      })}`,
+    );
+    const neuralFirstPage = await fixtureSnapshot(fixturePage.client);
+    const neuralFirstOverlay = visibleOverlay(neuralFirstPage, "primary");
+    requireCondition(
+      neural.status.presentation.source.width === neuralFirstPage.video.width &&
+        neural.status.presentation.source.height === neuralFirstPage.video.height,
+      "Neural presentation source dimensions do not match the decoded video",
+    );
+    requireCondition(
+      neuralFirstOverlay?.width === neural.status.presentation.output.width &&
+        neuralFirstOverlay?.height === neural.status.presentation.output.height,
+      "Neural canvas backing dimensions do not match the manifest-derived output",
+    );
+    const neuralFirstPixels = await waitForRenderedOverlayPixels(
+      fixturePage.client,
+      "primary",
+      "Neural ONNX first composited frame",
+      signal,
+    );
+    const neuralGeneration = neural.status.presentation.generation;
+    const neuralRuns = neural.status.neural.n;
+    await waitForStatus(
+      popupPage.client,
+      fixtureTab.id,
+      "Neural ONNX frame progression",
+      (status) => status.engine === "neural" && status.activeEngine === "neural" &&
+        status.renderer?.effectiveEngine === "neural" &&
+        status.renderer?.activeEngine === "neural" &&
+        status.renderer?.fallback == null && status.neuralRuntime?.phase === "active" &&
+        status.presentation?.committed === true &&
+        status.presentation.generation >= neuralGeneration + 2 &&
+        status.neural?.n >= neuralRuns + 2,
+      signal,
+    );
+    const neuralPixels = await waitForRenderedOverlayPixels(
+      fixturePage.client,
+      "primary",
+      "Neural ONNX later composited frame",
+      signal,
+    );
+    requirePixelProgression(neuralFirstPixels, neuralPixels, "Neural ONNX compositor");
+    checkpoint("Neural ONNX presentation without fallback");
+
+    await changePopupControl(popupPage.client, "engine", "fsrcnnx");
+    await waitForStatus(
+      popupPage.client,
+      fixtureTab.id,
+      "Neural engine exit",
+      (status) => status.engine === "fsrcnnx" && status.activeEngine === "fsrcnnx" &&
+        status.renderer?.requestedEngine === "fsrcnnx" &&
+        status.renderer?.effectiveEngine === "fsrcnnx" &&
+        status.renderer?.fallback == null &&
+        status.neuralRuntime?.requested === false && status.neuralRuntime?.phase === "off",
+      signal,
+    );
+    await changePopupControl(popupPage.client, "policy", "force2");
+    await waitForStatus(
+      popupPage.client,
+      fixtureTab.id,
+      "Neural to FSRCNNX transition",
+      (status) => status.engine === "fsrcnnx" && status.activeEngine === "fsrcnnx" &&
+        status.renderer?.requestedEngine === "fsrcnnx" &&
+        status.renderer?.effectiveEngine === "fsrcnnx" &&
+        status.renderer?.activeEngine === "fsrcnnx" &&
+        status.renderer?.phase === "active" && status.renderer?.fallback == null &&
+        status.policy === "force2" &&
+        status.neuralRuntime?.requested === false && status.neuralRuntime?.phase === "off" &&
+        status.presentation?.committed === true &&
+        status.presentation.output.width === status.presentation.source.width * 2 &&
+        status.presentation.output.height === status.presentation.source.height * 2,
+      signal,
+    );
+    checkpoint("Neural to FSRCNNX transition");
 
     await setFixtureDisplayScale(fixturePage.client, 1.35);
     await changePopupControl(popupPage.client, "ssimds", true);
@@ -2134,7 +2319,10 @@ async function runRealVideoIntegration(
 
 function diagnostics(events) {
   if (!Array.isArray(events) || !events.length) return "";
-  return events.slice(-20).map((event) => `  ${event.kind}/${event.type}: ${event.text}`).join("\n");
+  const failures = unexpectedRuntimeEvents(events);
+  const context = events.slice(-20);
+  const shown = [...new Set([...failures, ...context])].slice(-40);
+  return shown.map((event) => `  ${event.kind}/${event.type}: ${event.text}`).join("\n");
 }
 
 function numericalDiagnostics(state) {
@@ -2257,28 +2445,30 @@ async function main(signal, options) {
   }
 }
 
-const abortController = new AbortController();
-let receivedSignal = null;
-const signalHandlers = new Map();
-for (const name of ["SIGINT", "SIGTERM"]) {
-  const handler = () => {
-    receivedSignal = name;
-    abortController.abort(new Error(`received ${name}`));
-  };
-  signalHandlers.set(name, handler);
-  process.once(name, handler);
-}
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const abortController = new AbortController();
+  let receivedSignal = null;
+  const signalHandlers = new Map();
+  for (const name of ["SIGINT", "SIGTERM"]) {
+    const handler = () => {
+      receivedSignal = name;
+      abortController.abort(new Error(`received ${name}`));
+    };
+    signalHandlers.set(name, handler);
+    process.once(name, handler);
+  }
 
-try {
-  await main(abortController.signal, parseArguments(process.argv.slice(2)));
-} catch (error) {
-  console.error(error.message || String(error));
-  const numericalOutput = numericalDiagnostics(error.validationState);
-  if (numericalOutput) console.error(`Numerical references:\n${numericalOutput}`);
-  const eventOutput = diagnostics(error.browserEvents);
-  if (eventOutput) console.error(`Validation page diagnostics:\n${eventOutput}`);
-  if (error.browserOutput) console.error(`Browser output:\n${error.browserOutput.trim()}`);
-  process.exitCode = receivedSignal === "SIGINT" ? 130 : receivedSignal === "SIGTERM" ? 143 : 1;
-} finally {
-  for (const [name, handler] of signalHandlers) process.removeListener(name, handler);
+  try {
+    await main(abortController.signal, parseArguments(process.argv.slice(2)));
+  } catch (error) {
+    console.error(error.message || String(error));
+    const numericalOutput = numericalDiagnostics(error.validationState);
+    if (numericalOutput) console.error(`Numerical references:\n${numericalOutput}`);
+    const eventOutput = diagnostics(error.browserEvents);
+    if (eventOutput) console.error(`Validation page diagnostics:\n${eventOutput}`);
+    if (error.browserOutput) console.error(`Browser output:\n${error.browserOutput.trim()}`);
+    process.exitCode = receivedSignal === "SIGINT" ? 130 : receivedSignal === "SIGTERM" ? 143 : 1;
+  } finally {
+    for (const [name, handler] of signalHandlers) process.removeListener(name, handler);
+  }
 }

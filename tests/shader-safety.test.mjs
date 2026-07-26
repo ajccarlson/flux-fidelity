@@ -79,6 +79,10 @@ test("SSim shader builders reject invalid ratios and guard zero weight sums", ()
   const l2 = buildL2Shader(1, 2);
   assertFiniteWgsl(mean);
   assertFiniteWgsl(l2);
+  assert.equal(l2, buildL2Shader(1, 2, true));
+  assert.equal(buildL2Shader(0, 2), buildL2Shader(0, 2, false));
+  assert.doesNotMatch(buildL2Shader(1, 2, false), /s = s \* s;/);
+  assert.throws(() => buildL2Shader(1, 2, "false"), TypeError);
   assert.match(mean, /if \(abs\(W\) <= NUM_EPS\)/);
   assert.match(l2, /if \(abs\(W\) <= NUM_EPS\)/);
   assert.match(SSIMDS_MR_WGSL, /Sh \/ max\(Sl, NUM_EPS\)/);
@@ -114,15 +118,34 @@ test("Catmull-Rom weight sums stay nonzero across supported downscale ratios", (
   }
 });
 
-test("SSim work estimation allows normal downscales and bypasses extreme ratios", () => {
+test("SSim work estimation keeps total work diagnostic and bounds only individual passes", () => {
   const normal = estimateSsimWork(3840, 2160, 1920, 1080);
   assert.equal(normal.allowed, true);
-  assert.ok(normal.estimatedTextureSamples < SSIMDS_WORK_BUDGET.maxEstimatedTextureSamples);
+  assert.equal(normal.path, "direct");
+  assert.equal(normal.stages.length, 0);
+
+  // Aggregate work is deliberately not an eligibility gate. This otherwise
+  // device-valid 8K -> 4K plan remains on the unchanged direct SSimDS path.
+  const fourK = estimateSsimWork(7680, 4320, 3840, 2160);
+  assert.equal(fourK.path, "direct");
+  assert.ok(fourK.estimatedTextureSamples > 512_000_000);
 
   const extreme = estimateSsimWork(7680, 4320, 1, 1);
-  assert.equal(extreme.allowed, false);
+  assert.equal(extreme.allowed, true);
+  assert.equal(extreme.path, "multistage");
   assert.ok(extreme.tapsX > SSIMDS_WORK_BUDGET.maxAxisTaps);
-  assert.match(extreme.reason, /axis taps|mean taps|estimated texture samples/);
+  assert.equal(extreme.reason, null);
+  assert.ok(extreme.stages.length > 1);
+  assert.deepEqual(
+    [extreme.stages.at(-1).outputWidth, extreme.stages.at(-1).outputHeight],
+    [1, 1],
+  );
+  for (const stage of extreme.stages) {
+    assert.ok(stage.tapsX <= SSIMDS_WORK_BUDGET.maxAxisTaps);
+    assert.ok(stage.tapsY <= SSIMDS_WORK_BUDGET.maxAxisTaps);
+    assert.ok(stage.outputWidth <= stage.inputWidth);
+    assert.ok(stage.outputHeight <= stage.inputHeight);
+  }
 
   for (const dimensions of [
     [0, 1080, 1, 1],
@@ -134,24 +157,119 @@ test("SSim work estimation allows normal downscales and bypasses extreme ratios"
   }
 });
 
-test("SSim budget bypass records no GPU work and returns the input texture", () => {
-  const fakeDevice = {
+test("SSim extreme ratios run bounded two-moment stages and clean resources atomically", (t) => {
+  const previousUsage = globalThis.GPUTextureUsage;
+  globalThis.GPUTextureUsage = { RENDER_ATTACHMENT: 1, TEXTURE_BINDING: 2, COPY_SRC: 4 };
+  t.after(() => {
+    if (previousUsage === undefined) delete globalThis.GPUTextureUsage;
+    else globalThis.GPUTextureUsage = previousUsage;
+  });
+
+  const events = {
+    pipeline: 0,
+    texture: 0,
+    bind: 0,
+    failTextureAt: -1,
+    textures: [],
+    passes: [],
+  };
+  const makeTexture = (descriptor = null) => ({
+    descriptor,
+    destroyed: 0,
+    createView() { return { texture: this }; },
+    destroy() { this.destroyed++; },
+  });
+  const device = {
     limits: { maxTextureDimension2D: 8192 },
     createSampler() { return {}; },
+    createShaderModule({ code }) { return { code }; },
+    createRenderPipeline(descriptor) {
+      events.pipeline++;
+      return {
+        code: descriptor.fragment.module.code,
+        getBindGroupLayout() { return {}; },
+      };
+    },
+    createTexture(descriptor) {
+      events.texture++;
+      if (events.texture === events.failTextureAt) throw new Error("injected texture failure");
+      const texture = makeTexture(descriptor);
+      events.textures.push(texture);
+      return texture;
+    },
+    createBindGroup(descriptor) {
+      events.bind++;
+      return descriptor;
+    },
   };
-  const input = {
-    createView() { throw new Error("budget bypass must not create a texture view"); },
+  const encoder = {
+    beginRenderPass(descriptor) {
+      const record = { descriptor, pipeline: null, bindGroup: null, draws: 0 };
+      events.passes.push(record);
+      return {
+        setPipeline(pipeline) { record.pipeline = pipeline; },
+        setBindGroup(_index, bindGroup) { record.bindGroup = bindGroup; },
+        draw() { record.draws++; },
+        end() {},
+      };
+    },
   };
-  const scaler = new SsimDownscaler(fakeDevice);
+  const inputA = makeTexture();
+  const inputB = makeTexture();
+  const scaler = new SsimDownscaler(device);
 
-  assert.equal(scaler.prepare(7680, 4320, 1, 1, input), false);
-  assert.equal(scaler.bypassed, true);
-  assert.equal(scaler.lastPlan.allowed, false);
-  assert.equal(scaler.run(null, input), input);
-  assert.equal(scaler.textures, null);
-  assert.equal(scaler.bindGroups, null);
+  // A device-valid 8K source has no aggregate-work ceiling: the unchanged
+  // direct chain is prepared and applied for an ordinary 2x downscale.
+  assert.equal(scaler.prepare(7680, 4320, 3840, 2160, inputA), true);
+  assert.equal(scaler.path, "direct");
+  const directGeneration = [...events.textures];
+  const directOutput = scaler.run(encoder, inputA);
+  assert.equal(directOutput, scaler.textures.out);
+  assert.notEqual(directOutput, inputA);
+  assert.equal(events.passes.length, 5);
+  events.passes.length = 0;
 
-  assert.throws(() => scaler.prepare(9000, 4320, 1, 1, input), /device limit/);
+  const firstGenerationStart = events.textures.length;
+  assert.equal(scaler.prepare(7680, 4320, 1, 1, inputA), true);
+  assert.equal(scaler.path, "multistage");
+  assert.equal(scaler.lastPlan.allowed, true);
+  assert.ok(scaler.lastPlan.stages.length > 1);
+  assert.ok(directGeneration.every((texture) => texture.destroyed === 1));
+  assert.match(scaler.pipelines.stages[0].verticalL2.code, /s = s \* s;/);
+  assert.doesNotMatch(scaler.pipelines.stages[0].verticalMean.code, /s = s \* s;/);
+  for (const stage of scaler.pipelines.stages.slice(1)) {
+    assert.equal(stage.verticalL2, stage.verticalMean);
+    assert.doesNotMatch(stage.verticalL2.code, /s = s \* s;/);
+  }
+
+  const firstGeneration = events.textures.slice(firstGenerationStart);
+  const output = scaler.run(encoder, inputA);
+  assert.equal(output, scaler.textures.out);
+  assert.notEqual(output, inputA);
+  assert.equal(events.passes.length, scaler.lastPlan.stages.length * 4 + 2);
+  assert.ok(events.passes.every((pass) => pass.pipeline && pass.bindGroup && pass.draws === 1));
+
+  const failedGenerationStart = events.textures.length;
+  events.failTextureAt = events.texture + 2;
+  assert.throws(
+    () => scaler.prepare(6400, 3200, 1, 1, inputB),
+    /injected texture failure/,
+  );
+  assert.equal(scaler.hiTex, inputA);
+  assert.ok(firstGeneration.every((texture) => texture.destroyed === 0));
+  const failedGeneration = events.textures.slice(failedGenerationStart);
+  assert.equal(failedGeneration.length, 1);
+  assert.equal(failedGeneration[0].destroyed, 1);
+
+  events.failTextureAt = -1;
+  const finalGenerationStart = events.textures.length;
+  assert.equal(scaler.prepare(6400, 3200, 1, 1, inputB), true);
+  assert.ok(firstGeneration.every((texture) => texture.destroyed === 1));
+  const finalGeneration = events.textures.slice(finalGenerationStart);
+  scaler.destroy();
+  assert.ok(finalGeneration.every((texture) => texture.destroyed === 1));
+
+  assert.throws(() => scaler.prepare(9000, 4320, 1, 1, inputA), /device limit/);
   assert.throws(() => scaler.prepare(7680, 4320, 1, 1, null), TypeError);
 });
 

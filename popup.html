@@ -518,6 +518,14 @@
             </span>
           </label>
 
+          <label class="switch-row" for="auto-quality-fallback">
+            <input id="auto-quality-fallback" type="checkbox">
+            <span class="copy">
+              <strong>Automatic quality fallback</strong>
+              <small>Use standard FSRCNNX after sustained frame drops or GPU backlog.</small>
+            </span>
+          </label>
+
           <label class="switch-row" for="images">
             <input id="images" type="checkbox">
             <span class="copy">
@@ -553,7 +561,7 @@
                 <label for="interp-res">Inference resolution</label>
                 <select id="interp-res">
                   <option value="auto">Auto (adapt to budget)</option>
-                  <option value="full">Full</option>
+                  <option value="full" selected>Full</option>
                   <option value="half">Half</option>
                   <option value="quarter">Quarter</option>
                 </select>
@@ -603,7 +611,7 @@
               </label>
 
               <label class="switch-row" for="interp-autofallback">
-                <input id="interp-autofallback" type="checkbox" checked>
+                <input id="interp-autofallback" type="checkbox">
                 <span class="copy">
                   <strong>Automatic blend fallback</strong>
                   <small>Use blending when RIFE cannot maintain a useful frame rate.</small>

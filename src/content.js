@@ -128,7 +128,7 @@ const COMMANDS = Object.freeze({
     (module, msg) => module.setEngine(msg.engine)),
   FSRCNNX_SETNEURALMODEL: fieldPayload(
     "model",
-    (value) => typeof value === "string" && /^[A-Za-z0-9._-]{1,128}$/.test(value),
+    (value) => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value),
     "must be a safe model key",
     (module, msg) => module.setNeuralModel(msg.model),
   ),
@@ -162,6 +162,9 @@ const COMMANDS = Object.freeze({
   FSRCNNX_SETHOVERREVEAL: booleanPayload((module, msg) => module.setHoverReveal(msg.on)),
   FSRCNNX_SETALLVIDEOS: booleanPayload((module, msg) => module.setAllVideos(msg.on)),
   FSRCNNX_SETIDLEPOWERSAVING: booleanPayload((module, msg) => module.setIdlePowerSaving(msg.on)),
+  FSRCNNX_SETAUTOQUALITYFALLBACK: booleanPayload(
+    (module, msg) => module.setAutoQualityFallback(msg.on),
+  ),
   FSRCNNX_SETSHARPEN: booleanPayload((module, msg) => module.setSharpen(msg.on)),
   FSRCNNX_SETSHARPENSTR: boundedNumberPayload("strength", 0.1, 2,
     (module, msg) => module.setSharpenStrength(msg.strength)),
