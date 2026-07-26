@@ -1884,6 +1884,13 @@ export function isUnsupportedNeuralF16Warning(event) {
     /\brequires f16 but the device does not support it\b/i.test(event.text);
 }
 
+export function isRecoveredInterpolationWatchdogWarning(event) {
+  return event?.kind === "console" &&
+    event?.type === "warning" &&
+    typeof event?.text === "string" &&
+    /^\[FSRCNNX\] interp WATCHDOG: present stalled \d+ms \(q=\d+, headDue=-?\d+ms, headTs=\d+(?:\.\d+)?s\) — re-anchoring to recover$/.test(event.text);
+}
+
 async function runRealVideoIntegration(
   httpBase,
   controlClient,
@@ -1895,6 +1902,7 @@ async function runRealVideoIntegration(
     allowNeuralF16Unavailable = false,
     neuralModelKey = null,
     requireTemporalNeuralRuns = false,
+    usingSoftwareGpu = false,
   } = {},
 ) {
   const fixtureUrl = new URL("video.html", fixtureBase).href;
@@ -2458,7 +2466,9 @@ async function runRealVideoIntegration(
     assertRuntimeClean(
       fixtureEvents,
       "real-video fixture",
-      acceptedNeuralF16Fallback ? isUnsupportedNeuralF16Warning : undefined,
+      (event) =>
+        (acceptedNeuralF16Fallback && isUnsupportedNeuralF16Warning(event)) ||
+        (usingSoftwareGpu && isRecoveredInterpolationWatchdogWarning(event)),
     );
     assertRuntimeClean(popupEvents, "real popup");
     return { checkpoints, fixtureEvents, popupEvents };
@@ -2558,6 +2568,7 @@ async function main(signal, options) {
         allowNeuralF16Unavailable: options.allowNeuralF16Unavailable,
         neuralModelKey: options.neuralModelKey,
         requireTemporalNeuralRuns: options.requireTemporalNeuralRuns,
+        usingSoftwareGpu: process.platform === "linux",
       },
     );
     const webGpu = state.results.find((result) => result.id === "webgpu");
