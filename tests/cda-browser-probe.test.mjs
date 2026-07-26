@@ -28,6 +28,16 @@ const referenceCheckpoint =
 const paritySeed = 20260726;
 const fp32Precision = "float32";
 const mixedPrecision = "mixed-fp16";
+const derivedX2Contract = {
+  kind: "aligned-subpixel-average-v1",
+  source_scale: 4,
+  output_scale: 2,
+  source_head_channels: 48,
+  derived_head_channels: 12,
+  phase_reduction: "mean-aligned-2x2",
+  residual_base: "bilinear-align-corners-false-x2",
+  shipping_catalog: false,
+};
 const parityLimits = {
   [fp32Precision]: {
     output: { max_abs: 2e-4, max_mean: 2e-5 },
@@ -131,11 +141,11 @@ function precisionContract(profile) {
   };
 }
 
-function temporalTilingProfile(precision) {
+function temporalTilingProfile(precision, outputScale = 4) {
   const mixed = precision === mixedPrecision;
   return {
     kind: "temporal-state-atlas-v1",
-    scale: 4,
+    scale: outputScale,
     halo: 64,
     haloDerivation: {
       motionSearchRadius: 8,
@@ -156,7 +166,7 @@ function temporalTilingProfile(precision) {
   };
 }
 
-function graphLogicalMemoryProfile(role, precision) {
+function graphLogicalMemoryProfile(role, precision, outputScale = 4) {
   const mixed = precision === mixedPrecision;
   const computeDtype = mixed ? "float16" : "float32";
   const channels = role === "recurrent" ? 194 : 64;
@@ -167,7 +177,7 @@ function graphLogicalMemoryProfile(role, precision) {
   const candidates = [
     ["conv-input", convBytes],
     ["grid-sample-source", gridChannels.length ? 512 : 0],
-    ["public-output", 192],
+    ["public-output", 3 * outputScale * outputScale * 4],
   ];
   const [largestTensorKind, largestBytes] = candidates.reduce(
     (largest, candidate) => candidate[1] > largest[1] ? candidate : largest,
@@ -192,13 +202,13 @@ function graphLogicalMemoryProfile(role, precision) {
     public_output: {
       channels: 3,
       dtype: "float32",
-      spatial_scale: 4,
-      bytes_per_source_pixel: 192,
+      spatial_scale: outputScale,
+      bytes_per_source_pixel: 3 * outputScale * outputScale * 4,
     },
   };
 }
 
-function graphShapes(role) {
+function graphShapes(role, outputScale = 4) {
   const spatial = ["height", "width"];
   return {
     inputs: role === "initializer"
@@ -211,7 +221,12 @@ function graphShapes(role) {
         state_high: [1, 64, ...spatial],
       },
     outputs: {
-      output: [1, 3, "output_height_x4", "output_width_x4"],
+      output: [
+        1,
+        3,
+        `output_height_x${outputScale}`,
+        `output_width_x${outputScale}`,
+      ],
       next_state_low: [1, 64, ...spatial],
       next_state_high: [1, 64, ...spatial],
     },
@@ -281,7 +296,7 @@ function paritySequence(
 function receiptV3For(
   initializer,
   recurrent,
-  { precision = mixedPrecision } = {},
+  { precision = mixedPrecision, outputScale = 4 } = {},
 ) {
   const profile = precisionContract(precision);
   const stateDtype = profile.state_dtype;
@@ -304,7 +319,7 @@ function receiptV3For(
   const maxMean = Math.max(limits.output.max_mean, limits.state.max_mean);
   const contract = {
     ...temporalContract(stateDtype),
-    tiling: temporalTilingProfile(precision),
+    tiling: temporalTilingProfile(precision, outputScale),
   };
 
   const graphFor = (role, bytes) => {
@@ -312,8 +327,8 @@ function receiptV3For(
     const gridSampleNodes = role === "recurrent" ? 5 : 0;
     const targetDtype = profile.weight_dtype;
     const initializerCount = role === "recurrent" ? 20 : 10;
-    const shapesForRole = graphShapes(role);
-    return {
+    const shapesForRole = graphShapes(role, outputScale);
+    const graph = {
       file: role === "initializer"
         ? "cda-vsr-initializer.onnx"
         : "cda-vsr-recurrent.onnx",
@@ -345,7 +360,7 @@ function receiptV3For(
         grid_sample_dtype: "float32",
         grid_sample_nodes: gridSampleNodes,
       },
-      logical_memory: graphLogicalMemoryProfile(role, precision),
+      logical_memory: graphLogicalMemoryProfile(role, precision, outputScale),
       weight_derivation: {
         source_dtype: "float32",
         target_dtype: targetDtype,
@@ -354,9 +369,13 @@ function receiptV3For(
       },
       nodes: role === "recurrent" ? 511 : 238,
     };
+    if (outputScale === 2) {
+      graph.output_derivation = structuredClone(derivedX2Contract);
+    }
+    return graph;
   };
 
-  return {
+  const receipt = {
     format: 3,
     tool: "FSRCNNX-EXT CDA-VSR conversion toolkit",
     opset: 17,
@@ -433,6 +452,10 @@ function receiptV3For(
       recurrent: graphFor("recurrent", recurrent),
     },
   };
+  if (outputScale === 2) {
+    receipt.output_derivation = structuredClone(derivedX2Contract);
+  }
+  return receipt;
 }
 
 function receiptFor(initializer, recurrent) {
@@ -591,6 +614,29 @@ test("CDA browser probe accepts complete mixed-fp16 format-3 evidence", async (t
   ]);
   const verified = await verifyCdaExportDirectory(parent);
   assert.equal(verified.precision, mixedPrecision);
+});
+
+test("CDA browser probe stages exact derived 2x receipt evidence", () => {
+  const receipt = receiptV3For(
+    Buffer.from("derived initializer"),
+    Buffer.from("derived recurrent"),
+    { outputScale: 2 },
+  );
+  const validated = validateCdaExportReceipt(receipt);
+  assert.equal(validated.contract.tiling.scale, 2);
+  assert.equal(
+    receipt.graphs.initializer.logical_memory.public_output.bytes_per_source_pixel,
+    48,
+  );
+  const manifest = makeCdaProbeManifest([], validated.contract);
+  assert.equal(manifest[0].scale, 2);
+  assert.match(manifest[0].label, /2x/);
+
+  receipt.output_derivation.phase_reduction = "nearest";
+  assert.throws(
+    () => validateCdaExportReceipt(receipt),
+    /output_derivation\.phase_reduction must be "mean-aligned-2x2"/,
+  );
 });
 
 test("CDA browser probe accepts strict format-3 FP32 evidence", () => {

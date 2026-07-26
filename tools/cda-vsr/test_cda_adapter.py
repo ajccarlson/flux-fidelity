@@ -11,11 +11,17 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+try:
+    import torch
+except ImportError:  # The static contract suite intentionally needs no ML stack.
+    torch = None
+
 
 TOOL_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(TOOL_DIR))
 
 from cda_adapter import (  # noqa: E402
+    DERIVED_OUTPUT_SCALE,
     FP32_PRECISION,
     GRAPH_FILENAMES,
     MIXED_FP16_PRECISION,
@@ -23,6 +29,9 @@ from cda_adapter import (  # noqa: E402
     ToolError,
     atomic_write_json,
     audit_source_contract,
+    derived_x2_contract,
+    derive_x2_output_model,
+    derived_x2_phase_groups,
     dynamic_axes_for,
     dynamic_probe_shape,
     inspect_inputs,
@@ -35,6 +44,12 @@ from cda_adapter import (  # noqa: E402
     sha256_file,
     temporal_tiling_contract,
 )
+
+
+def mv_warp_avg_patch(value, *_args, **_kwargs):
+    """Minimal global used only by the derived-head model fixture."""
+
+    return value
 from cda_tool import (  # noqa: E402
     EXPORT_RECEIPT_FORMAT,
     EXPORT_TOOL_NAME,
@@ -105,9 +120,11 @@ class AdapterStaticTests(unittest.TestCase):
         dynamic=True,
         skipped=False,
         precision=FP32_PRECISION,
+        derived_x2=False,
     ):
         height = 8
         width = 10
+        output_scale = DERIVED_OUTPUT_SCALE if derived_x2 else 4
         limits = (
             {
                 "output": {"max_abs": 5e-3, "max_mean": 5e-4},
@@ -225,13 +242,14 @@ class AdapterStaticTests(unittest.TestCase):
         }
         if dynamic:
             runtime_contract["manifest_v2_template"] = runtime_contract_template(
-                precision
+                precision,
+                output_scale=output_scale,
             )
         else:
             runtime_contract["catalog_blocker"] = (
                 "fixed-shape feasibility fixtures cannot be catalog entries"
             )
-        return {
+        receipt = {
             "format": EXPORT_RECEIPT_FORMAT,
             "tool": EXPORT_TOOL_NAME,
             "opset": OPSET,
@@ -314,6 +332,12 @@ class AdapterStaticTests(unittest.TestCase):
                     "logical_memory": logical_memory_contract(
                         role,
                         precision,
+                        output_scale,
+                    ),
+                    **(
+                        {"output_derivation": derived_x2_contract()}
+                        if derived_x2
+                        else {}
                     ),
                 }
                 for index, (role, filename) in enumerate(
@@ -322,6 +346,9 @@ class AdapterStaticTests(unittest.TestCase):
             },
             "parity": parity,
         }
+        if derived_x2:
+            receipt["output_derivation"] = derived_x2_contract()
+        return receipt
 
     def test_source_contract_and_directory_resolution(self):
         temporary, root, source, _checkpoint = self.make_inputs()
@@ -376,6 +403,20 @@ class AdapterStaticTests(unittest.TestCase):
                 REFERENCE_CHECKPOINT_SHA256,
             )
             self.assertFalse(parsed.allow_unpinned_inputs)
+
+    def test_derived_x2_head_is_explicitly_opt_in(self):
+        base = [
+            "--source",
+            "source",
+            "--checkpoint",
+            "checkpoint",
+        ]
+        native = cda_parser().parse_args(["export", *base])
+        derived = cda_parser().parse_args(
+            ["export", *base, "--derive-x2-head"]
+        )
+        self.assertFalse(native.derive_x2_head)
+        self.assertTrue(derived.derive_x2_head)
 
     def test_precision_is_opt_in_and_uses_tensor_specific_limits(self):
         base = [
@@ -515,6 +556,28 @@ class AdapterStaticTests(unittest.TestCase):
                 self.assertEqual(identity[1], REFERENCE_CHECKPOINT_SHA256)
                 self.assertEqual(identity[4], dynamic)
                 self.assertEqual(identity[5], precision)
+
+    def test_receipt_contract_accepts_only_exact_derived_x2_contract(self):
+        receipt = self.make_receipt(
+            precision=MIXED_FP16_PRECISION,
+            derived_x2=True,
+        )
+        validate_receipt_contract(receipt)
+        self.assertEqual(
+            receipt["runtime_contract"]["manifest_v2_template"]["tiling"][
+                "scale"
+            ],
+            2,
+        )
+        self.assertEqual(
+            receipt["graphs"]["initializer"]["logical_memory"][
+                "largest_bytes_per_source_pixel"
+            ],
+            128,
+        )
+        receipt["output_derivation"]["phase_reduction"] = "nearest"
+        with self.assertRaisesRegex(ToolError, "output_derivation"):
+            validate_receipt_contract(receipt)
 
     def test_receipt_contract_rejects_policy_and_identity_tampering(self):
         mutations = {
@@ -877,6 +940,161 @@ class AdapterStaticTests(unittest.TestCase):
                 graph_facts=receipt["graphs"],
             )
 
+    def test_derived_x2_phase_groups_are_aligned_complete_partition(self):
+        groups = derived_x2_phase_groups()
+        self.assertEqual(len(groups), 12)
+        self.assertEqual(groups[0], (0, 1, 4, 5))
+        self.assertEqual(groups[1], (2, 3, 6, 7))
+        self.assertEqual(groups[-1], (42, 43, 46, 47))
+        self.assertEqual(
+            sorted(index for group in groups for index in group),
+            list(range(48)),
+        )
+        for target_index, group in enumerate(groups):
+            channel = target_index // 4
+            target_phase = target_index % 4
+            target_row, target_column = divmod(target_phase, 2)
+            for source_index in group:
+                self.assertEqual(source_index // 16, channel)
+                source_phase = source_index % 16
+                source_row, source_column = divmod(source_phase, 4)
+                self.assertEqual(source_row // 2, target_row)
+                self.assertEqual(source_column // 2, target_column)
+
+    @unittest.skipIf(torch is None, "PyTorch conversion dependency is absent")
+    def test_derived_x2_model_matches_aligned_native_area_reduction(self):
+        class DoubleAlignment(torch.nn.Module):
+            def forward(self, source, _condition, _motion):
+                return source * 2
+
+        class ZeroWeight(torch.nn.Module):
+            def forward(self, residual):
+                return torch.zeros_like(residual)
+
+        class SelectLowState(torch.nn.Module):
+            def forward(self, value):
+                return value[:, :64]
+
+        class MinimalInitializer(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.hr_in = False
+                self.conv_first = torch.nn.Conv2d(3, 64, 1)
+                self.feature_extraction = torch.nn.Identity()
+                self.reconstruction_I = torch.nn.Identity()
+                self.reconstruction_P = torch.nn.Identity()
+                self.conv_h = torch.nn.Identity()
+                self.deform_align = DoubleAlignment()
+                self.conv_weight_l = ZeroWeight()
+                self.convs = SelectLowState()
+                self.upconv1 = torch.nn.Conv2d(64, 48, 3, padding=1)
+                self.pixel_shuffle = torch.nn.PixelShuffle(4)
+
+            def forward(
+                self,
+                x,
+                motion,
+                residual,
+                hidden_key=None,
+                return_hs=False,
+            ):
+                batch, frames, channels, height, width = x.shape
+                features = self.feature_extraction(
+                    self.conv_first(x.view(-1, channels, height, width))
+                ).view(batch, frames, 64, height, width)
+                current_feature = features[:, 0]
+                if hidden_key is None:
+                    reconstructed = self.reconstruction_I(current_feature)
+                else:
+                    feature_pair = torch.cat(hidden_key[:2], dim=1)
+                    warped_pair = mv_warp_avg_patch(feature_pair, motion[:, 0])
+                    condition = torch.cat([warped_pair, current_feature], dim=1)
+                    aligned_pair = self.deform_align(
+                        feature_pair,
+                        condition,
+                        motion[:, 0],
+                    )
+                    aligned_weight = self.conv_weight_l(residual[:, 0])
+                    warped_pair = aligned_pair * aligned_weight + aligned_pair
+                    reconstructed = self.reconstruction_P(
+                        self.convs(
+                            torch.cat([warped_pair, current_feature], dim=1)
+                        )
+                    )
+                output = self.pixel_shuffle(self.upconv1(reconstructed)).view(
+                    batch,
+                    frames,
+                    channels,
+                    4 * height,
+                    4 * width,
+                )
+                base = torch.nn.functional.interpolate(
+                    x.view(-1, channels, height, width),
+                    scale_factor=4,
+                    mode="bilinear",
+                    align_corners=False,
+                ).view_as(output)
+                output = output + base
+                state = (current_feature, self.conv_h(reconstructed), x[:, 0])
+                return (output, state) if return_hs else output
+
+        torch.manual_seed(20260726)
+        native_model = MinimalInitializer().eval()
+        derived_model = derive_x2_output_model(native_model, torch)
+        frame = torch.rand((1, 1, 3, 5, 7))
+        motion = torch.zeros((1, 1, 2, 5, 7))
+        residual = torch.zeros((1, 1, 1, 5, 7))
+        with torch.inference_mode():
+            native, native_state = native_model(
+                frame,
+                motion,
+                residual,
+                return_hs=True,
+            )
+            expected = torch.nn.functional.avg_pool2d(
+                native.view(1, 3, 20, 28),
+                kernel_size=2,
+                stride=2,
+            ).view(1, 1, 3, 10, 14)
+            actual, derived_state = derived_model(
+                frame,
+                motion,
+                residual,
+                return_hs=True,
+            )
+        self.assertEqual(tuple(actual.shape), (1, 1, 3, 10, 14))
+        self.assertTrue(
+            torch.allclose(actual, expected, rtol=1e-5, atol=2e-7),
+            f"maximum error: {(actual - expected).abs().max().item()}",
+        )
+        for actual_state, expected_state in zip(derived_state, native_state):
+            self.assertTrue(torch.equal(actual_state, expected_state))
+
+        next_frame = torch.rand_like(frame)
+        with torch.inference_mode():
+            native, native_state = native_model(
+                next_frame,
+                motion,
+                residual,
+                hidden_key=native_state,
+                return_hs=True,
+            )
+            expected = torch.nn.functional.avg_pool2d(
+                native.view(1, 3, 20, 28),
+                kernel_size=2,
+                stride=2,
+            ).view(1, 1, 3, 10, 14)
+            actual, derived_state = derived_model(
+                next_frame,
+                motion,
+                residual,
+                hidden_key=derived_state,
+                return_hs=True,
+            )
+        self.assertTrue(torch.allclose(actual, expected, rtol=1e-5, atol=2e-7))
+        for actual_state, expected_state in zip(derived_state, native_state):
+            self.assertTrue(torch.equal(actual_state, expected_state))
+
     def test_dynamic_axes_leave_only_spatial_dimensions_symbolic(self):
         axes = dynamic_axes_for(["frame", "motion"])
         self.assertEqual(axes["frame"], {2: "height", 3: "width"})
@@ -887,6 +1105,10 @@ class AdapterStaticTests(unittest.TestCase):
         )
         self.assertNotIn(0, axes["next_state_low"])
         self.assertNotIn(1, axes["next_state_low"])
+        self.assertEqual(
+            dynamic_axes_for(["frame"], DERIVED_OUTPUT_SCALE)["output"],
+            {2: "output_height_x2", 3: "output_width_x2"},
+        )
 
     def test_inspect_cli_needs_no_ml_dependencies(self):
         temporary, root, _source, checkpoint = self.make_inputs()

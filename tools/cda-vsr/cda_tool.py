@@ -10,9 +10,11 @@ import sys
 from pathlib import Path
 
 from cda_adapter import (
+    DERIVED_OUTPUT_SCALE,
     FP32_PRECISION,
     GRAPH_FILENAMES,
     MIXED_FP16_PRECISION,
+    NATIVE_OUTPUT_SCALE,
     OPSET,
     PRECISION_PROFILES,
     PRIOR_CONTRACT,
@@ -20,6 +22,8 @@ from cda_adapter import (
     ToolError,
     atomic_write_json,
     dependency_versions,
+    derive_x2_output_model,
+    derived_x2_contract,
     dynamic_probe_shape,
     export_graphs,
     inspect_inputs,
@@ -188,6 +192,17 @@ def add_precision(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_derived_x2(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--derive-x2-head",
+        action="store_true",
+        help=(
+            "locally derive a 2x head by averaging aligned 4x subpixel "
+            "phases; generated graphs remain experimental and non-shipping"
+        ),
+    )
+
+
 def parity_limits(args) -> dict[str, dict[str, float]]:
     precision = normalize_precision(args.precision)
     limits = {
@@ -232,6 +247,7 @@ def parser() -> argparse.ArgumentParser:
     add_inputs(export_parser, expected_hashes=True)
     add_shape(export_parser)
     add_precision(export_parser)
+    add_derived_x2(export_parser)
     export_parser.add_argument(
         "--fixed-shape",
         action="store_false",
@@ -261,6 +277,7 @@ def parser() -> argparse.ArgumentParser:
     add_inputs(parity_parser, expected_hashes=True)
     add_shape(parity_parser)
     add_precision(parity_parser)
+    add_derived_x2(parity_parser)
     parity_parser.add_argument(
         "--fixed-shape",
         action="store_false",
@@ -724,6 +741,14 @@ def validate_receipt_contract(
         if recorded_precision != precision_contract(precision):
             raise ValueError("precision is not the exact expected profile")
 
+        output_derivation = receipt.get("output_derivation")
+        if output_derivation is None:
+            output_scale = NATIVE_OUTPUT_SCALE
+        elif output_derivation == derived_x2_contract():
+            output_scale = DERIVED_OUTPUT_SCALE
+        else:
+            raise ValueError("output_derivation is not the exact supported contract")
+
         distribution = _receipt_mapping(
             receipt["distribution"],
             "distribution",
@@ -838,6 +863,7 @@ def validate_receipt_contract(
             manifest_template = runtime_contract_template(
                 precision,
                 graph_facts=graphs,
+                output_scale=output_scale,
             )
         except ToolError as error:
             raise ValueError(str(error)) from error
@@ -926,6 +952,20 @@ def loaded_model(source: Path, checkpoint: Path, torch):
     return model, checkpoint_info
 
 
+def requested_output_scale(args) -> int:
+    return (
+        DERIVED_OUTPUT_SCALE
+        if getattr(args, "derive_x2_head", False)
+        else NATIVE_OUTPUT_SCALE
+    )
+
+
+def configure_output_model(model, args, torch):
+    if requested_output_scale(args) == DERIVED_OUTPUT_SCALE:
+        return derive_x2_output_model(model, torch)
+    return model
+
+
 def command_inspect(args) -> dict[str, object]:
     source = resolve_source(args.source)
     checkpoint = resolve_checkpoint(args.checkpoint)
@@ -959,6 +999,8 @@ def command_export(args) -> dict[str, object]:
     source, checkpoint, inspection = validated_inputs(args)
     numpy, onnx, onnxruntime, torch = require_conversion_dependencies()
     model, checkpoint_info = loaded_model(source, checkpoint, torch)
+    output_scale = requested_output_scale(args)
+    model = configure_output_model(model, args, torch)
     output_dir = args.out_dir.expanduser().resolve()
     stale_receipt = invalidate_export_receipt(output_dir)
     graphs = export_graphs(
@@ -970,6 +1012,7 @@ def command_export(args) -> dict[str, object]:
         width=args.width,
         dynamic=args.dynamic,
         precision=args.precision,
+        output_scale=output_scale,
         torch=torch,
         onnx=onnx,
     )
@@ -995,6 +1038,7 @@ def command_export(args) -> dict[str, object]:
         runtime_contract["manifest_v2_template"] = runtime_contract_template(
             args.precision,
             graph_facts=graphs,
+            output_scale=output_scale,
         )
     else:
         runtime_contract["catalog_blocker"] = (
@@ -1063,6 +1107,8 @@ def command_export(args) -> dict[str, object]:
         "graphs": graphs,
         "parity": parity,
     }
+    if output_scale == DERIVED_OUTPUT_SCALE:
+        receipt["output_derivation"] = derived_x2_contract()
     validate_receipt_contract(receipt)
     try:
         atomic_write_json(output_dir / RECEIPT_FILENAME, receipt)
@@ -1076,6 +1122,8 @@ def command_parity(args) -> dict[str, object]:
     source, checkpoint, inspection = validated_inputs(args)
     numpy, onnx, onnxruntime, torch = require_conversion_dependencies()
     model, checkpoint_info = loaded_model(source, checkpoint, torch)
+    output_scale = requested_output_scale(args)
+    model = configure_output_model(model, args, torch)
     onnx_dir = args.onnx_dir.expanduser().resolve()
     graphs = validate_saved_graphs(
         onnx_dir,
@@ -1085,6 +1133,7 @@ def command_parity(args) -> dict[str, object]:
         width=args.width,
         dynamic=args.dynamic,
         precision=args.precision,
+        output_scale=output_scale,
         onnx=onnx,
     )
     parity = parity_result(
@@ -1123,6 +1172,11 @@ def command_verify(args) -> dict[str, object]:
         dynamic,
         precision,
     ) = validate_receipt_contract(receipt)
+    output_scale = (
+        DERIVED_OUTPUT_SCALE
+        if receipt.get("output_derivation") is not None
+        else NATIVE_OUTPUT_SCALE
+    )
     _numpy, onnx, _onnxruntime, _torch = require_conversion_dependencies()
     graphs = validate_saved_graphs(
         onnx_dir,
@@ -1132,6 +1186,7 @@ def command_verify(args) -> dict[str, object]:
         width=width,
         dynamic=dynamic,
         precision=precision,
+        output_scale=output_scale,
         onnx=onnx,
     )
     for role, info in graphs.items():
