@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
+
+import {
+  browserVersion,
+  fixtureDisplayDimensions,
+} from "../tools/browser-validation.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const validator = readFileSync(resolve(root, "tools/browser-validation.mjs"), "utf8");
@@ -20,6 +26,15 @@ test("browser validator covers the packaged extension and real-video runtime", (
   assert.match(validator, /Page\.captureScreenshot/);
   assert.match(validator, /getImageData/);
   assert.match(validator, /requirePixelProgression/);
+  assert.match(validator, /changePopupControl\(popupPage\.client, "engine", "neural"\)/);
+  assert.match(validator, /Neural ONNX presentation without fallback/);
+  assert.match(validator, /status\.renderer\?\.fallback == null/);
+  assert.match(validator, /status\.neuralRuntime\?\.phase === "active"/);
+  assert.match(validator, /status\.neural\?\.n >= neuralRuns \+ 2/);
+  assert.match(validator, /status\.presentation\.output\.width === status\.presentation\.source\.width \* scale/);
+  assert.match(validator, /hostIsolation\?\.crossOriginIsolated === false/);
+  assert.match(validator, /hostIsolation\?\.sharedArrayBuffer === "undefined"/);
+  assert.match(validator, /Neural to FSRCNNX transition/);
   assert.match(validator, /__FSRCNNX_PIXEL_ISOLATION_RESTORE__/);
   assert.match(validator, /brightness\(0\)/);
   assert.match(validator, /element !== target/);
@@ -36,6 +51,70 @@ test("browser validator covers the packaged extension and real-video runtime", (
   assert.doesNotMatch(validator, /extensionIdFromPath/);
   assert.match(validator, /127\.0\.0\.1/);
   assert.doesNotMatch(validator, /--no-sandbox/);
+});
+
+test("browser validator accepts configured paths on Windows and POSIX", () => {
+  assert.match(validator, /isAbsolute\(candidate\)/);
+  assert.ok(validator.includes('candidate.includes("\\\\")'));
+  assert.match(validator, /process\.platform !== "win32" && !process\.env\.DISPLAY/);
+  assert.match(validator, /softwareGpuArguments = process\.platform === "linux"/);
+  assert.match(validator, /--disable-backgrounding-occluded-windows/);
+  assert.doesNotMatch(validator, /msEdgeDisableEnhancedSecurityMode/);
+  assert.doesNotMatch(validator, /state\.readyState === "complete" && state\.operationText\) break/);
+});
+
+test("fixture display scaling maps requested physical pixels through the live DPR", () => {
+  assert.deepEqual(fixtureDisplayDimensions(160, 90, 1.35, 1), {
+    width: 216,
+    height: 122,
+    physicalWidth: 216,
+    physicalHeight: 122,
+    devicePixelRatio: 1,
+  });
+  assert.deepEqual(fixtureDisplayDimensions(160, 90, 1.35, 2), {
+    width: 108,
+    height: 61,
+    physicalWidth: 216,
+    physicalHeight: 122,
+    devicePixelRatio: 2,
+  });
+  assert.deepEqual(fixtureDisplayDimensions(160, 90, 1.35, 1.25), {
+    width: 172.8,
+    height: 97.6,
+    physicalWidth: 216,
+    physicalHeight: 122,
+    devicePixelRatio: 1.25,
+  });
+  assert.equal(fixtureDisplayDimensions(160, 90, 1.35, 0).devicePixelRatio, 1);
+  assert.match(validator, /window\.devicePixelRatio/);
+});
+
+test("Windows browser version detection reads executable metadata without launching Edge", async () => {
+  const calls = [];
+  const spawnProcess = (command, args, options) => {
+    calls.push({ command, args, options });
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = () => {};
+    queueMicrotask(() => {
+      child.stdout.emit("data", Buffer.from("150.0.4078.83\r\n"));
+      child.emit("exit", 0, null);
+    });
+    return child;
+  };
+  const browser = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
+  const version = await browserVersion(browser, undefined, {
+    platform: "win32",
+    spawnProcess,
+    environment: { SystemRoot: "C:\\Windows" },
+  });
+
+  assert.equal(version, "150.0.4078.83");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command, "powershell.exe");
+  assert.ok(!calls[0].args.includes("--version"));
+  assert.equal(calls[0].options.env.FSRCNNX_BROWSER_VERSION_TARGET, browser);
 });
 
 test("browser fixture server pins a fail-closed content security policy", () => {

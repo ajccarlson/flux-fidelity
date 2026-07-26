@@ -7,6 +7,15 @@
     "node": ">=20.11"
   },
   "description": "Real-time WebGPU video upscaling and frame interpolation for Chromium",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ajccarlson/fsrcnnx-ext.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ajccarlson/fsrcnnx-ext/issues"
+  },
+  "homepage": "https://github.com/ajccarlson/fsrcnnx-ext#readme",
   "scripts": {
     "check": "npm run check:syntax && npm run check:package && npm run check:models && npm run check:generated && npm run check:references && npm run check:browser-fixtures && npm run check:release-record && npm test",
     "check:syntax": "node --experimental-vm-modules --no-warnings tools/check-syntax.mjs",

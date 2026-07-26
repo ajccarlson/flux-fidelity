@@ -17,9 +17,17 @@ const OFF_ICON = {
   48: "icons/icon-off-48.png", 128: "icons/icon-off-128.png",
 };
 const VALID_MODES = new Set(["off", "upscale", "passthrough", "protected"]);
+const NEURAL_CAPABILITY_MINT = "FSRCNNX_NEURAL_FRAME_CAPABILITY_MINT";
+const NEURAL_CAPABILITY_CONSUME = "FSRCNNX_NEURAL_FRAME_CAPABILITY_CONSUME";
+const NEURAL_FRAME_PATH = "/src/frame/neural-frame.html";
+const NONCE_PATTERN = /^[A-Za-z0-9_-]{16,128}$/;
+const CAPABILITY_PATTERN = /^[a-f0-9]{48}$/;
+const CAPABILITY_TTL_MS = 15_000;
+const MAX_NEURAL_CAPABILITIES = 128;
 const tabDocuments = new Map();
 const pendingDocuments = new Map();
 const documentLifecycles = new Map();
+const neuralCapabilities = new Map();
 
 function titleFor(mode) {
   switch (mode) {
@@ -57,7 +65,117 @@ function resetTab(tabId) {
   tabDocuments.delete(tabId);
   pendingDocuments.delete(tabId);
   documentLifecycles.delete(tabId);
+  clearNeuralCapabilities(tabId);
   setBadge(tabId, "off");
+}
+
+function clearNeuralCapabilities(tabId) {
+  for (const [capability, record] of neuralCapabilities) {
+    if (record.tabId === tabId) neuralCapabilities.delete(capability);
+  }
+}
+
+function pruneNeuralCapabilities(now = Date.now()) {
+  for (const [capability, record] of neuralCapabilities) {
+    if (record.expiresAt <= now) neuralCapabilities.delete(capability);
+  }
+  while (neuralCapabilities.size >= MAX_NEURAL_CAPABILITIES) {
+    neuralCapabilities.delete(neuralCapabilities.keys().next().value);
+  }
+}
+
+function randomNeuralCapability() {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  let capability = "";
+  for (const byte of bytes) capability += byte.toString(16).padStart(2, "0");
+  return capability;
+}
+
+function hasOnlyKeys(value, keys) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const actual = Object.keys(value);
+  return actual.length === keys.size && actual.every((key) => keys.has(key));
+}
+
+function pageOriginFromSender(sender) {
+  if (sender?.id !== chrome.runtime.id || typeof sender.url !== "string") return null;
+  try {
+    const parsed = new URL(sender.url);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      return { parentOrigin: parsed.origin, opaqueParent: false };
+    }
+    if (parsed.protocol === "file:") {
+      return { parentOrigin: "null", opaqueParent: true };
+    }
+  } catch {}
+  return null;
+}
+
+function isPackagedNeuralFrameSender(sender) {
+  if (sender?.id !== chrome.runtime.id ||
+      !Number.isInteger(sender?.tab?.id) ||
+      !Number.isInteger(sender.frameId) ||
+      sender.frameId === 0 ||
+      sender.documentLifecycle !== "active" ||
+      typeof sender.url !== "string") return false;
+  try {
+    const parsed = new URL(sender.url);
+    return parsed.protocol === "chrome-extension:" &&
+      parsed.pathname === NEURAL_FRAME_PATH;
+  } catch {
+    return false;
+  }
+}
+
+function mintNeuralCapability(msg, sender) {
+  if (!hasOnlyKeys(msg, new Set(["type", "instanceNonce"])) ||
+      !NONCE_PATTERN.test(msg.instanceNonce)) return { ok: false };
+  const identity = senderDocument(sender);
+  const parent = pageOriginFromSender(sender);
+  if (!parent || !isCurrentActiveDocument(identity)) return { ok: false };
+
+  try {
+    pruneNeuralCapabilities();
+    const capability = randomNeuralCapability();
+    neuralCapabilities.set(capability, {
+      tabId: identity.tabId,
+      documentId: identity.documentId,
+      instanceNonce: msg.instanceNonce,
+      parentOrigin: parent.parentOrigin,
+      opaqueParent: parent.opaqueParent,
+      expiresAt: Date.now() + CAPABILITY_TTL_MS,
+    });
+    return { ok: true, capability };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function consumeNeuralCapability(msg, sender) {
+  if (!hasOnlyKeys(
+    msg,
+    new Set(["type", "capability", "instanceNonce"]),
+  ) ||
+      !CAPABILITY_PATTERN.test(msg.capability) ||
+      !NONCE_PATTERN.test(msg.instanceNonce) ||
+      !isPackagedNeuralFrameSender(sender)) return { ok: false };
+
+  const record = neuralCapabilities.get(msg.capability);
+  // A capability is single-use even when the attempted consumption is invalid.
+  if (record) neuralCapabilities.delete(msg.capability);
+  if (!record || record.expiresAt <= Date.now() ||
+      record.tabId !== sender.tab.id ||
+      record.instanceNonce !== msg.instanceNonce) return { ok: false };
+  const owner = tabDocuments.get(record.tabId);
+  if (owner?.state !== "active" || owner.documentId !== record.documentId) {
+    return { ok: false };
+  }
+  return {
+    ok: true,
+    parentOrigin: record.parentOrigin,
+    opaqueParent: record.opaqueParent,
+  };
 }
 
 function senderDocument(sender) {
@@ -160,6 +278,10 @@ function retainLoadingTombstone(tabId, blockedDocumentId, outgoingWasActive) {
 }
 
 function claimDocument(identity, mode = "off") {
+  const previous = tabDocuments.get(identity.tabId);
+  if (previous?.documentId && previous.documentId !== identity.documentId) {
+    clearNeuralCapabilities(identity.tabId);
+  }
   tabDocuments.set(identity.tabId, { documentId: identity.documentId, state: "active" });
   pendingDocuments.delete(identity.tabId);
   clearFallbackRetirement(identity.tabId, identity.documentId);
@@ -194,6 +316,10 @@ function stagePendingDocument(identity, mode = null, { confirmationGeneration = 
 function promotePendingDocument(tabId) {
   const pending = pendingDocuments.get(tabId);
   if (!pending) return false;
+  const previous = tabDocuments.get(tabId);
+  if (previous?.documentId && previous.documentId !== pending.documentId) {
+    clearNeuralCapabilities(tabId);
+  }
   pendingDocuments.delete(tabId);
   tabDocuments.set(tabId, { documentId: pending.documentId, state: "active" });
   clearFallbackRetirement(tabId, pending.documentId);
@@ -299,7 +425,15 @@ function handleDocumentHandshake(msg, identity) {
   if (!promotePendingDocument(identity.tabId)) setBadge(identity.tabId, "off");
 }
 
-chrome.runtime.onMessage.addListener((msg, sender) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type === NEURAL_CAPABILITY_MINT) {
+    sendResponse?.(mintNeuralCapability(msg, sender));
+    return;
+  }
+  if (msg?.type === NEURAL_CAPABILITY_CONSUME) {
+    sendResponse?.(consumeNeuralCapability(msg, sender));
+    return;
+  }
   const identity = senderDocument(sender);
   if (msg?.type === "FSRCNNX_DOCUMENT") {
     handleDocumentHandshake(msg, identity);
@@ -332,6 +466,9 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
 // A loading navigation invalidates the old document before its delayed async
 // callbacks can report. The newly injected content script will claim ownership.
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.status === "loading" || typeof changeInfo.url === "string") {
+    clearNeuralCapabilities(tabId);
+  }
   if (changeInfo.status === "loading") {
     const current = tabDocuments.get(tabId);
     const blockedDocumentId = current?.state === "loading"
@@ -356,12 +493,14 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   tabDocuments.delete(tabId);
   pendingDocuments.delete(tabId);
   documentLifecycles.delete(tabId);
+  clearNeuralCapabilities(tabId);
 });
 
 chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
   tabDocuments.delete(removedTabId);
   pendingDocuments.delete(removedTabId);
   documentLifecycles.delete(removedTabId);
+  clearNeuralCapabilities(removedTabId);
   resetTab(addedTabId);
   tabDocuments.set(addedTabId, {
     documentId: null,

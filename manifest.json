@@ -34,6 +34,7 @@
     {
       "resources": [
         "src/core/fsrcnnx-main.js",
+        "src/core/fsrcnnx-neural-frame-bridge.js",
         "src/core/fsrcnnx-model-bundle.js",
         "src/core/fsrcnnx-model-catalog.js",
         "src/core/fsrcnnx-performance.js",
@@ -48,12 +49,12 @@
         "src/core/fsrcnnx-video-controller.js",
         "src/core/fsrcnnx-sharpen.js",
         "src/core/fsrcnnx-artcnn-runtime.js",
-        "model/*.artcnn.wgsl",
-        "model/*.artcnn.json",
         "src/core/fsrcnnx-images.js",
         "src/core/fsrcnnx-interpolate.js",
         "src/core/fsrcnnx-rife.js",
-        "vendor/ort/*",
+        "vendor/ort/ort.webgpu.min.mjs",
+        "vendor/ort/ort-wasm-simd.asyncify.mjs",
+        "vendor/ort/ort-wasm-simd.asyncify.wasm",
         "model/*.onnx",
         "src/core/fsrcnnx-grab.js",
         "src/core/fsrcnnx-rife-gpu.js",
@@ -63,6 +64,16 @@
       "matches": [
         "<all_urls>"
       ]
+    },
+    {
+      "resources": [
+        "src/frame/neural-frame.html",
+        "src/frame/neural-frame-runtime.js"
+      ],
+      "matches": [
+        "<all_urls>"
+      ],
+      "use_dynamic_url": true
     }
   ],
   "icons": {

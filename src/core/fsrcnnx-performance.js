@@ -37,6 +37,8 @@ export class PlaybackPerformanceGuard {
     this.callbackSkips = 0;
     this.qualityFrames = 0;
     this.qualityDrops = 0;
+    this.rendererFrames = 0;
+    this.rendererSkips = 0;
     this.lastPresentedFrames = null;
     this.lastQualityFrames = null;
     this.lastQualityDrops = null;
@@ -53,6 +55,7 @@ export class PlaybackPerformanceGuard {
     const timestamp = finiteNonNegative(now);
     if (timestamp == null) return null;
     if (this.windowStartedAt == null) this.windowStartedAt = timestamp;
+    this.rendererFrames++;
 
     const presented = finiteNonNegative(metadata?.presentedFrames);
     if (presented != null) {
@@ -94,8 +97,9 @@ export class PlaybackPerformanceGuard {
     if (timestamp - this.windowStartedAt < this.options.windowMs) return null;
     const callbackRatio = this.callbackFrames > 0 ? this.callbackSkips / this.callbackFrames : 0;
     const qualityRatio = this.qualityFrames > 0 ? this.qualityDrops / this.qualityFrames : 0;
-    const observedFrames = Math.max(this.callbackFrames, this.qualityFrames);
-    const ratio = Math.max(callbackRatio, qualityRatio);
+    const rendererRatio = this.rendererFrames > 0 ? this.rendererSkips / this.rendererFrames : 0;
+    const observedFrames = Math.max(this.callbackFrames, this.qualityFrames, this.rendererFrames);
+    const ratio = Math.max(callbackRatio, qualityRatio, rendererRatio);
     const sufficientlyObserved = observedFrames >= this.options.minFrames;
     const degraded = sufficientlyObserved && ratio >= this.options.dropRatio;
     this.degradedWindows = degraded ? this.degradedWindows + 1 : 0;
@@ -105,6 +109,7 @@ export class PlaybackPerformanceGuard {
       observedFrames,
       callbackSkips: this.callbackSkips,
       qualityDrops: this.qualityDrops,
+      rendererSkips: this.rendererSkips,
       dropRatio: ratio,
       degraded,
       consecutiveDegradedWindows: this.degradedWindows,
@@ -114,6 +119,8 @@ export class PlaybackPerformanceGuard {
     this.callbackSkips = 0;
     this.qualityFrames = 0;
     this.qualityDrops = 0;
+    this.rendererFrames = 0;
+    this.rendererSkips = 0;
 
     if (!this.triggered && this.degradedWindows >= this.options.consecutiveWindows) {
       this.triggered = {
@@ -126,6 +133,12 @@ export class PlaybackPerformanceGuard {
       return this.triggered;
     }
     return null;
+  }
+
+  observeRendererSkip(count = 1) {
+    const skipped = finiteNonNegative(count);
+    if (skipped == null) return;
+    this.rendererSkips += skipped;
   }
 
   shouldSampleQueue() {

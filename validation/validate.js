@@ -1,7 +1,13 @@
 import { ArtCnnModel } from "../src/core/fsrcnnx-artcnn-runtime.js";
 import { GENERATED_MODEL_CATALOG } from "../src/core/fsrcnnx-model-catalog.js";
 import { validateModelBundle } from "../src/core/fsrcnnx-model-bundle.js";
-import { createOrtSession, ensureOrt, getOrtSessionDevice } from "../src/core/fsrcnnx-rife.js";
+import { validateNeuralManifest } from "../src/core/fsrcnnx-neural.js";
+import {
+  createOrtSession,
+  ensureOrt,
+  getOrtSessionDevice,
+  resolvePackagedAssetUrl,
+} from "../src/core/fsrcnnx-rife.js";
 import { FsrcnnxModel } from "../src/core/fsrcnnx-runtime.js";
 import {
   formatReferenceMetrics,
@@ -12,8 +18,10 @@ import {
 import {
   acquireValidationDevice,
   buildCorePipelines,
+  createNeuralValidationFixture,
   createValidationPlan,
   inspectOrtFloatTensor,
+  ONNX_VALIDATION_CHECKS,
   REFERENCE_VALIDATION_CHECKS,
   summarizeValidation,
   VALIDATION_TIMEOUT_MS,
@@ -246,7 +254,13 @@ function rifeInput(width, height) {
   return data;
 }
 
-async function createValidationOrtSession(modelUrl, label, { provider, gpuOutput, enableFp16 }) {
+async function createValidationOrtSession(modelUrl, label, {
+  provider,
+  gpuOutput,
+  enableFp16,
+  inputName = null,
+  outputName = null,
+}) {
   let session = null;
   try {
     const options = {
@@ -266,6 +280,12 @@ async function createValidationOrtSession(modelUrl, label, { provider, gpuOutput
     }
     if (!Array.isArray(session.outputNames) || session.outputNames.length !== 1) {
       throw new Error(`${label} exposes ${session.outputNames?.length ?? 0} outputs; expected exactly one`);
+    }
+    if (inputName && session.inputNames[0] !== inputName) {
+      throw new Error(`${label} input is '${session.inputNames[0]}'; manifest declares '${inputName}'`);
+    }
+    if (outputName && session.outputNames[0] !== outputName) {
+      throw new Error(`${label} output is '${session.outputNames[0]}'; manifest declares '${outputName}'`);
     }
     if (provider === "webgpu" && !getOrtSessionDevice(session)) {
       throw new Error(`${label} did not expose its ORT WebGPU device`);
@@ -353,6 +373,76 @@ async function executeValidationOrtCheck(ort, check) {
   return stats;
 }
 
+async function loadNeuralValidationCheck() {
+  const manifestUrl = resolvePackagedAssetUrl("model/neural/manifest.json");
+  const response = await withTimeout(
+    fetch(manifestUrl),
+    VALIDATION_TIMEOUT_MS,
+    "bundled neural manifest fetch",
+  );
+  if (!response.ok) throw new Error(`bundled neural manifest HTTP ${response.status}`);
+  const entries = validateNeuralManifest(await response.json());
+  if (!entries.length) throw new Error("bundled neural manifest contains no models");
+  const entry = entries[0];
+  const fixture = createNeuralValidationFixture(entry);
+  return {
+    id: "onnx:neural",
+    kind: "neural",
+    label: entry.label || entry.key,
+    modelUrl: resolvePackagedAssetUrl(`model/neural/${entry.file}`),
+    inputName: entry.input || null,
+    outputName: entry.output || null,
+    enableFp16: entry.fp16 === true,
+    ...fixture,
+  };
+}
+
+async function executeNeuralValidationOrtCheck(ort, check) {
+  const failures = [];
+  const canUseWebGpu = !!navigator.gpu && typeof GPUBufferUsage !== "undefined";
+  if (canUseWebGpu) {
+    const fp16Modes = check.enableFp16 ? [true, false] : [false];
+    for (const enableFp16 of fp16Modes) {
+      try {
+        const stats = await executeValidationOrtCheck(ort, {
+          ...check,
+          provider: "webgpu",
+          enableFp16,
+          gpuInput: true,
+          gpuOutput: true,
+        });
+        return {
+          stats,
+          provider: `WebGPU GPU-buffer (${enableFp16 ? "FP16" : "FP32"} execution)`,
+          fallback: failures.length ? failures.join("; ") : null,
+        };
+      } catch (error) {
+        failures.push(`WebGPU ${enableFp16 ? "FP16" : "FP32"}: ${errorMessage(error)}`);
+      }
+    }
+  } else {
+    failures.push("WebGPU API/GPUBufferUsage unavailable");
+  }
+
+  try {
+    const stats = await executeValidationOrtCheck(ort, {
+      ...check,
+      provider: "wasm",
+      enableFp16: false,
+      gpuInput: false,
+      gpuOutput: false,
+    });
+    return {
+      stats,
+      provider: "WASM CPU fallback",
+      fallback: failures.join("; "),
+    };
+  } catch (error) {
+    failures.push(`WASM: ${errorMessage(error)}`);
+    throw new Error(failures.join("; "));
+  }
+}
+
 async function validateOnnxModels(runId, resultMap) {
   const checks = [
     {
@@ -365,7 +455,7 @@ async function validateOnnxModels(runId, resultMap) {
       enableFp16: false,
       gpuInput: false,
       gpuOutput: false,
-      modelUrl: chrome.runtime.getURL("model/rife_v4.26_fp16.onnx"),
+      modelUrl: resolvePackagedAssetUrl("model/rife_v4.26_fp16.onnx"),
     },
     {
       id: "onnx:rife-v4.26",
@@ -377,37 +467,60 @@ async function validateOnnxModels(runId, resultMap) {
       enableFp16: false,
       gpuInput: true,
       gpuOutput: true,
-      modelUrl: chrome.runtime.getURL("model/rife_v4.26.onnx"),
+      modelUrl: resolvePackagedAssetUrl("model/rife_v4.26.onnx"),
     },
   ];
   const outcomes = new Map();
+  try {
+    checks.push(await loadNeuralValidationCheck());
+  } catch (error) {
+    outcomes.set("onnx:neural", {
+      status: "fail",
+      detail: `manifest/model contract: ${errorMessage(error)}`,
+    });
+  }
   let ort;
   try {
     ort = await ensureOrt();
   } catch (error) {
-    for (const check of checks) outcomes.set(check.id, { status: "fail", detail: `ORT bundle load: ${errorMessage(error)}` });
+    for (const check of ONNX_VALIDATION_CHECKS) {
+      if (!outcomes.has(check.id)) {
+        outcomes.set(check.id, { status: "fail", detail: `ORT bundle load: ${errorMessage(error)}` });
+      }
+    }
   }
 
   if (ort) {
     for (const check of checks) {
       if (outcomes.has(check.id)) continue;
       try {
-        const stats = await withTimeout(
-          executeValidationOrtCheck(ort, check),
+        const result = await withTimeout(
+          check.kind === "neural"
+            ? executeNeuralValidationOrtCheck(ort, check)
+            : executeValidationOrtCheck(ort, check),
           VALIDATION_TIMEOUT_MS,
           `${check.label} ORT validation`,
         );
+        const stats = check.kind === "neural" ? result.stats : result;
+        const route = check.kind === "neural" ? result.provider : `ORT ${check.provider}`;
+        const source = check.kind === "neural"
+          ? `${check.sourceWidth}×${check.sourceHeight} source, ` +
+            `${check.inputDims[3]}×${check.inputDims[2]} padded FP32 RGB NCHW`
+          : check.inputDims.join("×");
+        const fallback = check.kind === "neural" && result.fallback
+          ? `; fallback reason: ${result.fallback}`
+          : "";
         outcomes.set(check.id, {
           status: "pass",
-          detail: `${check.inputDims.join("×")} → ${stats.dims.join("×")}; ${stats.elements} finite values ` +
-            `in [${stats.min.toPrecision(4)}, ${stats.max.toPrecision(4)}] via ORT ${check.provider}`,
+          detail: `${source} → ${stats.dims.join("×")}; ${stats.elements} finite values ` +
+            `in [${stats.min.toPrecision(4)}, ${stats.max.toPrecision(4)}] via ${route}${fallback}`,
         });
       } catch (error) {
         outcomes.set(check.id, { status: "fail", detail: errorMessage(error) });
       }
     }
   }
-  for (const check of checks) {
+  for (const check of ONNX_VALIDATION_CHECKS) {
     const outcome = outcomes.get(check.id) || { status: "fail", detail: "validation produced no outcome" };
     setResult(runId, resultMap, check.id, outcome.status, outcome.detail);
   }

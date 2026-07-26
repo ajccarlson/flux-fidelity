@@ -394,6 +394,24 @@ test("MultiTarget startup rollback removes registration and destroys resources",
   }
 });
 
+test("secondary admission keeps its target-count bound without a source-pixel ceiling", async () => {
+  const large = candidate("large");
+  large.videoWidth = 3840;
+  large.videoHeight = 2160;
+  large.getBoundingClientRect = () => ({ width: 1920, height: 1080 });
+  const small = candidate("small");
+  const deps = { events: [], warnings: [], candidates: [small, large] };
+  const lifecycle = await loadMultiTargetLifecycle(deps);
+
+  lifecycle.reconcile();
+
+  assert.equal(lifecycle.size(), 2);
+  assert.equal(count(deps.events, "controller:construct:large"), 1,
+    "a large secondary source must not be excluded by an aggregate pixel quota");
+  assert.equal(count(deps.events, "controller:construct:small"), 1);
+  await lifecycle.clear();
+});
+
 test("secondary High targets receive an independent depth-matched model pool", async (t) => {
   const previous = globalThis.__multiTargetLifecycleDeps;
   t.after(() => { globalThis.__multiTargetLifecycleDeps = previous; });

@@ -35,6 +35,8 @@ Thumbs.db
 
 # Dependencies, caches, and generated output
 node_modules/
+.venv/
+venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -44,6 +46,8 @@ dist/
 build/
 tmp/
 temp/
+.tmp-*/
+tools/neural-export/.work/
 *.log
 validation/results/
 benchmarks/results/

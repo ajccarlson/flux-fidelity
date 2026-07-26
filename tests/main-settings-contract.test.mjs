@@ -4,6 +4,11 @@ import { readFile } from "node:fs/promises";
 
 const mainUrl = new URL("../src/core/fsrcnnx-main.js", import.meta.url);
 const source = await readFile(mainUrl, "utf8");
+const interpolateSource = await readFile(
+  new URL("../src/core/fsrcnnx-interpolate.js", import.meta.url),
+  "utf8",
+);
+const popupSource = await readFile(new URL("../popup.html", import.meta.url), "utf8");
 let revision = 0;
 
 function section(startMarker, endMarker) {
@@ -19,6 +24,24 @@ const settingsContract = section(
   "// ---- end validated setting contracts",
 );
 const policyToDepth = section("function policyToDepth", "// ---- validated setting contracts");
+
+test("performance-driven quality reductions are opt-in by default", () => {
+  assert.match(source, /const DEFAULT_INTERPOLATION_RES_MODE = "full";/);
+  assert.match(source, /let interpAutoFallbackPref = false;/);
+  assert.match(source, /boolean\("interpAutoFallback", false\)/);
+  assert.match(interpolateSource, /this\.resMode = "full";/);
+  assert.match(interpolateSource, /this\._autoFallback = false;/);
+  assert.match(
+    popupSource,
+    /<input id="interp-autofallback" type="checkbox">/,
+  );
+  assert.match(popupSource, /<option value="full" selected>Full<\/option>/);
+  assert.doesNotMatch(popupSource, /<option value="auto" selected>/);
+  assert.doesNotMatch(
+    popupSource,
+    /<input id="(?:auto-quality-fallback|interp-autofallback)"[^>]*\schecked(?:\s|>)/,
+  );
+});
 
 async function importHarness(code, deps = {}) {
   globalThis.__mainSettingsContractDeps = deps;
@@ -82,7 +105,7 @@ async function loadSaveHarness() {
     const deps = globalThis.__mainSettingsContractDeps;
     const DEFAULT_SETTING_FIELDS = ${JSON.stringify([
       "mode", "engine", "artVariant", "policy", "ssimds", "sharpen", "sharpenStrength",
-      "hoverReveal", "allVideos", "idlePowerSaving", "images", "interpolate",
+      "hoverReveal", "allVideos", "idlePowerSaving", "autoQualityFallback", "images", "interpolate",
       "interpEngine", "interpResMode", "neuralModel", "interpTargetFps", "interpAvOffsetMs",
       "interpStaticPassthrough", "interpAutoFallback", "interpLadder", "interpInvert",
     ])};
@@ -93,6 +116,7 @@ async function loadSaveHarness() {
     let mode = "upscale", requestedEngine = "artcnn", engine = "fsrcnnx", artVariant = "ArtCNN_C4F32_DS";
     let upscalePolicy = "force4", ssimdsEnabled = false, sharpenEnabled = true, sharpenStrength = 1.4;
     let optHoverReveal = true, optAllVideos = true, optIdlePowerSaving = true;
+    let optAutoQualityFallback = true;
     let optImages = true, optInterpolate = false, neuralModelKey = "span";
     let pendingEngine = "rife_v4.26_fp16", pendingResMode = "half", pendingTargetFps = 144;
     let pendingAvOffsetMs = 35, interpStaticPassthroughPref = false;
@@ -121,6 +145,76 @@ async function loadIdlePowerSavingHarness({ suspended = false } = {}) {
   `, { fences: 0, saved: [], notifications: 0, retirements: [] });
 }
 
+async function loadAutoQualityFallbackHarness({ selectedEngine = "neural" } = {}) {
+  const performanceFallback = section(
+    "function resetPlaybackPerformanceMonitoring()",
+    "async function ensureNeural",
+  );
+  const setter = section(
+    "export function setAutoQualityFallback",
+    "export function setAllVideos",
+  );
+  return importHarness(`
+    const deps = globalThis.__mainSettingsContractDeps;
+    let requestedEngine = ${JSON.stringify(selectedEngine)};
+    let engine = requestedEngine;
+    let mode = "upscale", upscalePolicy = "display", chainDepth = 1;
+    let optAutoQualityFallback = false, rendererFallback = null;
+    let neuralLastFailure = null, neuralFail = 0, engineSelectionGeneration = 0;
+    let performanceObservationGeneration = 0, performanceQueueSamplePending = false;
+    let presentedRuntimeEngine = engine, video = null, device = null;
+    const playbackPerformance = {
+      reset: () => { deps.monitorResets++; },
+      observeFrame: () => null,
+      shouldSampleQueue: () => false,
+      observeQueueBacklog: () => null,
+    };
+    const neuralEng = { stop: () => { deps.neuralStops++; } };
+    const stopNeuralEngine = () => Promise.resolve(neuralEng?.stop?.());
+    const hidePrimaryOverlays = () => {};
+    const boundedRuntimeDetail = (error, fallback) => error?.message || fallback;
+    const resetScaleSelection = () => { deps.scaleResets++; };
+    const clearMultiTargets = () => { deps.clears++; };
+    const resumeInterpolationAfterNeural = () => { deps.interpolationResumes++; };
+    const ensureFsrcnnxStages = async () => {};
+    const warn = () => {};
+    const notifyState = () => { deps.notifications++; };
+    const cancelPreferenceRestore = () => { deps.fences++; };
+    const saveSitePrefs = (fields) => { deps.saved.push(fields); };
+    const setEngine = (next) => {
+      deps.engineRestores.push(next);
+      engineSelectionGeneration++;
+      requestedEngine = next;
+      engine = next;
+      rendererFallback = null;
+      resetPlaybackPerformanceMonitoring();
+      return { ok: true, pending: next === "neural" };
+    };
+    ${policyToDepth}
+    ${performanceFallback}
+    ${setter}
+    export function eligible() { return performanceFallbackEligible(); }
+    export function lower(signal) { return activatePerformanceFallback(signal); }
+    export function installHardFallback() {
+      engine = "fsrcnnx";
+      rendererFallback = { from: "neural", to: "fsrcnnx", code: "neural-inference-failed" };
+    }
+    export function state() {
+      return { requestedEngine, engine, optAutoQualityFallback, rendererFallback };
+    }
+  `, {
+    monitorResets: 0,
+    neuralStops: 0,
+    scaleResets: 0,
+    clears: 0,
+    interpolationResumes: 0,
+    notifications: 0,
+    fences: 0,
+    saved: [],
+    engineRestores: [],
+  });
+}
+
 async function loadRestoreHarness(prefs, { neuralModels = [{ key: "span" }] } = {}) {
   const restore = section("export async function restoreSitePrefs()", "function cancelPreferenceRestore()");
   const validationHelpers = section("function validateSitePreferencePatch", "function saveSitePrefs");
@@ -128,7 +222,7 @@ async function loadRestoreHarness(prefs, { neuralModels = [{ key: "span" }] } = 
     const deps = globalThis.__mainSettingsContractDeps;
     const DEFAULT_SETTING_FIELDS = ${JSON.stringify([
       "mode", "engine", "artVariant", "policy", "ssimds", "sharpen", "sharpenStrength",
-      "hoverReveal", "allVideos", "idlePowerSaving", "images", "interpolate",
+      "hoverReveal", "allVideos", "idlePowerSaving", "autoQualityFallback", "images", "interpolate",
       "interpEngine", "interpResMode", "neuralModel", "interpTargetFps", "interpAvOffsetMs",
       "interpStaticPassthrough", "interpAutoFallback", "interpLadder", "interpInvert",
     ])};
@@ -141,9 +235,10 @@ async function loadRestoreHarness(prefs, { neuralModels = [{ key: "span" }] } = 
     let requestedEngine = "fsrcnnx", engine = "fsrcnnx", neuralModelKey = "", artVariant = "ArtCNN_C4F32";
     let upscalePolicy = "display", ssimdsEnabled = true, sharpenEnabled = false, sharpenStrength = 1;
     let optHoverReveal = false, optAllVideos = false, optIdlePowerSaving = false;
+    let optAutoQualityFallback = false;
     let chainDepth = 1, pendingEngine = "rife_v4.26", pendingResMode = "auto";
     let pendingTargetFps = "auto", pendingAvOffsetMs = 0;
-    let interpStaticPassthroughPref = true, interpAutoFallbackPref = true;
+    let interpStaticPassthroughPref = true, interpAutoFallbackPref = false;
     let interpLadderPref = false, interpInvertPref = true;
     let preferenceValidationFailure = null;
     const invalidPreferenceFields = new Set();
@@ -171,7 +266,7 @@ async function loadRestoreHarness(prefs, { neuralModels = [{ key: "span" }] } = 
     export function state() {
       return { engine, neuralModelKey, artVariant, policy: upscalePolicy, chainDepth,
         ssimdsEnabled, sharpenEnabled, sharpenStrength,
-        optIdlePowerSaving,
+        optIdlePowerSaving, optAutoQualityFallback,
         pendingEngine, pendingResMode, pendingTargetFps, pendingAvOffsetMs,
         interpStaticPassthroughPref, interpAutoFallbackPref, interpLadderPref, interpInvertPref,
         preferenceValidationFailure };
@@ -195,9 +290,10 @@ async function loadInterpolationConfigHarness(instance = null, {
     let pendingEngine = DEFAULT_INTERPOLATION_MODEL, pendingResMode = DEFAULT_INTERPOLATION_RES_MODE;
     let pendingTargetFps = DEFAULT_INTERPOLATION_TARGET_FPS;
     let pendingAvOffsetMs = DEFAULT_INTERPOLATION_AV_OFFSET_MS;
-    let interpStaticPassthroughPref = true, interpAutoFallbackPref = true;
+    let interpStaticPassthroughPref = true, interpAutoFallbackPref = false;
     let interpLadderPref = false, interpInvertPref = true;
     let optInterpolate = true, engine = "fsrcnnx", video = { id: "video" };
+    let optAutoQualityFallback = false;
     let interpolationStartFailureStreak = null, chainInverted = false, canvas = null;
     const reviseInterpolationConfiguration = () => ({ generation: ++interpolationConfigGeneration, retry: false });
     const saveSitePrefs = () => deps.saved.push({
@@ -227,6 +323,10 @@ async function loadInterpolationConfigHarness(instance = null, {
       return { ok: true };
     };
     const notifyState = () => {};
+    const setAutoQualityFallback = (value) => {
+      optAutoQualityFallback = value;
+      return { ok: true, autoQualityFallback: value };
+    };
     const log = () => {};
     ${configure}
     ${primarySetters}
@@ -239,7 +339,7 @@ async function loadInterpolationConfigHarness(instance = null, {
       return { pendingEngine, pendingResMode, pendingTargetFps, pendingAvOffsetMs,
         interpStaticPassthroughPref, interpAutoFallbackPref, interpLadderPref,
         interpInvertPref, interpolationConfigGeneration, preferenceFences: deps.fences,
-        neuralModelKey };
+        neuralModelKey, optAutoQualityFallback };
     }
   `, { instance, saved: [], failures: [], fences: 0, neuralCalls: 0, neuralGate, writes: [] });
 }
@@ -266,6 +366,7 @@ async function loadStatusHarness(storeHealth = {
       colorSpace: { primaries: null, transfer: null, matrix: null, fullRange: null },
     };
     let optHoverReveal = false, optAllVideos = false, optIdlePowerSaving = false;
+    let optAutoQualityFallback = false;
     let optImages = false, imageUpscaledCount = 0;
     let optInterpolate = deps.runtime.interpolate === true, interpPausedByNeural = false;
     let interpolationTerminalQuarantine = deps.runtime.interpFailure || null, interpolator = null;
@@ -352,7 +453,7 @@ async function loadRuntimeKeyHarness() {
   return importHarness(`
     let interpolationConfigGeneration = 7, pendingEngine = "rife_v4.26_fp16", pendingResMode = "auto";
     let pendingTargetFps = "auto", pendingAvOffsetMs = 0, interpStaticPassthroughPref = true;
-    let interpAutoFallbackPref = true, interpLadderPref = false, interpInvertPref = true;
+    let interpAutoFallbackPref = false, interpLadderPref = false, interpInvertPref = true;
     ${runtimeKey}
     export const key = interpolationRuntimeConfigKey;
     export function vary(name, value) {
@@ -462,6 +563,21 @@ test("verified standard x2 planning cascades only for explicit or clearly larger
     outputWidth: 2560, outputHeight: 1440,
     downsample: false, ssimds: false,
   });
+
+  assert.deepEqual(upscalePresentationPlan(
+    "force2", 160, 90, 2, 216, { ssimdsEnabled: true, displaySafe: true },
+  ), {
+    modelWidth: 320, modelHeight: 180,
+    outputWidth: 216, outputHeight: 122,
+    downsample: true, ssimds: true,
+  }, "SSimDS should reduce a 320px model result for a 216-device-pixel target");
+  assert.deepEqual(upscalePresentationPlan(
+    "force2", 160, 90, 2, 216 * 2, { ssimdsEnabled: true, displaySafe: true },
+  ), {
+    modelWidth: 320, modelHeight: 180,
+    outputWidth: 320, outputHeight: 180,
+    downsample: false, ssimds: false,
+  }, "CSS width must be converted to physical display pixels before SSimDS planning");
 });
 
 test("site persistence records requested intent and writes only selected fields", async () => {
@@ -472,6 +588,7 @@ test("site persistence records requested intent and writes only selected fields"
     mode: "upscale", engine: "artcnn", artVariant: "ArtCNN_C4F32_DS", policy: "force4",
     ssimds: false, sharpen: true, sharpenStrength: 1.4,
     hoverReveal: true, allVideos: true, idlePowerSaving: true,
+    autoQualityFallback: true,
     images: true, interpolate: false,
     interpEngine: "rife_v4.26_fp16", interpResMode: "half", neuralModel: "span",
     interpTargetFps: 144, interpAvOffsetMs: 35, interpStaticPassthrough: false,
@@ -498,6 +615,103 @@ test("idle power saving is opt-in and retires an already-hidden document immedia
   assert.deepEqual(globalThis.__mainSettingsContractDeps.saved, [["idlePowerSaving"]]);
   assert.equal(globalThis.__mainSettingsContractDeps.fences, 1);
   assert.equal(globalThis.__mainSettingsContractDeps.notifications, 1);
+});
+
+test("automatic quality fallback is opt-in, includes Neural, and restores requested quality when disabled", async () => {
+  const quality = await loadAutoQualityFallbackHarness();
+  const deps = globalThis.__mainSettingsContractDeps;
+  const signal = {
+    code: "sustained-frame-drops",
+    detail: "Playback pressure persisted.",
+    evidence: { dropRatio: 0.25 },
+  };
+
+  assert.equal(quality.eligible(), false);
+  assert.equal(quality.lower(signal), null,
+    "frame pressure cannot lower quality while the preference is disabled");
+
+  assert.deepEqual(quality.setAutoQualityFallback(true), {
+    ok: true,
+    autoQualityFallback: true,
+    restored: false,
+  });
+  assert.equal(quality.eligible(), true, "Neural is an eligible high-cost requested renderer");
+  assert.equal(quality.lower({
+    code: "model-render-failed",
+    detail: "A single renderer exception is not sustained playback pressure.",
+  }), null, "opt-in adaptation must not turn a one-off renderer error into a quality downgrade");
+  assert.equal(quality.state().engine, "neural");
+  assert.equal(quality.lower(signal).category, "performance");
+  assert.deepEqual(quality.state(), {
+    requestedEngine: "neural",
+    engine: "fsrcnnx",
+    optAutoQualityFallback: true,
+    rendererFallback: {
+      category: "performance",
+      from: "neural",
+      to: "fsrcnnx",
+      code: "sustained-frame-drops",
+      detail: "Playback pressure persisted.",
+      at: quality.state().rendererFallback.at,
+      evidence: { dropRatio: 0.25 },
+    },
+  });
+  assert.equal(deps.neuralStops, 1);
+  assert.equal(deps.interpolationResumes, 1);
+
+  assert.deepEqual(quality.setAutoQualityFallback(false), {
+    ok: true,
+    autoQualityFallback: false,
+    restored: true,
+    pending: true,
+  });
+  assert.equal(quality.state().requestedEngine, "neural");
+  assert.equal(quality.state().engine, "neural");
+  assert.equal(quality.state().rendererFallback, null);
+  assert.deepEqual(deps.engineRestores, ["neural"]);
+  assert.deepEqual(deps.saved, [["autoQualityFallback"], ["autoQualityFallback"]]);
+
+  quality.installHardFallback();
+  assert.deepEqual(quality.setAutoQualityFallback(false), {
+    ok: true,
+    autoQualityFallback: false,
+    restored: false,
+  });
+  assert.equal(quality.state().rendererFallback.code, "neural-inference-failed",
+    "disabling performance adaptation must not erase a hard neural safety fallback");
+  assert.deepEqual(deps.engineRestores, ["neural"]);
+});
+
+test("automatic quality fallback targets every expensive upscaler but never standard FSRCNNX", async () => {
+  const signal = {
+    code: "sustained-gpu-backlog",
+    detail: "GPU pressure persisted.",
+    evidence: { consecutiveBacklogs: 3 },
+  };
+
+  for (const selectedEngine of ["fsrcnnx-hi", "artcnn", "neural"]) {
+    const quality = await loadAutoQualityFallbackHarness({ selectedEngine });
+    quality.setAutoQualityFallback(true);
+    assert.equal(quality.eligible(), true, `${selectedEngine} must be eligible after opt-in`);
+    const fallback = quality.lower(signal);
+    assert.equal(fallback.from, selectedEngine);
+    assert.equal(fallback.to, "fsrcnnx");
+    assert.equal(fallback.category, "performance");
+    assert.equal(quality.state().requestedEngine, selectedEngine,
+      "the durable requested model must survive a temporary quality fallback");
+    assert.equal(quality.state().engine, "fsrcnnx");
+  }
+
+  const standard = await loadAutoQualityFallbackHarness({ selectedEngine: "fsrcnnx" });
+  standard.setAutoQualityFallback(true);
+  assert.equal(standard.eligible(), false);
+  assert.equal(standard.lower(signal), null);
+  assert.deepEqual(standard.state(), {
+    requestedEngine: "fsrcnnx",
+    engine: "fsrcnnx",
+    optAutoQualityFallback: true,
+    rendererFallback: null,
+  });
 });
 
 test("preference restore preserves High selections, migrates legacy values, and rejects corrupt fields", async () => {
@@ -545,7 +759,8 @@ test("preference restore preserves High selections, migrates legacy values, and 
 
   const valid = await loadRestoreHarness({
     engine: "artcnn", neuralModel: "span", artVariant: "ArtCNN_C4F32_DN", policy: "force8",
-    mode: "upscale", idlePowerSaving: true, images: true, interpolate: true,
+    mode: "upscale", idlePowerSaving: true, autoQualityFallback: true,
+    images: true, interpolate: true,
     interpEngine: "blend", interpResMode: "half", interpTargetFps: "144", interpAvOffsetMs: "25",
     interpStaticPassthrough: false, interpAutoFallback: false, interpLadder: true, interpInvert: false,
   });
@@ -554,7 +769,7 @@ test("preference restore preserves High selections, migrates legacy values, and 
     engine: "artcnn", neuralModelKey: "span", artVariant: "ArtCNN_C4F32_DN",
     policy: "force8", chainDepth: 3,
     ssimdsEnabled: true, sharpenEnabled: false, sharpenStrength: 1,
-    optIdlePowerSaving: true,
+    optIdlePowerSaving: true, optAutoQualityFallback: true,
     pendingEngine: "blend", pendingResMode: "half", pendingTargetFps: 144, pendingAvOffsetMs: 25,
     interpStaticPassthroughPref: false, interpAutoFallbackPref: false,
     interpLadderPref: true, interpInvertPref: false, preferenceValidationFailure: null,
@@ -566,6 +781,7 @@ test("preference restore preserves High selections, migrates legacy values, and 
     interpEngine: "file:///tmp/model", interpResMode: "max", interpTargetFps: 999,
     interpAvOffsetMs: -101, interpStaticPassthrough: "false",
     interpAutoFallback: "false", interpLadder: 1, interpInvert: null,
+    autoQualityFallback: "true",
     sharpenStrength: "2",
   });
   assert.equal((await corrupt.restoreSitePrefs()).ok, true);
@@ -573,12 +789,12 @@ test("preference restore preserves High selections, migrates legacy values, and 
     engine: "fsrcnnx", neuralModelKey: "", artVariant: "ArtCNN_C4F32",
     policy: "force4", chainDepth: 2,
     ssimdsEnabled: true, sharpenEnabled: false, sharpenStrength: 1,
-    optIdlePowerSaving: false,
-    pendingEngine: "rife_v4.26", pendingResMode: "auto",
+    optIdlePowerSaving: false, optAutoQualityFallback: false,
+    pendingEngine: "rife_v4.26", pendingResMode: "full",
     pendingTargetFps: "auto", pendingAvOffsetMs: 0,
-    interpStaticPassthroughPref: true, interpAutoFallbackPref: true,
+    interpStaticPassthroughPref: true, interpAutoFallbackPref: false,
     interpLadderPref: false, interpInvertPref: true,
-    preferenceValidationFailure: "Invalid stored settings: artVariant, engine, " +
+    preferenceValidationFailure: "Invalid stored settings: artVariant, autoQualityFallback, engine, " +
       "images, interpAutoFallback, interpAvOffsetMs, interpEngine, interpInvert, interpLadder, " +
       "interpResMode, interpStaticPassthrough, interpTargetFps, interpolate, mode, neuralModel, " +
       "sharpenStrength",
@@ -586,7 +802,7 @@ test("preference restore preserves High selections, migrates legacy values, and 
   assert.deepEqual(corrupt.migrationWrites(), [{ policy: "force4" }]);
 
   assert.equal(corrupt.applyValidation({ images: true }),
-    "Invalid stored settings: artVariant, engine, interpAutoFallback, " +
+    "Invalid stored settings: artVariant, autoQualityFallback, engine, interpAutoFallback, " +
       "interpAvOffsetMs, interpEngine, interpInvert, interpLadder, interpResMode, " +
       "interpStaticPassthrough, interpTargetFps, interpolate, mode, neuralModel, " +
       "sharpenStrength",
@@ -707,6 +923,24 @@ test("external preference reconciliation replaces a neural model removed from th
   assert.deepEqual(config.migrationWrites(), [{ neuralModel: "span" }]);
 });
 
+test("external preference reconciliation accepts only a boolean automatic quality fallback", async () => {
+  const config = await loadInterpolationConfigHarness();
+  assert.deepEqual(await config.applyExternalSitePreferences({ autoQualityFallback: true }), {
+    ok: true,
+    applied: true,
+    invalid: [],
+  });
+  assert.equal(config.state().optAutoQualityFallback, true);
+
+  assert.deepEqual(await config.applyExternalSitePreferences({ autoQualityFallback: "true" }), {
+    ok: false,
+    applied: true,
+    invalid: ["autoQualityFallback"],
+  });
+  assert.equal(config.state().optAutoQualityFallback, false,
+    "an invalid external value falls back to the safe disabled default");
+});
+
 test("preference synchronization retries failed runtime application and reports persistent failure", async () => {
   const initialized = await loadPreferenceApplicationHarness(0, { mode: "passthrough" });
   assert.equal((await initialized.module.syncSitePrefs()).ok, true);
@@ -758,12 +992,14 @@ test("status exposes configured interpolation and neural values without live run
   assert.equal(status.gpuState, "idle");
   assert.deepEqual(status.runtime.resources, { phase: "idle", reason: null });
   assert.equal(status.idlePowerSaving, false);
+  assert.equal(status.autoQualityFallback, false);
   assert.deepEqual(status.persistence, {
     scope: "https://video.example", schemaVersion: 2,
     state: "ready", operation: null, errorOperation: null, pendingWrites: 0, error: null,
   });
   assert.equal(status.renderer.requestedEngine, "neural");
   assert.equal(status.renderer.effectiveEngine, "neural");
+  assert.equal(status.renderer.performance.enabled, false);
   assert.deepEqual(status.renderer.nativePresentation, {
     pictureInPicture: false,
     directFullscreen: false,
@@ -904,7 +1140,7 @@ test("status exposes configured interpolation and neural values without live run
 test("interpolation quarantine identity includes every runtime-affecting preference", async () => {
   for (const [field, value] of [
     ["model", "blend"], ["res", "half"], ["target", 120], ["offset", 25],
-    ["static", false], ["fallback", false], ["ladder", true], ["invert", false],
+    ["static", false], ["fallback", true], ["ladder", true], ["invert", false],
   ]) {
     const runtime = await loadRuntimeKeyHarness();
     const before = runtime.key();

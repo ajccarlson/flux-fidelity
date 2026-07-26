@@ -167,9 +167,14 @@ function checkedProduct(values, label) {
   return result;
 }
 
-export const DEFAULT_GPU_POOL_BUDGET_BYTES = 512 * 1024 * 1024;
-export const DEFAULT_GPU_FRAME_BUDGET_BYTES = 256 * 1024 * 1024;
-export const DEFAULT_GPU_INPUT_BUDGET_BYTES = 256 * 1024 * 1024;
+// WebGPU exposes per-resource limits, but no portable aggregate-VRAM limit.
+// Keep aggregate accounting injectable for constrained deployments and lifecycle
+// tests; the extension default rejects only unsafe arithmetic and actual device
+// limit violations.
+const NO_POLICY_GPU_BUDGET_BYTES = Number.MAX_SAFE_INTEGER;
+export const DEFAULT_GPU_POOL_BUDGET_BYTES = NO_POLICY_GPU_BUDGET_BYTES;
+export const DEFAULT_GPU_FRAME_BUDGET_BYTES = NO_POLICY_GPU_BUDGET_BYTES;
+export const DEFAULT_GPU_INPUT_BUDGET_BYTES = NO_POLICY_GPU_BUDGET_BYTES;
 
 export class GpuInterp {
   constructor({
@@ -200,8 +205,8 @@ export class GpuInterp {
     this._pool = []; // recycled result textures for the presentation queue
     this._allPooledTextures = new Set(); // includes checked-out/in-flight textures
     // Retired textures remain physically live until every captured operation is
-    // idle and the device queue fence resolves. Keep their bytes in the bound so
-    // rapid resolution churn cannot allocate around deferred destruction.
+    // idle and the device queue fence resolves. Keep their bytes in accounting so
+    // an explicitly configured bound cannot be bypassed during resolution churn.
     this._retiringPooledBytes = 0;
     this._activeFrameBytes = 0;
     this._retiringFrameBytes = 0;

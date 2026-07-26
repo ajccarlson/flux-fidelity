@@ -128,7 +128,7 @@ export const REFERENCE_CASES = deepFreeze([
     id: "FSRCNNX_x2_56-16-4-1",
     label: "FSRCNNX High x2 numerical reference",
     source: {
-      path: "shaders/FSRCNNX_x2_56-16-4-1.glsl",
+      path: "shaders/upstream/FSRCNNX_x2_56-16-4-1.glsl",
       sha256: "34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6",
     },
     inputs: [{ role: "source", id: "model" }],
@@ -277,7 +277,9 @@ export const REFERENCE_CASES = deepFreeze([
       comparison: "rgb",
     },
     oracle: { kind: "cpu-bt709-f32-f16", operation: "recombine" },
-    tolerances: { rmse: 0.001, max: 0.003 },
+    // Native D3D12 filtering can differ from the f32 oracle by one 1/256
+    // interpolation step; keep the full-frame RMSE bound strict.
+    tolerances: { rmse: 0.001, max: 0.004 },
   },
 ]);
 

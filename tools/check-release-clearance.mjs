@@ -4,12 +4,15 @@ import { isAbsolute, posix, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(import.meta.dirname, "..");
+const DEFAULT_LEDGER_FILE = "docs/compliance/release-clearance.json";
+const PROVENANCE_FILE = "docs/compliance/MODEL_PROVENANCE.md";
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const STATUS_VALUES = new Set(["blocked", "cleared"]);
 const ARTIFACT_DISPOSITIONS = new Set(["present", "removed"]);
 export const REQUIRED_RELEASE_GATE_IDS = Object.freeze([
   "unidentified-rife-model",
   "unproven-rife-fp16-conversion",
+  "neural-model-provenance",
   "unknown-high-x2-shader-origin",
   "missing-x3-x4-shader-sources",
   "unreproducible-span-smoke-model",
@@ -18,20 +21,62 @@ export const REQUIRED_RELEASE_GATE_IDS = Object.freeze([
   "onnx-runtime-third-party-review",
 ]);
 const HIGH_X2_GATE_ID = "unknown-high-x2-shader-origin";
+const LGPL_GATE_ID = "lgpl-compliance-review";
+const NEURAL_MODEL_GATE_ID = "neural-model-provenance";
+const NEURAL_MODEL_ARTIFACTS = Object.freeze(new Map([
+  [
+    "LICENSES/Real-ESRGAN-BSD-3-Clause.txt",
+    "4a699ec4863d96a91fc265948a0c90033f7e8735d515524dcf3444736406e0c2",
+  ],
+  [
+    "model/neural/realesrganv2_animevideo_xsx2.fp16.onnx",
+    "f674a410b528aec55bb9f9f594cb1aaea580237adb29abd9dc32296d34b690a0",
+  ],
+]));
+const NEURAL_MODEL_EVIDENCE = Object.freeze([
+  PROVENANCE_FILE,
+  "LICENSES/Real-ESRGAN-BSD-3-Clause.txt",
+  "tools/neural-export/README.md",
+  "tools/neural-export/export.py",
+  "tools/neural-export/requirements.txt",
+  "https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.2.3.0",
+  "https://github.com/xinntao/Real-ESRGAN/blob/f07aaffda04c7e69f11e6bfaf8023a6435471459/LICENSE",
+]);
+const NEURAL_MODEL_PROVENANCE_MARKERS = Object.freeze([
+  "27985aa2198711ecd72f9bb274ec7b164e018fc9ce2933daaa7c7ab36a2bd3fe",
+  "f674a410b528aec55bb9f9f594cb1aaea580237adb29abd9dc32296d34b690a0",
+  "f07aaffda04c7e69f11e6bfaf8023a6435471459",
+  "4a699ec4863d96a91fc265948a0c90033f7e8735d515524dcf3444736406e0c2",
+]);
 const HIGH_X2_ARTIFACTS = Object.freeze(new Map([
   [
-    "shaders/FSRCNNX_x2_56-16-4-1.glsl",
+    "shaders/upstream/FSRCNNX_x2_56-16-4-1.glsl",
     "34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6",
   ],
   [
     "model/FSRCNNX_x2_56-16-4-1.wgsl",
-    "267ba203867483a467c535fd03c36c62ff9428116111d4d258dc5c295ef8e0d7",
+    "19a5327c8f96b7cb0593512f846f75ef266a3d857a84532c4dc5a374296e3d11",
   ],
   [
     "model/FSRCNNX_x2_56-16-4-1.passes.json",
-    "57395ac668b4cbebea69938a9089c9bea0029ce785f7cc6dad239c4be31d43e7",
+    "4b7512ca17fd9788f4876f2681207fa8fb3b10c46d314ea2b3ce684864fb4d70",
   ],
 ]));
+const HIGH_X2_EVIDENCE = Object.freeze([
+  PROVENANCE_FILE,
+  "shaders/README.md",
+  "docs/compliance/LGPL_REBUILDING.md",
+  "https://web.archive.org/web/20190330194401/https://github.com/igv/FSRCNN-TensorFlow/releases",
+  "https://web.archive.org/web/20201011050553id_/https://github.com/igv/FSRCNN-TensorFlow/releases/download/1.1/checkpoints_params.7z",
+  "https://github.com/igv/FSRCNN-TensorFlow/blob/1aa11ab0e1fc12741fdb84cef31da5619a478670/gen.py",
+]);
+const HIGH_X2_PROVENANCE_MARKERS = Object.freeze([
+  "28167f74341256054c790e94c30a10964818f6bdbe7aedb97c6507208123fc10",
+  "a27f732e1609a0d26e768d63447a42b04acd71918386026e1ca18a937ceea290",
+  "aa99254fd8001f2d0ac99e93a71f7225d78227e282b727b9c4bf7e5901e601ca",
+  "b507e0ec6c0d9ab22d440736677cd2ccb8a8b5441e190889ca7ec762d53ca063",
+  "34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6",
+]);
 
 function safeRelativePath(path) {
   return typeof path === "string"
@@ -75,7 +120,7 @@ function isExternalEvidenceReference(reference) {
 
 export function inspectReleaseClearance({
   rootDir = root,
-  ledgerFile = "release-clearance.json",
+  ledgerFile = DEFAULT_LEDGER_FILE,
   requiredGateIds = REQUIRED_RELEASE_GATE_IDS,
 } = {}) {
   const errors = [];
@@ -137,10 +182,41 @@ export function inspectReleaseClearance({
         continue;
       }
 
-      if (artifact.sha256 !== undefined &&
-          (typeof artifact.sha256 !== "string" || !SHA256_PATTERN.test(artifact.sha256))) {
+      const primaryShaValid = artifact.sha256 === undefined ||
+        (typeof artifact.sha256 === "string" && SHA256_PATTERN.test(artifact.sha256));
+      if (!primaryShaValid) {
         errors.push(`${artifactLabel}: sha256 must be 64 lowercase hexadecimal characters`);
-        continue;
+      }
+
+      if (artifact.historicalSha256 !== undefined) {
+        if (disposition !== "removed") {
+          errors.push(`${artifactLabel}: historicalSha256 is allowed only for removed artifacts`);
+        }
+        if (!Array.isArray(artifact.historicalSha256) ||
+            artifact.historicalSha256.length === 0) {
+          errors.push(
+            `${artifactLabel}: historicalSha256 must be a non-empty array when present`,
+          );
+        } else {
+          const historicalHashes = new Set();
+          for (const [hashIndex, hash] of artifact.historicalSha256.entries()) {
+            const hashLabel = `${artifactLabel}: historicalSha256 ${hashIndex + 1}`;
+            if (typeof hash !== "string" || !SHA256_PATTERN.test(hash)) {
+              errors.push(
+                `${hashLabel}: hash must be 64 lowercase hexadecimal characters`,
+              );
+              continue;
+            }
+            if (historicalHashes.has(hash)) {
+              errors.push(`${hashLabel}: duplicate historical hash ${hash}`);
+              continue;
+            }
+            historicalHashes.add(hash);
+            if (hash === artifact.sha256) {
+              errors.push(`${hashLabel}: hash must differ from primary sha256`);
+            }
+          }
+        }
       }
 
       const absolute = resolve(rootDir, artifact.path);
@@ -164,7 +240,7 @@ export function inspectReleaseClearance({
       const checkedPath = inspectRegularFile(rootDir, artifact.path, artifactLabel, errors);
       if (checkedPath === null) continue;
 
-      if (artifact.sha256 !== undefined) {
+      if (artifact.sha256 !== undefined && primaryShaValid) {
         const actual = createHash("sha256").update(readFileSync(checkedPath)).digest("hex");
         if (actual !== artifact.sha256) {
           errors.push(`${artifactLabel}: ${artifact.path} hash is ${actual}, expected ${artifact.sha256}`);
@@ -204,15 +280,13 @@ export function inspectReleaseClearance({
     if (!requiredIds.has(id)) errors.push(`release clearance: unexpected gate ${id}`);
   }
 
-  // The restored high x2 model is intentionally a current-boundary blocker.
-  // Keep this invariant explicit so a missing disposition, hash drift, or an
-  // accidental status flip cannot silently turn byte identity into a license
-  // claim. Once authoritative origin and permission are established, updating
-  // this guard must be part of the deliberate gate-clearance change.
+  // High's origin is cleared by an archived official release and exact
+  // reproduction chain. Keep that evidence and its separate LGPL review
+  // inventory explicit so provenance clearance cannot imply legal clearance.
   if (requiredIds.has(HIGH_X2_GATE_ID)) {
     const highGate = ledger.gates.find((gate) => gate?.id === HIGH_X2_GATE_ID);
-    if (highGate?.status !== "blocked") {
-      errors.push(`release clearance: ${HIGH_X2_GATE_ID} must remain blocked pending authoritative origin and license evidence`);
+    if (highGate?.status !== "cleared") {
+      errors.push(`release clearance: ${HIGH_X2_GATE_ID} must remain cleared by the official release and reproduction evidence`);
     }
 
     const highArtifacts = Array.isArray(highGate?.artifacts) ? highGate.artifacts : [];
@@ -232,6 +306,81 @@ export function inspectReleaseClearance({
         errors.push(`release clearance: ${HIGH_X2_GATE_ID} artifact ${path} must retain SHA-256 ${sha256}`);
       }
     }
+
+    const highEvidence = new Set(Array.isArray(highGate?.evidence) ? highGate.evidence : []);
+    for (const reference of HIGH_X2_EVIDENCE) {
+      if (!highEvidence.has(reference)) {
+        errors.push(`release clearance: ${HIGH_X2_GATE_ID} is missing authoritative evidence ${reference}`);
+      }
+    }
+
+    let provenance = "";
+    try {
+      provenance = readFileSync(resolve(rootDir, PROVENANCE_FILE), "utf8");
+    } catch {
+      // The generic evidence check reports the missing file.
+    }
+    for (const marker of HIGH_X2_PROVENANCE_MARKERS) {
+      if (provenance && !provenance.includes(marker)) {
+        errors.push(`release clearance: ${HIGH_X2_GATE_ID} provenance is missing ${marker}`);
+      }
+    }
+
+    if (requiredIds.has(LGPL_GATE_ID)) {
+      const lgplGate = ledger.gates.find((gate) => gate?.id === LGPL_GATE_ID);
+      const lgplArtifacts = Array.isArray(lgplGate?.artifacts) ? lgplGate.artifacts : [];
+      for (const [path, sha256] of HIGH_X2_ARTIFACTS) {
+        const artifact = lgplArtifacts.find((entry) => entry?.path === path);
+        if (!artifact || artifact.sha256 !== sha256 ||
+            (artifact.disposition !== undefined && artifact.disposition !== "present")) {
+          errors.push(`release clearance: ${LGPL_GATE_ID} must retain High artifact ${path} at SHA-256 ${sha256}`);
+        }
+      }
+    }
+  }
+
+  if (requiredIds.has(NEURAL_MODEL_GATE_ID)) {
+    const neuralGate = ledger.gates.find((gate) => gate?.id === NEURAL_MODEL_GATE_ID);
+    if (neuralGate?.status !== "cleared") {
+      errors.push(`release clearance: ${NEURAL_MODEL_GATE_ID} must remain cleared by the official release, license, and reproduction evidence`);
+    }
+
+    const artifacts = Array.isArray(neuralGate?.artifacts) ? neuralGate.artifacts : [];
+    if (artifacts.length !== NEURAL_MODEL_ARTIFACTS.size) {
+      errors.push(`release clearance: ${NEURAL_MODEL_GATE_ID} must inventory exactly ${NEURAL_MODEL_ARTIFACTS.size} artifacts`);
+    }
+    for (const [path, sha256] of NEURAL_MODEL_ARTIFACTS) {
+      const artifact = artifacts.find((entry) => entry?.path === path);
+      if (!artifact) {
+        errors.push(`release clearance: ${NEURAL_MODEL_GATE_ID} is missing ${path}`);
+        continue;
+      }
+      if (artifact.disposition !== "present") {
+        errors.push(`release clearance: ${NEURAL_MODEL_GATE_ID} artifact ${path} must be explicitly present`);
+      }
+      if (artifact.sha256 !== sha256) {
+        errors.push(`release clearance: ${NEURAL_MODEL_GATE_ID} artifact ${path} must retain SHA-256 ${sha256}`);
+      }
+    }
+
+    const evidence = new Set(Array.isArray(neuralGate?.evidence) ? neuralGate.evidence : []);
+    for (const reference of NEURAL_MODEL_EVIDENCE) {
+      if (!evidence.has(reference)) {
+        errors.push(`release clearance: ${NEURAL_MODEL_GATE_ID} is missing authoritative evidence ${reference}`);
+      }
+    }
+
+    let provenance = "";
+    try {
+      provenance = readFileSync(resolve(rootDir, PROVENANCE_FILE), "utf8");
+    } catch {
+      // The generic evidence check reports the missing file.
+    }
+    for (const marker of NEURAL_MODEL_PROVENANCE_MARKERS) {
+      if (provenance && !provenance.includes(marker)) {
+        errors.push(`release clearance: ${NEURAL_MODEL_GATE_ID} provenance is missing ${marker}`);
+      }
+    }
   }
 
   const fp16Gate = ledger.gates.find((gate) => gate?.id === "unproven-rife-fp16-conversion");
@@ -244,12 +393,12 @@ export function inspectReleaseClearance({
     } else {
       let provenance = "";
       try {
-        provenance = readFileSync(resolve(rootDir, "MODEL_PROVENANCE.md"), "utf8");
+        provenance = readFileSync(resolve(rootDir, PROVENANCE_FILE), "utf8");
       } catch (error) {
-        errors.push(`release clearance: cannot read MODEL_PROVENANCE.md (${error.code || error.message})`);
+        errors.push(`release clearance: cannot read ${PROVENANCE_FILE} (${error.code || error.message})`);
       }
       if (provenance && !provenance.includes(fp16Artifact.sha256)) {
-        errors.push("release clearance: cleared FP16 artifact hash is absent from MODEL_PROVENANCE.md");
+        errors.push(`release clearance: cleared FP16 artifact hash is absent from ${PROVENANCE_FILE}`);
       }
     }
   }

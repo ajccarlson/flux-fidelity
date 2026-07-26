@@ -1,2 +1,12 @@
+# Keep byte-pinned text reproducible across platforms.
+* text=auto eol=lf
+
 # Preserve pinned upstream shader bytes exactly, including source whitespace.
-shaders/upstream/*.glsl -whitespace
+shaders/upstream/*.glsl text eol=lf -whitespace
+
+# Never apply text conversion to runtime models, fixtures, or images.
+*.onnx binary
+*.wasm binary
+*.rgb16le binary
+*.png binary
+*.webm binary

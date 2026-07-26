@@ -13,11 +13,18 @@ function deferred() {
 async function loadNeuralEngine(deps) {
   const url = new URL("../src/core/fsrcnnx-neural.js", import.meta.url);
   const original = await readFile(url, "utf8");
-  const dependencyImport = "import { createOrtSession, ensureOrt, getOrtSessionDevice } " +
-    `from ${JSON.stringify("./fsrcnnx-rife.js")};`;
+  const dependencyImport = [
+    "import {",
+    "  createOrtSession,",
+    "  ensureOrt,",
+    "  getOrtSessionDevice,",
+    "  resolvePackagedAssetUrl,",
+    `} from ${JSON.stringify("./fsrcnnx-rife.js")};`,
+  ].join("\n");
   const source = original.replace(
     dependencyImport,
-    "const { createOrtSession, ensureOrt, getOrtSessionDevice } = globalThis.__neuralTestDeps;",
+    "const { createOrtSession, ensureOrt, getOrtSessionDevice } = globalThis.__neuralTestDeps;\n" +
+      "const resolvePackagedAssetUrl = (path) => chrome.runtime.getURL(path);",
   );
   assert.notEqual(source, original, "neural test dependency injection must match the source import");
   globalThis.__neuralTestDeps = deps;
@@ -36,6 +43,32 @@ function fakeDevice() {
   };
 }
 
+function fakeInferenceDevice() {
+  const device = {
+    limits: {
+      maxTextureDimension2D: 8192,
+      maxBufferSize: 256 * 1024 * 1024,
+      maxStorageBufferBindingSize: 128 * 1024 * 1024,
+      maxComputeWorkgroupsPerDimension: 65535,
+    },
+    lost: new Promise(() => {}),
+    queue: { onSubmittedWorkDone: async () => {}, writeBuffer() {}, submit() {} },
+    createShaderModule: () => ({}),
+    createComputePipeline: () => ({ getBindGroupLayout: () => ({}) }),
+    createSampler: () => ({}),
+    createBuffer: ({ size }) => ({ size, destroy() {} }),
+    createTexture: () => ({ createView: () => ({}), destroy() {} }),
+    createBindGroup: () => ({}),
+    createCommandEncoder: () => ({
+      beginComputePass: () => ({
+        setPipeline() {}, setBindGroup() {}, dispatchWorkgroups() {}, end() {},
+      }),
+      finish: () => ({}),
+    }),
+  };
+  return device;
+}
+
 test("neural manifests reject ambiguous keys and unsafe model paths", async (t) => {
   const previous = globalThis.__neuralTestDeps;
   t.after(() => { globalThis.__neuralTestDeps = previous; });
@@ -48,13 +81,20 @@ test("neural manifests reject ambiguous keys and unsafe model paths", async (t) 
   assert.deepEqual(validateNeuralManifest([]), []);
   assert.deepEqual(validateNeuralManifest({ models: [] }), []);
   const valid = validateNeuralManifest({ models: [
-    { key: "span-2x", file: "span.fp16.onnx", label: "SPAN", scale: 2, padMultiple: 8, input: "input", output: "output" },
+    {
+      key: "span-2x", file: "span.fp16.onnx", label: "SPAN", scale: 2,
+      padMultiple: 8, input: "input", output: "output",
+    },
   ] });
   assert.equal(valid.length, 1);
   assert.equal(Object.isFrozen(valid[0]), true);
+  assert.equal(validateNeuralManifest([
+    { key: "a".repeat(64), file: "max-key.onnx", scale: 2 },
+  ])[0].key.length, 64);
 
   const invalid = [
     [{ key: "", file: "model.onnx", scale: 2 }],
+    [{ key: "a".repeat(65), file: "model.onnx", scale: 2 }],
     [{ key: "model", file: "../model.onnx", scale: 2 }],
     [{ key: "model", file: "folder/model.onnx", scale: 2 }],
     [{ key: "model", file: "%2e%2e-model.onnx", scale: 2 }],
@@ -747,4 +787,258 @@ test("a failed deferred neural device guard is reported by run and later disposa
     (error) => error instanceof AggregateError && /session disposal/.test(error.message));
   assert.equal(releasesFirst, 1);
   assert.equal(releasesSecond, 1);
+});
+
+test("neural init validates graph names and FP32 dynamic RGB NCHW metadata", async (t) => {
+  const previous = {
+    chrome: globalThis.chrome,
+    fetch: globalThis.fetch,
+    GPUBufferUsage: globalThis.GPUBufferUsage,
+    deps: globalThis.__neuralTestDeps,
+  };
+  t.after(() => {
+    globalThis.chrome = previous.chrome;
+    globalThis.fetch = previous.fetch;
+    globalThis.GPUBufferUsage = previous.GPUBufferUsage;
+    globalThis.__neuralTestDeps = previous.deps;
+  });
+
+  globalThis.chrome = { runtime: { getURL: (path) => path } };
+  globalThis.GPUBufferUsage = { UNIFORM: 1, COPY_DST: 2, STORAGE: 4 };
+  const dynamic = [1, 3, "height", "width"];
+  const cases = [
+    {
+      label: "ambiguous output",
+      entry: { key: "model", file: "model.onnx", scale: 2 },
+      session: { inputNames: ["input"], outputNames: ["image", "debug"] },
+      expected: /manifest must name the output tensor/,
+    },
+    {
+      label: "unknown explicit input",
+      entry: { key: "model", file: "model.onnx", scale: 2, input: "pixels" },
+      session: { inputNames: ["input"], outputNames: ["output"] },
+      expected: /manifest input 'pixels' is not exposed/,
+    },
+    {
+      label: "non-tensor input",
+      entry: { key: "model", file: "model.onnx", scale: 2 },
+      session: {
+        inputNames: ["input"], outputNames: ["output"],
+        inputMetadata: [{ name: "input", isTensor: false }],
+      },
+      expected: /input 'input' is not a tensor/,
+    },
+    {
+      label: "FP16 output",
+      entry: { key: "model", file: "model.onnx", scale: 2 },
+      session: {
+        inputNames: ["input"], outputNames: ["output"],
+        inputMetadata: [{ name: "input", isTensor: true, type: "float32", shape: dynamic }],
+        outputMetadata: [{ name: "output", isTensor: true, type: "float16", shape: dynamic }],
+      },
+      expected: /output 'output' has dtype 'float16'/,
+    },
+    {
+      label: "fixed spatial input",
+      entry: { key: "model", file: "model.onnx", scale: 2 },
+      session: {
+        inputNames: ["input"], outputNames: ["output"],
+        inputMetadata: [{ name: "input", isTensor: true, type: "float32", shape: [1, 3, 64, 64] }],
+      },
+      expected: /input 'input' spatial dimensions must be dynamic/,
+    },
+    {
+      label: "non-RGB output",
+      entry: { key: "model", file: "model.onnx", scale: 2 },
+      session: {
+        inputNames: ["input"], outputNames: ["output"],
+        inputMetadata: [{ name: "input", isTensor: true, type: "float32", shape: dynamic }],
+        outputMetadata: [{ name: "output", isTensor: true, type: "float32", shape: [1, 1, "height", "width"] }],
+      },
+      expected: /output 'output' channel dimension must be RGB/,
+    },
+  ];
+
+  for (const scenario of cases) {
+    let releases = 0;
+    const session = {
+      device: fakeDevice(),
+      async release() { releases++; },
+      ...scenario.session,
+    };
+    globalThis.fetch = async () => ({
+      ok: true,
+      json: async () => ({ models: [scenario.entry] }),
+    });
+    const deps = {
+      ensureOrt: async () => ({}),
+      getOrtSessionDevice: (candidate) => candidate.device,
+      createOrtSession: async () => session,
+    };
+    const { createNeuralEngine } = await loadNeuralEngine(deps);
+    const engine = createNeuralEngine({ log: () => {}, warn: () => {} });
+    await assert.rejects(engine.init("model"), scenario.expected, scenario.label);
+    assert.equal(releases, 1, `${scenario.label}: rejected session must be released`);
+    assert.equal(engine.ready(), false, scenario.label);
+  }
+});
+
+test("neural execution defaults to FP32 and only attempts FP16 for a manifest opt-in", async (t) => {
+  const previous = {
+    chrome: globalThis.chrome,
+    fetch: globalThis.fetch,
+    GPUBufferUsage: globalThis.GPUBufferUsage,
+    deps: globalThis.__neuralTestDeps,
+  };
+  t.after(() => {
+    globalThis.chrome = previous.chrome;
+    globalThis.fetch = previous.fetch;
+    globalThis.GPUBufferUsage = previous.GPUBufferUsage;
+    globalThis.__neuralTestDeps = previous.deps;
+  });
+
+  globalThis.chrome = { runtime: { getURL: (path) => path } };
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({ models: [
+      { key: "default", file: "default.fp16.onnx", scale: 2 },
+      { key: "opt-in", file: "opt-in.onnx", scale: 2, fp16: true },
+    ] }),
+  });
+  globalThis.GPUBufferUsage = { UNIFORM: 1, COPY_DST: 2, STORAGE: 4 };
+
+  const device = { ...fakeDevice(), lost: new Promise(() => {}) };
+  const executionModes = [];
+  let releases = 0;
+  const deps = {
+    ensureOrt: async () => ({}),
+    getOrtSessionDevice: (session) => session.device,
+    createOrtSession: async (_url, _options, { enableFp16 }) => {
+      executionModes.push(enableFp16);
+      if (enableFp16) throw new Error("shader-f16 unavailable");
+      return {
+        device,
+        inputNames: ["input"],
+        outputNames: ["output"],
+        async release() { releases++; },
+      };
+    },
+  };
+  const { createNeuralEngine } = await loadNeuralEngine(deps);
+  const warnings = [];
+  const engine = createNeuralEngine({ log: () => {}, warn: (message) => warnings.push(message) });
+
+  await engine.init("default");
+  await engine.init("opt-in");
+  assert.deepEqual(executionModes, [false, true, false]);
+  assert.match(warnings.join("\n"), /retrying FP32/);
+  await engine.dispose();
+  assert.equal(releases, 2);
+});
+
+test("neural run selects the declared output and retires every returned tensor", async (t) => {
+  const previous = {
+    chrome: globalThis.chrome,
+    fetch: globalThis.fetch,
+    GPUBufferUsage: globalThis.GPUBufferUsage,
+    GPUTextureUsage: globalThis.GPUTextureUsage,
+    deps: globalThis.__neuralTestDeps,
+  };
+  t.after(() => {
+    globalThis.chrome = previous.chrome;
+    globalThis.fetch = previous.fetch;
+    globalThis.GPUBufferUsage = previous.GPUBufferUsage;
+    globalThis.GPUTextureUsage = previous.GPUTextureUsage;
+    globalThis.__neuralTestDeps = previous.deps;
+  });
+
+  globalThis.chrome = { runtime: { getURL: (path) => path } };
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({ models: [{
+      key: "model",
+      file: "model.onnx",
+      scale: 2,
+      output: "image",
+    }] }),
+  });
+  globalThis.GPUBufferUsage = { UNIFORM: 1, COPY_DST: 2, STORAGE: 4 };
+  globalThis.GPUTextureUsage = { STORAGE_BINDING: 1, TEXTURE_BINDING: 2 };
+
+  const device = fakeInferenceDevice();
+  const disposals = { input: 0, selected: 0, unselected: 0, errorOutput: 0 };
+  let runFetches = null;
+  let runFeeds = null;
+  let runCalls = 0;
+  const selected = {
+    type: "float32",
+    dims: [1, 3, 4, 6],
+    size: 72,
+    gpuBuffer: { size: 72 * 4 },
+    dispose() { disposals.selected++; },
+  };
+  const unselected = {
+    type: "float32",
+    dims: [1],
+    gpuBuffer: { size: 4 },
+    dispose() { disposals.unselected++; },
+  };
+  const errorOutput = {
+    type: "float32",
+    dims: [1],
+    gpuBuffer: { size: 4 },
+    dispose() { disposals.errorOutput++; },
+  };
+  let returned = { image: selected, debug: unselected };
+  const session = {
+    device,
+    inputNames: ["input"],
+    outputNames: ["image", "debug"],
+    inputMetadata: [
+      { name: "input", isTensor: true, type: "float32", shape: [1, 3, "height", "width"] },
+    ],
+    outputMetadata: [
+      { name: "image", isTensor: true, type: "float32", shape: [1, 3, "out_height", "out_width"] },
+      { name: "debug", isTensor: true, type: "float32", shape: [1] },
+    ],
+    async run(feeds, fetches) {
+      runCalls++;
+      runFeeds = feeds;
+      runFetches = fetches;
+      return returned;
+    },
+    async release() {},
+  };
+  const deps = {
+    ensureOrt: async () => ({
+      Tensor: {
+        fromGpuBuffer: (_buffer, options) => ({
+          options,
+          dispose() { disposals.input++; },
+        }),
+      },
+    }),
+    getOrtSessionDevice: (candidate) => candidate.device,
+    createOrtSession: async () => session,
+  };
+  const { createNeuralEngine } = await loadNeuralEngine(deps);
+  const engine = createNeuralEngine({ log: () => {}, warn: () => {} });
+  await engine.init("model");
+
+  const rendered = await engine.run({ tex: { createView: () => ({}) } }, 3, 2);
+  assert.deepEqual({ outW: rendered.outW, outH: rendered.outH }, { outW: 6, outH: 4 });
+  assert.deepEqual(runFetches, ["image"]);
+  assert.deepEqual(runFeeds.input.options, {
+    dataType: "float32",
+    dims: [1, 3, 2, 3],
+  });
+  returned = { debug: errorOutput };
+  await assert.rejects(
+    engine.run({ tex: { createView: () => ({}) } }, 3, 2),
+    /output not on GPU \(image\)/,
+  );
+  assert.equal(runCalls, 2);
+  await engine.quiesce();
+  assert.deepEqual(disposals, { input: 2, selected: 1, unselected: 1, errorOutput: 1 });
+  await engine.dispose();
 });

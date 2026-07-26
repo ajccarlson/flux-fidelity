@@ -16,6 +16,8 @@ async function loadBackground({ rejectActions = false } = {}) {
   const caughtRejections = [];
   const listeners = {};
   const action = {};
+  const clock = { now: 1_000_000 };
+  let randomSeed = 1;
   for (const method of [
     "setBadgeText", "setBadgeBackgroundColor", "setBadgeTextColor", "setTitle", "setIcon",
   ]) {
@@ -33,20 +35,68 @@ async function loadBackground({ rejectActions = false } = {}) {
   }
   const chrome = {
     action,
-    runtime: { onMessage: { addListener(listener) { listeners.message = listener; } } },
+    runtime: {
+      id: "unit-test",
+      onMessage: { addListener(listener) { listeners.message = listener; } },
+    },
     tabs: {
       onUpdated: { addListener(listener) { listeners.updated = listener; } },
       onRemoved: { addListener(listener) { listeners.removed = listener; } },
       onReplaced: { addListener(listener) { listeners.replaced = listener; } },
     },
   };
-  const context = vm.createContext({ chrome, Map, Number, Set });
+  const crypto = {
+    getRandomValues(bytes) {
+      for (let index = 0; index < bytes.length; index++) {
+        bytes[index] = (randomSeed + index) & 0xff;
+      }
+      randomSeed++;
+      return bytes;
+    },
+  };
+  class TestDate extends Date {
+    static now() { return clock.now; }
+  }
+  const context = vm.createContext({
+    chrome,
+    crypto,
+    Map,
+    Number,
+    Set,
+    Date: TestDate,
+    Uint8Array,
+    URL,
+  });
   new vm.Script(source, { filename: "background.js" }).runInContext(context);
-  return { calls, caughtRejections, listeners };
+  return { calls, caughtRejections, listeners, clock };
 }
 
 function sender(tabId, documentId, { frameId = 0, lifecycle = "active" } = {}) {
-  return { tab: { id: tabId }, frameId, documentId, documentLifecycle: lifecycle };
+  return {
+    id: "unit-test",
+    tab: { id: tabId },
+    frameId,
+    documentId,
+    documentLifecycle: lifecycle,
+    url: "https://video.example/watch",
+  };
+}
+
+function frameSender(tabId, documentId = "neural-frame") {
+  return {
+    id: "unit-test",
+    tab: { id: tabId },
+    frameId: 7,
+    documentId,
+    documentLifecycle: "active",
+    url: "chrome-extension://dynamic-id/src/frame/neural-frame.html",
+  };
+}
+
+function request(messageListener, message, messageSender) {
+  let response;
+  messageListener(message, messageSender, (value) => { response = value; });
+  return response == null ? response : JSON.parse(JSON.stringify(response));
 }
 
 function documentMessage(state, generation = 1) {
@@ -334,6 +384,133 @@ test("every action Promise rejection is observed", async () => {
   assert.ok(state.caughtRejections.includes("setIcon"));
 });
 
+test("Neural frame capabilities are active-document bound and single-use", async () => {
+  const state = await loadBackground();
+  const message = state.listeners.message;
+  const nonce = "0123456789abcdef0123456789abcdef";
+  const mint = { type: "FSRCNNX_NEURAL_FRAME_CAPABILITY_MINT", instanceNonce: nonce };
+
+  assert.deepEqual(
+    request(message, mint, {
+      id: "unit-test",
+      documentId: "popup",
+      documentLifecycle: "active",
+      frameId: 0,
+      url: "chrome-extension://unit-test/popup.html",
+    }),
+    { ok: false },
+    "extension pages cannot mint a page renderer capability",
+  );
+  assert.deepEqual(
+    request(message, mint, sender(30, "cached", { lifecycle: "cached" })),
+    { ok: false },
+    "inactive documents cannot mint a capability",
+  );
+
+  message(documentMessage("active"), sender(30, "doc-a"));
+  const granted = request(message, mint, sender(30, "doc-a"));
+  assert.equal(granted.ok, true);
+  assert.match(granted.capability, /^[a-f0-9]{48}$/);
+
+  const consume = {
+    type: "FSRCNNX_NEURAL_FRAME_CAPABILITY_CONSUME",
+    capability: granted.capability,
+    instanceNonce: nonce,
+  };
+  assert.deepEqual(
+    request(message, consume, frameSender(31)),
+    { ok: false },
+    "a child in another tab cannot consume the token",
+  );
+  assert.deepEqual(
+    request(message, consume, frameSender(30)),
+    { ok: false },
+    "an invalid consumption burns the one-time token",
+  );
+
+  const replacement = request(message, mint, sender(30, "doc-a"));
+  assert.deepEqual(
+    request(message, {
+      ...consume,
+      capability: replacement.capability,
+    }, frameSender(30)),
+    {
+      ok: true,
+      parentOrigin: "https://video.example",
+      opaqueParent: false,
+    },
+  );
+  assert.deepEqual(
+    request(message, {
+      ...consume,
+      capability: replacement.capability,
+    }, frameSender(30)),
+    { ok: false },
+    "a consumed token cannot be replayed",
+  );
+});
+
+test("navigation clears pending Neural frame capabilities", async () => {
+  const state = await loadBackground();
+  const message = state.listeners.message;
+  const nonce = "0123456789abcdef0123456789abcdef";
+  message(documentMessage("active"), sender(32, "doc-a"));
+  const granted = request(message, {
+    type: "FSRCNNX_NEURAL_FRAME_CAPABILITY_MINT",
+    instanceNonce: nonce,
+  }, sender(32, "doc-a"));
+
+  state.listeners.updated(32, { status: "loading" });
+  assert.deepEqual(request(message, {
+    type: "FSRCNNX_NEURAL_FRAME_CAPABILITY_CONSUME",
+    capability: granted.capability,
+    instanceNonce: nonce,
+  }, frameSender(32)), { ok: false });
+});
+
+test("Neural frame capabilities expire after the bounded handshake window", async () => {
+  const state = await loadBackground();
+  const message = state.listeners.message;
+  const nonce = "0123456789abcdef0123456789abcdef";
+  const pageSender = sender(34, "doc-a");
+  message(documentMessage("active"), pageSender);
+  const granted = request(message, {
+    type: "FSRCNNX_NEURAL_FRAME_CAPABILITY_MINT",
+    instanceNonce: nonce,
+  }, pageSender);
+
+  state.clock.now += 15_001;
+  assert.equal(request(message, {
+    type: "FSRCNNX_NEURAL_FRAME_CAPABILITY_CONSUME",
+    capability: granted.capability,
+    instanceNonce: nonce,
+  }, frameSender(34)).ok, false);
+});
+
+test("pending Neural frame capability state stays bounded", async () => {
+  const state = await loadBackground();
+  const message = state.listeners.message;
+  const nonce = "0123456789abcdef0123456789abcdef";
+  const pageSender = sender(33, "doc-a");
+  message(documentMessage("active"), pageSender);
+  const grants = [];
+  for (let index = 0; index < 130; index++) {
+    grants.push(request(message, {
+      type: "FSRCNNX_NEURAL_FRAME_CAPABILITY_MINT",
+      instanceNonce: nonce,
+    }, pageSender));
+  }
+  const consume = (capability) => request(message, {
+    type: "FSRCNNX_NEURAL_FRAME_CAPABILITY_CONSUME",
+    capability,
+    instanceNonce: nonce,
+  }, frameSender(33));
+
+  assert.equal(consume(grants[0].capability).ok, false,
+    "the oldest token should be evicted at the map limit");
+  assert.equal(consume(grants.at(-1).capability).ok, true);
+});
+
 test("manifest pins the browser version that supplies document identity metadata", async () => {
   const manifest = JSON.parse(await readFile(manifestUrl, "utf8"));
   assert.equal(manifest.minimum_chrome_version, "113");
@@ -341,4 +518,24 @@ test("manifest pins the browser version that supplies document identity metadata
     "badge ownership adds no broad tabs or navigation permission");
   assert.equal(manifest.content_scripts[0].all_frames ?? false, false,
     "document lifecycle authority depends on outermost-only injection");
+  const resourceGroups = manifest.web_accessible_resources;
+  const runtimeGroup = resourceGroups.find((group) =>
+    group.resources.includes("src/core/fsrcnnx-main.js"));
+  const neuralFrameGroup = resourceGroups.find((group) =>
+    group.resources.includes("src/frame/neural-frame.html"));
+  assert.ok(runtimeGroup, "the content-script runtime must be web-accessible");
+  assert.equal(runtimeGroup.use_dynamic_url ?? false, false,
+    "Edge-compatible content-script imports must use the static extension host");
+  assert.ok(neuralFrameGroup, "the Neural frame entry must be web-accessible");
+  assert.equal(neuralFrameGroup.use_dynamic_url, true,
+    "the capability-gated Neural frame URL should rotate per browser session");
+  assert.deepEqual(neuralFrameGroup.resources, [
+    "src/frame/neural-frame.html",
+    "src/frame/neural-frame-runtime.js",
+  ]);
+  assert.equal(
+    runtimeGroup.resources.some((resource) => neuralFrameGroup.resources.includes(resource)),
+    false,
+    "no resource may have ambiguous static and dynamic exposure",
+  );
 });

@@ -1,1 +1,15 @@
-[]
+[
+  {
+    "key": "realesrganv2_animevideo_xsx2",
+    "label": "Real-ESRGAN AnimeVideo XS 2x",
+    "file": "realesrganv2_animevideo_xsx2.fp16.onnx",
+    "scale": 2,
+    "padMultiple": 1,
+    "tileSize": 512,
+    "tileOverlap": 24,
+    "input": "input",
+    "output": "output",
+    "fp16": true,
+    "arch": "RealESRGAN Compact"
+  }
+]

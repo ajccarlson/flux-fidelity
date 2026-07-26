@@ -1,19 +1,49 @@
 # Neural model export
 
-This tool converts a Spandrel-supported PyTorch checkpoint into a dynamically sized ONNX model for FSRCNNX-EXT. Exported models use float32 input/output tensors; weights may be converted to float16.
+`export.py` converts a Spandrel-supported RGB super-resolution checkpoint to
+the extension ABI: one dynamic NCHW float32 input and output, with float16
+weights by default. It checks the graph, runs a CPU comparison against the
+source model, lowers unsupported PReLU nodes to audited ORT WebGPU operators,
+updates `model/neural/manifest.json`, and prints the output hash.
 
-Create an isolated Python environment and install the pinned dependencies:
+Use an isolated environment:
 
 ```sh
 python -m venv .venv
-. .venv/bin/activate
-python -m pip install -r tools/neural-export/requirements.txt
+.venv/bin/python -m pip install -r tools/neural-export/requirements.txt
 ```
 
-Export a checkpoint:
+Then export with the expected source identity pinned:
 
 ```sh
-python tools/neural-export/export.py --pth checkpoint.pth --key model-id --label "Model label"
+.venv/bin/python tools/neural-export/export.py \
+  --pth checkpoint.pth \
+  --checkpoint-sha256 SHA256 \
+  --expected-scale 2 \
+  --key model-id \
+  --label "Model label" \
+  --source-url https://example.com/checkpoint.pth
 ```
 
-Output is written to `model/neural/`, and its entry is added to `model/neural/manifest.json`. Check the checkpoint's provenance and redistribution license before adding the generated ONNX file to a release boundary. No neural model is bundled by default.
+On Windows, use `.venv\Scripts\python.exe`. Verify the checkpoint's provenance
+and redistribution license before placing the generated model in a release.
+
+## Bundled Real-ESRGAN model
+
+The checked export used CPython 3.12.10 on Windows x64 and the exact versions
+in `requirements.txt`. Those versions are pinned, but their wheels are not
+hash-locked.
+
+```sh
+python tools/neural-export/export.py \
+  --pth RealESRGANv2-animevideo-xsx2.pth \
+  --checkpoint-sha256 27985aa2198711ecd72f9bb274ec7b164e018fc9ce2933daaa7c7ab36a2bd3fe \
+  --expected-scale 2 \
+  --expected-arch "RealESRGAN Compact" \
+  --source-url https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.3.0/RealESRGANv2-animevideo-xsx2.pth \
+  --key realesrganv2_animevideo_xsx2 \
+  --label "Real-ESRGAN AnimeVideo XS 2x"
+```
+
+Two clean runs produced SHA-256
+`f674a410b528aec55bb9f9f594cb1aaea580237adb29abd9dc32296d34b690a0`.

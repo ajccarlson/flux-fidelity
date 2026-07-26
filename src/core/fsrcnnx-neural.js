@@ -1,28 +1,39 @@
-// fsrcnnx-neural.js — ONNX neural upscaler engine (v0.49.0, Tier-B ladder).
+// fsrcnnx-neural.js — tiled ONNX neural upscaler.
 //
-// Runs community super-resolution models (SPAN / RealPLKSR / DAT2 / ATD, any
-// spandrel-exportable arch) as a SECOND ORT WebGPU session alongside RIFE's,
-// sharing the same ORT env/device. Unlike the WGSL mpv ports (luma-only), these
-// models are RGB: chroma gets neural treatment and the recombine stage is
-// bypassed — output composites straight into an rgba16float texture that
-// main.js presents through the existing SSimDS/sharpen tail.
+// Runs a vetted bundled RGB super-resolution model on an ORT WebGPU device.
+// Production hosts this engine in an extension-owned frame, where Neural output
+// bypasses luma/chroma recombination and enters the frame's SSimDS/sharpen
+// presentation tail as rgba16float.
 //
-// Frame flow (mirrors the RIFE GPU-resident pattern exactly):
-//   rvfc → pack pass (external texture → padded NCHW fp32 storage buffer,
-//   submitted before any await so the external texture is consumed in-task)
-//   → await session.run (fromGpuBuffer in, preferredOutputLocation gpu-buffer
-//   out — zero readback) → composite pass (output buffer → rgba16float tex,
-//   crop replicate-pad) → caller presents.
+// The inference core stays GPU-resident after its source upload; the isolated
+// frame adapter performs CPU staging only at the renderer-process boundaries:
+//   snapshot the expiring external/texture source before any await
+//   -> split the snapshot into bounded, overlapping core tiles
+//   -> pack each clipped halo into dynamic NCHW FP32 and run ORT sequentially
+//   -> crop each tile's halo into one full rgba16float output texture
+//   -> caller presents. The frame has no policy resolution ceiling; only the
+//   adapter's unavoidable source/final-texture dimensions can reject it.
 //
-// Models are dropped into model/neural/ with a manifest.json; the export kit
-// in tools/neural-export/ produces both. Sessions use DYNAMIC dims (no
-// freeDimensionOverrides, no graph capture — experiment #1's verdict stands).
+// The model catalog lives in model/neural/manifest.json. The reproducible export
+// kit in tools/neural-export/ produces the bundled dynamic-shape ONNX graph.
 
-import { createOrtSession, ensureOrt, getOrtSessionDevice } from "./fsrcnnx-rife.js";
+import {
+  createOrtSession,
+  ensureOrt,
+  getOrtSessionDevice,
+  resolvePackagedAssetUrl,
+} from "./fsrcnnx-rife.js";
 
 const NEURAL_KEY = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const NEURAL_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]*\.onnx$/;
 const TENSOR_NAME = /^[A-Za-z_][A-Za-z0-9_.-]{0,127}$/;
+export const DEFAULT_NEURAL_TILE_SIZE = 512;
+export const DEFAULT_NEURAL_TILE_OVERLAP = 24;
+const MIN_NEURAL_TILE_SIZE = 64;
+const MAX_NEURAL_TILE_SIZE = 768;
+const MIN_NEURAL_TILE_OVERLAP = 18;
+const MAX_NEURAL_TILE_OVERLAP = 192;
+const MAX_NEURAL_TILE_INPUT_EXTENT = 896;
 
 export function isValidNeuralModelKey(value) {
   return typeof value === "string" && NEURAL_KEY.test(value);
@@ -54,25 +65,238 @@ export function validateNeuralManifest(value) {
       }
     }
     if (entry.fp16 != null && typeof entry.fp16 !== "boolean") throw new Error(`${at} has an invalid fp16 flag`);
+    const tileSize = entry.tileSize ?? DEFAULT_NEURAL_TILE_SIZE;
+    const tileOverlap = entry.tileOverlap ?? DEFAULT_NEURAL_TILE_OVERLAP;
+    if (!Number.isInteger(tileSize) ||
+        tileSize < MIN_NEURAL_TILE_SIZE || tileSize > MAX_NEURAL_TILE_SIZE) {
+      throw new Error(`${at} has an invalid tileSize`);
+    }
+    if (!Number.isInteger(tileOverlap) ||
+        tileOverlap < MIN_NEURAL_TILE_OVERLAP || tileOverlap > MAX_NEURAL_TILE_OVERLAP ||
+        tileSize + 2 * tileOverlap > MAX_NEURAL_TILE_INPUT_EXTENT) {
+      throw new Error(`${at} has an invalid tileOverlap`);
+    }
     keys.add(entry.key);
     files.add(entry.file);
     return Object.freeze({ ...entry });
   });
 }
 
-const PACK_EXT_WGSL = `
-struct P { padW:u32, padH:u32, w:u32, h:u32 }
+function requirePositiveSafeInteger(value, label) {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${label} must be a positive safe integer`);
+  }
+  return value;
+}
+
+// Pure geometry helper kept public so the tile ABI can be checked without a
+// GPU. Boundary halos are clipped to the real image: the model therefore sees
+// its own native boundary padding at the same edges as whole-frame inference.
+// Only padMultiple expansion replicates the last real pixel in the pack pass.
+export function planNeuralTiles(srcW, srcH, {
+  tileSize = DEFAULT_NEURAL_TILE_SIZE,
+  tileOverlap = DEFAULT_NEURAL_TILE_OVERLAP,
+  padMultiple = 1,
+  scale = 1,
+} = {}) {
+  requirePositiveSafeInteger(srcW, "neural source width");
+  requirePositiveSafeInteger(srcH, "neural source height");
+  requirePositiveSafeInteger(scale, "neural scale");
+  requirePositiveSafeInteger(padMultiple, "neural pad multiple");
+  if (!Number.isInteger(tileSize) ||
+      tileSize < MIN_NEURAL_TILE_SIZE || tileSize > MAX_NEURAL_TILE_SIZE) {
+    throw new Error("neural tile size is outside the supported range");
+  }
+  if (!Number.isInteger(tileOverlap) ||
+      tileOverlap < MIN_NEURAL_TILE_OVERLAP || tileOverlap > MAX_NEURAL_TILE_OVERLAP ||
+      tileSize + 2 * tileOverlap > MAX_NEURAL_TILE_INPUT_EXTENT) {
+    throw new Error("neural tile overlap is outside the supported range");
+  }
+  if (srcW > Math.floor(Number.MAX_SAFE_INTEGER / scale) ||
+      srcH > Math.floor(Number.MAX_SAFE_INTEGER / scale)) {
+    throw new Error("neural output dimensions exceed the safe integer range");
+  }
+
+  const tiles = [];
+  for (let coreY = 0; coreY < srcH; coreY += tileSize) {
+    const coreH = Math.min(tileSize, srcH - coreY);
+    for (let coreX = 0; coreX < srcW; coreX += tileSize) {
+      const coreW = Math.min(tileSize, srcW - coreX);
+      const inputX = Math.max(0, coreX - tileOverlap);
+      const inputY = Math.max(0, coreY - tileOverlap);
+      const inputRight = Math.min(srcW, coreX + coreW + tileOverlap);
+      const inputBottom = Math.min(srcH, coreY + coreH + tileOverlap);
+      const inputW = inputRight - inputX;
+      const inputH = inputBottom - inputY;
+      const padW = Math.ceil(inputW / padMultiple) * padMultiple;
+      const padH = Math.ceil(inputH / padMultiple) * padMultiple;
+      if (!Number.isSafeInteger(padW) || !Number.isSafeInteger(padH)) {
+        throw new Error("neural padded tile dimensions exceed the safe integer range");
+      }
+      tiles.push(Object.freeze({
+        coreX,
+        coreY,
+        coreW,
+        coreH,
+        inputX,
+        inputY,
+        inputW,
+        inputH,
+        padW,
+        padH,
+        cropX: (coreX - inputX) * scale,
+        cropY: (coreY - inputY) * scale,
+        dstX: coreX * scale,
+        dstY: coreY * scale,
+        outW: coreW * scale,
+        outH: coreH * scale,
+      }));
+    }
+  }
+  return Object.freeze(tiles);
+}
+
+function sessionNames(session, kind) {
+  const names = session?.[`${kind}Names`];
+  if (!Array.isArray(names) || names.length === 0 ||
+      names.some((name) => typeof name !== "string" || !name)) {
+    throw new Error(`neural session has no valid ${kind} names`);
+  }
+  if (new Set(names).size !== names.length) {
+    throw new Error(`neural session has duplicate ${kind} names`);
+  }
+  return names;
+}
+
+function selectSessionName(names, requested, kind) {
+  if (requested != null) {
+    if (!names.includes(requested)) {
+      throw new Error(`manifest ${kind} '${requested}' is not exposed by the neural session`);
+    }
+    return requested;
+  }
+  if (names.length !== 1) {
+    throw new Error(
+      `neural session exposes ${names.length} ${kind}s; manifest must name the ${kind} tensor`,
+    );
+  }
+  return names[0];
+}
+
+function sessionMetadata(session, kind, name, names) {
+  const collection = session?.[`${kind}Metadata`];
+  if (collection == null) return null;
+  if (Array.isArray(collection)) {
+    const hasNamedMetadata = collection.some(
+      (metadata) => typeof metadata?.name === "string",
+    );
+    const metadata = hasNamedMetadata
+      ? collection.find((candidate) => candidate?.name === name)
+      : collection[names.indexOf(name)];
+    if (metadata == null) throw new Error(`neural session has no metadata for ${kind} '${name}'`);
+    return metadata;
+  }
+  if (collection instanceof Map) {
+    if (!collection.has(name)) throw new Error(`neural session has no metadata for ${kind} '${name}'`);
+    return collection.get(name);
+  }
+  if (typeof collection === "object") {
+    if (!Object.hasOwn(collection, name)) {
+      throw new Error(`neural session has no metadata for ${kind} '${name}'`);
+    }
+    return collection[name];
+  }
+  throw new Error(`neural session exposes invalid ${kind} metadata`);
+}
+
+function isDynamicDimension(value) {
+  return value == null ||
+    (typeof value === "string" && value.length > 0) ||
+    (Number.isInteger(value) && value < 0);
+}
+
+function validateTensorMetadata(metadata, kind, name) {
+  if (metadata == null) return;
+  if (metadata.isTensor === false) {
+    throw new Error(`neural ${kind} '${name}' is not a tensor`);
+  }
+  const type = metadata.type ?? metadata.dataType;
+  if (type != null && type !== "float32") {
+    throw new Error(`neural ${kind} '${name}' has dtype '${type}' (expected float32)`);
+  }
+  const shape = metadata.shape ?? metadata.dims ?? metadata.dimensions;
+  if (shape == null) return;
+  if (!Array.isArray(shape) || shape.length !== 4) {
+    const shown = Array.isArray(shape) ? `[${shape.join(",")}]` : String(shape);
+    throw new Error(`neural ${kind} '${name}' has shape ${shown} (expected NCHW rank 4)`);
+  }
+  if (shape[0] !== 1 && !isDynamicDimension(shape[0])) {
+    throw new Error(`neural ${kind} '${name}' batch dimension must be 1 or dynamic`);
+  }
+  if (shape[1] !== 3) {
+    throw new Error(`neural ${kind} '${name}' channel dimension must be RGB (3)`);
+  }
+  if (!isDynamicDimension(shape[2]) || !isDynamicDimension(shape[3])) {
+    throw new Error(`neural ${kind} '${name}' spatial dimensions must be dynamic`);
+  }
+}
+
+function validateSessionContract(session, entry) {
+  const inputs = sessionNames(session, "input");
+  const outputs = sessionNames(session, "output");
+  const selectedInput = selectSessionName(inputs, entry.input, "input");
+  const selectedOutput = selectSessionName(outputs, entry.output, "output");
+  validateTensorMetadata(
+    sessionMetadata(session, "input", selectedInput, inputs),
+    "input",
+    selectedInput,
+  );
+  validateTensorMetadata(
+    sessionMetadata(session, "output", selectedOutput, outputs),
+    "output",
+    selectedOutput,
+  );
+  return { inputName: selectedInput, outputName: selectedOutput };
+}
+
+const SNAPSHOT_EXT_WGSL = `
+struct P { w:u32, h:u32, _pad0:u32, _pad1:u32 }
 @group(0) @binding(0) var samp: sampler;
 @group(0) @binding(1) var src: texture_external;
-@group(0) @binding(2) var<storage, read_write> dst: array<f32>;
+@group(0) @binding(2) var dst: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(3) var<uniform> u: P;
 @compute @workgroup_size(8,8)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-  if (gid.x >= u.padW || gid.y >= u.padH) { return; }
-  let xx = min(gid.x, u.w - 1u);
-  let yy = min(gid.y, u.h - 1u);
-  let uv = (vec2<f32>(f32(xx), f32(yy)) + vec2<f32>(0.5, 0.5)) / vec2<f32>(f32(u.w), f32(u.h));
+  if (gid.x >= u.w || gid.y >= u.h) { return; }
+  let uv = (vec2<f32>(vec2<u32>(gid.xy)) + vec2<f32>(0.5, 0.5)) /
+    vec2<f32>(f32(u.w), f32(u.h));
   let c = textureSampleBaseClampToEdge(src, samp, uv).rgb;
+  textureStore(dst, vec2<i32>(gid.xy), vec4<f32>(c, 1.0));
+}`;
+
+// texture_2d twin: decoder frames and frames synthesized upstream are captured
+// with identical sampling before run() first yields.
+const SNAPSHOT_TEX_WGSL = SNAPSHOT_EXT_WGSL
+  .replace("texture_external", "texture_2d<f32>")
+  .replace("textureSampleBaseClampToEdge(src, samp, uv)", "textureSampleLevel(src, samp, uv, 0.0)");
+
+const PACK_TILE_WGSL = `
+struct P {
+  padW:u32, padH:u32, tileW:u32, tileH:u32,
+  srcX:u32, srcY:u32, srcW:u32, srcH:u32
+}
+@group(0) @binding(0) var src: texture_2d<f32>;
+@group(0) @binding(1) var<storage, read_write> dst: array<f32>;
+@group(0) @binding(2) var<uniform> u: P;
+@compute @workgroup_size(8,8)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (gid.x >= u.padW || gid.y >= u.padH) { return; }
+  // Halos are clipped at actual image boundaries. Replication is exclusively
+  // the model's padMultiple expansion on the right/bottom.
+  let xx = min(gid.x, u.tileW - 1u);
+  let yy = min(gid.y, u.tileH - 1u);
+  let pos = vec2<i32>(i32(u.srcX + xx), i32(u.srcY + yy));
+  let c = textureLoad(src, pos, 0).rgb;
   let plane = u.padW * u.padH;
   let idx = gid.y * u.padW + gid.x;
   dst[idx] = c.r;
@@ -80,33 +304,32 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   dst[2u * plane + idx] = c.b;
 }`;
 
-// texture_2d twin (same body, sampled with explicit LOD) — the source-is-a-
-// parameter doctrine: frames from a decoder and frames synthesized upstream
-// go through identical math.
-const PACK_TEX_WGSL = PACK_EXT_WGSL
-  .replace("texture_external", "texture_2d<f32>")
-  .replace("textureSampleBaseClampToEdge(src, samp, uv)", "textureSampleLevel(src, samp, uv, 0.0)");
-
 const COMPOSITE_WGSL = `
-struct P { strideW:u32, plane:u32, outW:u32, outH:u32 }
+struct P {
+  strideW:u32, plane:u32, srcX:u32, srcY:u32,
+  dstX:u32, dstY:u32, outW:u32, outH:u32
+}
 @group(0) @binding(0) var<storage, read> src: array<f32>;
 @group(0) @binding(1) var dst: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(2) var<uniform> u: P;
 @compute @workgroup_size(8,8)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (gid.x >= u.outW || gid.y >= u.outH) { return; }
-  let idx = gid.y * u.strideW + gid.x;
+  let idx = (u.srcY + gid.y) * u.strideW + u.srcX + gid.x;
   let r = clamp(src[idx], 0.0, 1.0);
   let g = clamp(src[u.plane + idx], 0.0, 1.0);
   let b = clamp(src[2u * u.plane + idx], 0.0, 1.0);
-  textureStore(dst, vec2<i32>(i32(gid.x), i32(gid.y)), vec4<f32>(r, g, b, 1.0));
+  let dstPos = vec2<i32>(i32(u.dstX + gid.x), i32(u.dstY + gid.y));
+  textureStore(dst, dstPos, vec4<f32>(r, g, b, 1.0));
 }`;
 
 export function createNeuralEngine({ log = console.log, warn = console.warn } = {}) {
   let ort = null;
   let session = null;
   let device = null;
-  let manifest = null;          // [{key,label,file,scale,padMultiple?,input?,output?}]
+  // tileSize/tileOverlap tune bounded work only; omitted entries use 512/24.
+  // They never limit the source dimensions or skip a frame by policy.
+  let manifest = null;          // [{key,label,file,scale,padMultiple?,input?,output?,fp16?,tileSize?,tileOverlap?}]
   let active = null;            // manifest entry of the loaded model
   let inputName = "input", outputName = "output";
   let fp16Model = false;
@@ -132,13 +355,25 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
 
   // GPU resources (allocated on ORT's device)
   let sampler = null;
-  let packExtPipe = null, packTexPipe = null, compPipe = null;
+  let snapshotExtPipe = null, snapshotTexPipe = null;
+  let packTilePipe = null, compPipe = null;
   let inBuf = null, inBufSize = 0;
-  let packU = null, compU = null;
+  let snapshotU = null, packU = null, compU = null;
+  let snapshotTex = null, snapshotTexW = 0, snapshotTexH = 0;
   let outTex = null, outTexW = 0, outTexH = 0;
 
   // instrumentation (mirrors RIFE's readout vocabulary)
-  const stats = { last: 0, mu: 0, n: 0, skip: 0, fails: 0 };
+  const stats = {
+    last: 0,
+    mu: 0,
+    n: 0,
+    skip: 0,
+    fails: 0,
+    lastTiles: 0,
+    tileRuns: 0,
+    maxTileW: 0,
+    maxTileH: 0,
+  };
 
   function whenRunsIdle() {
     if (activeRuns === 0) return Promise.resolve();
@@ -174,11 +409,13 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     });
   }
 
-  function retireTensors(ownerDevice, inputTensor, outputTensor) {
-    if (!inputTensor && !outputTensor) return;
+  function retireTensors(ownerDevice, ...tensors) {
+    const live = [...new Set(tensors.filter(Boolean))];
+    if (!live.length) return;
     afterSubmittedWork(ownerDevice, () => {
-      try { inputTensor?.dispose?.(); } catch {}
-      try { outputTensor?.dispose?.(); } catch {}
+      for (const tensor of live) {
+        try { tensor?.dispose?.(); } catch {}
+      }
     });
   }
 
@@ -286,7 +523,7 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
   async function loadManifest() {
     if (manifest) return manifest;
     try {
-      const r = await fetch(chrome.runtime.getURL("model/neural/manifest.json"));
+      const r = await fetch(resolvePackagedAssetUrl("model/neural/manifest.json"));
       if (!r.ok) throw new Error("HTTP " + r.status);
       manifest = validateNeuralManifest(await r.json());
     } catch (e) {
@@ -297,19 +534,28 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
   }
 
   function ensurePipelines() {
-    if (packExtPipe) return;
+    if (snapshotExtPipe) return;
     const mk = (code) => device.createShaderModule({ code });
-    let nextPackU = null, nextCompU = null;
+    let nextSnapshotU = null, nextPackU = null, nextCompU = null;
     try {
-      const nextPackExtPipe = device.createComputePipeline({ layout: "auto", compute: { module: mk(PACK_EXT_WGSL), entryPoint: "main" } });
-      const nextPackTexPipe = device.createComputePipeline({ layout: "auto", compute: { module: mk(PACK_TEX_WGSL), entryPoint: "main" } });
+      const nextSnapshotExtPipe = device.createComputePipeline({ layout: "auto", compute: { module: mk(SNAPSHOT_EXT_WGSL), entryPoint: "main" } });
+      const nextSnapshotTexPipe = device.createComputePipeline({ layout: "auto", compute: { module: mk(SNAPSHOT_TEX_WGSL), entryPoint: "main" } });
+      const nextPackTilePipe = device.createComputePipeline({ layout: "auto", compute: { module: mk(PACK_TILE_WGSL), entryPoint: "main" } });
       const nextCompPipe = device.createComputePipeline({ layout: "auto", compute: { module: mk(COMPOSITE_WGSL), entryPoint: "main" } });
       const nextSampler = device.createSampler({ magFilter: "linear", minFilter: "linear" });
-      nextPackU = device.createBuffer({ label: "neural-packU", size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-      nextCompU = device.createBuffer({ label: "neural-compU", size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-      packExtPipe = nextPackExtPipe; packTexPipe = nextPackTexPipe; compPipe = nextCompPipe;
-      sampler = nextSampler; packU = nextPackU; compU = nextCompU;
+      nextSnapshotU = device.createBuffer({ label: "neural-snapshotU", size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+      nextPackU = device.createBuffer({ label: "neural-packU", size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+      nextCompU = device.createBuffer({ label: "neural-compU", size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+      snapshotExtPipe = nextSnapshotExtPipe;
+      snapshotTexPipe = nextSnapshotTexPipe;
+      packTilePipe = nextPackTilePipe;
+      compPipe = nextCompPipe;
+      sampler = nextSampler;
+      snapshotU = nextSnapshotU;
+      packU = nextPackU;
+      compU = nextCompU;
     } catch (error) {
+      try { nextSnapshotU?.destroy?.(); } catch {}
       try { nextPackU?.destroy?.(); } catch {}
       try { nextCompU?.destroy?.(); } catch {}
       throw error;
@@ -317,8 +563,8 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
   }
 
   function ensureInBuf(padW, padH) {
-    const need = padW * padH * 3 * 4;
-    if (inBuf && inBufSize === need) return;
+    const need = checkedProduct("neural input buffer", padW, padH, 3, 4);
+    if (inBuf && inBufSize >= need) return;
     const old = inBuf;
     const candidate = device.createBuffer({
       label: `neural-in-${padW}x${padH}`,
@@ -327,6 +573,21 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     });
     inBuf = candidate;
     inBufSize = need;
+    if (old) retireGpuObjects([old]);
+  }
+
+  function ensureSnapshotTex(w, h) {
+    if (snapshotTex && snapshotTexW === w && snapshotTexH === h) return;
+    const old = snapshotTex;
+    const candidate = device.createTexture({
+      label: `neural-snapshot-${w}x${h}`,
+      size: { width: w, height: h },
+      format: "rgba16float",
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    snapshotTex = candidate;
+    snapshotTexW = w;
+    snapshotTexH = h;
     if (old) retireGpuObjects([old]);
   }
 
@@ -357,24 +618,39 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     return product;
   }
 
-  function validateAllocationLimits(padW, padH, outW, outH, scale) {
+  function allocationLimits() {
     const maxDimension = Math.max(1, Number(device?.limits?.maxTextureDimension2D) || 8192);
     const maxBuffer = Math.max(1, Math.min(
       Number(device?.limits?.maxBufferSize) || 256 * 1024 * 1024,
       Number(device?.limits?.maxStorageBufferBindingSize) || 128 * 1024 * 1024,
     ));
     const maxGroups = Math.max(1, Number(device?.limits?.maxComputeWorkgroupsPerDimension) || 65535);
-    const paddedOutW = checkedProduct("neural padded output width", padW, scale);
-    const paddedOutH = checkedProduct("neural padded output height", padH, scale);
-    const dimensions = [padW, padH, outW, outH, paddedOutW, paddedOutH];
+    return { maxDimension, maxBuffer, maxGroups };
+  }
+
+  function validateFrameAllocationLimits(srcW, srcH, outW, outH) {
+    const { maxDimension, maxGroups } = allocationLimits();
+    const dimensions = [srcW, srcH, outW, outH];
     if (dimensions.some((value) => !Number.isSafeInteger(value) || value < 1 || value > maxDimension)) {
       const error = new Error(`neural dimensions exceed the device texture limit ${maxDimension}`);
       error.code = "NEURAL_LIMIT";
       throw error;
     }
+    if (Math.ceil(srcW / 8) > maxGroups || Math.ceil(srcH / 8) > maxGroups) {
+      const error = new Error(`neural snapshot dispatch exceeds the device workgroup limit ${maxGroups}`);
+      error.code = "NEURAL_LIMIT";
+      throw error;
+    }
+  }
+
+  function validateTileAllocationLimits(tile, scale) {
+    const { maxBuffer, maxGroups } = allocationLimits();
+    const { padW, padH, outW, outH } = tile;
+    const paddedOutW = checkedProduct("neural padded output width", padW, scale);
+    const paddedOutH = checkedProduct("neural padded output height", padH, scale);
     if (Math.ceil(padW / 8) > maxGroups || Math.ceil(padH / 8) > maxGroups ||
         Math.ceil(outW / 8) > maxGroups || Math.ceil(outH / 8) > maxGroups) {
-      const error = new Error(`neural dispatch exceeds the device workgroup limit ${maxGroups}`);
+      const error = new Error(`neural tile dispatch exceeds the device workgroup limit ${maxGroups}`);
       error.code = "NEURAL_LIMIT";
       throw error;
     }
@@ -396,11 +672,10 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
 
     ort = await ensureOrt();
     if (generation !== initGeneration) return null;
-    // Create the NEW session before releasing any old one: the shared ORT
-    // device's lifetime follows its sessions, and letting the refcount touch
-    // zero mid-swap would tear down the device under the upscaler (crash-1's
-    // lesson, applied preemptively).
-    const url = chrome.runtime.getURL("model/neural/" + entry.file);
+    // Create the new session before releasing the old one. The ORT device's
+    // lifetime follows its sessions, so its refcount must not reach zero during
+    // a live model swap.
+    const url = resolvePackagedAssetUrl("model/neural/" + entry.file);
     const opts = {
       executionProviders: [{ name: "webgpu" }],
       graphOptimizationLevel: "all",
@@ -408,13 +683,23 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
       preferredOutputLocation: "gpu-buffer",
     };
     let next;
-    let executionFp16 = true;
-    try {
-      next = await createOrtSession(url, opts, { enableFp16: true });
-    } catch (fp16Error) {
-      if (generation !== initGeneration) return null;
-      executionFp16 = false;
-      warn(`neural: FP16 execution session failed for ${entry.file}; retrying FP32: ${fp16Error.message}`);
+    const requestedExecutionFp16 = entry.fp16 === true;
+    let executionFp16 = requestedExecutionFp16;
+    if (requestedExecutionFp16) {
+      try {
+        next = await createOrtSession(url, opts, { enableFp16: true });
+      } catch (fp16Error) {
+        if (generation !== initGeneration) return null;
+        executionFp16 = false;
+        warn(`neural: FP16 execution session failed for ${entry.file}; retrying FP32: ${fp16Error.message}`);
+        try {
+          next = await createOrtSession(url, opts, { enableFp16: false });
+        } catch (fp32Error) {
+          if (generation !== initGeneration) return null;
+          throw new Error(`neural session create failed (${entry.file}): ${fp32Error.message}`);
+        }
+      }
+    } else {
       try {
         next = await createOrtSession(url, opts, { enableFp16: false });
       } catch (fp32Error) {
@@ -425,6 +710,22 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     if (generation !== initGeneration) {
       try { await next?.release?.(); } catch {}
       return null;
+    }
+    let contract;
+    try {
+      contract = validateSessionContract(next, entry);
+    } catch (contractError) {
+      try {
+        await next?.release?.();
+      } catch (releaseError) {
+        throw new AggregateError(
+          [contractError, releaseError],
+          `neural model contract rejection cleanup failed (${entry.file})`,
+        );
+      }
+      throw new Error(`neural model contract rejected (${entry.file}): ${contractError.message}`, {
+        cause: contractError,
+      });
     }
     const nextOrt = await ensureOrt();
     const nextDevice = getOrtSessionDevice(next);
@@ -471,8 +772,8 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     ort = nextOrt;
     session = next;
     active = entry;
-    inputName = entry.input || (next.inputNames && next.inputNames[0]) || "input";
-    outputName = entry.output || (next.outputNames && next.outputNames[0]) || "output";
+    inputName = contract.inputName;
+    outputName = contract.outputName;
     fp16Model = /fp16/i.test(entry.file) || entry.fp16 === true;
     sessionGeneration++;
     // Transfer the prior session out of this initializer's local ownership before
@@ -505,8 +806,8 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
         }
       }
       // For a different device, keep the pre-yield deferred ownership until the
-      // first new-device run (whose pack is submitted after main's adoption).
-      // This prevents a cross-device swap from orphaning current main pipelines.
+      // first new-device run. The presentation owner adopts the new device before
+      // calling run(), so this cannot orphan its current pipelines.
     }
 
     if (initializationCancelled) return null;
@@ -548,10 +849,13 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
   }
 
   function destroyGpuResources(ownerDevice = device) {
-    const resources = [inBuf, packU, compU, outTex];
-    inBuf = null; inBufSize = 0; packU = null; compU = null;
+    const resources = [inBuf, snapshotU, packU, compU, snapshotTex, outTex];
+    inBuf = null; inBufSize = 0;
+    snapshotU = null; packU = null; compU = null;
+    snapshotTex = null; snapshotTexW = 0; snapshotTexH = 0;
     outTex = null; outTexW = 0; outTexH = 0;
-    packExtPipe = null; packTexPipe = null; compPipe = null; sampler = null;
+    snapshotExtPipe = null; snapshotTexPipe = null;
+    packTilePipe = null; compPipe = null; sampler = null;
     const cleanup = whenRunsIdle().then(async () => {
       try { await ownerDevice?.queue?.onSubmittedWorkDone?.(); } catch {}
       for (const resource of resources) { try { resource?.destroy?.(); } catch {} }
@@ -653,80 +957,176 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     const runSessionGeneration = sessionGeneration;
     const runLifecycleGeneration = lifecycleGeneration;
     const mult = Math.max(1, runEntry.padMultiple | 0 || 1);
-    const padW = Math.ceil(srcW / mult) * mult;
-    const padH = Math.ceil(srcH / mult) * mult;
     const scale = runEntry.scale;
-    const outW = srcW * scale, outH = srcH * scale;
-    validateAllocationLimits(padW, padH, outW, outH, scale);
+    const outW = checkedProduct("neural output width", srcW, scale);
+    const outH = checkedProduct("neural output height", srcH, scale);
+    validateFrameAllocationLimits(srcW, srcH, outW, outH);
+    const tiles = planNeuralTiles(srcW, srcH, {
+      tileSize: runEntry.tileSize ?? DEFAULT_NEURAL_TILE_SIZE,
+      tileOverlap: runEntry.tileOverlap ?? DEFAULT_NEURAL_TILE_OVERLAP,
+      padMultiple: mult,
+      scale,
+    });
+    for (const tile of tiles) validateTileAllocationLimits(tile, scale);
+    const largestTile = tiles.reduce((largest, tile) =>
+      tile.padW * tile.padH > largest.padW * largest.padH ? tile : largest);
     const t0 = performance.now();
     runBusy = true;
     activeRuns++;
-    let inTensor = null, outT = null;
+    stats.lastTiles = tiles.length;
+    stats.maxTileW = Math.max(stats.maxTileW, ...tiles.map((tile) => tile.padW));
+    stats.maxTileH = Math.max(stats.maxTileH, ...tiles.map((tile) => tile.padH));
 
     try {
       ensurePipelines();
-      ensureInBuf(padW, padH);
+      ensureInBuf(largestTile.padW, largestTile.padH);
+      ensureSnapshotTex(srcW, srcH);
       ensureOutTex(outW, outH);
       const runInBuf = inBuf;
+      const runSnapshotU = snapshotU;
       const runPackU = packU;
       const runCompU = compU;
-      const runPackExtPipe = packExtPipe;
-      const runPackTexPipe = packTexPipe;
+      const runSnapshotExtPipe = snapshotExtPipe;
+      const runSnapshotTexPipe = snapshotTexPipe;
+      const runPackTilePipe = packTilePipe;
       const runCompPipe = compPipe;
       const runSampler = sampler;
+      const runSnapshotTex = snapshotTex;
       const runOutTex = outTex;
-      runDevice.queue.writeBuffer(runPackU, 0, new Uint32Array([padW, padH, srcW, srcH]));
 
-      // Pack must be submitted before any await because external textures expire at
-      // task end. Every object used after the await is captured for this generation.
-      {
-        const isTex = src && src.tex;
-        const pipe = isTex ? runPackTexPipe : runPackExtPipe;
-        const enc = runDevice.createCommandEncoder();
+      const writePackUniform = (tile) => {
+        runDevice.queue.writeBuffer(runPackU, 0, new Uint32Array([
+          tile.padW,
+          tile.padH,
+          tile.inputW,
+          tile.inputH,
+          tile.inputX,
+          tile.inputY,
+          srcW,
+          srcH,
+        ]));
+      };
+      const encodePack = (encoder, tile) => {
         const bg = runDevice.createBindGroup({
+          layout: runPackTilePipe.getBindGroupLayout(0),
+          entries: [
+            { binding: 0, resource: runSnapshotTex.createView() },
+            { binding: 1, resource: { buffer: runInBuf } },
+            { binding: 2, resource: { buffer: runPackU } },
+          ],
+        });
+        const cp = encoder.beginComputePass();
+        cp.setPipeline(runPackTilePipe);
+        cp.setBindGroup(0, bg);
+        cp.dispatchWorkgroups(Math.ceil(tile.padW / 8), Math.ceil(tile.padH / 8));
+        cp.end();
+      };
+
+      // Capture the whole external/texture source and pack the first tile in one
+      // submission before the first await. External textures expire at task end;
+      // every later tile reads only the persistent snapshot.
+      runDevice.queue.writeBuffer(runSnapshotU, 0, new Uint32Array([srcW, srcH, 0, 0]));
+      writePackUniform(tiles[0]);
+      {
+        const isTex = !!(src && src.tex);
+        const pipe = isTex ? runSnapshotTexPipe : runSnapshotExtPipe;
+        const enc = runDevice.createCommandEncoder();
+        const snapshotBg = runDevice.createBindGroup({
           layout: pipe.getBindGroupLayout(0),
           entries: [
             { binding: 0, resource: runSampler },
             { binding: 1, resource: isTex ? src.tex.createView() : src },
-            { binding: 2, resource: { buffer: runInBuf } },
-            { binding: 3, resource: { buffer: runPackU } },
+            { binding: 2, resource: runSnapshotTex.createView() },
+            { binding: 3, resource: { buffer: runSnapshotU } },
           ],
         });
         const cp = enc.beginComputePass();
-        cp.setPipeline(pipe); cp.setBindGroup(0, bg);
-        cp.dispatchWorkgroups(Math.ceil(padW / 8), Math.ceil(padH / 8));
+        cp.setPipeline(pipe);
+        cp.setBindGroup(0, snapshotBg);
+        cp.dispatchWorkgroups(Math.ceil(srcW / 8), Math.ceil(srcH / 8));
         cp.end();
+        encodePack(enc, tiles[0]);
         runDevice.queue.submit([enc.finish()]);
       }
 
       // The external source is now consumed on the new device. It is safe to let
-      // sessions retaining a prior device go; main has adopted this device before
-      // it can call run().
+      // sessions retaining a prior device go because the presentation owner
+      // adopts this device before it can call run().
       await releaseDeferredSessions();
       if (runLifecycleGeneration !== lifecycleGeneration) throw new Error("neural inference cancelled by stop");
 
-      inTensor = runOrt.Tensor.fromGpuBuffer(runInBuf, { dataType: "float32", dims: [1, 3, padH, padW] });
-      const result = await runSession.run({ [runInputName]: inTensor });
-      outT = result[runOutputName];
-      if (runLifecycleGeneration !== lifecycleGeneration) throw new Error("neural inference cancelled by stop");
-      if (runSessionGeneration !== sessionGeneration || runSession !== session) throw new Error("neural session changed during inference");
-      const shape = validateOutputTensor(outT, padW, padH, scale, runOutputName);
+      for (let tileIndex = 0; tileIndex < tiles.length; tileIndex++) {
+        const tile = tiles[tileIndex];
+        let inTensor = null;
+        let resultTensors = [];
+        try {
+          if (tileIndex > 0) {
+            if (runLifecycleGeneration !== lifecycleGeneration) {
+              throw new Error("neural inference cancelled by stop");
+            }
+            writePackUniform(tile);
+            const packEncoder = runDevice.createCommandEncoder();
+            encodePack(packEncoder, tile);
+            runDevice.queue.submit([packEncoder.finish()]);
+          }
 
-      runDevice.queue.writeBuffer(runCompU, 0, new Uint32Array([shape.strideW, shape.plane, outW, outH]));
-      const enc = runDevice.createCommandEncoder();
-      const bg = runDevice.createBindGroup({
-        layout: runCompPipe.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: { buffer: outT.gpuBuffer } },
-          { binding: 1, resource: runOutTex.createView() },
-          { binding: 2, resource: { buffer: runCompU } },
-        ],
-      });
-      const cp = enc.beginComputePass();
-      cp.setPipeline(runCompPipe); cp.setBindGroup(0, bg);
-      cp.dispatchWorkgroups(Math.ceil(outW / 8), Math.ceil(outH / 8));
-      cp.end();
-      runDevice.queue.submit([enc.finish()]);
+          inTensor = runOrt.Tensor.fromGpuBuffer(runInBuf, {
+            dataType: "float32",
+            dims: [1, 3, tile.padH, tile.padW],
+          });
+          const result = await runSession.run({ [runInputName]: inTensor }, [runOutputName]);
+          if (!result || typeof result !== "object") {
+            throw new Error("neural session returned an invalid result");
+          }
+          resultTensors = [...new Set(Object.values(result).filter(Boolean))];
+          const outT = result[runOutputName];
+          if (runLifecycleGeneration !== lifecycleGeneration) {
+            throw new Error("neural inference cancelled by stop");
+          }
+          if (runSessionGeneration !== sessionGeneration || runSession !== session) {
+            throw new Error("neural session changed during inference");
+          }
+          const shape = validateOutputTensor(
+            outT,
+            tile.padW,
+            tile.padH,
+            scale,
+            runOutputName,
+          );
+
+          runDevice.queue.writeBuffer(runCompU, 0, new Uint32Array([
+            shape.strideW,
+            shape.plane,
+            tile.cropX,
+            tile.cropY,
+            tile.dstX,
+            tile.dstY,
+            tile.outW,
+            tile.outH,
+          ]));
+          const enc = runDevice.createCommandEncoder();
+          const bg = runDevice.createBindGroup({
+            layout: runCompPipe.getBindGroupLayout(0),
+            entries: [
+              { binding: 0, resource: { buffer: outT.gpuBuffer } },
+              { binding: 1, resource: runOutTex.createView() },
+              { binding: 2, resource: { buffer: runCompU } },
+            ],
+          });
+          const cp = enc.beginComputePass();
+          cp.setPipeline(runCompPipe);
+          cp.setBindGroup(0, bg);
+          cp.dispatchWorkgroups(Math.ceil(tile.outW / 8), Math.ceil(tile.outH / 8));
+          cp.end();
+          runDevice.queue.submit([enc.finish()]);
+          stats.tileRuns++;
+        } finally {
+          // Each tile can release its wrappers after its composite is submitted;
+          // this bounds wrapper/output lifetime instead of retaining a frame's
+          // worth of ONNX tensors until every tile finishes.
+          retireTensors(runDevice, inTensor, ...resultTensors);
+        }
+      }
 
       const dt = performance.now() - t0;
       stats.last = dt;
@@ -737,31 +1137,32 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
       stats.fails++;
       throw error;
     } finally {
-      // Both wrappers may still back submitted inference/composite commands. Their
-      // disposal is deferred to a queue fence; the user-owned input buffer remains
-      // owned by this engine and is retired independently on resize/stop.
-      retireTensors(runDevice, inTensor, outT);
       runBusy = false;
       endRun();
     }
   }
 
-  function stop() {
-    // Release GPU resources but keep the SESSION alive: if this is the only
-    // ORT session, releasing it tears down the shared device the upscaler has
-    // adopted. Sessions persist until page unload (documented v1 tradeoff:
-    // idle model VRAM in exchange for never orphaning the device).
+  function cancel() {
+    // Logical cancellation is deliberately synchronous and allocation-free.
+    // The serialized stop/dispose command owns physical GPU/session cleanup after
+    // the active session.run() observes this generation change and unwinds.
     ++lifecycleGeneration;
     ++initGeneration;
+  }
+
+  function stop() {
+    // Release transient GPU resources but keep the session alive. Releasing the
+    // only session would tear down the device still used by the presentation
+    // owner; the session persists until engine disposal.
+    cancel();
     return destroyGpuResources();
   }
 
   async function quiesce() {
     // Cancel unpublished initialization and prevent active inference from
     // reaching a newer continuation, while retaining the committed session as
-    // a device-lifetime guard until the main renderer releases its resources.
-    ++lifecycleGeneration;
-    ++initGeneration;
+    // a device-lifetime guard until the presentation owner releases its resources.
+    cancel();
     const pendingInit = initTail;
     const cleanup = destroyGpuResources();
     try { await pendingInit; } catch {}
@@ -854,6 +1255,7 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     models: loadManifest,
     init,
     run,
+    cancel,
     stop,
     quiesce,
     dispose,
