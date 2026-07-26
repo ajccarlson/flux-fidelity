@@ -168,7 +168,7 @@ const ART_FILES = ARTCNN_MODEL_NAMES;
 let requestedEngine = "fsrcnnx"; // durable user choice
 let engine = "fsrcnnx"; // effective renderer: may fall back without changing requestedEngine
 let engineSelectionGeneration = 0;
-let neuralEng = null, neuralModelKey = "", neuralBusy = false, neuralFail = 0; // v0.49.0 ONNX engine
+let neuralEng = null, neuralModelKey = "", neuralBusy = false, neuralFail = 0; // v0.50.0 ONNX engine
 let neuralTemporalResetReason = null;
 let neuralTemporalResetGeneration = 0;
 let rendererFallback = null, neuralLastFailure = null;
@@ -569,12 +569,47 @@ function upscalePresentationPlan(
   };
 }
 
+// Neural models always infer at their trained native scale. Presentation policy
+// can then request an exact 2x frame without relabeling or modifying the model.
+// SSimDS improves a reduction when enabled; the regular sampled presentation
+// path preserves the exact requested dimensions when it is disabled.
+function neuralPresentationPlan(
+  policy,
+  srcW,
+  srcH,
+  modelScale,
+  displayWidth,
+  { ssimdsEnabled: useSSimDS = true } = {},
+) {
+  const modelWidth = srcW * modelScale;
+  const modelHeight = srcH * modelScale;
+  const exactScale = policy === "force2" ? 2 : policy === "native" ? modelScale : null;
+  const targetWidth = exactScale == null
+    ? Math.max(1, displayWidth)
+    : Math.max(1, srcW * exactScale);
+  const targetHeight = exactScale == null
+    ? Math.max(1, Math.round(targetWidth * modelHeight / modelWidth))
+    : Math.max(1, srcH * exactScale);
+  const downsample = modelWidth > targetWidth * 1.05;
+  const ssimds = !!useSSimDS && downsample;
+  const presentAtTarget = exactScale != null || ssimds;
+  return {
+    modelWidth,
+    modelHeight,
+    outputWidth: presentAtTarget ? targetWidth : modelWidth,
+    outputHeight: presentAtTarget ? targetHeight : modelHeight,
+    downsample: presentAtTarget && downsample,
+    ssimds,
+  };
+}
+
 // ---- validated setting contracts ----------------------------------------
 // These values cross both a message boundary and chrome.storage. Treat them as
 // untrusted even though the current popup only emits values from fixed controls.
 const VALID_ENGINES = Object.freeze(["fsrcnnx", "fsrcnnx-hi", "artcnn", "neural"]);
 const STANDARD_UPSCALE_POLICIES = Object.freeze(["display", "auto", "force2", "force3", "force4"]);
 const FIXED_2X_UPSCALE_POLICIES = Object.freeze(["display", "auto", "force2", "force4", "force8"]);
+const NEURAL_UPSCALE_POLICIES = Object.freeze(["display", "force2", "native"]);
 const INTERPOLATION_MODEL_KEYS = Object.freeze([
   "rife_v4.26_fp16",
   "rife_v4.26",
@@ -588,6 +623,7 @@ const DEFAULT_INTERPOLATION_TARGET_FPS = "auto";
 const DEFAULT_INTERPOLATION_AV_OFFSET_MS = 0;
 
 function policyOptionsForEngine(targetEngine) {
+  if (targetEngine === "neural") return NEURAL_UPSCALE_POLICIES;
   return targetEngine === "artcnn" || targetEngine === "fsrcnnx-hi"
     ? FIXED_2X_UPSCALE_POLICIES
     : STANDARD_UPSCALE_POLICIES;
@@ -1157,6 +1193,11 @@ function emptyNeuralStats() {
     tileRuns: 0,
     maxTileW: 0,
     maxTileH: 0,
+    lastRunMs: 0,
+    meanRunMs: 0,
+    runs: 0,
+    cdaPriorRuns: 0,
+    cdaPriorResets: 0,
   };
 }
 
@@ -1185,9 +1226,25 @@ function createEmbeddedNeuralEngine({ log: engineLog = log, warn: engineWarn = w
   };
 
   const updateStats = (result) => {
-    const next = result?.stats?.engine;
-    if (!next || typeof next !== "object") return;
-    remoteStats = { ...remoteStats, ...next };
+    const snapshot = result?.stats;
+    if (!snapshot || typeof snapshot !== "object") return;
+    const engineStats = snapshot.engine;
+    const frameStats = {};
+    for (const key of [
+      "lastRunMs",
+      "meanRunMs",
+      "runs",
+      "cdaPriorRuns",
+      "cdaPriorResets",
+    ]) {
+      const value = Number(snapshot[key]);
+      if (Number.isFinite(value) && value >= 0) frameStats[key] = value;
+    }
+    remoteStats = {
+      ...remoteStats,
+      ...(engineStats && typeof engineStats === "object" ? engineStats : {}),
+      ...frameStats,
+    };
   };
 
   const frameHasDimensions = (frame, width, height) => {
@@ -1638,6 +1695,10 @@ function showPresentedCanvas(
     presentedRuntimeEngine = presentedRuntimeMode === "upscale" ? (runtimeEngine || engine) : null;
     presentedCanvas = targetCanvas;
     primaryPresentationGeneration++;
+    const native = presentationDimensions(
+      diagnostics?.native?.width,
+      diagnostics?.native?.height,
+    );
     presentedPresentation = Object.freeze({
       committed: true,
       generation: primaryPresentationGeneration,
@@ -1645,6 +1706,7 @@ function showPresentedCanvas(
       engine: presentedRuntimeEngine,
       source: presentationDimensions(diagnostics?.source?.width, diagnostics?.source?.height) ||
         presentationDimensions(video.videoWidth, video.videoHeight),
+      ...(native ? { native } : {}),
       output: presentationDimensions(diagnostics?.output?.width, diagnostics?.output?.height) ||
         presentationDimensions(targetCanvas.width, targetCanvas.height),
       ssimds: presentationStage(diagnostics?.ssimds),
@@ -3055,7 +3117,7 @@ function finalizeToCanvas(enc, srcTex) {
 }
 
 
-// ---- neural engine (v0.49.0) ----------------------------------------------
+// ---- neural engine (v0.50.0) ----------------------------------------------
 // Bundled ONNX super-resolution runs in the extension-owned Neural frame.
 // It returns a full-RGB bitmap after optional SSimDownscaler and sharpening;
 // the page-side adapter presents that bitmap on its dedicated overlay canvas.
@@ -3277,11 +3339,9 @@ export async function setNeuralModel(key, { persist = true } = {}) {
   return { ok: true, model: neuralModelKey };
 }
 
-// Shared present tail settings for the extension-frame renderer. Model output stays
-// at native scale unless SSimDownscaler is both enabled and useful.
+// Shared present tail settings for the extension-frame renderer. Inference stays
+// at native model scale; presentation may be display-sized or an exact 2x.
 function neuralFramePresentation(srcW, srcH, scale) {
-  const modelWidth = srcW * scale;
-  const modelHeight = srcH * scale;
   const dpr = window.devicePixelRatio || 1;
   const fullscreen = document.fullscreenElement != null;
   const displayWidth = Math.max(
@@ -3290,11 +3350,17 @@ function neuralFramePresentation(srcW, srcH, scale) {
       ? Math.round(window.screen.width * dpr)
       : Math.round(video.getBoundingClientRect().width * dpr),
   );
-  const displayHeight = Math.max(1, Math.round(displayWidth * modelHeight / modelWidth));
-  const downscale = ssimdsEnabled && modelWidth > displayWidth * 1.05;
+  const plan = neuralPresentationPlan(
+    upscalePolicy,
+    srcW,
+    srcH,
+    scale,
+    displayWidth,
+    { ssimdsEnabled },
+  );
   return Object.freeze({
-    width: downscale ? displayWidth : modelWidth,
-    height: downscale ? displayHeight : modelHeight,
+    width: plan.outputWidth,
+    height: plan.outputHeight,
     ssimdsEnabled,
     sharpenEnabled,
     sharpenStrength,
@@ -3709,9 +3775,24 @@ function loop(owner, frameNow = null, frameMetadata = null) {
       lastLog = now;
       const avg = frameTimes.reduce((a, b) => a + b, 0) / frameTimes.length;
       const max = Math.max(...frameTimes);
+      const neuralStats = mode === "upscale" &&
+        engine === "neural" &&
+        neuralEng?.ready()
+        ? neuralEng.stats()
+        : null;
+      const neuralTemporalStats = neuralStats?.cdaPriorRuns > 0
+        ? ` recurrent:${neuralStats.temporalRecurrentRuns}` +
+          ` reset:${neuralStats.temporalResetRuns}` +
+          ` prior-reset:${neuralStats.cdaPriorResets}/${neuralStats.cdaPriorRuns}`
+        : "";
       log(`mode=${mode} frames=${frameCount} src=${video.videoWidth}x${video.videoHeight}` +
           (mode === "upscale" && activeModel ? ` ${engine==="artcnn"?artVariant.replace("ArtCNN_",""):engine==="fsrcnnx-hi"?"FSRCNNX-high":"FSRCNNX"} ${activeModel.scale}x out=${video.videoWidth*activeModel.scale}x${video.videoHeight*activeModel.scale}` : "") +
-          (mode === "upscale" && engine === "neural" && neuralEng && neuralEng.ready() ? ` NEURAL ${neuralEng.activeEntry()?.label || neuralModelKey} ${neuralEng.activeEntry()?.scale}x mu=${neuralEng.stats().mu.toFixed(1)}ms skip:${neuralEng.stats().skip}` : "") +
+          (neuralStats ? ` NEURAL ${neuralEng.activeEntry()?.label || neuralModelKey} ${neuralEng.activeEntry()?.scale}x` +
+            ` mu=${neuralStats.mu.toFixed(1)}ms(core)` +
+            ` total(last/mu)=${neuralStats.lastRunMs.toFixed(1)}/${neuralStats.meanRunMs.toFixed(1)}ms` +
+            ` tiles=${neuralStats.lastTiles}` +
+            neuralTemporalStats +
+            ` skip:${neuralStats.skip}` : "") +
           (mode === "upscale" && lastSSimDS ? " +SSimDS" : "") +
           (mode === "upscale" && sharpenEnabled ? ` +Sharpen(${sharpenStrength})` : "") +
           ` | CPU encode avg=${avg.toFixed(1)}ms max=${max.toFixed(1)}ms`);
@@ -5297,6 +5378,11 @@ export function getStatus() {
     : "waiting";
   const neuralStats = neuralEng ? neuralEng.stats() : null;
   const neuralActiveEntry = neuralEng?.activeEntry?.() || null;
+  const neuralOutputScale = presented.engine === "neural" &&
+      Number.isFinite(presentation?.source?.width) && presentation.source.width > 0 &&
+      Number.isFinite(presentation?.output?.width)
+    ? presentation.output.width / presentation.source.width
+    : null;
   const neuralPhase = requestedEngine !== "neural" ? "off"
     : rendererFallback ? "fallback"
     : pageSuspended ? "waiting"
@@ -5318,6 +5404,8 @@ export function getStatus() {
              model: neuralModelKey || neuralActiveEntry?.key || null,
              label: neuralActiveEntry?.label ?? null,
              scale: neuralActiveEntry?.scale ?? null,
+             nativeScale: neuralActiveEntry?.scale ?? null,
+             outputScale: neuralOutputScale,
              ready: neuralEng.ready(), ...neuralStats,
            } : null,
            neuralModels: _neuralList,
@@ -5400,6 +5488,8 @@ export function getStatus() {
              phase: neuralPhase,
              requestedModel: configuredNeuralModel,
              activeModel: neuralActiveEntry?.key || null,
+             nativeScale: neuralActiveEntry?.scale ?? null,
+             outputScale: neuralOutputScale,
              consecutiveFailures: neuralFail,
              lastFailure: neuralLastFailure,
            } };

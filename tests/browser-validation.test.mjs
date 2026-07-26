@@ -45,7 +45,9 @@ test("browser validator covers the packaged extension and real-video runtime", (
   assert.match(validator, /status\.renderer\?\.fallback == null/);
   assert.match(validator, /status\.neuralRuntime\?\.phase === "active"/);
   assert.match(validator, /status\.neural\?\.n >= neuralRuns \+ 2/);
-  assert.match(validator, /status\.presentation\.output\.width === status\.presentation\.source\.width \* scale/);
+  assert.match(validator, /status\.presentation\.output\.width === status\.presentation\.source\.width \* outputScale/);
+  assert.match(validator, /status\.policy === "force2" \? 2 : scale/);
+  assert.match(validator, /Neural exact x2 sampled and SSimDownscaler presentation/);
   assert.match(validator, /hostIsolation\?\.crossOriginIsolated === false/);
   assert.match(validator, /hostIsolation\?\.sharedArrayBuffer === "undefined"/);
   assert.match(validator, /Neural to FSRCNNX transition/);
@@ -218,6 +220,8 @@ test("browser validation is release-blocking without slowing internal packaging"
   const releaseCheck = packageJson.scripts["release:check"];
   assert.match(releaseCheck, /npm run package:stage/);
   assert.match(releaseCheck, /npm run validate:browser -- --extension-root dist\/fsrcnnx-ext/);
+  assert.match(releaseCheck, /--neural-model-key cda-vsr-4x/);
+  assert.match(releaseCheck, /--require-temporal-neural-runs/);
   assert.ok(releaseCheck.indexOf("npm run package:stage") < releaseCheck.indexOf("npm run validate:browser"));
   assert.equal(packageJson.scripts.package, "npm run release:check");
   assert.doesNotMatch(packageJson.scripts["package:internal"], /validate:browser/);
@@ -246,6 +250,8 @@ test("CI validates the staged package under Xvfb without disabling the sandbox",
   assert.doesNotMatch(workflow, /FSRCNNX_BROWSER: google-chrome/);
   assert.match(workflow, /npm run package:internal/);
   assert.match(workflow, /--extension-root dist\/fsrcnnx-ext/);
+  assert.match(workflow, /--neural-model-key cda-vsr-4x/);
+  assert.match(workflow, /--require-temporal-neural-runs/);
   assert.match(workflow, /--allow-neural-f16-unavailable/);
   assert.match(workflow, /xvfb-run/);
   assert.doesNotMatch(workflow, /--no-sandbox/);

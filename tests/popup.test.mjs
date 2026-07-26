@@ -483,6 +483,88 @@ test("controller replaces the neural placeholder and notices a same-size model c
   assert.equal(select.value, "span4x_b");
 });
 
+test("controller deduplicates neural scales and reports CDA total performance", () => {
+  const { controller, document } = controllerHarness();
+  controller.render(readyStatus({
+    engine: "neural",
+    activeEngine: "neural",
+    neuralModel: "cda-vsr-4x",
+    policy: "force2",
+    neuralModels: [{
+      key: "cda-vsr-4x",
+      label: "CDA-VSR 4x (mixed FP16)",
+      scale: 4,
+    }],
+    neural: {
+      model: "cda-vsr-4x",
+      label: "CDA-VSR 4x (mixed FP16)",
+      scale: 4,
+      nativeScale: 4,
+      outputScale: 2,
+      ready: true,
+      meanRunMs: 75.25,
+      runs: 4,
+      mu: 41.5,
+      lastTiles: 6,
+      skip: 3,
+    },
+  }));
+
+  assert.equal(
+    document.getElementById("neural-model").children[0].textContent,
+    "CDA-VSR 4x (mixed FP16)",
+  );
+  assert.equal(document.getElementById("s-model").textContent, "CDA-VSR 4x (mixed FP16)");
+  assert.equal(document.getElementById("policy").value, "force2");
+  assert.equal(
+    document.getElementById("neural-note").textContent,
+    "native 4× → output 2× · total mean 75.3 ms · 6 tiles · skipped 3 · high GPU/memory use",
+  );
+});
+
+test("controller falls back to core neural timing and warns before CDA initialization", () => {
+  const { controller, document } = controllerHarness();
+  controller.render(readyStatus({
+    engine: "neural",
+    activeEngine: "neural",
+    neuralModel: "local2x",
+    neuralModels: [{ key: "local2x", label: "Local 2x", scale: 2 }],
+    neural: {
+      model: "local2x",
+      label: "Local 2x",
+      scale: 2,
+      ready: true,
+      meanRunMs: 0,
+      runs: 0,
+      mu: 20.25,
+      lastTiles: 1,
+      skip: 0,
+    },
+  }));
+
+  assert.equal(document.getElementById("neural-model").children[0].textContent, "Local 2x");
+  assert.equal(
+    document.getElementById("neural-note").textContent,
+    "core mean 20.3 ms · 1 tile · skipped 0",
+  );
+
+  controller.render(readyStatus({
+    engine: "neural",
+    activeEngine: "neural",
+    neuralModel: "cda-vsr-4x",
+    neuralModels: [{
+      key: "cda-vsr-4x",
+      label: "CDA-VSR 4x (mixed FP16)",
+      scale: 4,
+    }],
+    neural: null,
+  }));
+  assert.equal(
+    document.getElementById("neural-note").textContent,
+    "Selected; initializes when video upscaling is active. High GPU/memory use.",
+  );
+});
+
 test("controller presents FSRCNNX High with its fixed-scale policies and model label", () => {
   const { controller, document } = controllerHarness();
   controller.render(readyStatus({
@@ -537,7 +619,9 @@ test("controller disables every command while loading or failed and enables only
   }));
   assert.equal(document.getElementById("engine").children.find(({ value }) => value === "neural")?.disabled, false);
   assert.equal(document.getElementById("neural-model").disabled, false);
-  assert.equal(document.getElementById("policy").disabled, true);
+  assert.equal(document.getElementById("policy").disabled, false);
+  assert.deepEqual(document.getElementById("policy").children.map(({ value }) => value),
+    ["display", "force2", "native"]);
   assert.equal(document.getElementById("all-videos").disabled, true);
   assert.equal(document.getElementById("artvariant").disabled, true);
   assert.equal(document.getElementById("interp-model").disabled, true);
@@ -833,7 +917,7 @@ test("requested neural controls remain selected while model and runtime expose t
 
   assert.equal(document.getElementById("engine").value, "neural");
   assert.equal(document.getElementById("mode-upscale").getAttribute("aria-pressed"), "true");
-  assert.equal(document.getElementById("policy").disabled, true,
+  assert.equal(document.getElementById("policy").disabled, false,
     "control applicability follows the requested engine");
   assert.match(document.getElementById("s-model").textContent, /FSRCNNX standard fallback/);
   assert.doesNotMatch(document.getElementById("s-model").textContent, /Local 2x/);

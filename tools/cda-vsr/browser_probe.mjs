@@ -36,6 +36,10 @@ const GRAPH_FILES = Object.freeze({
   initializer: "cda-vsr-initializer.onnx",
   recurrent: "cda-vsr-recurrent.onnx",
 });
+const STAGED_PROBE_GRAPH_FILES = Object.freeze({
+  initializer: "cda-vsr-local-probe-initializer.onnx",
+  recurrent: "cda-vsr-local-probe-recurrent.onnx",
+});
 const GRAPH_GRID_SAMPLE_NODES = Object.freeze({
   initializer: 0,
   recurrent: 5,
@@ -576,13 +580,16 @@ function validateParityEvidenceV3(receipt, captureFixture, precision) {
 }
 
 function makeProbeEntry(contract) {
+  const stagedContract = structuredClone(contract);
+  stagedContract.graphs.initialize.file = STAGED_PROBE_GRAPH_FILES.initializer;
+  stagedContract.graphs.recurrent.file = STAGED_PROBE_GRAPH_FILES.recurrent;
   return {
     key: CDA_BROWSER_PROBE_MODEL_KEY,
     label: "CDA-VSR 4x (local browser probe)",
     scale: 4,
     fp16: false,
     arch: "CDA-VSR local export",
-    contract: structuredClone(contract),
+    contract: stagedContract,
   };
 }
 
@@ -1036,7 +1043,11 @@ export async function stageCdaBrowserProbe({
     const probeManifest = makeCdaProbeManifest(manifest, verified.contract);
 
     for (const [role, graph] of Object.entries(verified.graphs)) {
-      const target = join(extensionRoot, "model/neural", graph.file);
+      const target = join(
+        extensionRoot,
+        "model/neural",
+        STAGED_PROBE_GRAPH_FILES[role],
+      );
       await copyFile(graph.path, target, fsConstants.COPYFILE_EXCL);
       const copied = await requireRegularFile(target, `staged CDA-VSR ${role} graph`);
       if (copied.size !== graph.bytes || await sha256File(target) !== graph.sha256) {

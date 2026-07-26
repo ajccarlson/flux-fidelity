@@ -1346,6 +1346,7 @@ export function createNeuralFrameSession({
           : dimensions(modelWidth, modelHeight);
         const diagnostics = Object.freeze({
           source: dimensions(srcW, srcH),
+          native: dimensions(modelWidth, modelHeight),
           output,
           ssimds: ssimdsApplied ? Object.freeze({
             source: dimensions(modelWidth, modelHeight),

@@ -406,6 +406,12 @@ export function validateNeuralManifest(value) {
     if (entry.label != null && (typeof entry.label !== "string" || !entry.label.trim() || entry.label.length > 160)) {
       throw new Error(`${at} has an invalid label`);
     }
+    if (entry.license != null &&
+        (typeof entry.license !== "string" ||
+         !entry.license.trim() ||
+         entry.license.length > 160)) {
+      throw new Error(`${at} has an invalid license description`);
+    }
     for (const field of ["input", "output"]) {
       if (entry[field] != null && (typeof entry[field] !== "string" || !TENSOR_NAME.test(entry[field]))) {
         throw new Error(`${at} has an invalid ${field} tensor name`);
@@ -655,6 +661,31 @@ function contractForEntry(entry) {
   return validatedContracts.get(entry) || normalizeNeuralModelContract(entry);
 }
 
+function neuralPrecisionSummary(contract, fp16Model, executionFp16) {
+  if (contract.version === 2) {
+    const dtypes = new Set();
+    for (const graph of Object.values(contract.graphs)) {
+      for (const descriptor of [
+        ...Object.values(graph.inputs),
+        ...Object.values(graph.outputs),
+      ]) {
+        if (descriptor.dtype === "float16" ||
+            descriptor.dtype === "float32") {
+          dtypes.add(descriptor.dtype);
+        }
+      }
+    }
+    if (dtypes.has("float16") && dtypes.has("float32")) {
+      return "mixed FP16/FP32 contract";
+    }
+    if (dtypes.size === 1) {
+      return `${dtypes.has("float16") ? "FP16" : "FP32"} tensor contract`;
+    }
+  }
+  return `${fp16Model ? "fp16" : "fp32"} weights, ` +
+    `${executionFp16 ? "FP16" : "FP32"} execution`;
+}
+
 export function validateNeuralSessionContract(session, entry, graphName = null) {
   const declaredContract = contractForEntry(entry);
   const inputs = sessionNames(session, "input");
@@ -890,6 +921,7 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
   let temporalStatePackU = null, temporalStateUnpackU = null;
   const temporalStateScratch = new Map();
   const temporalAuxScratch = new Map();
+  const temporalOutputScratch = new Map();
 
   // instrumentation (mirrors RIFE's readout vocabulary)
   const stats = {
@@ -1041,6 +1073,7 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
       ...[...temporalAuxScratch.values()].flatMap(
         ({ buffer, uniform }) => [buffer, uniform].filter(Boolean),
       ),
+      ...[...temporalOutputScratch.values()].map(({ buffer }) => buffer),
       ...(stale
         ? stale.states.flatMap(
           ({ banks }) => banks.map(({ texture }) => texture),
@@ -1052,6 +1085,7 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     temporalStateUnpackU = null;
     temporalStateScratch.clear();
     temporalAuxScratch.clear();
+    temporalOutputScratch.clear();
     temporalAuxPipe = null;
     temporalStatePipes.clear();
     return retireGpuObjects(resources, ownerDevice);
@@ -1552,6 +1586,141 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     }
   }
 
+  function temporalOutputDims(descriptor, inputWidth, inputHeight, scale) {
+    if (descriptor.layout !== "nchw") return null;
+    if (descriptor.role === "rgb") {
+      return [
+        1,
+        descriptor.channels,
+        checkedProduct(
+          `neural temporal output '${descriptor.name}' height`,
+          inputHeight,
+          scale,
+        ),
+        checkedProduct(
+          `neural temporal output '${descriptor.name}' width`,
+          inputWidth,
+          scale,
+        ),
+      ];
+    }
+    if (descriptor.role === "state-out") {
+      return [1, descriptor.channels, inputHeight, inputWidth];
+    }
+    return null;
+  }
+
+  function temporalOutputScratchKey(descriptor, scale) {
+    const role = descriptor.role === "state-out"
+      ? `state-${descriptor.state}`
+      : `${descriptor.role}-${scale}x`;
+    return `${role}:${descriptor.dtype}:${descriptor.channels}`;
+  }
+
+  function alignedGpuBufferBytes(label, bytes) {
+    const aligned = Math.ceil(bytes / 16) * 16;
+    if (!Number.isSafeInteger(aligned) || aligned < bytes) {
+      const error = new Error(`${label} exceeds the safe integer range`);
+      error.code = "NEURAL_LIMIT";
+      throw error;
+    }
+    return aligned;
+  }
+
+  function ensureTemporalOutputScratch(
+    graph,
+    maxInputWidth,
+    maxInputHeight,
+    scale,
+  ) {
+    const { maxBuffer } = allocationLimits();
+    for (const descriptor of Object.values(graph.outputs)) {
+      const dims = temporalOutputDims(
+        descriptor,
+        maxInputWidth,
+        maxInputHeight,
+        scale,
+      );
+      if (!dims) continue;
+      const label = `neural temporal output '${descriptor.name}' scratch`;
+      const bytes = checkedProduct(
+        label,
+        ...dims,
+        tensorElementBytes(descriptor.dtype),
+      );
+      const alignedBytes = alignedGpuBufferBytes(label, bytes);
+      if (alignedBytes > maxBuffer) {
+        const error = new Error(
+          `${label} exceeds the device binding limit ${maxBuffer}`,
+        );
+        error.code = "NEURAL_LIMIT";
+        throw error;
+      }
+      const key = temporalOutputScratchKey(descriptor, scale);
+      const current = temporalOutputScratch.get(key);
+      if (current?.size >= alignedBytes) continue;
+      const buffer = device.createBuffer({
+        label: `neural-temporal-output-${key}`,
+        size: alignedBytes,
+        // ORT's caller-owned output contract requires all three usages. The
+        // buffer remains engine-owned and is reused only by serial tile runs.
+        usage:
+          GPUBufferUsage.COPY_SRC |
+          GPUBufferUsage.COPY_DST |
+          GPUBufferUsage.STORAGE,
+      });
+      temporalOutputScratch.set(key, {
+        buffer,
+        size: alignedBytes,
+      });
+      if (current) retireGpuObjects([current.buffer]);
+    }
+  }
+
+  function createTemporalOutputFetches(
+    graph,
+    tile,
+    scale,
+    Tensor,
+  ) {
+    const fetches = {};
+    const tensors = [];
+    for (const descriptor of Object.values(graph.outputs)) {
+      const dims = temporalOutputDims(
+        descriptor,
+        tile.padW,
+        tile.padH,
+        scale,
+      );
+      if (!dims) {
+        // A contract may expose scalar or graph-specific auxiliary outputs
+        // whose exact runtime shape is not derivable from the tiled ABI.
+        fetches[descriptor.name] = null;
+        continue;
+      }
+      const scratch = temporalOutputScratch.get(
+        temporalOutputScratchKey(descriptor, scale),
+      );
+      const requiredBytes = checkedProduct(
+        `neural temporal output '${descriptor.name}'`,
+        ...dims,
+        tensorElementBytes(descriptor.dtype),
+      );
+      if (!scratch || scratch.size < requiredBytes) {
+        throw new Error(
+          `neural temporal output scratch is unavailable for '${descriptor.name}'`,
+        );
+      }
+      const tensor = Tensor.fromGpuBuffer(scratch.buffer, {
+        dataType: descriptor.dtype,
+        dims,
+      });
+      tensors.push(tensor);
+      fetches[descriptor.name] = tensor;
+    }
+    return { fetches, tensors };
+  }
+
   function temporalTileGeometry(tile, sourceWidth, sourceHeight) {
     return {
       sourceWidth,
@@ -1832,7 +2001,23 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
 
     if (initializationCancelled) return null;
 
-    log(`neural: session ready — ${entry.label || entry.key} (${entry.scale}x, ${fp16Model ? "fp16" : "fp32"} weights, ${executionFp16 ? "FP16" : "FP32"} execution, dynamic dims)`);
+    const precision = neuralPrecisionSummary(
+      modelContract,
+      fp16Model,
+      executionFp16,
+    );
+    const maxBufferMiB = Math.floor(
+      Number(nextDevice.limits?.maxBufferSize || 0) / (1024 * 1024),
+    );
+    const maxBindingMiB = Math.floor(
+      Number(nextDevice.limits?.maxStorageBufferBindingSize || 0) /
+        (1024 * 1024),
+    );
+    log(
+      `neural: session ready — ${entry.label || entry.key} ` +
+      `(${entry.scale}x, ${precision}, dynamic dims; ` +
+      `device buffer/binding ${maxBufferMiB}/${maxBindingMiB} MiB)`,
+    );
     return entry;
   }
 
@@ -1887,6 +2072,7 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
       ...[...temporalAuxScratch.values()].flatMap(
         ({ buffer, uniform }) => [buffer, uniform].filter(Boolean),
       ),
+      ...[...temporalOutputScratch.values()].map(({ buffer }) => buffer),
     ];
     const resources = [
       inBuf,
@@ -1909,6 +2095,7 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     temporalStateUnpackU = null;
     temporalStateScratch.clear();
     temporalAuxScratch.clear();
+    temporalOutputScratch.clear();
     temporalAuxPipe = null;
     temporalStatePipes.clear();
     snapshotExtPipe = null; snapshotTexPipe = null;
@@ -2279,6 +2466,12 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
           largestTile.padW,
           largestTile.padH,
         );
+        ensureTemporalOutputScratch(
+          runGraph,
+          largestTile.padW,
+          largestTile.padH,
+          scale,
+        );
       }
       ensureInBuf(largestTile.padW, largestTile.padH);
       ensureSnapshotTex(srcW, srcH);
@@ -2438,6 +2631,7 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
         const tile = tiles[tileIndex];
         let inTensor = null;
         let auxiliaryTensors = [];
+        let outputFetchTensors = [];
         let resultTensors = [];
         let retainedResultTensors = new Set();
         try {
@@ -2514,6 +2708,16 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
               feeds[descriptor.name] = wrapper;
             }
             fetches = Object.keys(runGraph.outputs);
+            if (usesTemporalAtlas) {
+              const preallocated = createTemporalOutputFetches(
+                runGraph,
+                tile,
+                scale,
+                runOrt.Tensor,
+              );
+              fetches = preallocated.fetches;
+              outputFetchTensors = preallocated.tensors;
+            }
           }
           const result = await runSession.run(feeds, fetches);
           if (!result || typeof result !== "object") {
@@ -2663,6 +2867,7 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
             runDevice,
             inTensor,
             ...auxiliaryTensors,
+            ...outputFetchTensors,
             ...resultTensors.filter((tensor) => !retainedResultTensors.has(tensor)),
           );
         }

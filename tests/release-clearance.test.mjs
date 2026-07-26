@@ -33,6 +33,35 @@ const neuralModelProvenanceMarkers = [
   "f07aaffda04c7e69f11e6bfaf8023a6435471459",
   "4a699ec4863d96a91fc265948a0c90033f7e8735d515524dcf3444736406e0c2",
 ];
+const cdaVsrArtifacts = new Map([
+  [
+    "model/neural/cda-vsr-initializer.onnx",
+    "7773490658a7cad663e9b4f7e9cc8269b3d0c7a9a8e5840ec3151e895c1161f1",
+  ],
+  [
+    "model/neural/cda-vsr-recurrent.onnx",
+    "442be6f8d356889070ed70acdb49f9d2d77f24b6947e51e823404ca5a6d66a05",
+  ],
+]);
+const cdaVsrEvidence = [
+  provenanceFile,
+  "THIRD_PARTY_NOTICES.md",
+  "tools/cda-vsr/README.md",
+  "tools/cda-vsr/promote_bundled.py",
+  "https://github.com/sspBIT/CDA-VSR/tree/5707d997759996f19521c3beaddfb3d1ea965d44",
+  "https://github.com/sspBIT/CDA-VSR/blob/5707d997759996f19521c3beaddfb3d1ea965d44/README.md",
+  "https://github.com/sspBIT/CDA-VSR/blob/5707d997759996f19521c3beaddfb3d1ea965d44/NOTICE",
+];
+const cdaVsrProvenanceMarkers = [
+  "5707d997759996f19521c3beaddfb3d1ea965d44",
+  "0defb80e5fcbaa2abd0eb9cbc4f4f2050a68e94fa6f743aa48a785cc734fd87b",
+  "afc8745b890289ae421c500279d9ccf2a27c92cf3e71133b20840c7816e86d3e",
+  "7d688658a2acdf249d5224dac7c6d4cdad8764ecc02e34084bc0306cabf3ac0d",
+  "c1c69f1163f2d83bfa8af40ed69edc9cfc962d50e86c79c31f2019cee7c7af24",
+  "7773490658a7cad663e9b4f7e9cc8269b3d0c7a9a8e5840ec3151e895c1161f1",
+  "442be6f8d356889070ed70acdb49f9d2d77f24b6947e51e823404ca5a6d66a05",
+  "License not specified by upstream",
+];
 const highX2Artifacts = new Map([
   [
     "shaders/upstream/FSRCNNX_x2_56-16-4-1.glsl",
@@ -136,6 +165,16 @@ test("current release-clearance record is structurally valid and nonblocking", (
   );
   for (const reference of neuralModelEvidence) assert.ok(neuralGate.evidence.includes(reference));
   for (const marker of neuralModelProvenanceMarkers) assert.ok(provenance.includes(marker));
+
+  const cdaGate = result.ledger.gates.find((gate) => gate.id === "cda-vsr-license-review");
+  assert.equal(cdaGate.status, "accepted-risk");
+  assert.equal(cdaGate.riskAcceptance.reviewDeferred, true);
+  assert.deepEqual(
+    cdaGate.artifacts.map(({ path, sha256, disposition }) => ({ path, sha256, disposition })),
+    [...cdaVsrArtifacts].map(([path, sha256]) => ({ path, sha256, disposition: "present" })),
+  );
+  for (const reference of cdaVsrEvidence) assert.ok(cdaGate.evidence.includes(reference));
+  for (const marker of cdaVsrProvenanceMarkers) assert.ok(provenance.includes(marker));
 
   const debandGate = result.ledger.gates.find(
     (gate) => gate.id === "unresolved-deband-port-origin",

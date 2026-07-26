@@ -11,5 +11,126 @@
     "output": "output",
     "fp16": true,
     "arch": "RealESRGAN Compact"
+  },
+  {
+    "key": "cda-vsr-4x",
+    "label": "CDA-VSR 4x (mixed FP16)",
+    "scale": 4,
+    "fp16": false,
+    "arch": "CDA-VSR",
+    "license": "Not specified by upstream",
+    "contract": {
+      "version": 2,
+      "mode": "temporal",
+      "resetGraph": "initialize",
+      "recurrentGraph": "recurrent",
+      "graphs": {
+        "initialize": {
+          "file": "cda-vsr-initializer.onnx",
+          "inputs": {
+            "frame": {
+              "channels": 3,
+              "dtype": "float32",
+              "role": "rgb"
+            }
+          },
+          "outputs": {
+            "next_state_high": {
+              "channels": 64,
+              "dtype": "float16",
+              "role": "state-out",
+              "state": "high"
+            },
+            "next_state_low": {
+              "channels": 64,
+              "dtype": "float16",
+              "role": "state-out",
+              "state": "low"
+            },
+            "output": {
+              "channels": 3,
+              "dtype": "float32",
+              "role": "rgb"
+            }
+          }
+        },
+        "recurrent": {
+          "file": "cda-vsr-recurrent.onnx",
+          "inputs": {
+            "frame": {
+              "channels": 3,
+              "dtype": "float32",
+              "role": "rgb"
+            },
+            "motion": {
+              "channels": 2,
+              "dtype": "float32",
+              "provider": "decoded-cda-v1",
+              "role": "motion"
+            },
+            "residual": {
+              "channels": 1,
+              "dtype": "float32",
+              "provider": "decoded-cda-v1",
+              "role": "residual"
+            },
+            "state_high": {
+              "channels": 64,
+              "dtype": "float16",
+              "reset": "required",
+              "role": "state-in",
+              "state": "high"
+            },
+            "state_low": {
+              "channels": 64,
+              "dtype": "float16",
+              "reset": "required",
+              "role": "state-in",
+              "state": "low"
+            }
+          },
+          "outputs": {
+            "next_state_high": {
+              "channels": 64,
+              "dtype": "float16",
+              "role": "state-out",
+              "state": "high"
+            },
+            "next_state_low": {
+              "channels": 64,
+              "dtype": "float16",
+              "role": "state-out",
+              "state": "low"
+            },
+            "output": {
+              "channels": 3,
+              "dtype": "float32",
+              "role": "rgb"
+            }
+          }
+        }
+      },
+      "tiling": {
+        "halo": 64,
+        "haloDerivation": {
+          "alignment": 8,
+          "fixedRecurrentRadius": 35,
+          "minimum": 64,
+          "motionSearchRadius": 8
+        },
+        "inputAlignment": 8,
+        "kind": "temporal-state-atlas-v1",
+        "largestLogicalBytesPerSourcePixel": 512,
+        "preferredInputExtent": 512,
+        "scale": 4,
+        "stateAtlas": {
+          "arrayLayersPerState": 16,
+          "channelsPerState": 64,
+          "stateCount": 2,
+          "textureFormat": "rgba16float"
+        },
+        "workgroupSize": 8
+      }
+    }
   }
 ]

@@ -487,6 +487,7 @@ test("extension-frame session copies, infers, SSim-downscales, sharpens, and pre
   assert.deepEqual(strengths, [1.25]);
   assert.deepEqual(result.presentation, {
     source: { width: 4, height: 2 },
+    native: { width: 8, height: 4 },
     output: { width: 4, height: 2 },
     ssimds: {
       source: { width: 8, height: 4 },
