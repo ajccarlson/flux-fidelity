@@ -86,6 +86,26 @@ group is sampled with standard ONNX `GridSample` using MMCV's interleaved
 `[y, x]` offset order, multiplied by its modulation mask, concatenated, and
 passed through the checkpoint's original 1×1 convolution.
 
+### Derived 2× head experiment
+
+Add `--derive-x2-head` to `export` and `parity` to create a local-only 2×
+variant. After strict loading of the original 4× checkpoint, the adapter
+averages each aligned 2×2 group of subpixel kernels and biases into a
+12-channel `PixelShuffle(2)` head and uses the matching 2× bilinear residual.
+Its output is numerically equivalent to aligned 2×2 area reduction of the
+native 4× model, but not to the extension's adaptive SSimDownscaler. Receipts
+record the derivation and keep `shipping_catalog` false; promotion requires a
+separate browser quality and performance comparison.
+
+```sh
+.venv/bin/python tools/cda-vsr/cda_tool.py export \
+  --source ../CDA-VSR \
+  --checkpoint ../CDA-VSR/pretrained_models/best.pth \
+  --precision mixed-fp16 \
+  --derive-x2-head \
+  --out-dir tmp/cda-vsr/x2
+```
+
 ## Recheck
 
 Re-run PyTorch/ONNX sequence parity:
