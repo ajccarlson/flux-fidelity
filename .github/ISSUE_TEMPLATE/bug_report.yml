@@ -1,0 +1,53 @@
+name: Bug report
+description: Report reproducible extension behavior that is not security-sensitive.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For security or privacy issues, use [private vulnerability reporting](https://github.com/ajccarlson/fsrcnnx-ext/security/advisories/new) instead.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Include what you expected and what occurred instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Open...
+        2. Select...
+        3. Observe...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: v0.49.0 or a commit SHA
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and version
+      placeholder: Chrome 140.0
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Operating system and GPU
+      placeholder: Windows 11, NVIDIA RTX 4070
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Additional details
+      description: Add relevant console output, screenshots, video properties, or site constraints. Remove private data.
