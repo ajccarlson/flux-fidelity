@@ -165,7 +165,7 @@
     },
     {
       "id": "lgpl-compliance-review",
-      "status": "blocked",
+      "status": "accepted-risk",
       "artifacts": [
         {
           "path": "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl",
@@ -209,7 +209,7 @@
         },
         {
           "path": "docs/compliance/LGPL_REBUILDING.md",
-          "sha256": "e1948c021281cdf7420c4fb881b30a93ac7f53937a47d38af1939111eeaf52eb"
+          "sha256": "1e7843deaf5da74a884a78b98205f99d034cf12cdfece0b8bec1b72cf36843bd"
         },
         {
           "path": "LICENSE",
@@ -238,11 +238,17 @@
         "docs/compliance/MODEL_PROVENANCE.md",
         "THIRD_PARTY_NOTICES.md"
       ],
-      "resolution": "Exact source, transformation tooling, rebuilding and Load unpacked substitution instructions, license texts, notices, and artifact hashes are bundled; obtain and record qualified legal review confirming that the distribution plan satisfies every applicable LGPL obligation before clearing."
+      "riskAcceptance": {
+        "acceptedBy": "repository owner",
+        "acceptedOn": "2026-07-25",
+        "reviewDeferred": true,
+        "rationale": "Small-scale, non-commercial release; preserve all bundled license, source, notice, rebuilding, and substitution materials while deferring external legal review."
+      },
+      "resolution": "Exact source, transformation tooling, rebuilding and Load unpacked substitution instructions, license texts, notices, and artifact hashes are bundled."
     },
     {
       "id": "onnx-runtime-third-party-review",
-      "status": "blocked",
+      "status": "accepted-risk",
       "artifacts": [
         {
           "path": "vendor/ort/ort.webgpu.min.mjs",
@@ -271,7 +277,13 @@
         "vendor/ort/LICENSE",
         "vendor/ort/ThirdPartyNotices.txt"
       ],
-      "resolution": "The exact upstream MIT license and third-party notice set are bundled and byte-pinned; complete and record qualified review of which third-party notices and obligations apply to the distributed Web runtime files before clearing."
+      "riskAcceptance": {
+        "acceptedBy": "repository owner",
+        "acceptedOn": "2026-07-25",
+        "reviewDeferred": true,
+        "rationale": "Small-scale, non-commercial release; preserve the exact upstream license and third-party notice set while deferring external applicability review."
+      },
+      "resolution": "The exact upstream MIT license and third-party notice set are bundled and byte-pinned."
     }
   ]
 }

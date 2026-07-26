@@ -18,7 +18,7 @@ const pinnedArtifacts = {
   "LICENSES/LGPL-3.0.txt": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118",
   "LICENSES/Real-ESRGAN-BSD-3-Clause.txt": "4a699ec4863d96a91fc265948a0c90033f7e8735d515524dcf3444736406e0c2",
   "NOTICE": "42dfd832a3c91892045eb6a2c5f76df4aa185c794145f0c3726fa20054c5daaa",
-  "docs/compliance/LGPL_REBUILDING.md": "e1948c021281cdf7420c4fb881b30a93ac7f53937a47d38af1939111eeaf52eb",
+  "docs/compliance/LGPL_REBUILDING.md": "1e7843deaf5da74a884a78b98205f99d034cf12cdfece0b8bec1b72cf36843bd",
   "model/rife_v4.26.onnx": "af25762dfec02a4bbb949decea63988b01fa56c46c0ff9dc66ac8e2f12cbb661",
   "model/rife_v4.26_fp16.onnx": "d5672f39b493609220c95c709542d6b99204145a67d9ca496d4500cd8895301f",
   "model/neural/realesrganv2_animevideo_xsx2.fp16.onnx": "f674a410b528aec55bb9f9f594cb1aaea580237adb29abd9dc32296d34b690a0",

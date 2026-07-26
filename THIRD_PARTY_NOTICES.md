@@ -12,7 +12,7 @@ Copyright (c) Microsoft Corporation
 
 Upstream: <https://github.com/microsoft/onnxruntime/tree/8f0278c77bf44b0cc83c098c6c722b92a36ac4b5>
 
-This package preserves the official MIT text from the pinned source commit as `vendor/ort/LICENSE` (SHA-256 `2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c`). The official npm tarball does not carry a notice file, so the package also preserves `vendor/ort/ThirdPartyNotices.txt` byte-for-byte from that commit (SHA-256 `0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2`). Bundling the license and upstream notice set does not replace the pending review of which notices and obligations apply to the distributed Web runtime files.
+This package preserves the official MIT text from the pinned source commit as `vendor/ort/LICENSE` (SHA-256 `2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c`). The official npm tarball does not carry a notice file, so the package also preserves `vendor/ort/ThirdPartyNotices.txt` byte-for-byte from that commit (SHA-256 `0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2`). The repository owner has deferred external applicability review and accepted the residual risk; the bundled license and notice set remain part of every package.
 
 ### ArtCNN
 
@@ -67,9 +67,9 @@ The SSimDownscaler WebGPU port derives from the packaged `shaders/upstream/SSimD
 
 Upstream: <https://gist.github.com/igv/36508af3ffc84410fe39761d6969be10/38992bce7f9ff844f800820df0908692b65bb74a>
 
-The Standard and SSim upstream files state that they may be redistributed and/or modified under the GNU Lesser General Public License, version 3 or, at the recipient's option, any later version; they disclaim warranty. High is treated consistently as LGPL-3.0-or-later. Qualified review of the overall LGPL distribution plan remains pending.
+The Standard and SSim upstream files state that they may be redistributed and/or modified under the GNU Lesser General Public License, version 3 or, at the recipient's option, any later version; they disclaim warranty. High is treated consistently as LGPL-3.0-or-later.
 
-The package includes the exact FSRCNNX and SSim upstream sources, complete official [`LGPL-3.0.txt`](LICENSES/LGPL-3.0.txt) text and [`GPL-3.0.txt`](LICENSES/GPL-3.0.txt) companion, the FSRCNNX transformation script, generated source metadata, and [`LGPL_REBUILDING.md`](docs/compliance/LGPL_REBUILDING.md) with offline rebuilding and Chromium substitution instructions. Sources with embedded notices retain them, and the generated/ported files identify local modifications. The Apache-2.0 license for project-authored material does not restrict modification, reverse engineering, or recombination needed to exercise LGPL rights in these portions. These materials do not clear public distribution: qualified review must still confirm that the plan satisfies every applicable obligation.
+The package includes the exact FSRCNNX and SSim upstream sources, complete official [`LGPL-3.0.txt`](LICENSES/LGPL-3.0.txt) text and [`GPL-3.0.txt`](LICENSES/GPL-3.0.txt) companion, the FSRCNNX transformation script, generated source metadata, and [`LGPL_REBUILDING.md`](docs/compliance/LGPL_REBUILDING.md) with offline rebuilding and Chromium substitution instructions. Sources with embedded notices retain them, and the generated/ported files identify local modifications. The Apache-2.0 license for project-authored material does not restrict modification, reverse engineering, or recombination needed to exercise LGPL rights in these portions.
 
 ## Adaptive Sharpen redistribution notice
 
