@@ -253,7 +253,7 @@
         },
         {
           "path": "src/core/fsrcnnx-ssimds.js",
-          "sha256": "5bec6c839d512e504e44789765c0fb1edba3b9888755a8625becde09e6386101"
+          "sha256": "70ccb3d08686bc2cb244683c8800dd1117cad916611c51bb069ff4aa35f3ed9e"
         },
         {
           "path": "tools/transpile.js",

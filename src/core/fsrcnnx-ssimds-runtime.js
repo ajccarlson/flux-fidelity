@@ -7,7 +7,7 @@
 // they're rebuilt when hi-res or target size changes. Bind groups are cached.
 
 import {
-  buildMeanShader, buildL2Shader, SSIMDS_MR_WGSL, SSIMDS_FINAL_WGSL,
+  buildL2Shader, SSIMDS_MR_WGSL, SSIMDS_FINAL_WGSL,
 } from "./fsrcnnx-ssimds.js";
 
 const FMT = "rgba16float";
@@ -115,12 +115,14 @@ export function estimateSsimWork(hiW, hiH, dW, dH) {
   const ratioX = hiW / dW, ratioY = hiH / dH;
   const tapsX = tapCount(ratioX, "horizontal direct pass");
   const tapsY = tapCount(ratioY, "vertical direct pass");
-  const meanTapsPerPixel = checkedProduct([tapsX, tapsY], "mean taps per pixel");
+  const meanTapsPerPixel = checkedSum([tapsX, tapsY], "separable mean taps per pixel");
   const outputPixels = checkedProduct([dW, dH], "SSimDownscaler output area");
+  const oneMomentSamples = checkedSum([
+    checkedProduct([hiW, dH, tapsY], "direct vertical moment samples"),
+    checkedProduct([outputPixels, tapsX], "direct horizontal moment samples"),
+  ], "direct separable moment samples");
   const directTerms = [
-    checkedProduct([outputPixels, meanTapsPerPixel], "direct mean samples"),
-    checkedProduct([hiW, dH, tapsY], "direct vertical second-moment samples"),
-    checkedProduct([outputPixels, tapsX], "direct horizontal second-moment samples"),
+    checkedProduct([oneMomentSamples, 2], "direct first and second moment samples"),
     checkedProduct([outputPixels, 28], "SSimDownscaler reconstruction samples"),
   ];
   const directEstimatedTextureSamples = checkedSum(
@@ -230,16 +232,23 @@ export class SsimDownscaler {
           return texture;
         };
         if (plan.path === "direct") {
+          const horizontal = this._renderPipeline(
+            buildL2Shader(0, ratioX, false),
+          );
           candidatePipelines = {
-            mean: this._renderPipeline(buildMeanShader(ratioX, ratioY)),
-            l2v: this._renderPipeline(buildL2Shader(1, ratioY)), // vertical, squares input
-            l2h: this._renderPipeline(buildL2Shader(0, ratioX)), // horizontal
+            verticalMean: this._renderPipeline(
+              buildL2Shader(1, ratioY, false),
+            ),
+            verticalL2: this._renderPipeline(
+              buildL2Shader(1, ratioY, true),
+            ),
+            horizontal,
             mr: this._renderPipeline(SSIMDS_MR_WGSL),
             final: this._renderPipeline(SSIMDS_FINAL_WGSL),
           };
           candidateTextures = {
+            vertical: makeTexture(hiW, dH, "ssimds-moment-v"),
             mean: makeTexture(dW, dH, "ssimds-mean"),
-            l2v: makeTexture(hiW, dH, "ssimds-l2v"),
             l2: makeTexture(dW, dH, "ssimds-l2"),
             mr: makeTexture(dW, dH, "ssimds-mr"),
             out: makeTexture(dW, dH, "ssimds-out"),
@@ -294,14 +303,19 @@ export class SsimDownscaler {
       let candidateBindGroups;
       if (plan.path === "direct") {
         candidateBindGroups = {
-          mean: bg(candidatePipelines.mean, [
+          verticalMean: bg(candidatePipelines.verticalMean, [
             { binding: 0, resource: s }, { binding: 1, resource: hiTex.createView() },
           ]),
-          l2v: bg(candidatePipelines.l2v, [
+          horizontalMean: bg(candidatePipelines.horizontal, [
+            { binding: 0, resource: s },
+            { binding: 1, resource: candidateTextures.vertical.createView() },
+          ]),
+          verticalL2: bg(candidatePipelines.verticalL2, [
             { binding: 0, resource: s }, { binding: 1, resource: hiTex.createView() },
           ]),
-          l2h: bg(candidatePipelines.l2h, [
-            { binding: 0, resource: s }, { binding: 1, resource: candidateTextures.l2v.createView() },
+          horizontalL2: bg(candidatePipelines.horizontal, [
+            { binding: 0, resource: s },
+            { binding: 1, resource: candidateTextures.vertical.createView() },
           ]),
           mr: bg(candidatePipelines.mr, [
             { binding: 0, resource: s },
@@ -389,9 +403,30 @@ export class SsimDownscaler {
     }
     let meanTexture;
     if (this.path === "direct") {
-      this._pass(enc, this.pipelines.mean, this.bindGroups.mean, this.textures.mean);
-      this._pass(enc, this.pipelines.l2v, this.bindGroups.l2v, this.textures.l2v);
-      this._pass(enc, this.pipelines.l2h, this.bindGroups.l2h, this.textures.l2);
+      this._pass(
+        enc,
+        this.pipelines.verticalMean,
+        this.bindGroups.verticalMean,
+        this.textures.vertical,
+      );
+      this._pass(
+        enc,
+        this.pipelines.horizontal,
+        this.bindGroups.horizontalMean,
+        this.textures.mean,
+      );
+      this._pass(
+        enc,
+        this.pipelines.verticalL2,
+        this.bindGroups.verticalL2,
+        this.textures.vertical,
+      );
+      this._pass(
+        enc,
+        this.pipelines.horizontal,
+        this.bindGroups.horizontalL2,
+        this.textures.l2,
+      );
       meanTexture = this.textures.mean;
     } else if (this.path === "multistage") {
       for (let index = 0; index < this.lastPlan.stages.length; index++) {

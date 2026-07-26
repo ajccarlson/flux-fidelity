@@ -193,6 +193,7 @@ function installGlobals(t, entries) {
     UNIFORM: 1,
     COPY_DST: 2,
     STORAGE: 4,
+    COPY_SRC: 8,
   };
   globalThis.GPUTextureUsage = {
     STORAGE_BINDING: 1,
@@ -403,6 +404,7 @@ async function createHarness(
   const calls = [];
   const wrappers = [];
   const resultTensors = [];
+  const logs = [];
   const releases = { initialize: 0, recurrent: 0 };
   const graphRuns = { initialize: 0, recurrent: 0 };
   const graphRunDelays = new Map();
@@ -461,11 +463,18 @@ async function createHarness(
           delay.entered();
           await delay.promise;
         }
+        const preallocatedFetches = Array.isArray(fetches)
+          ? {}
+          : fetches;
+        const fetchNames = Array.isArray(fetches)
+          ? [...fetches]
+          : Object.keys(fetches);
         const call = {
           graph,
           graphIndex,
           feeds,
-          fetches: [...fetches],
+          fetches: fetchNames,
+          preallocatedFetches,
           results: null,
         };
         calls.push(call);
@@ -480,18 +489,28 @@ async function createHarness(
           throw new Error("later temporal tile failed");
         }
         const [, , height, width] = feeds.frame.options.dims;
+        const outputTensor = (name, type, dims, label) => {
+          const provided = preallocatedFetches[name];
+          if (!provided) return makeResultTensor(type, dims, label);
+          assert.equal(provided.type, type);
+          assert.deepEqual(provided.dims, dims);
+          return provided;
+        };
         const results = {
-          output: makeResultTensor(
+          output: outputTensor(
+            "output",
             "float32",
             [1, 3, height * 4, width * 4],
             `${graph}-${graphIndex}-rgb`,
           ),
-          next_state_low: makeResultTensor(
+          next_state_low: outputTensor(
+            "next_state_low",
             stateDtype,
             [1, 64, height, width],
             `${graph}-${graphIndex}-low`,
           ),
-          next_state_high: makeResultTensor(
+          next_state_high: outputTensor(
+            "next_state_high",
             stateDtype,
             [1, 64, height, width],
             `${graph}-${graphIndex}-high`,
@@ -510,6 +529,14 @@ async function createHarness(
         const wrapper = {
           buffer,
           options,
+          type: options.dataType,
+          dataType: options.dataType,
+          dims: options.dims,
+          size: options.dims.reduce(
+            (product, value) => product * value,
+            1,
+          ),
+          gpuBuffer: buffer,
           disposed: false,
           dispose() { this.disposed = true; },
         };
@@ -534,7 +561,7 @@ async function createHarness(
   };
   const module = await loadNeuralEngine(deps);
   const engine = module.createNeuralEngine({
-    log: () => {},
+    log: (...values) => logs.push(values.join(" ")),
     warn: () => {},
   });
   await engine.init(entry.key);
@@ -576,6 +603,7 @@ async function createHarness(
     calls,
     wrappers,
     resultTensors,
+    logs,
     releases,
     auxiliary,
     delayNextGraphRun(graph) {
@@ -606,6 +634,11 @@ function atlasTextures(harness, width, height) {
     label.endsWith(`-${width}x${height}`));
 }
 
+function temporalOutputBuffers(harness) {
+  return harness.buffers.filter(({ label }) =>
+    label?.startsWith("neural-temporal-output-"));
+}
+
 function assertTileFeedDims(call, width, height) {
   assert.deepEqual(call.feeds.frame.options.dims, [1, 3, height, width]);
   if (call.graph !== "recurrent") return;
@@ -615,24 +648,110 @@ function assertTileFeedDims(call, width, height) {
   assert.deepEqual(call.feeds.state_high.options.dims, [1, 64, height, width]);
 }
 
+test("mixed CDA runtime executes the optimized five-tile 720p plan", async (t) => {
+  const harness = await createHarness(t);
+  const auxiliary = harness.auxiliary(1280, 720);
+  assert.match(
+    harness.logs.at(-1),
+    /4x, mixed FP16\/FP32 contract, dynamic dims/,
+  );
+  assert.doesNotMatch(harness.logs.at(-1), /fp32 weights|FP32 execution/);
+
+  const result = await harness.engine.run(
+    harness.source,
+    1280,
+    720,
+    { auxiliary },
+  );
+
+  assert.deepEqual(
+    { outW: result.outW, outH: result.outH },
+    { outW: 5120, outH: 2880 },
+  );
+  assert.deepEqual(
+    harness.calls.map(({ graph }) => graph),
+    Array(5).fill("initialize"),
+  );
+  assert.deepEqual(
+    harness.calls.map(({ feeds }) => [
+      feeds.frame.options.dims[3],
+      feeds.frame.options.dims[2],
+    ]),
+    [
+      [360, 720],
+      [360, 720],
+      [360, 720],
+      [360, 720],
+      [352, 720],
+    ],
+  );
+  const outputBuffers = temporalOutputBuffers(harness);
+  assert.equal(outputBuffers.length, 3);
+  assert.deepEqual(
+    outputBuffers.map(({ size }) => size).sort((a, b) => a - b),
+    [
+      360 * 720 * 64 * 2,
+      360 * 720 * 64 * 2,
+      360 * 720 * 3 * 4 * 4 * 4,
+    ],
+  );
+  assert.ok(outputBuffers.every(
+    ({ usage }) =>
+      usage === (
+        GPUBufferUsage.COPY_SRC |
+        GPUBufferUsage.COPY_DST |
+        GPUBufferUsage.STORAGE
+      ),
+  ));
+  assert.equal(
+    harness.resultTensors.length,
+    0,
+    "ORT receives caller-owned output tensors instead of allocating per tile",
+  );
+  const firstFetches = harness.calls[0].preallocatedFetches;
+  for (const call of harness.calls) {
+    assert.deepEqual(call.fetches, [
+      "output",
+      "next_state_low",
+      "next_state_high",
+    ]);
+    for (const name of call.fetches) {
+      assert.equal(
+        call.preallocatedFetches[name].gpuBuffer,
+        firstFetches[name].gpuBuffer,
+        `${name} reuses one caller-owned GPU buffer across serial tiles`,
+      );
+    }
+  }
+  assert.deepEqual(
+    {
+      lastTiles: harness.engine.stats().lastTiles,
+      tileRuns: harness.engine.stats().tileRuns,
+    },
+    { lastTiles: 5, tileRuns: 5 },
+  );
+
+  await harness.engine.dispose();
+});
+
 test("mixed CDA tiles recurrent state through a transactional atlas", async (t) => {
   const harness = await createHarness(t);
-  const auxiliary = harness.auxiliary(640, 360);
+  const auxiliary = harness.auxiliary(854, 480);
   const expectedTiles = [
-    { width: 448, height: 360 },
-    { width: 320, height: 360 },
+    { width: 488, height: 480 },
+    { width: 494, height: 480 },
   ];
   assert.equal(harness.device.features.has("shader-f16"), true);
 
   const initialized = await harness.engine.run(
     harness.source,
-    640,
-    360,
+    854,
+    480,
     { auxiliary },
   );
   assert.deepEqual(
     { outW: initialized.outW, outH: initialized.outH },
-    { outW: 2560, outH: 1440 },
+    { outW: 3416, outH: 1920 },
   );
   assert.deepEqual(
     harness.calls.map(({ graph }) => graph),
@@ -681,6 +800,7 @@ test("mixed CDA tiles recurrent state through a transactional atlas", async (t) 
       "next_state_high",
     ]);
   });
+  const initialOutputFetches = harness.calls[0].preallocatedFetches;
 
   const initialStateBuffers = new Set(
     harness.calls.flatMap(({ results }) => [
@@ -688,21 +808,21 @@ test("mixed CDA tiles recurrent state through a transactional atlas", async (t) 
       results.next_state_high.gpuBuffer,
     ]),
   );
-  const firstAtlas = atlasTextures(harness, 640, 360);
+  const firstAtlas = atlasTextures(harness, 854, 480);
   assert.deepEqual(
     firstAtlas.map(({ label }) => label).sort(),
     [
-      "neural-temporal-high-bank0-640x360",
-      "neural-temporal-high-bank1-640x360",
-      "neural-temporal-low-bank0-640x360",
-      "neural-temporal-low-bank1-640x360",
+      "neural-temporal-high-bank0-854x480",
+      "neural-temporal-high-bank1-854x480",
+      "neural-temporal-low-bank0-854x480",
+      "neural-temporal-low-bank1-854x480",
     ],
   );
   for (const texture of firstAtlas) {
     assert.equal(texture.format, "rgba16float");
     assert.deepEqual(texture.size, {
-      width: 640,
-      height: 360,
+      width: 854,
+      height: 480,
       depthOrArrayLayers: 16,
     });
     assert.equal(texture.views[0].options.dimension, "2d-array");
@@ -722,8 +842,8 @@ test("mixed CDA tiles recurrent state through a transactional atlas", async (t) 
   const recurrentBindGroupStart = harness.bindGroups.length;
   await harness.engine.run(
     harness.source,
-    640,
-    360,
+    854,
+    480,
     { auxiliary },
   );
   const recurrentCalls = harness.calls.slice(2, 4);
@@ -748,6 +868,15 @@ test("mixed CDA tiles recurrent state through a transactional atlas", async (t) 
     recurrentCalls.map(({ graph }) => graph),
     ["recurrent", "recurrent"],
   );
+  for (const call of recurrentCalls) {
+    for (const name of call.fetches) {
+      assert.equal(
+        call.preallocatedFetches[name].gpuBuffer,
+        initialOutputFetches[name].gpuBuffer,
+        `${name} output scratch is shared by initializer and recurrent graphs`,
+      );
+    }
+  }
   const firstSuccessfulScopeEnd = harness.events.indexOf(
     initialScopeEvents.at(-1),
   );
@@ -814,26 +943,26 @@ test("mixed CDA tiles recurrent state through a transactional atlas", async (t) 
   );
   assert.equal(
     recurrentCalls[0].feeds.state_low.buffer.size,
-    448 * 360 * 64 * 2,
+    494 * 480 * 64 * 2,
   );
   assert.equal(
     recurrentCalls[0].feeds.state_high.buffer.size,
-    448 * 360 * 64 * 2,
+    494 * 480 * 64 * 2,
   );
   assert.equal(
     recurrentCalls[0].feeds.motion.buffer.size,
-    448 * 360 * 2 * 4,
+    494 * 480 * 2 * 4,
   );
   assert.equal(
     recurrentCalls[0].feeds.residual.buffer.size,
-    448 * 360 * 1 * 4,
+    494 * 480 * 1 * 4,
   );
 
   const secondRecurrentBindGroupStart = harness.bindGroups.length;
   await harness.engine.run(
     harness.source,
-    640,
-    360,
+    854,
+    480,
     { auxiliary },
   );
   const secondRecurrentStateBindGroups =
@@ -863,8 +992,8 @@ test("mixed CDA tiles recurrent state through a transactional atlas", async (t) 
 
   await harness.engine.run(
     harness.source,
-    640,
-    360,
+    854,
+    480,
     { reset: true, auxiliary },
   );
   assert.deepEqual(
@@ -905,20 +1034,20 @@ test("mixed CDA tiles recurrent state through a transactional atlas", async (t) 
 
 test("a failed later tile never commits its candidate atlas bank", async (t) => {
   const harness = await createHarness(t);
-  const auxiliary = harness.auxiliary(640, 360);
+  const auxiliary = harness.auxiliary(854, 480);
 
   await harness.engine.run(
     harness.source,
-    640,
-    360,
+    854,
+    480,
     { auxiliary },
   );
   harness.failNextLaterRecurrentTile();
   await assert.rejects(
     harness.engine.run(
       harness.source,
-      640,
-      360,
+      854,
+      480,
       { auxiliary },
     ),
     /later temporal tile failed/,
@@ -944,8 +1073,8 @@ test("a failed later tile never commits its candidate atlas bank", async (t) => 
 
   await harness.engine.run(
     harness.source,
-    640,
-    360,
+    854,
+    480,
     { auxiliary },
   );
   assert.deepEqual(
@@ -964,7 +1093,7 @@ test("a failed later tile never commits its candidate atlas bank", async (t) => 
   await harness.engine.dispose();
   assert.ok(harness.wrappers.every(({ disposed }) => disposed));
   assert.ok(harness.resultTensors.every(({ disposed }) => disposed));
-  assert.ok(atlasTextures(harness, 640, 360).every(({ destroyed }) => destroyed));
+  assert.ok(atlasTextures(harness, 854, 480).every(({ destroyed }) => destroyed));
   assert.deepEqual(harness.releases, {
     initialize: 1,
     recurrent: 1,
@@ -973,15 +1102,15 @@ test("a failed later tile never commits its candidate atlas bank", async (t) => 
 
 test("a submitted frame with a GPU validation error is not committed", async (t) => {
   const harness = await createHarness(t);
-  const auxiliary = harness.auxiliary(640, 360);
+  const auxiliary = harness.auxiliary(854, 480);
 
   await harness.engine.run(
     harness.source,
-    640,
-    360,
+    854,
+    480,
     { auxiliary },
   );
-  const initialAtlas = atlasTextures(harness, 640, 360);
+  const initialAtlas = atlasTextures(harness, 854, 480);
   const initialBuffers = [...harness.buffers];
   const submissionsBeforeFailure = harness.submissions.length;
   const validationError = Object.assign(
@@ -993,8 +1122,8 @@ test("a submitted frame with a GPU validation error is not committed", async (t)
   await assert.rejects(
     harness.engine.run(
       harness.source,
-      640,
-      360,
+      854,
+      480,
       { auxiliary },
     ),
     (error) => {
@@ -1024,11 +1153,11 @@ test("a submitted frame with a GPU validation error is not committed", async (t)
 
   await harness.engine.run(
     harness.source,
-    640,
-    360,
+    854,
+    480,
     { auxiliary },
   );
-  const rebuiltAtlas = atlasTextures(harness, 640, 360)
+  const rebuiltAtlas = atlasTextures(harness, 854, 480)
     .filter((texture) => !initialAtlas.includes(texture));
   assert.equal(rebuiltAtlas.length, 4);
   assert.ok(
@@ -1163,20 +1292,20 @@ test("stop cancels an initialization queued behind OOM recovery", async (t) => {
 
 test("stop during a delayed error-scope pop prevents atlas commit", async (t) => {
   const harness = await createHarness(t);
-  const auxiliary = harness.auxiliary(640, 360);
+  const auxiliary = harness.auxiliary(854, 480);
 
   await harness.engine.run(
     harness.source,
-    640,
-    360,
+    854,
+    480,
     { auxiliary },
   );
   const delayedPop = harness.delayNextErrorScopePop();
   const scopeEventStart = harness.events.length;
   const recurrent = harness.engine.run(
     harness.source,
-    640,
-    360,
+    854,
+    480,
     { auxiliary },
   );
   await delayedPop.entered;
@@ -1195,8 +1324,8 @@ test("stop during a delayed error-scope pop prevents atlas commit", async (t) =>
   );
   await harness.engine.run(
     harness.source,
-    640,
-    360,
+    854,
+    480,
     { auxiliary },
   );
   assert.deepEqual(

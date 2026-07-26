@@ -381,12 +381,58 @@ function engineLabel(engine) {
   })[engine] || "Renderer";
 }
 
+function formatNeuralLabel(label, scale, option = false) {
+  const text = String(label || "");
+  const includesScale = Number.isInteger(scale) && scale > 0 && new RegExp(
+    `(?:^|[^0-9])(?:${scale}\\s*[x×]|[x×]\\s*${scale})(?:$|[^0-9])`,
+    "i",
+  ).test(text);
+  if (!Number.isInteger(scale) || scale < 1 || includesScale) {
+    return text;
+  }
+  return option ? `${text} (${scale}×)` : `${scale}× ${text}`;
+}
+
+function isCdaNeuralModel(status, selectedKey) {
+  const catalogLabel = Array.isArray(status.neuralModels)
+    ? status.neuralModels.find(({ key }) => key === selectedKey)?.label
+    : null;
+  return [selectedKey, status.neural?.label, catalogLabel]
+    .some((value) => typeof value === "string" && /\bcda(?:-vsr)?\b/i.test(value));
+}
+
+function formatReadyNeuralNote(neural, warnForCda) {
+  const pipelineMean = Number(neural.meanRunMs);
+  const pipelineRuns = Number(neural.runs);
+  const hasPipelineMean = Number.isFinite(pipelineMean) && pipelineMean >= 0 &&
+    (pipelineMean > 0 || (Number.isFinite(pipelineRuns) && pipelineRuns > 0));
+  const coreMean = Number(neural.mu);
+  const mean = hasPipelineMean
+    ? pipelineMean
+    : Number.isFinite(coreMean) && coreMean >= 0 ? coreMean : 0;
+  const count = (value) => {
+    const number = Number(value);
+    return Number.isFinite(number) && number >= 0 ? Math.trunc(number) : 0;
+  };
+  const tiles = count(neural.lastTiles);
+  const parts = [
+    `${hasPipelineMean ? "total" : "core"} mean ${mean.toFixed(1)} ms`,
+    `${tiles} ${tiles === 1 ? "tile" : "tiles"}`,
+    `skipped ${count(neural.skip)}`,
+  ];
+  if (warnForCda) parts.push("high GPU/memory use");
+  return parts.join(" · ");
+}
+
 function formatEngineModel(status, engine) {
   if (engine === "neural") {
     const neural = status.neural;
     const key = neural?.label || neural?.model || status.neuralModel;
     if (!key) return "—";
-    return `${neural?.scale || "?"}× ${key}`;
+    const scale = Number(neural?.scale);
+    return Number.isInteger(scale) && scale > 0
+      ? formatNeuralLabel(key, scale)
+      : `?× ${key}`;
   }
   if (!status.model) return "—";
   if (engine === "artcnn") return String(status.model).replace("ArtCNN_", "ArtCNN ");
@@ -777,7 +823,7 @@ export function createPopupController({
     const neuralItems = Array.isArray(status.neuralModels) && status.neuralModels.length
       ? status.neuralModels.map((model) => ({
           value: model.key,
-          label: `${model.label || model.key} (${model.scale}×)`,
+          label: formatNeuralLabel(model.label || model.key, model.scale, true),
         }))
       : [{ value: "", label: "No bundled neural models", disabled: true }];
     const selectedNeural = status.neural?.model || status.neuralModel || "";
@@ -794,9 +840,13 @@ export function createPopupController({
         $("neural-note").textContent = `Using ${engineLabel(fallback.to || effectiveEngine(status))} fallback` +
           (detail ? ` · ${detail}` : ".");
       } else {
+        const warnForCda = isCdaNeuralModel(status, selectedNeural);
         $("neural-note").textContent = status.neural?.ready
-          ? `mean ${(status.neural.mu || 0).toFixed(1)} ms · skipped ${status.neural.skip || 0}`
-          : (selectedNeural ? "Selected; initializes when video upscaling is active." : "No model selected.");
+          ? formatReadyNeuralNote(status.neural, warnForCda)
+          : (selectedNeural
+              ? "Selected; initializes when video upscaling is active." +
+                (warnForCda ? " High GPU/memory use." : "")
+              : "No model selected.");
       }
     } else {
       $("neural-note").textContent = "";

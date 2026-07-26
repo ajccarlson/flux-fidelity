@@ -273,7 +273,7 @@ test("tiny odd and non-square sources remain one clipped real-edge tile", () => 
   assert.equal(Object.isFrozen(plan.tiles[0]), true);
 });
 
-test("a source that fits the planned input extent is not split unnecessarily", () => {
+test("a source that fits the square-equivalent input budget is not split", () => {
   const plan = planTemporalNeuralTiling(450, 173, cda(), limits());
   assert.equal(plan.maxInputExtent, 512);
   assert.equal(plan.coreExtent, 450);
@@ -282,6 +282,25 @@ test("a source that fits the planned input extent is not split unnecessarily", (
     [plan.tiles[0].inputWidth, plan.tiles[0].inputHeight],
     [450, 173],
   );
+});
+
+test("rectangular sources use the complete area budget without a side cap", () => {
+  const plan = planTemporalNeuralTiling(640, 360, cda(), limits());
+  assert.equal(plan.maxInputExtent, 512);
+  assert.equal(plan.maxInputPixels, 512 * 512);
+  assert.equal(plan.tileColumns, 1);
+  assert.equal(plan.tileRows, 1);
+  assert.equal(plan.tiles.length, 1);
+  assert.deepEqual(
+    [plan.tiles[0].inputWidth, plan.tiles[0].inputHeight],
+    [640, 360],
+  );
+  assert.equal(plan.maxTileInputPixels, 640 * 360);
+  assert.equal(plan.maxTileInputWidth, 640);
+  assert.equal(plan.maxTileInputHeight, 360);
+  assert.equal(plan.totalTileInputPixels, 640 * 360);
+  assert.ok(plan.tiles[0].inputWidth > plan.maxInputExtent);
+  assert.ok(plan.tiles[0].logicalBytes <= plan.bindingLimit);
 });
 
 test("cores own every source pixel exactly once and halos are clipped", () => {
@@ -295,8 +314,8 @@ test("cores own every source pixel exactly once and halos are clipped", () => {
     assert.ok(tile.inputY >= 0);
     assert.ok(tile.inputX + tile.inputWidth <= width);
     assert.ok(tile.inputY + tile.inputHeight <= height);
-    assert.ok(tile.inputWidth <= plan.maxInputExtent);
-    assert.ok(tile.inputHeight <= plan.maxInputExtent);
+    assert.ok(tile.inputWidth * tile.inputHeight <= plan.maxInputPixels);
+    assert.ok(tile.logicalBytes <= plan.bindingLimit);
     assert.equal(tile.cropX, tile.stateCropX * 4);
     assert.equal(tile.cropY, tile.stateCropY * 4);
     assert.equal(tile.dstX, tile.coreX * 4);
@@ -343,12 +362,55 @@ test("128 MiB limits select bounded FP32 and mixed input extents", () => {
   assert.equal(fp32.maxInputExtent, 408);
   assert.equal(fp32.coreExtent, 280);
   assert.ok(fp32.maxTileLogicalBytes <= 128 * MIB);
+  assert.equal(fp32.tiles.length, 9);
 
   assert.equal(mixed.hardInputExtent, 512);
   assert.equal(mixed.maxInputExtent, 512);
   assert.equal(mixed.coreExtent, 384);
   assert.ok(mixed.maxTileLogicalBytes <= 128 * MIB);
+  assert.equal(mixed.tiles.length, 5);
   assert.ok(mixed.tiles.length < fp32.tiles.length);
+});
+
+test("720p mixed CDA uses five exact rectangular strips with 40% overlap", () => {
+  const width = 1280;
+  const height = 720;
+  const plan = planTemporalNeuralTiling(width, height, cda(), limits());
+
+  assert.equal(plan.tileColumns, 5);
+  assert.equal(plan.tileRows, 1);
+  assert.equal(plan.tiles.length, 5);
+  assert.deepEqual(
+    plan.tiles.map(({ inputWidth, inputHeight }) =>
+      [inputWidth, inputHeight]),
+    [
+      [360, 720],
+      [360, 720],
+      [360, 720],
+      [360, 720],
+      [352, 720],
+    ],
+  );
+  assert.deepEqual(
+    plan.tiles.map(({ coreWidth, coreHeight }) => [coreWidth, coreHeight]),
+    [
+      [296, 720],
+      [232, 720],
+      [232, 720],
+      [232, 720],
+      [288, 720],
+    ],
+  );
+  assert.equal(plan.maxTileInputPixels, 360 * 720);
+  assert.equal(plan.maxTileInputWidth, 360);
+  assert.equal(plan.maxTileInputHeight, 720);
+  assert.equal(plan.totalTileInputPixels, 1_290_240);
+  assert.equal(
+    plan.totalTileInputPixels / (width * height),
+    1.4,
+  );
+  assert.equal(plan.maxTileLogicalBytes, 360 * 720 * 512);
+  assert.ok(plan.tiles.every(({ stateCropY }) => stateCropY === 0));
 });
 
 test("the smaller of max buffer and binding limits controls the plan", () => {
@@ -463,6 +525,6 @@ test("larger sources keep the selected profile and extent and only add tiles", (
   assert.equal(large.halo, small.halo);
   assert.equal(large.scale, small.scale);
   assert.equal(large.maxInputExtent, small.maxInputExtent);
-  assert.equal(large.coreExtent, small.coreExtent);
+  assert.equal(large.maxInputPixels, small.maxInputPixels);
   assert.ok(large.tiles.length > small.tiles.length);
 });

@@ -304,6 +304,68 @@ test("Neural adapter transfers a direct ImageBitmap without page-side staging", 
   }
 });
 
+test("Neural adapter reports frame-pipeline and CDA temporal stats with engine stats", async () => {
+  const runGate = deferred();
+  const control = controlledBridge({ runGate });
+  const { engine } = await loadAdapter(control);
+  await engine.init("cda-vsr-4x");
+
+  const running = engine.run({}, 320, 180, {
+    width: 640,
+    height: 360,
+  });
+  await flushUntil(() => control.calls.run === 1, "remote run");
+  runGate.resolve({
+    presentation: { output: { width: 640, height: 360 } },
+    stats: {
+      lastRunMs: 153.25,
+      meanRunMs: 144.5,
+      runs: 8,
+      cdaPriorRuns: 8,
+      cdaPriorResets: 3,
+      engine: {
+        last: 91.75,
+        mu: 87.5,
+        n: 8,
+        skip: 2,
+        temporalResetRuns: 3,
+        temporalRecurrentRuns: 5,
+      },
+    },
+  });
+  await running;
+
+  assert.deepEqual(
+    {
+      last: engine.stats().last,
+      mu: engine.stats().mu,
+      n: engine.stats().n,
+      skip: engine.stats().skip,
+      lastRunMs: engine.stats().lastRunMs,
+      meanRunMs: engine.stats().meanRunMs,
+      runs: engine.stats().runs,
+      cdaPriorRuns: engine.stats().cdaPriorRuns,
+      cdaPriorResets: engine.stats().cdaPriorResets,
+      temporalResetRuns: engine.stats().temporalResetRuns,
+      temporalRecurrentRuns: engine.stats().temporalRecurrentRuns,
+    },
+    {
+      last: 91.75,
+      mu: 87.5,
+      n: 8,
+      skip: 2,
+      lastRunMs: 153.25,
+      meanRunMs: 144.5,
+      runs: 8,
+      cdaPriorRuns: 8,
+      cdaPriorResets: 3,
+      temporalResetRuns: 3,
+      temporalRecurrentRuns: 5,
+    },
+  );
+  await engine.dispose();
+});
+
 test("Neural adapter falls back to a page canvas when direct capture fails", async () => {
   const control = controlledBridge();
   const { engine, deps } = await loadAdapter(control, {

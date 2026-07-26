@@ -1157,6 +1157,11 @@ function emptyNeuralStats() {
     tileRuns: 0,
     maxTileW: 0,
     maxTileH: 0,
+    lastRunMs: 0,
+    meanRunMs: 0,
+    runs: 0,
+    cdaPriorRuns: 0,
+    cdaPriorResets: 0,
   };
 }
 
@@ -1185,9 +1190,25 @@ function createEmbeddedNeuralEngine({ log: engineLog = log, warn: engineWarn = w
   };
 
   const updateStats = (result) => {
-    const next = result?.stats?.engine;
-    if (!next || typeof next !== "object") return;
-    remoteStats = { ...remoteStats, ...next };
+    const snapshot = result?.stats;
+    if (!snapshot || typeof snapshot !== "object") return;
+    const engineStats = snapshot.engine;
+    const frameStats = {};
+    for (const key of [
+      "lastRunMs",
+      "meanRunMs",
+      "runs",
+      "cdaPriorRuns",
+      "cdaPriorResets",
+    ]) {
+      const value = Number(snapshot[key]);
+      if (Number.isFinite(value) && value >= 0) frameStats[key] = value;
+    }
+    remoteStats = {
+      ...remoteStats,
+      ...(engineStats && typeof engineStats === "object" ? engineStats : {}),
+      ...frameStats,
+    };
   };
 
   const frameHasDimensions = (frame, width, height) => {
@@ -3709,9 +3730,24 @@ function loop(owner, frameNow = null, frameMetadata = null) {
       lastLog = now;
       const avg = frameTimes.reduce((a, b) => a + b, 0) / frameTimes.length;
       const max = Math.max(...frameTimes);
+      const neuralStats = mode === "upscale" &&
+        engine === "neural" &&
+        neuralEng?.ready()
+        ? neuralEng.stats()
+        : null;
+      const neuralTemporalStats = neuralStats?.cdaPriorRuns > 0
+        ? ` recurrent:${neuralStats.temporalRecurrentRuns}` +
+          ` reset:${neuralStats.temporalResetRuns}` +
+          ` prior-reset:${neuralStats.cdaPriorResets}/${neuralStats.cdaPriorRuns}`
+        : "";
       log(`mode=${mode} frames=${frameCount} src=${video.videoWidth}x${video.videoHeight}` +
           (mode === "upscale" && activeModel ? ` ${engine==="artcnn"?artVariant.replace("ArtCNN_",""):engine==="fsrcnnx-hi"?"FSRCNNX-high":"FSRCNNX"} ${activeModel.scale}x out=${video.videoWidth*activeModel.scale}x${video.videoHeight*activeModel.scale}` : "") +
-          (mode === "upscale" && engine === "neural" && neuralEng && neuralEng.ready() ? ` NEURAL ${neuralEng.activeEntry()?.label || neuralModelKey} ${neuralEng.activeEntry()?.scale}x mu=${neuralEng.stats().mu.toFixed(1)}ms skip:${neuralEng.stats().skip}` : "") +
+          (neuralStats ? ` NEURAL ${neuralEng.activeEntry()?.label || neuralModelKey} ${neuralEng.activeEntry()?.scale}x` +
+            ` mu=${neuralStats.mu.toFixed(1)}ms(core)` +
+            ` total(last/mu)=${neuralStats.lastRunMs.toFixed(1)}/${neuralStats.meanRunMs.toFixed(1)}ms` +
+            ` tiles=${neuralStats.lastTiles}` +
+            neuralTemporalStats +
+            ` skip:${neuralStats.skip}` : "") +
           (mode === "upscale" && lastSSimDS ? " +SSimDS" : "") +
           (mode === "upscale" && sharpenEnabled ? ` +Sharpen(${sharpenStrength})` : "") +
           ` | CPU encode avg=${avg.toFixed(1)}ms max=${max.toFixed(1)}ms`);
