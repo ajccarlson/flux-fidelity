@@ -24,6 +24,11 @@ export const POLICY_OPTIONS = Object.freeze({
     ["force4", "Always ×4"],
     ["force8", "Always ×8"],
   ]),
+  neural: Object.freeze([
+    ["display", "Fit display with SSimDS (recommended)"],
+    ["force2", "Exact ×2 output"],
+    ["native", "Native model scale"],
+  ]),
 });
 
 const STATIC_INTERPOLATION_MODELS = Object.freeze([
@@ -415,11 +420,19 @@ function formatReadyNeuralNote(neural, warnForCda) {
     return Number.isFinite(number) && number >= 0 ? Math.trunc(number) : 0;
   };
   const tiles = count(neural.lastTiles);
-  const parts = [
+  const nativeScale = Number(neural.nativeScale ?? neural.scale);
+  const outputScale = Number(neural.outputScale);
+  const parts = [];
+  if (Number.isFinite(nativeScale) && nativeScale > 0 &&
+      Number.isFinite(outputScale) && outputScale > 0 &&
+      Math.abs(nativeScale - outputScale) > 0.01) {
+    parts.push(`native ${nativeScale}× → output ${Number(outputScale.toFixed(2))}×`);
+  }
+  parts.push(
     `${hasPipelineMean ? "total" : "core"} mean ${mean.toFixed(1)} ms`,
     `${tiles} ${tiles === 1 ? "tile" : "tiles"}`,
     `skipped ${count(neural.skip)}`,
-  ];
+  );
   if (warnForCda) parts.push("high GPU/memory use");
   return parts.join(" · ");
 }
@@ -522,7 +535,6 @@ export function createPopupController({
     if (globallyDisabled || !currentStatus) return;
 
     const neural = currentStatus.engine === "neural";
-    $("policy").disabled = neural;
     $("all-videos").disabled = neural;
     $("artvariant").disabled = currentStatus.engine !== "artcnn";
     $("neural-model").disabled = !neural || !Array.isArray(currentStatus.neuralModels) ||

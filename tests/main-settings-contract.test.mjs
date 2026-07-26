@@ -53,7 +53,7 @@ async function loadFsrcnnxPlanHarness() {
   return importHarness(`
     const STANDARD_CASCADE_THRESHOLD = 2.4;
     ${policyToDepth}
-    export { fsrcnnxPlan, upscalePresentationPlan };
+    export { fsrcnnxPlan, upscalePresentationPlan, neuralPresentationPlan };
   `);
 }
 
@@ -358,7 +358,12 @@ async function loadStatusHarness(storeHealth = {
     let activeModel = null, upscalePolicy = "display", ssimdsEnabled = true;
     let sharpenEnabled = false, sharpenStrength = 1, requestedEngine = "neural", engine = "neural";
     let artVariant = "ArtCNN_C4F32", chainDepth = 1, neuralModelKey = "span-lazy";
-    let neuralEng = null, protectedSource = false, protectedReason = null;
+    let neuralEng = deps.runtime.neuralEntry ? {
+      activeEntry: () => deps.runtime.neuralEntry,
+      ready: () => true,
+      stats: () => ({ runs: 1, meanRunMs: 10 }),
+    } : null;
+    let protectedSource = false, protectedReason = null;
     const selectedColorSupport = {
       supported: false,
       code: "color-not-checked",
@@ -525,6 +530,54 @@ test("engine and policy setters reject invalid values and normalize incompatible
   assert.deepEqual(standard.setPolicy("force4"), {
     ok: true, policy: "force4", chainDepth: 2,
   });
+
+  const neural = await loadPolicyHarness({ engine: "neural", policy: "display" });
+  assert.deepEqual(neural.setPolicy("force2"), {
+    ok: true, policy: "force2", chainDepth: 1,
+  });
+  assert.deepEqual(neural.setPolicy("native"), {
+    ok: true, policy: "native", chainDepth: 1,
+  });
+  assert.deepEqual(neural.setPolicy("force4"), {
+    ok: false, reason: "invalid policy", policy: "native", chainDepth: 1,
+  });
+});
+
+test("Neural exact x2 presentation preserves native inference and output dimensions", async () => {
+  const { neuralPresentationPlan } = await loadFsrcnnxPlanHarness();
+  const expectedExact = {
+    modelWidth: 2564, modelHeight: 1436,
+    outputWidth: 1282, outputHeight: 718,
+    downsample: true,
+  };
+  assert.deepEqual(neuralPresentationPlan(
+    "force2", 641, 359, 4, 3840, { ssimdsEnabled: true },
+  ), { ...expectedExact, ssimds: true });
+  assert.deepEqual(neuralPresentationPlan(
+    "force2", 641, 359, 4, 320, { ssimdsEnabled: false },
+  ), { ...expectedExact, ssimds: false },
+  "the sampled fallback must retain exact x2 dimensions when SSimDS is off");
+  assert.deepEqual(neuralPresentationPlan(
+    "native", 641, 359, 4, 320, { ssimdsEnabled: true },
+  ), {
+    modelWidth: 2564, modelHeight: 1436,
+    outputWidth: 2564, outputHeight: 1436,
+    downsample: false, ssimds: false,
+  });
+  assert.deepEqual(neuralPresentationPlan(
+    "force2", 641, 359, 2, 320, { ssimdsEnabled: true },
+  ), {
+    modelWidth: 1282, modelHeight: 718,
+    outputWidth: 1282, outputHeight: 718,
+    downsample: false, ssimds: false,
+  }, "a native x2 model must not be needlessly downscaled");
+  assert.deepEqual(neuralPresentationPlan(
+    "display", 641, 359, 4, 1923, { ssimdsEnabled: true },
+  ), {
+    modelWidth: 2564, modelHeight: 1436,
+    outputWidth: 1923, outputHeight: 1077,
+    downsample: true, ssimds: true,
+  }, "display width is already expressed in physical pixels after DPR/fullscreen planning");
 });
 
 test("verified standard x2 planning cascades only for explicit or clearly larger targets", async () => {
@@ -1029,6 +1082,28 @@ test("status exposes configured interpolation and neural values without live run
     interpLadder: true,
     interpInvert: false,
   });
+
+  const neuralStatus = (await loadStatusHarness(undefined, undefined, {
+    mode: "upscale",
+    hasVideo: true,
+    presented: { mode: "upscale", engine: "neural" },
+    neuralEntry: { key: "cda-vsr-4x", label: "CDA-VSR 4x", scale: 4 },
+    presentation: {
+      source: { width: 641, height: 359 },
+      native: { width: 2564, height: 1436 },
+      output: { width: 1282, height: 718 },
+      ssimds: {
+        source: { width: 2564, height: 1436 },
+        output: { width: 1282, height: 718 },
+      },
+    },
+  })).getStatus();
+  assert.equal(neuralStatus.neural.nativeScale, 4);
+  assert.equal(neuralStatus.neural.outputScale, 2);
+  assert.equal(neuralStatus.neuralRuntime.nativeScale, 4);
+  assert.equal(neuralStatus.neuralRuntime.outputScale, 2);
+  assert.deepEqual(neuralStatus.renderer.presentation.native,
+    { width: 2564, height: 1436 });
 
   const failedStatus = (await loadStatusHarness({
     state: "error", operation: null, errorOperation: "syncing", pending: 0,

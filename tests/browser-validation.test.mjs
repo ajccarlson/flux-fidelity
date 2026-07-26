@@ -45,7 +45,9 @@ test("browser validator covers the packaged extension and real-video runtime", (
   assert.match(validator, /status\.renderer\?\.fallback == null/);
   assert.match(validator, /status\.neuralRuntime\?\.phase === "active"/);
   assert.match(validator, /status\.neural\?\.n >= neuralRuns \+ 2/);
-  assert.match(validator, /status\.presentation\.output\.width === status\.presentation\.source\.width \* scale/);
+  assert.match(validator, /status\.presentation\.output\.width === status\.presentation\.source\.width \* outputScale/);
+  assert.match(validator, /status\.policy === "force2" \? 2 : scale/);
+  assert.match(validator, /Neural exact x2 sampled and SSimDownscaler presentation/);
   assert.match(validator, /hostIsolation\?\.crossOriginIsolated === false/);
   assert.match(validator, /hostIsolation\?\.sharedArrayBuffer === "undefined"/);
   assert.match(validator, /Neural to FSRCNNX transition/);

@@ -19,7 +19,7 @@ Processing stays on the device. See [Privacy](PRIVACY.md) for the data and permi
 3. Play a supported video, open the extension popup, choose an engine and its available options, then select **Upscale**.
 4. Select **Off** to restore native rendering. Reload the extension after changing the checkout.
 
-Settings are stored per site; local-file pages share one local-file scope. The extension has no configured source-resolution or pixel-area ceiling. Requested inputs, outputs, and model resources must still fit the browser's and GPU adapter's actual limits. Neural offers tiled Real-ESRGAN AnimeVideo XS 2× and temporal CDA-VSR 4×. CDA-VSR targets compressed-video fidelity but is compute- and memory-intensive and may not keep pace with HD playback. Neural pauses frame interpolation while selected.
+Settings are stored per site; local-file pages share one local-file scope. The extension has no configured source-resolution or pixel-area ceiling. Requested inputs, outputs, and model resources must still fit the browser's and GPU adapter's actual limits. Neural offers tiled Real-ESRGAN AnimeVideo XS 2× and temporal CDA-VSR 4×; CDA can present an exact 2× result by downscaling its native 4× output. CDA-VSR targets compressed-video fidelity but is compute- and memory-intensive and may not keep pace with HD playback. Neural pauses frame interpolation while selected.
 
 Performance-driven fallbacks are advanced per-site settings and are off by default. **Automatic quality fallback** lowers FSRCNNX High, ArtCNN, or Neural to standard FSRCNNX after sustained frame drops or GPU backlog; **Automatic blend fallback** replaces RIFE when it cannot maintain a useful frame rate.
 

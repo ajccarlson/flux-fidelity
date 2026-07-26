@@ -2068,6 +2068,7 @@ async function runRealVideoIntegration(
     await changePopupControl(popupPage.client, "engine", "neural");
     const neuralIsReady = (status) => {
       const scale = status.neural?.scale;
+      const outputScale = status.policy === "force2" ? 2 : scale;
       return status.mode === "upscale" && status.activeMode === "upscale" &&
         status.engine === "neural" && status.activeEngine === "neural" &&
         status.renderer?.requestedEngine === "neural" &&
@@ -2084,8 +2085,8 @@ async function runRealVideoIntegration(
         Number.isInteger(scale) && scale > 0 &&
         status.neural?.n > 0 && status.presentation?.committed === true &&
         status.presentation?.source?.width > 0 && status.presentation?.source?.height > 0 &&
-        status.presentation.output.width === status.presentation.source.width * scale &&
-        status.presentation.output.height === status.presentation.source.height * scale;
+        status.presentation.output.width === status.presentation.source.width * outputScale &&
+        status.presentation.output.height === status.presentation.source.height * outputScale;
     };
     const neural = await waitForStatus(
       popupPage.client,
@@ -2130,6 +2131,20 @@ async function runRealVideoIntegration(
           neuralFirstOverlay?.height === neural.status.presentation.output.height,
         "Neural canvas backing dimensions do not match the manifest-derived output",
       );
+      requireCondition(
+        neural.status.neural.nativeScale === neural.status.neural.scale &&
+          neural.status.neural.outputScale === 2 &&
+          neural.status.neuralRuntime.nativeScale === neural.status.neural.scale &&
+          neural.status.neuralRuntime.outputScale === 2,
+        "Neural scale diagnostics do not distinguish native inference from exact x2 output",
+      );
+      requireCondition(
+        neural.status.presentation.native?.width ===
+            neural.status.presentation.source.width * neural.status.neural.scale &&
+          neural.status.presentation.native?.height ===
+            neural.status.presentation.source.height * neural.status.neural.scale,
+        "Neural native-output diagnostics do not match the selected model scale",
+      );
       const neuralFirstPixels = await waitForRenderedOverlayPixels(
         fixturePage.client,
         "primary",
@@ -2161,6 +2176,31 @@ async function runRealVideoIntegration(
         signal,
       );
       requirePixelProgression(neuralFirstPixels, neuralPixels, "Neural ONNX compositor");
+      if (neural.status.neural.scale > 2) {
+        requireCondition(neural.status.ssimds === false && neural.status.presentation.ssimds == null,
+          "Neural exact x2 sampled presentation unexpectedly used SSimDS");
+        await changePopupControl(popupPage.client, "ssimds", true);
+        const neuralSsim = await waitForStatus(
+          popupPage.client,
+          fixtureTab.id,
+          "Neural exact x2 SSimDownscaler presentation",
+          (status) => status.engine === "neural" && status.policy === "force2" &&
+            status.ssimds === true && status.presentation?.ssimds != null &&
+            status.presentation.output.width === status.presentation.source.width * 2 &&
+            status.presentation.output.height === status.presentation.source.height * 2 &&
+            status.neural?.nativeScale === status.neural?.scale &&
+            status.neural?.outputScale === 2,
+          signal,
+        );
+        requireCondition(
+          neuralSsim.status.presentation.ssimds.source.width ===
+              neuralSsim.status.presentation.native.width &&
+            neuralSsim.status.presentation.ssimds.output.width ===
+              neuralSsim.status.presentation.output.width,
+          "Neural exact x2 SSimDS diagnostics do not cover native-to-output reduction",
+        );
+        checkpoint("Neural exact x2 sampled and SSimDownscaler presentation");
+      }
       checkpoint(
         requireTemporalNeuralRuns
           ? "Neural ONNX presentation without fallback " +
