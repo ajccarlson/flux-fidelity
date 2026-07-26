@@ -1,4 +1,4 @@
-# CDA-VSR conversion experiment
+# CDA-VSR local conversion and browser probe
 
 This offline toolkit adapts a user-supplied CDA-VSR source file and checkpoint
 into two dynamic-spatial ONNX graphs:
@@ -123,9 +123,10 @@ Set `FSRCNNX_BROWSER` when browser auto-detection is insufficient. The probe
 rechecks the dynamic, local-only export receipt and exact graph hashes, builds
 the normal package into an operating-system temporary directory, appends a
 local CDA-VSR manifest entry, selects that exact model for real-video
-validation, requires successful initializer and recurrent executions, and
-removes the temporary package afterward. It never changes the shipping neural
-manifest or copies the graphs into the repository.
+validation, requires successful state-atlas initializer and recurrent
+executions without fallback, and removes the temporary package afterward. It
+never changes the shipping neural manifest or copies the graphs into the
+repository.
 
 For a one-time primitive comparison against the original implementation, use
 an upstream-compatible CUDA/PyTorch environment with compiled `mmcv-full`:
@@ -169,15 +170,19 @@ benefit.
 
 ## Current boundary
 
-These are feasibility graphs, not extension assets. Dynamic shapes remove
-exact-size specialization, not physical WebGPU limits. At a 1280×720 source,
-each 64-channel state is 225 MiB in FP32 or 112.5 MiB in FP16, while the 4×
-FP32 RGB output is 168.75 MiB. The mixed profile therefore reduces persistent
-state and model bytes but does not make full-frame execution generally safe: a
-large recurrent FP16 activation still exceeds common storage-binding limits.
-A validated tiled state strategy and representative browser-provider tests are
-required before catalog inclusion. This is a hardware/runtime blocker, not an
-artificial source-resolution policy.
+The graphs remain user-supplied local artifacts rather than bundled extension
+assets, but the browser execution path is implemented. The receipt declares an
+audited `temporal-state-atlas-v1` contract. The runtime bounds ONNX work with
+overlapping input halos, reads prior state from a committed full-frame atlas,
+writes only each tile's owned core to a second atlas, and swaps banks only after
+the complete frame succeeds.
+
+There is no source-resolution policy ceiling. Device texture dimensions,
+storage-binding limits, allocation failures, and device loss remain physical
+limits. State atlases are still substantial: at 1280×720, both 64-channel states
+across two FP16 banks use 450 MiB before snapshots, output, and ORT working
+memory. The opt-in automatic quality fallback can select the standard model
+after sustained playback pressure; it remains off by default.
 
 Regular parity checks sampled numerical agreement between the graphs and the
 lowered PyTorch network; `dcn-parity` separately samples the lowering against

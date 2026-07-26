@@ -25,6 +25,19 @@ import {
   getOrtSessionDevice,
   resolvePackagedAssetUrl,
 } from "./fsrcnnx-rife.js";
+import {
+  normalizeTemporalNeuralTilingProfile,
+  planTemporalNeuralTiling,
+} from "./fsrcnnx-neural-temporal-tiling.js";
+import {
+  buildTemporalAuxiliaryPackUniform,
+  buildTemporalStatePackUniform,
+  buildTemporalStateUnpackUniform,
+  createTemporalStateAtlasShaders,
+  createTemporalStateAtlasSpec,
+  TEMPORAL_ATLAS_UNIFORM_BYTES,
+  TEMPORAL_AUXILIARY_PACK_WGSL,
+} from "./fsrcnnx-neural-temporal-atlas.js";
 
 const NEURAL_KEY = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const NEURAL_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]*\.onnx$/;
@@ -182,6 +195,36 @@ function requireMatchingStateSets(left, right, at) {
   }
 }
 
+function validateTemporalAtlasStateAbi(profile, descriptors, at) {
+  const states = [...descriptors.values()];
+  const atlas = profile.stateAtlas;
+  if (states.length !== atlas.stateCount) {
+    throw new Error(
+      `${at} tiling atlas declares ${atlas.stateCount} states but the graph declares ${states.length}`,
+    );
+  }
+  if (states.some((descriptor) =>
+    descriptor.channels !== atlas.channelsPerState)) {
+    throw new Error(
+      `${at} tiling atlas channels do not match the recurrent state contract`,
+    );
+  }
+  const dtypes = new Set(states.map(({ dtype }) => dtype));
+  if (dtypes.size !== 1 || !dtypes.has("float16") && !dtypes.has("float32")) {
+    throw new Error(
+      `${at} tiled recurrent states must share one float16 or float32 dtype`,
+    );
+  }
+  const dtype = states[0].dtype;
+  const spec = createTemporalStateAtlasSpec(dtype, atlas.channelsPerState);
+  if (spec.layers !== atlas.arrayLayersPerState ||
+      spec.textureFormat !== atlas.textureFormat) {
+    throw new Error(
+      `${at} tiling atlas texture ABI does not match recurrent state dtype/channels`,
+    );
+  }
+}
+
 function freezeV2Graph(name, value, at) {
   const graphAt = `${at} graph '${name}'`;
   if (!GRAPH_KEY.test(name)) throw new Error(`${at} has an invalid graph name '${name}'`);
@@ -236,6 +279,9 @@ export function normalizeNeuralModelContract(entry, at = "neural manifest entry"
         (!declared || typeof declared !== "object" || Array.isArray(declared))) {
       throw new Error(`${at} has an invalid v1 contract`);
     }
+    if (declared?.tiling != null) {
+      throw new Error(`${at} v1 contract may not declare temporal tiling`);
+    }
     return Object.freeze({
       version: 1,
       mode: "spatial",
@@ -279,6 +325,7 @@ export function normalizeNeuralModelContract(entry, at = "neural manifest entry"
 
   let resetGraph;
   let recurrentGraph;
+  let tiling = null;
   if (mode === "temporal") {
     resetGraph = declared.resetGraph ?? "initialize";
     recurrentGraph = declared.recurrentGraph ?? "recurrent";
@@ -296,7 +343,17 @@ export function normalizeNeuralModelContract(entry, at = "neural manifest entry"
     if (!resetOutputs.size) throw new Error(`${at} temporal contract must produce recurrent state`);
     requireMatchingStateSets(recurrentInputs, recurrentOutputs, `${at} recurrent graph`);
     requireMatchingStateSets(recurrentInputs, resetOutputs, `${at} reset/recurrent graphs`);
+    if (declared.tiling != null) {
+      tiling = normalizeTemporalNeuralTilingProfile(declared.tiling);
+      if (tiling.scale !== entry.scale) {
+        throw new Error(`${at} tiling scale does not match the manifest scale`);
+      }
+      validateTemporalAtlasStateAbi(tiling, recurrentInputs, at);
+    }
   } else {
+    if (declared.tiling != null) {
+      throw new Error(`${at} spatial contract may not declare temporal tiling`);
+    }
     resetGraph = declared.resetGraph ?? graphEntries[0][0];
     recurrentGraph = null;
     if (!Object.hasOwn(graphs, resetGraph)) {
@@ -320,6 +377,7 @@ export function normalizeNeuralModelContract(entry, at = "neural manifest entry"
     recurrentGraph,
     graphs: Object.freeze(graphs),
     states: Object.freeze(stateKeys),
+    ...(tiling ? { tiling } : {}),
   });
 }
 
@@ -802,6 +860,10 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
   let activeRuns = 0;
   let runIdleResolvers = [];
   let runBusy = false;
+  let runGateResolvers = [];
+  let initCommitBusy = false;
+  let initCommitResolvers = [];
+  let gpuFailureRecovery = null;
   let deferredSessionReleases = [];
   const retirements = new Set();
   let disposalPromise = null;
@@ -822,6 +884,12 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
   let snapshotU = null, packU = null, compU = null;
   let snapshotTex = null, snapshotTexW = 0, snapshotTexH = 0;
   let outTex = null, outTexW = 0, outTexH = 0;
+  let temporalAtlas = null;
+  let temporalAuxPipe = null;
+  const temporalStatePipes = new Map();
+  let temporalStatePackU = null, temporalStateUnpackU = null;
+  const temporalStateScratch = new Map();
+  const temporalAuxScratch = new Map();
 
   // instrumentation (mirrors RIFE's readout vocabulary)
   const stats = {
@@ -843,6 +911,50 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     return new Promise((resolve) => runIdleResolvers.push(resolve));
   }
 
+  function setRunBusy(value) {
+    runBusy = value;
+    if (!runBusy && runGateResolvers.length) {
+      for (const resolve of runGateResolvers.splice(0)) resolve();
+    }
+  }
+
+  function whenRunGateOpen() {
+    if (!runBusy) return Promise.resolve();
+    return new Promise((resolve) => runGateResolvers.push(resolve));
+  }
+
+  function whenInitCommitOpen() {
+    if (!initCommitBusy) return Promise.resolve();
+    return new Promise((resolve) => initCommitResolvers.push(resolve));
+  }
+
+  async function acquireInitCommitGate() {
+    while (true) {
+      await whenRunsIdle();
+      if (activeRuns !== 0) continue;
+      const recovery = gpuFailureRecovery;
+      if (recovery) {
+        await recovery;
+        continue;
+      }
+      await whenRunGateOpen();
+      await whenInitCommitOpen();
+      if (activeRuns !== 0 || runBusy || gpuFailureRecovery ||
+          initCommitBusy) {
+        continue;
+      }
+      initCommitBusy = true;
+      return;
+    }
+  }
+
+  function releaseInitCommitGate() {
+    initCommitBusy = false;
+    if (initCommitResolvers.length) {
+      for (const resolve of initCommitResolvers.splice(0)) resolve();
+    }
+  }
+
   function endRun() {
     activeRuns = Math.max(0, activeRuns - 1);
     if (activeRuns === 0 && runIdleResolvers.length) {
@@ -855,6 +967,15 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     retirements.add(tracked);
     tracked.finally(() => retirements.delete(tracked));
     return tracked;
+  }
+
+  function gateGpuFailureRecovery(cleanup) {
+    const recovery = Promise.resolve(cleanup).catch(() => {});
+    gpuFailureRecovery = recovery;
+    recovery.finally(() => {
+      if (gpuFailureRecovery === recovery) gpuFailureRecovery = null;
+    });
+    return recovery;
   }
 
   function afterSubmittedWork(ownerDevice, callback) {
@@ -899,10 +1020,41 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     }
   }
 
+  function invalidateTemporalAtlas() {
+    if (!temporalAtlas) return;
+    temporalAtlas.valid = false;
+  }
+
   function clearTemporalState(ownerDevice = device) {
     const stale = [...temporalState.values()];
     temporalState = new Map();
+    invalidateTemporalAtlas();
     retireTensors(ownerDevice, ...stale);
+  }
+
+  function retireTemporalGpuResources(ownerDevice = device) {
+    const stale = temporalAtlas;
+    const resources = [
+      temporalStatePackU,
+      temporalStateUnpackU,
+      ...[...temporalStateScratch.values()].map(({ buffer }) => buffer),
+      ...[...temporalAuxScratch.values()].flatMap(
+        ({ buffer, uniform }) => [buffer, uniform].filter(Boolean),
+      ),
+      ...(stale
+        ? stale.states.flatMap(
+          ({ banks }) => banks.map(({ texture }) => texture),
+        )
+        : []),
+    ];
+    temporalAtlas = null;
+    temporalStatePackU = null;
+    temporalStateUnpackU = null;
+    temporalStateScratch.clear();
+    temporalAuxScratch.clear();
+    temporalAuxPipe = null;
+    temporalStatePipes.clear();
+    return retireGpuObjects(resources, ownerDevice);
   }
 
   async function releaseDeferredSessions() {
@@ -1114,6 +1266,321 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     return { maxDimension, maxBuffer, maxGroups };
   }
 
+  function temporalPlannerLimits() {
+    return {
+      maxTextureDimension2D:
+        Math.max(1, Number(device?.limits?.maxTextureDimension2D) || 8192),
+      maxTextureArrayLayers:
+        Math.max(1, Number(device?.limits?.maxTextureArrayLayers) || 256),
+      maxBufferSize:
+        Math.max(1, Number(device?.limits?.maxBufferSize) || 256 * 1024 * 1024),
+      maxStorageBufferBindingSize:
+        Math.max(
+          1,
+          Number(device?.limits?.maxStorageBufferBindingSize) ||
+            128 * 1024 * 1024,
+        ),
+      maxComputeWorkgroupsPerDimension:
+        Math.max(
+          1,
+          Number(device?.limits?.maxComputeWorkgroupsPerDimension) || 65535,
+        ),
+    };
+  }
+
+  function recurrentStateDescriptors(contract) {
+    const graph = contract.graphs[contract.recurrentGraph];
+    const descriptors = stateDescriptors(graph.inputs, "state-in");
+    return contract.states.map((key) => {
+      const descriptor = descriptors.get(key);
+      if (!descriptor) {
+        throw new Error(`tiled temporal contract is missing state '${key}'`);
+      }
+      return descriptor;
+    });
+  }
+
+  function temporalAtlasMatches(contract, width, height) {
+    return temporalAtlas?.contract === contract &&
+      temporalAtlas.width === width &&
+      temporalAtlas.height === height;
+  }
+
+  function ensureTemporalAtlas(contract, width, height) {
+    if (temporalAtlasMatches(contract, width, height)) return temporalAtlas;
+    const states = [];
+    const created = [];
+    try {
+      for (const descriptor of recurrentStateDescriptors(contract)) {
+        const spec = createTemporalStateAtlasSpec(
+          descriptor.dtype,
+          descriptor.channels,
+        );
+        const banks = [];
+        for (let bank = 0; bank < 2; bank++) {
+          const texture = device.createTexture({
+            label: `neural-temporal-${descriptor.state}-bank${bank}-${width}x${height}`,
+            size: {
+              width,
+              height,
+              depthOrArrayLayers: spec.layers,
+            },
+            dimension: "2d",
+            format: spec.textureFormat,
+            usage:
+              GPUTextureUsage.TEXTURE_BINDING |
+              GPUTextureUsage.STORAGE_BINDING,
+          });
+          created.push(texture);
+          banks.push(Object.freeze({
+            texture,
+            view: texture.createView({
+              dimension: "2d-array",
+              baseArrayLayer: 0,
+              arrayLayerCount: spec.layers,
+            }),
+          }));
+        }
+        states.push(Object.freeze({
+          key: descriptor.state,
+          descriptor,
+          spec,
+          banks: Object.freeze(banks),
+        }));
+      }
+    } catch (error) {
+      for (const texture of created) {
+        try { texture.destroy?.(); } catch {}
+      }
+      throw error;
+    }
+    const old = temporalAtlas;
+    temporalAtlas = {
+      contract,
+      width,
+      height,
+      states: Object.freeze(states),
+      committedBank: 0,
+      valid: false,
+    };
+    if (old) {
+      retireGpuObjects(
+        old.states.flatMap(({ banks }) => banks.map(({ texture }) => texture)),
+      );
+    }
+    return temporalAtlas;
+  }
+
+  function ensureTemporalPipelines(contract) {
+    if (!temporalAuxPipe) {
+      temporalAuxPipe = device.createComputePipeline({
+        layout: "auto",
+        compute: {
+          module: device.createShaderModule({
+            code: TEMPORAL_AUXILIARY_PACK_WGSL,
+          }),
+          entryPoint: "main",
+        },
+      });
+    }
+    for (const descriptor of recurrentStateDescriptors(contract)) {
+      const spec = createTemporalStateAtlasSpec(
+        descriptor.dtype,
+        descriptor.channels,
+      );
+      if (spec.dtype === "float16" &&
+          typeof device.features?.has === "function" &&
+          !device.features.has("shader-f16")) {
+        throw new Error(
+          "tiled float16 temporal state requires the WebGPU shader-f16 feature",
+        );
+      }
+      const key = `${spec.dtype}:${spec.channels}`;
+      if (temporalStatePipes.has(key)) continue;
+      const shaders = createTemporalStateAtlasShaders(spec);
+      const visibility = globalThis.GPUShaderStage?.COMPUTE ?? 4;
+      const packBindGroupLayout = device.createBindGroupLayout({
+        label: `neural-temporal-state-pack-${spec.dtype}-bindings`,
+        entries: [
+          {
+            binding: 0,
+            visibility,
+            texture: {
+              sampleType: spec.textureFormat === "rgba32float"
+                ? "unfilterable-float"
+                : "float",
+              viewDimension: "2d-array",
+              multisampled: false,
+            },
+          },
+          {
+            binding: 1,
+            visibility,
+            buffer: { type: "storage" },
+          },
+          {
+            binding: 2,
+            visibility,
+            buffer: { type: "uniform" },
+          },
+        ],
+      });
+      temporalStatePipes.set(key, Object.freeze({
+        pack: device.createComputePipeline({
+          layout: device.createPipelineLayout({
+            label: `neural-temporal-state-pack-${spec.dtype}-layout`,
+            bindGroupLayouts: [packBindGroupLayout],
+          }),
+          compute: {
+            module: device.createShaderModule({ code: shaders.pack }),
+            entryPoint: "main",
+          },
+        }),
+        unpack: device.createComputePipeline({
+          layout: "auto",
+          compute: {
+            module: device.createShaderModule({ code: shaders.unpack }),
+            entryPoint: "main",
+          },
+        }),
+      }));
+    }
+    if (!temporalStatePackU) {
+      temporalStatePackU = device.createBuffer({
+        label: "neural-temporal-state-pack-uniform",
+        size: TEMPORAL_ATLAS_UNIFORM_BYTES.statePack,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+    }
+    if (!temporalStateUnpackU) {
+      temporalStateUnpackU = device.createBuffer({
+        label: "neural-temporal-state-unpack-uniform",
+        size: TEMPORAL_ATLAS_UNIFORM_BYTES.stateUnpack,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+    }
+  }
+
+  function ensureTemporalScratchBuffer(map, key, bytes, label, uniformBytes = 0) {
+    const current = map.get(key);
+    if (current?.size >= bytes && (!uniformBytes || current.uniform)) {
+      return current;
+    }
+    const buffer = device.createBuffer({
+      label,
+      size: bytes,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+    let uniform = current?.uniform || null;
+    try {
+      if (uniformBytes && !uniform) {
+        uniform = device.createBuffer({
+          label: `${label}-uniform`,
+          size: uniformBytes,
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        });
+      }
+    } catch (error) {
+      try { buffer.destroy?.(); } catch {}
+      throw error;
+    }
+    const next = { buffer, size: bytes, uniform };
+    map.set(key, next);
+    if (current) {
+      retireGpuObjects([
+        current.buffer,
+        ...(current.uniform && current.uniform !== uniform
+          ? [current.uniform]
+          : []),
+      ]);
+    }
+    return next;
+  }
+
+  function ensureTemporalScratch(contract, graph, maxInputWidth, maxInputHeight) {
+    const { maxBuffer } = allocationLimits();
+    for (const descriptor of recurrentStateDescriptors(contract)) {
+      const bytes = checkedProduct(
+        `neural temporal state '${descriptor.state}' scratch`,
+        maxInputWidth,
+        maxInputHeight,
+        descriptor.channels,
+        tensorElementBytes(descriptor.dtype),
+      );
+      if (bytes > maxBuffer) {
+        const error = new Error(
+          `neural temporal state scratch exceeds the device binding limit ${maxBuffer}`,
+        );
+        error.code = "NEURAL_LIMIT";
+        throw error;
+      }
+      ensureTemporalScratchBuffer(
+        temporalStateScratch,
+        descriptor.state,
+        bytes,
+        `neural-temporal-state-${descriptor.state}`,
+      );
+    }
+    for (const descriptor of Object.values(graph.inputs)) {
+      if (descriptor.role === "rgb" || descriptor.role === "state-in") continue;
+      if (descriptor.layout !== "nchw" || descriptor.dtype !== "float32") {
+        throw new Error(
+          `tiled temporal auxiliary '${descriptor.name}' must be float32 NCHW`,
+        );
+      }
+      const bytes = checkedProduct(
+        `neural temporal auxiliary '${descriptor.name}' scratch`,
+        maxInputWidth,
+        maxInputHeight,
+        descriptor.channels,
+        4,
+      );
+      if (bytes > maxBuffer) {
+        const error = new Error(
+          `neural temporal auxiliary scratch exceeds the device binding limit ${maxBuffer}`,
+        );
+        error.code = "NEURAL_LIMIT";
+        throw error;
+      }
+      ensureTemporalScratchBuffer(
+        temporalAuxScratch,
+        descriptor.name,
+        bytes,
+        `neural-temporal-aux-${descriptor.name}`,
+        TEMPORAL_ATLAS_UNIFORM_BYTES.auxiliaryPack,
+      );
+    }
+  }
+
+  function temporalTileGeometry(tile, sourceWidth, sourceHeight) {
+    return {
+      sourceWidth,
+      sourceHeight,
+      inputX: tile.inputX,
+      inputY: tile.inputY,
+      inputWidth: tile.inputWidth,
+      inputHeight: tile.inputHeight,
+      coreX: tile.coreX,
+      coreY: tile.coreY,
+      coreWidth: tile.coreWidth,
+      coreHeight: tile.coreHeight,
+    };
+  }
+
+  function legacyShapeForTemporalTile(tile) {
+    return Object.freeze({
+      ...tile,
+      coreW: tile.coreWidth,
+      coreH: tile.coreHeight,
+      inputW: tile.inputWidth,
+      inputH: tile.inputHeight,
+      padW: tile.inputWidth,
+      padH: tile.inputHeight,
+      outW: tile.outWidth,
+      outH: tile.outHeight,
+    });
+  }
+
   function validateFrameAllocationLimits(srcW, srcH, outW, outH) {
     const { maxDimension, maxGroups } = allocationLimits();
     const dimensions = [srcW, srcH, outW, outH];
@@ -1287,52 +1754,62 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
       throw new Error("ORT device was lost during neural session initialization");
     }
 
-    // Do not swap or release the old session while run() is using its names,
-    // buffers, output tensor, or device. New runs cannot begin during this task's
-    // synchronous commit once the idle promise resolves.
-    await whenRunsIdle();
-    if (generation !== initGeneration) {
-      try { await releaseManagedSession(next); } catch {}
-      return null;
-    }
-
-    const oldSession = session;
-    const oldDevice = device;
-    if (oldDevice && oldDevice !== nextDevice) destroyGpuResources(oldDevice);
-    device = nextDevice;
+    // Reserve publication against both active inference and a run waiting on
+    // failed-resource retirement. The reservation remains visible across the
+    // promise continuation so no queued run can enter between the idle check and
+    // the session swap.
+    await acquireInitCommitGate();
+    let oldSession = null;
+    let oldDevice = null;
+    let initializationCancelled = false;
     try {
-      ensurePipelines();
-    } catch (error) {
-      destroyGpuResources(nextDevice);
-      device = oldDevice;
-      try { await releaseManagedSession(next); } catch {}
-      throw error;
-    }
+      if (generation !== initGeneration) {
+        try { await releaseManagedSession(next); } catch {}
+        return null;
+      }
 
-    ort = nextOrt;
-    session = next;
-    active = entry;
-    activeContract = modelContract;
-    const primaryContract = resolvedGraphs.get(primaryGraphName);
-    inputName = primaryContract.inputName;
-    outputName = primaryContract.outputName;
-    clearTemporalState(nextDevice);
-    fp16Model = graphSpecs.some(({ file }) => /fp16/i.test(file)) || entry.fp16 === true;
-    sessionGeneration++;
-    // Transfer the prior session out of this initializer's local ownership before
-    // yielding. A concurrent dispose/device-loss can clear the just-published
-    // session at the microtask below; without this handoff, the identity check
-    // would throw before the prior session reached either release path.
-    if (oldSession && !deferredSessionReleases.includes(oldSession)) {
-      deferredSessionReleases.push(oldSession);
-    }
-    // Re-check after synchronous publication as well. This closes the narrow
-    // window between the pre-commit yield and assigning the public session.
-    await Promise.resolve();
-    const initializationCancelled = generation !== initGeneration;
-    if (lostDevices.has(nextDevice) || device !== nextDevice || session !== next) {
-      await invalidateDevice(nextDevice);
-      throw new Error("ORT device was lost during neural session initialization");
+      oldSession = session;
+      oldDevice = device;
+      if (oldDevice && oldDevice !== nextDevice) destroyGpuResources(oldDevice);
+      device = nextDevice;
+      try {
+        ensurePipelines();
+      } catch (error) {
+        destroyGpuResources(nextDevice);
+        device = oldDevice;
+        try { await releaseManagedSession(next); } catch {}
+        throw error;
+      }
+
+      ort = nextOrt;
+      session = next;
+      active = entry;
+      activeContract = modelContract;
+      const primaryContract = resolvedGraphs.get(primaryGraphName);
+      inputName = primaryContract.inputName;
+      outputName = primaryContract.outputName;
+      clearTemporalState(nextDevice);
+      await retireTemporalGpuResources(nextDevice);
+      fp16Model = graphSpecs.some(({ file }) => /fp16/i.test(file)) || entry.fp16 === true;
+      sessionGeneration++;
+      // Transfer the prior session out of this initializer's local ownership
+      // before yielding. A concurrent dispose/device-loss can clear the just-
+      // published session at the microtask below; without this handoff, the
+      // identity check would throw before the prior session reached either
+      // release path.
+      if (oldSession && !deferredSessionReleases.includes(oldSession)) {
+        deferredSessionReleases.push(oldSession);
+      }
+      // Re-check after publication while the commit reservation still excludes
+      // inference from the half-validated session.
+      await Promise.resolve();
+      initializationCancelled = generation !== initGeneration;
+      if (lostDevices.has(nextDevice) || device !== nextDevice || session !== next) {
+        await invalidateDevice(nextDevice);
+        throw new Error("ORT device was lost during neural session initialization");
+      }
+    } finally {
+      releaseInitCommitGate();
     }
     if (oldSession) {
       if (oldDevice === nextDevice) {
@@ -1371,7 +1848,14 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
       return deviceInvalidationPromise.then(() => init(key));
     }
     const generation = ++initGeneration;
-    const raw = initTail.catch(() => {}).then(() => initOne(key, generation));
+    const recovery = gpuFailureRecovery;
+    const raw = initTail.catch(() => {}).then(async () => {
+      if (recovery) {
+        await recovery;
+        if (generation !== initGeneration) return null;
+      }
+      return initOne(key, generation);
+    });
     initTail = raw.then(() => undefined, () => undefined);
     let exposed;
     exposed = raw.then(
@@ -1393,11 +1877,40 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
 
   function destroyGpuResources(ownerDevice = device) {
     clearTemporalState(ownerDevice);
-    const resources = [inBuf, snapshotU, packU, compU, snapshotTex, outTex];
+    const atlasResources = temporalAtlas
+      ? temporalAtlas.states.flatMap(
+        ({ banks }) => banks.map(({ texture }) => texture),
+      )
+      : [];
+    const temporalScratchResources = [
+      ...[...temporalStateScratch.values()].map(({ buffer }) => buffer),
+      ...[...temporalAuxScratch.values()].flatMap(
+        ({ buffer, uniform }) => [buffer, uniform].filter(Boolean),
+      ),
+    ];
+    const resources = [
+      inBuf,
+      snapshotU,
+      packU,
+      compU,
+      snapshotTex,
+      outTex,
+      temporalStatePackU,
+      temporalStateUnpackU,
+      ...atlasResources,
+      ...temporalScratchResources,
+    ];
     inBuf = null; inBufSize = 0;
     snapshotU = null; packU = null; compU = null;
     snapshotTex = null; snapshotTexW = 0; snapshotTexH = 0;
     outTex = null; outTexW = 0; outTexH = 0;
+    temporalAtlas = null;
+    temporalStatePackU = null;
+    temporalStateUnpackU = null;
+    temporalStateScratch.clear();
+    temporalAuxScratch.clear();
+    temporalAuxPipe = null;
+    temporalStatePipes.clear();
     snapshotExtPipe = null; snapshotTexPipe = null;
     packTilePipe = null; compPipe = null; sampler = null;
     const cleanup = whenRunsIdle().then(async () => {
@@ -1434,7 +1947,7 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
       ++sessionGeneration;
       session = null;
       device = null;
-      runBusy = false;
+      setRunBusy(false);
       cleanup = destroyGpuResources(lostDevice);
     }
     const claimedSessions = new Set([...lostDeferred, oldSession].filter(Boolean));
@@ -1568,7 +2081,9 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
   // recurrent state tensors it receives from the graph.
   async function run(src, srcW, srcH, options = undefined) {
     if (!session || !device) throw new Error("neural engine not initialized");
-    if (runBusy) throw new Error("neural inference already in progress");
+    if (runBusy || initCommitBusy) {
+      throw new Error("neural inference already in progress");
+    }
     if (!Number.isInteger(srcW) || !Number.isInteger(srcH) || srcW <= 0 || srcH <= 0) {
       throw new Error(`invalid neural input dimensions ${srcW}x${srcH}`);
     }
@@ -1579,6 +2094,10 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     const runPrimarySession = session;
     const runModelContract = activeContract || contractForEntry(runEntry);
     const isV2 = runModelContract.version === 2;
+    const usesTemporalAtlas =
+      isV2 &&
+      runModelContract.mode === "temporal" &&
+      runModelContract.tiling != null;
     let runSession = session;
     let runInputName = inputName;
     let runOutputName = outputName;
@@ -1607,22 +2126,25 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
       const recurrentStates = recurrentGraph
         ? stateDescriptors(recurrentGraph.inputs, "state-in")
         : new Map();
-      const stateReady = runModelContract.states.every((key) => {
-        const tensor = temporalState.get(key);
-        const descriptor = recurrentStates.get(key);
-        if (!tensor || !descriptor) return false;
-        try {
-          validateRuntimeTensor(
-            tensor,
-            descriptor,
-            `neural recurrent state '${key}'`,
-            { width: srcW, height: srcH },
-          );
-          return true;
-        } catch {
-          return false;
-        }
-      });
+      const stateReady = usesTemporalAtlas
+        ? temporalAtlasMatches(runModelContract, srcW, srcH) &&
+          temporalAtlas.valid
+        : runModelContract.states.every((key) => {
+          const tensor = temporalState.get(key);
+          const descriptor = recurrentStates.get(key);
+          if (!tensor || !descriptor) return false;
+          try {
+            validateRuntimeTensor(
+              tensor,
+              descriptor,
+              `neural recurrent state '${key}'`,
+              { width: srcW, height: srcH },
+            );
+            return true;
+          } catch {
+            return false;
+          }
+        });
       resettingTemporalState = runModelContract.mode === "temporal" && (reset || !stateReady);
       runGraphName = runModelContract.mode === "temporal" && !resettingTemporalState
         ? runModelContract.recurrentGraph
@@ -1640,7 +2162,9 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
       );
       if (resettingTemporalState) clearTemporalState(runDevice);
       for (const descriptor of Object.values(runGraph.inputs)) {
-        if (descriptor.role === "state-in" && !temporalState.has(descriptor.state)) {
+        if (descriptor.role === "state-in" &&
+            !usesTemporalAtlas &&
+            !temporalState.has(descriptor.state)) {
           throw new Error(
             `neural graph '${runGraphName}' is missing recurrent state '${descriptor.state}'`,
           );
@@ -1654,26 +2178,108 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     const outW = checkedProduct("neural output width", srcW, scale);
     const outH = checkedProduct("neural output height", srcH, scale);
     validateFrameAllocationLimits(srcW, srcH, outW, outH);
-    const tiles = isV2
-      ? Object.freeze([fullFrameTile(srcW, srcH, scale)])
+    const temporalPlan = usesTemporalAtlas
+      ? planTemporalNeuralTiling(
+        srcW,
+        srcH,
+        runModelContract.tiling,
+        temporalPlannerLimits(),
+      )
+      : null;
+    const tiles = usesTemporalAtlas
+      ? Object.freeze(temporalPlan.tiles.map(legacyShapeForTemporalTile))
+      : isV2
+        ? Object.freeze([fullFrameTile(srcW, srcH, scale)])
       : planNeuralTiles(srcW, srcH, {
         tileSize: runEntry.tileSize ?? DEFAULT_NEURAL_TILE_SIZE,
         tileOverlap: runEntry.tileOverlap ?? DEFAULT_NEURAL_TILE_OVERLAP,
         padMultiple: mult,
         scale,
       });
+    if (usesTemporalAtlas) {
+      for (const descriptor of Object.values(runGraph.inputs)) {
+        if (descriptor.role === "rgb" || descriptor.role === "state-in") continue;
+        validateRuntimeTensor(
+          runAuxiliary[descriptor.name],
+          descriptor,
+          `neural auxiliary input '${descriptor.name}'`,
+          { width: srcW, height: srcH },
+        );
+      }
+    }
     for (const tile of tiles) validateTileAllocationLimits(tile, scale);
     const largestTile = tiles.reduce((largest, tile) =>
       tile.padW * tile.padH > largest.padW * largest.padH ? tile : largest);
     const t0 = performance.now();
-    runBusy = true;
+    const recovery = gpuFailureRecovery;
+    setRunBusy(true);
+    if (recovery) {
+      try {
+        await recovery;
+      } catch (error) {
+        setRunBusy(false);
+        throw error;
+      }
+      if (runLifecycleGeneration !== lifecycleGeneration) {
+        setRunBusy(false);
+        throw new Error("neural inference cancelled by stop");
+      }
+      if (runSessionGeneration !== sessionGeneration ||
+          runPrimarySession !== session || runDevice !== device) {
+        setRunBusy(false);
+        throw new Error("neural session changed during inference");
+      }
+    }
     activeRuns++;
     stats.lastTiles = tiles.length;
     stats.maxTileW = Math.max(stats.maxTileW, ...tiles.map((tile) => tile.padW));
     stats.maxTileH = Math.max(stats.maxTileH, ...tiles.map((tile) => tile.padH));
+    const temporalErrorScopes = [];
+    const popTemporalErrorScopes = async () => {
+      const failures = [];
+      while (temporalErrorScopes.length) {
+        const filter = temporalErrorScopes.pop();
+        try {
+          const error = await runDevice.popErrorScope();
+          if (error) failures.push({ filter, error });
+        } catch (error) {
+          failures.push({ filter, error });
+        }
+      }
+      return failures;
+    };
 
     try {
+      if (usesTemporalAtlas &&
+          typeof runDevice.pushErrorScope === "function" &&
+          typeof runDevice.popErrorScope === "function") {
+        for (const filter of ["out-of-memory", "internal", "validation"]) {
+          runDevice.pushErrorScope(filter);
+          temporalErrorScopes.push(filter);
+        }
+      }
       ensurePipelines();
+      let runTemporalAtlas = null;
+      let runCandidateBank = null;
+      if (usesTemporalAtlas) {
+        ensureTemporalPipelines(runModelContract);
+        runTemporalAtlas = ensureTemporalAtlas(
+          runModelContract,
+          srcW,
+          srcH,
+        );
+        if (runGraphName === runModelContract.recurrentGraph &&
+            !runTemporalAtlas.valid) {
+          throw new Error("neural temporal state atlas is not initialized");
+        }
+        runCandidateBank = (runTemporalAtlas.committedBank + 1) % 2;
+        ensureTemporalScratch(
+          runModelContract,
+          runGraph,
+          largestTile.padW,
+          largestTile.padH,
+        );
+      }
       ensureInBuf(largestTile.padW, largestTile.padH);
       ensureSnapshotTex(srcW, srcH);
       ensureOutTex(outW, outH);
@@ -1688,6 +2294,9 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
       const runSampler = sampler;
       const runSnapshotTex = snapshotTex;
       const runOutTex = outTex;
+      const runTemporalStatePackU = temporalStatePackU;
+      const runTemporalStateUnpackU = temporalStateUnpackU;
+      const runTemporalAuxPipe = temporalAuxPipe;
 
       const writePackUniform = (tile) => {
         runDevice.queue.writeBuffer(runPackU, 0, new Uint32Array([
@@ -1716,6 +2325,80 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
         cp.dispatchWorkgroups(Math.ceil(tile.padW / 8), Math.ceil(tile.padH / 8));
         cp.end();
       };
+      const encodeTemporalInputs = (encoder, tile) => {
+        if (!usesTemporalAtlas) return;
+        const geometry = temporalTileGeometry(tile, srcW, srcH);
+        const atlasByKey = new Map(
+          runTemporalAtlas.states.map((state) => [state.key, state]),
+        );
+        const stateInputs = Object.values(runGraph.inputs).filter(
+          ({ role }) => role === "state-in",
+        );
+        if (stateInputs.length) {
+          const representative = atlasByKey.get(stateInputs[0].state);
+          runDevice.queue.writeBuffer(
+            runTemporalStatePackU,
+            0,
+            buildTemporalStatePackUniform(geometry, representative.spec),
+          );
+        }
+        for (const descriptor of Object.values(runGraph.inputs)) {
+          let pipeline;
+          let entries;
+          let dispatchZ;
+          if (descriptor.role === "rgb") continue;
+          if (descriptor.role === "state-in") {
+            const state = atlasByKey.get(descriptor.state);
+            const scratch = temporalStateScratch.get(descriptor.state);
+            pipeline = temporalStatePipes.get(
+              `${state.spec.dtype}:${state.spec.channels}`,
+            ).pack;
+            entries = [
+              {
+                binding: 0,
+                resource: state.banks[runTemporalAtlas.committedBank].view,
+              },
+              { binding: 1, resource: { buffer: scratch.buffer } },
+              {
+                binding: 2,
+                resource: { buffer: runTemporalStatePackU },
+              },
+            ];
+            dispatchZ = state.spec.layers;
+          } else {
+            const scratch = temporalAuxScratch.get(descriptor.name);
+            const provided = runAuxiliary[descriptor.name];
+            runDevice.queue.writeBuffer(
+              scratch.uniform,
+              0,
+              buildTemporalAuxiliaryPackUniform(
+                geometry,
+                descriptor.channels,
+              ),
+            );
+            pipeline = runTemporalAuxPipe;
+            entries = [
+              { binding: 0, resource: { buffer: provided.gpuBuffer } },
+              { binding: 1, resource: { buffer: scratch.buffer } },
+              { binding: 2, resource: { buffer: scratch.uniform } },
+            ];
+            dispatchZ = descriptor.channels;
+          }
+          const bindGroup = runDevice.createBindGroup({
+            layout: pipeline.getBindGroupLayout(0),
+            entries,
+          });
+          const pass = encoder.beginComputePass();
+          pass.setPipeline(pipeline);
+          pass.setBindGroup(0, bindGroup);
+          pass.dispatchWorkgroups(
+            Math.ceil(tile.padW / 8),
+            Math.ceil(tile.padH / 8),
+            dispatchZ,
+          );
+          pass.end();
+        }
+      };
 
       // Capture the whole external/texture source and pack the first tile in one
       // submission before the first await. External textures expire at task end;
@@ -1741,6 +2424,7 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
         cp.dispatchWorkgroups(Math.ceil(srcW / 8), Math.ceil(srcH / 8));
         cp.end();
         encodePack(enc, tiles[0]);
+        encodeTemporalInputs(enc, tiles[0]);
         runDevice.queue.submit([enc.finish()]);
       }
 
@@ -1764,6 +2448,7 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
             writePackUniform(tile);
             const packEncoder = runDevice.createCommandEncoder();
             encodePack(packEncoder, tile);
+            encodeTemporalInputs(packEncoder, tile);
             runDevice.queue.submit([packEncoder.finish()]);
           }
 
@@ -1777,21 +2462,54 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
             for (const descriptor of Object.values(runGraph.inputs)) {
               if (descriptor.role === "rgb") continue;
               if (descriptor.role === "state-in") {
-                feeds[descriptor.name] = temporalState.get(descriptor.state);
+                if (usesTemporalAtlas) {
+                  const scratch = temporalStateScratch.get(descriptor.state);
+                  const wrapper = runOrt.Tensor.fromGpuBuffer(
+                    scratch.buffer,
+                    {
+                      dataType: descriptor.dtype,
+                      dims: [
+                        1,
+                        descriptor.channels,
+                        tile.padH,
+                        tile.padW,
+                      ],
+                    },
+                  );
+                  auxiliaryTensors.push(wrapper);
+                  feeds[descriptor.name] = wrapper;
+                } else {
+                  feeds[descriptor.name] = temporalState.get(descriptor.state);
+                }
                 continue;
               }
               const provided = runAuxiliary[descriptor.name];
-              const expectedSpatial =
-                descriptor.role === "motion" || descriptor.role === "residual"
-                  ? { width: tile.padW, height: tile.padH }
-                  : null;
-              const tensorOptions = validateRuntimeTensor(
-                provided,
-                descriptor,
-                `neural auxiliary input '${descriptor.name}'`,
-                expectedSpatial,
+              const tensorOptions = usesTemporalAtlas
+                ? {
+                  dataType: descriptor.dtype,
+                  dims: [
+                    1,
+                    descriptor.channels,
+                    tile.padH,
+                    tile.padW,
+                  ],
+                }
+                : validateRuntimeTensor(
+                  provided,
+                  descriptor,
+                  `neural auxiliary input '${descriptor.name}'`,
+                  descriptor.role === "motion" ||
+                    descriptor.role === "residual"
+                    ? { width: tile.padW, height: tile.padH }
+                    : null,
+                );
+              const gpuBuffer = usesTemporalAtlas
+                ? temporalAuxScratch.get(descriptor.name).buffer
+                : provided.gpuBuffer;
+              const wrapper = runOrt.Tensor.fromGpuBuffer(
+                gpuBuffer,
+                tensorOptions,
               );
-              const wrapper = runOrt.Tensor.fromGpuBuffer(provided.gpuBuffer, tensorOptions);
               auxiliaryTensors.push(wrapper);
               feeds[descriptor.name] = wrapper;
             }
@@ -1810,8 +2528,10 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
             throw new Error("neural session changed during inference");
           }
           let nextTemporalState = null;
+          let atlasStateOutputs = null;
           if (isV2 && runModelContract.mode === "temporal") {
-            nextTemporalState = new Map();
+            if (usesTemporalAtlas) atlasStateOutputs = [];
+            else nextTemporalState = new Map();
             for (const descriptor of Object.values(runGraph.outputs)) {
               if (descriptor.role !== "state-out") continue;
               const stateTensor = result[descriptor.name];
@@ -1821,10 +2541,19 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
                 `neural state output '${descriptor.name}'`,
                 { width: tile.padW, height: tile.padH },
               );
-              nextTemporalState.set(descriptor.state, stateTensor);
+              if (usesTemporalAtlas) {
+                atlasStateOutputs.push({ descriptor, tensor: stateTensor });
+              } else {
+                nextTemporalState.set(descriptor.state, stateTensor);
+              }
             }
-            if (nextTemporalState.size !== runModelContract.states.length ||
-                runModelContract.states.some((key) => !nextTemporalState.has(key))) {
+            const returnedStates = usesTemporalAtlas
+              ? new Set(atlasStateOutputs.map(
+                ({ descriptor }) => descriptor.state,
+              ))
+              : new Set(nextTemporalState.keys());
+            if (returnedStates.size !== runModelContract.states.length ||
+                runModelContract.states.some((key) => !returnedStates.has(key))) {
               throw new Error(`neural graph '${runGraphName}' returned incomplete recurrent state`);
             }
           }
@@ -1846,6 +2575,22 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
             tile.outW,
             tile.outH,
           ]));
+          if (atlasStateOutputs?.length) {
+            const atlasByKey = new Map(
+              runTemporalAtlas.states.map((state) => [state.key, state]),
+            );
+            const representative = atlasByKey.get(
+              atlasStateOutputs[0].descriptor.state,
+            );
+            runDevice.queue.writeBuffer(
+              runTemporalStateUnpackU,
+              0,
+              buildTemporalStateUnpackUniform(
+                temporalTileGeometry(tile, srcW, srcH),
+                representative.spec,
+              ),
+            );
+          }
           const enc = runDevice.createCommandEncoder();
           const bg = runDevice.createBindGroup({
             layout: runCompPipe.getBindGroupLayout(0),
@@ -1860,6 +2605,43 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
           cp.setBindGroup(0, bg);
           cp.dispatchWorkgroups(Math.ceil(tile.outW / 8), Math.ceil(tile.outH / 8));
           cp.end();
+          if (atlasStateOutputs) {
+            const atlasByKey = new Map(
+              runTemporalAtlas.states.map((state) => [state.key, state]),
+            );
+            for (const { descriptor, tensor } of atlasStateOutputs) {
+              const state = atlasByKey.get(descriptor.state);
+              const pipeline = temporalStatePipes.get(
+                `${state.spec.dtype}:${state.spec.channels}`,
+              ).unpack;
+              const stateBindGroup = runDevice.createBindGroup({
+                layout: pipeline.getBindGroupLayout(0),
+                entries: [
+                  {
+                    binding: 0,
+                    resource: { buffer: tensor.gpuBuffer },
+                  },
+                  {
+                    binding: 1,
+                    resource: state.banks[runCandidateBank].view,
+                  },
+                  {
+                    binding: 2,
+                    resource: { buffer: runTemporalStateUnpackU },
+                  },
+                ],
+              });
+              const statePass = enc.beginComputePass();
+              statePass.setPipeline(pipeline);
+              statePass.setBindGroup(0, stateBindGroup);
+              statePass.dispatchWorkgroups(
+                Math.ceil(tile.coreW / 8),
+                Math.ceil(tile.coreH / 8),
+                state.spec.layers,
+              );
+              statePass.end();
+            }
+          }
           runDevice.queue.submit([enc.finish()]);
           if (nextTemporalState) {
             const previousState = temporalState;
@@ -1886,6 +2668,31 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
         }
       }
 
+      if (usesTemporalAtlas) {
+        if (temporalErrorScopes.length) {
+          const scopeFailures = await popTemporalErrorScopes();
+          if (scopeFailures.length) {
+            const details = scopeFailures.map(({ filter, error }) =>
+              `${filter}: ${error.message || String(error)}`).join("; ");
+            const gpuError = new Error(
+              `neural temporal atlas WebGPU error: ${details}`,
+              { cause: scopeFailures[0].error },
+            );
+            gpuError.code = "NEURAL_GPU";
+            throw gpuError;
+          }
+        }
+        if (runLifecycleGeneration !== lifecycleGeneration) {
+          throw new Error("neural inference cancelled by stop");
+        }
+        if (runSessionGeneration !== sessionGeneration ||
+            runPrimarySession !== session) {
+          throw new Error("neural session changed during inference");
+        }
+        runTemporalAtlas.committedBank = runCandidateBank;
+        runTemporalAtlas.valid = true;
+      }
+
       const dt = performance.now() - t0;
       stats.last = dt;
       stats.mu = stats.n === 0 ? dt : stats.mu * 0.9 + dt * 0.1;
@@ -1898,11 +2705,31 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
       stats.n++;
       return { tex: runOutTex, outW, outH };
     } catch (error) {
+      let caughtScopeFailures = [];
+      if (temporalErrorScopes.length) {
+        caughtScopeFailures = await popTemporalErrorScopes();
+        for (const { filter, error: scopeError } of caughtScopeFailures) {
+          warn(
+            `neural temporal atlas ${filter} scope also failed:`,
+            scopeError.message || String(scopeError),
+          );
+        }
+      }
       stats.fails++;
-      if (isV2 && runModelContract.mode === "temporal") clearTemporalState(runDevice);
+      const scopedGpuFailure =
+        error?.code === "NEURAL_GPU" || caughtScopeFailures.length > 0;
+      if (scopedGpuFailure) {
+        // A deferred scope error can originate from any resource created while
+        // the scope was active, not just an atlas texture. Unpublish the whole
+        // engine-owned GPU cache so the next frame rebuilds it from the still-
+        // valid ORT sessions.
+        gateGpuFailureRecovery(destroyGpuResources(runDevice));
+      } else if (isV2 && runModelContract.mode === "temporal") {
+        clearTemporalState(runDevice);
+      }
       throw error;
     } finally {
-      runBusy = false;
+      setRunBusy(false);
       endRun();
     }
   }
@@ -1960,7 +2787,7 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     inputName = "input";
     outputName = "output";
     fp16Model = false;
-    runBusy = false;
+    setRunBusy(false);
     latestInitPromise = null;
     deferredSessionReleases = [];
     sessionReleaseFailures = [];

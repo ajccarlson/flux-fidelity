@@ -156,6 +156,76 @@ function precisionContract(profile) {
   };
 }
 
+function temporalTilingProfile(precision) {
+  const mixed = precision === MIXED_FP16_PRECISION;
+  return {
+    kind: "temporal-state-atlas-v1",
+    scale: 4,
+    halo: 64,
+    haloDerivation: {
+      motionSearchRadius: 8,
+      fixedRecurrentRadius: 35,
+      minimum: 64,
+      alignment: 8,
+    },
+    largestLogicalBytesPerSourcePixel: mixed ? 512 : 776,
+    preferredInputExtent: 512,
+    inputAlignment: 8,
+    workgroupSize: 8,
+    stateAtlas: {
+      stateCount: 2,
+      channelsPerState: 64,
+      arrayLayersPerState: 16,
+      textureFormat: mixed ? "rgba16float" : "rgba32float",
+    },
+  };
+}
+
+function graphLogicalMemoryProfile(role, precision) {
+  const mixed = precision === MIXED_FP16_PRECISION;
+  const computeDtype = mixed ? "float16" : "float32";
+  const computeBytes = mixed ? 2 : 4;
+  const channels = role === "recurrent" ? 194 : 64;
+  const convBytes = channels * computeBytes;
+  const gridChannels = role === "recurrent"
+    ? [32, 32, 32, 32, 128]
+    : [];
+  const gridBytes = gridChannels.length ? 512 : 0;
+  const publicBytes = 3 * 4 * 4 * 4;
+  const candidates = [
+    ["conv-input", convBytes],
+    ["grid-sample-source", gridBytes],
+    ["public-output", publicBytes],
+  ];
+  const [largestTensorKind, largestBytes] = candidates.reduce(
+    (largest, candidate) => candidate[1] > largest[1] ? candidate : largest,
+  );
+  const conv = {
+    channels,
+    dtype: computeDtype,
+    spatial_scale: 1,
+    bytes_per_source_pixel: convBytes,
+  };
+  return {
+    largest_bytes_per_source_pixel: largestBytes,
+    largest_tensor_kind: largestTensorKind,
+    max_conv_input: conv,
+    deform_align_predictor_input: role === "recurrent" ? { ...conv } : null,
+    grid_sample_sources: {
+      channels: gridChannels,
+      dtype: gridChannels.length ? "float32" : null,
+      spatial_scale: 1,
+      largest_bytes_per_source_pixel: gridBytes,
+    },
+    public_output: {
+      channels: 3,
+      dtype: "float32",
+      spatial_scale: 4,
+      bytes_per_source_pixel: publicBytes,
+    },
+  };
+}
+
 function validatePrecision(receipt) {
   const recorded = requireRecord(receipt.precision, "precision");
   const expected = precisionContract(recorded.profile);
@@ -555,6 +625,32 @@ function validateManifestPrecision(contract, precision) {
       receiptError(`runtime_contract.manifest_v2_template.${at}.dtype must be ${dtype}`);
     }
   }
+
+  for (const [descriptors, role, at] of [
+    [initialize.outputs, "state-out", "initialize.outputs"],
+    [recurrent.inputs, "state-in", "recurrent.inputs"],
+    [recurrent.outputs, "state-out", "recurrent.outputs"],
+  ]) {
+    const states = Object.values(descriptors)
+      .filter((descriptor) => descriptor.role === role);
+    if (states.length !== 2 ||
+        !sameStringArray(states.map(({ state }) => state).sort(), ["high", "low"]) ||
+        states.some(({ channels, dtype }) =>
+          channels !== 64 || dtype !== expected.state_dtype)) {
+      receiptError(
+        `runtime_contract.manifest_v2_template.${at} must expose exactly ` +
+        `two 64-channel ${expected.state_dtype} recurrent states`,
+      );
+    }
+  }
+}
+
+function validateTemporalTilingProfile(contract, precision) {
+  requireExactValue(
+    contract.tiling,
+    temporalTilingProfile(precision),
+    "runtime_contract.manifest_v2_template.tiling",
+  );
 }
 
 function expectedGraphShapes(role) {
@@ -618,6 +714,11 @@ function validateGraphEvidenceV3(
       grid_sample_nodes: expectedGridSamples,
     },
     `${at}.precision_islands`,
+  );
+  requireExactValue(
+    graph.logical_memory,
+    graphLogicalMemoryProfile(role, precision),
+    `${at}.logical_memory`,
   );
 
   if (!Array.isArray(graph.operators) ||
@@ -759,6 +860,7 @@ export function validateCdaExportReceipt(receipt) {
     runtime.manifest_v2_template,
     "runtime_contract.manifest_v2_template",
   );
+  if (!legacy) validateTemporalTilingProfile(contract, precision);
   let normalizedEntry;
   try {
     [normalizedEntry] = validateNeuralManifest([makeProbeEntry(contract)]);

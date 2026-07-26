@@ -5,6 +5,7 @@ import {
   CDA_TEMPORAL_LOGICAL_BYTES,
   createCdaTemporalTilingProfile,
   deriveCdaTemporalHalo,
+  normalizeTemporalNeuralTilingProfile,
   planTemporalNeuralTiling,
 } from "../src/core/fsrcnnx-neural-temporal-tiling.js";
 
@@ -27,6 +28,207 @@ function cda(bytes = CDA_TEMPORAL_LOGICAL_BYTES.mixed, options = {}) {
     ...options,
   });
 }
+
+function clone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+test("CDA profiles preserve the exact temporal state-atlas contract", () => {
+  const fp32 = cda(CDA_TEMPORAL_LOGICAL_BYTES.fp32);
+  assert.deepEqual(fp32, {
+    kind: "temporal-state-atlas-v1",
+    scale: 4,
+    halo: 64,
+    haloDerivation: {
+      motionSearchRadius: 8,
+      fixedRecurrentRadius: 35,
+      minimum: 64,
+      alignment: 8,
+    },
+    largestLogicalBytesPerSourcePixel: 776,
+    preferredInputExtent: 512,
+    inputAlignment: 8,
+    workgroupSize: 8,
+    stateAtlas: {
+      stateCount: 2,
+      channelsPerState: 64,
+      arrayLayersPerState: 16,
+      textureFormat: "rgba32float",
+    },
+  });
+  assert.equal(Object.isFrozen(fp32), true);
+  assert.equal(Object.isFrozen(fp32.haloDerivation), true);
+  assert.equal(Object.isFrozen(fp32.stateAtlas), true);
+
+  const normalized = normalizeTemporalNeuralTilingProfile(clone(fp32));
+  assert.deepEqual(normalized, fp32);
+  assert.notEqual(normalized, fp32);
+  assert.equal(Object.isFrozen(normalized.haloDerivation), true);
+  assert.equal(Object.isFrozen(normalized.stateAtlas), true);
+
+  const mixed = cda(CDA_TEMPORAL_LOGICAL_BYTES.mixed);
+  assert.equal(mixed.stateAtlas.textureFormat, "rgba16float");
+  assert.equal(mixed.largestLogicalBytesPerSourcePixel, 512);
+});
+
+test("strict temporal profile normalization rejects malformed nested contracts", () => {
+  const cases = [
+    [
+      "missing top-level field",
+      (profile) => { delete profile.haloDerivation; },
+      /profile is missing haloDerivation/,
+    ],
+    [
+      "unknown top-level field",
+      (profile) => { profile.stateArrayLayers = 16; },
+      /profile has unknown stateArrayLayers/,
+    ],
+    [
+      "partial halo derivation",
+      (profile) => { delete profile.haloDerivation.minimum; },
+      /haloDerivation is missing minimum/,
+    ],
+    [
+      "unknown halo derivation field",
+      (profile) => {
+        profile.haloDerivation.formula =
+          "max(minimum, alignUp(radius, alignment))";
+      },
+      /haloDerivation has unknown formula/,
+    ],
+    [
+      "motion search radius",
+      (profile) => { profile.haloDerivation.motionSearchRadius = 7; },
+      /motionSearchRadius must be 8/,
+    ],
+    [
+      "fixed recurrent radius",
+      (profile) => { profile.haloDerivation.fixedRecurrentRadius = 34; },
+      /fixedRecurrentRadius must be 35/,
+    ],
+    [
+      "minimum halo",
+      (profile) => { profile.haloDerivation.minimum = 63; },
+      /minimum must be 64/,
+    ],
+    [
+      "halo alignment",
+      (profile) => { profile.haloDerivation.alignment = 16; },
+      /alignment must be 8/,
+    ],
+    [
+      "derived halo mismatch",
+      (profile) => { profile.halo = 72; },
+      /halo 72 does not match derived halo 64/,
+    ],
+    [
+      "missing state atlas",
+      (profile) => { delete profile.stateAtlas; },
+      /profile is missing stateAtlas/,
+    ],
+    [
+      "partial state atlas",
+      (profile) => { delete profile.stateAtlas.textureFormat; },
+      /stateAtlas is missing textureFormat/,
+    ],
+    [
+      "unknown state atlas field",
+      (profile) => { profile.stateAtlas.bytesPerChannel = 2; },
+      /stateAtlas has unknown bytesPerChannel/,
+    ],
+    [
+      "state count",
+      (profile) => { profile.stateAtlas.stateCount = 3; },
+      /stateAtlas\.stateCount must be 2/,
+    ],
+    [
+      "state channels",
+      (profile) => { profile.stateAtlas.channelsPerState = 60; },
+      /stateAtlas\.channelsPerState must be 64/,
+    ],
+    [
+      "state layers",
+      (profile) => { profile.stateAtlas.arrayLayersPerState = 15; },
+      /stateAtlas\.arrayLayersPerState must be 16/,
+    ],
+    [
+      "state format",
+      (profile) => { profile.stateAtlas.textureFormat = "r16float"; },
+      /textureFormat must be rgba16float or rgba32float/,
+    ],
+    [
+      "non-positive preferred core",
+      (profile) => { profile.preferredInputExtent = 128; },
+      /must leave a positive core/,
+    ],
+    [
+      "shader workgroup size",
+      (profile) => { profile.workgroupSize = 16; },
+      /workgroupSize must be 8/,
+    ],
+  ];
+
+  for (const [label, mutate, expected] of cases) {
+    const profile = clone(cda(CDA_TEMPORAL_LOGICAL_BYTES.fp32));
+    mutate(profile);
+    assert.throws(
+      () => normalizeTemporalNeuralTilingProfile(profile),
+      expected,
+      label,
+    );
+  }
+});
+
+test("the planner only adapts complete legacy flat unit profiles", () => {
+  const legacy = {
+    scale: 4,
+    halo: 64,
+    largestLogicalBytesPerSourcePixel: CDA_TEMPORAL_LOGICAL_BYTES.mixed,
+    preferredInputExtent: 512,
+    inputAlignment: 8,
+    stateArrayLayers: 16,
+    workgroupSize: 8,
+  };
+  assert.throws(
+    () => normalizeTemporalNeuralTilingProfile(legacy),
+    /profile is missing kind, haloDerivation, stateAtlas/,
+  );
+
+  const plan = planTemporalNeuralTiling(16, 9, legacy, limits());
+  assert.equal(plan.profile.kind, "temporal-state-atlas-v1");
+  assert.deepEqual(plan.profile.haloDerivation, {
+    motionSearchRadius: 8,
+    fixedRecurrentRadius: 35,
+    minimum: 64,
+    alignment: 8,
+  });
+  assert.deepEqual(plan.profile.stateAtlas, {
+    stateCount: 2,
+    channelsPerState: 64,
+    arrayLayersPerState: 16,
+    textureFormat: "rgba16float",
+  });
+  assert.equal(Object.hasOwn(plan.profile, "stateArrayLayers"), false);
+
+  const partialNested = {
+    kind: "temporal-state-atlas-v1",
+    ...legacy,
+    haloDerivation: {},
+  };
+  assert.throws(
+    () => planTemporalNeuralTiling(16, 9, partialNested, limits()),
+    /profile is missing stateAtlas/,
+  );
+  assert.throws(
+    () => planTemporalNeuralTiling(
+      16,
+      9,
+      { ...legacy, halo: 72 },
+      limits(),
+    ),
+    /legacy profile halo must be the audited CDA default/,
+  );
+});
 
 test("CDA halo covers initializer and bounded recurrent dependency radii", () => {
   assert.equal(deriveCdaTemporalHalo(0), 64);

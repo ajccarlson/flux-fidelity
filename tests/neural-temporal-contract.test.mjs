@@ -19,7 +19,25 @@ async function loadNeuralEngine(deps) {
     dependencyImport,
     "const { createOrtSession, ensureOrt, getOrtSessionDevice } = globalThis.__neuralTemporalTestDeps;\n" +
       "const resolvePackagedAssetUrl = (path) => chrome.runtime.getURL(path);",
-  );
+  )
+    .replace(
+      JSON.stringify("./fsrcnnx-neural-temporal-tiling.js"),
+      JSON.stringify(
+        new URL(
+          "../src/core/fsrcnnx-neural-temporal-tiling.js",
+          import.meta.url,
+        ).href,
+      ),
+    )
+    .replace(
+      JSON.stringify("./fsrcnnx-neural-temporal-atlas.js"),
+      JSON.stringify(
+        new URL(
+          "../src/core/fsrcnnx-neural-temporal-atlas.js",
+          import.meta.url,
+        ).href,
+      ),
+    );
   assert.notEqual(source, original, "temporal neural test dependency injection must match");
   globalThis.__neuralTemporalTestDeps = deps;
   return import(

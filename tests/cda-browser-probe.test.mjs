@@ -131,6 +131,73 @@ function precisionContract(profile) {
   };
 }
 
+function temporalTilingProfile(precision) {
+  const mixed = precision === mixedPrecision;
+  return {
+    kind: "temporal-state-atlas-v1",
+    scale: 4,
+    halo: 64,
+    haloDerivation: {
+      motionSearchRadius: 8,
+      fixedRecurrentRadius: 35,
+      minimum: 64,
+      alignment: 8,
+    },
+    largestLogicalBytesPerSourcePixel: mixed ? 512 : 776,
+    preferredInputExtent: 512,
+    inputAlignment: 8,
+    workgroupSize: 8,
+    stateAtlas: {
+      stateCount: 2,
+      channelsPerState: 64,
+      arrayLayersPerState: 16,
+      textureFormat: mixed ? "rgba16float" : "rgba32float",
+    },
+  };
+}
+
+function graphLogicalMemoryProfile(role, precision) {
+  const mixed = precision === mixedPrecision;
+  const computeDtype = mixed ? "float16" : "float32";
+  const channels = role === "recurrent" ? 194 : 64;
+  const convBytes = channels * (mixed ? 2 : 4);
+  const gridChannels = role === "recurrent"
+    ? [32, 32, 32, 32, 128]
+    : [];
+  const candidates = [
+    ["conv-input", convBytes],
+    ["grid-sample-source", gridChannels.length ? 512 : 0],
+    ["public-output", 192],
+  ];
+  const [largestTensorKind, largestBytes] = candidates.reduce(
+    (largest, candidate) => candidate[1] > largest[1] ? candidate : largest,
+  );
+  const conv = {
+    channels,
+    dtype: computeDtype,
+    spatial_scale: 1,
+    bytes_per_source_pixel: convBytes,
+  };
+  return {
+    largest_bytes_per_source_pixel: largestBytes,
+    largest_tensor_kind: largestTensorKind,
+    max_conv_input: conv,
+    deform_align_predictor_input: role === "recurrent" ? { ...conv } : null,
+    grid_sample_sources: {
+      channels: gridChannels,
+      dtype: gridChannels.length ? "float32" : null,
+      spatial_scale: 1,
+      largest_bytes_per_source_pixel: gridChannels.length ? 512 : 0,
+    },
+    public_output: {
+      channels: 3,
+      dtype: "float32",
+      spatial_scale: 4,
+      bytes_per_source_pixel: 192,
+    },
+  };
+}
+
 function graphShapes(role) {
   const spatial = ["height", "width"];
   return {
@@ -235,7 +302,10 @@ function receiptV3For(
   const sequences = [...shapeResults, fractional];
   const maxAbs = Math.max(limits.output.max_abs, limits.state.max_abs);
   const maxMean = Math.max(limits.output.max_mean, limits.state.max_mean);
-  const contract = temporalContract(stateDtype);
+  const contract = {
+    ...temporalContract(stateDtype),
+    tiling: temporalTilingProfile(precision),
+  };
 
   const graphFor = (role, bytes) => {
     const mixed = precision === mixedPrecision;
@@ -275,6 +345,7 @@ function receiptV3For(
         grid_sample_dtype: "float32",
         grid_sample_nodes: gridSampleNodes,
       },
+      logical_memory: graphLogicalMemoryProfile(role, precision),
       weight_derivation: {
         source_dtype: "float32",
         target_dtype: targetDtype,
@@ -464,6 +535,7 @@ test("CDA browser probe preserves legacy format-2 FP32 receipts", async (t) => {
   assert.deepEqual(fixture.receipt, before, "receipt validation must not mutate evidence");
   assert.equal(validated.precision, fp32Precision);
   assert.equal(validated.contract.version, 2);
+  assert.equal(validated.contract.tiling, undefined);
 
   const verified = await verifyCdaExportDirectory(fixture.directory);
   assert.equal(verified.precision, fp32Precision);
@@ -496,8 +568,16 @@ test("CDA browser probe accepts complete mixed-fp16 format-3 evidence", async (t
     validated.contract.graphs.recurrent.outputs.output.dtype,
     "float32",
   );
+  assert.deepEqual(
+    validated.contract.tiling,
+    temporalTilingProfile(mixedPrecision),
+  );
   const manifest = makeCdaProbeManifest([], validated.contract);
   assert.equal(manifest[0].fp16, false);
+  assert.deepEqual(
+    manifest[0].contract.tiling,
+    temporalTilingProfile(mixedPrecision),
+  );
 
   const parent = await mkdtemp(join(tmpdir(), "fsrcnnx-cda-mixed-probe-test-"));
   t.after(() => rm(parent, { recursive: true, force: true }));
@@ -525,6 +605,10 @@ test("CDA browser probe accepts strict format-3 FP32 evidence", () => {
     validated.contract.graphs.recurrent.inputs.state_high.dtype,
     "float32",
   );
+  assert.deepEqual(
+    validated.contract.tiling,
+    temporalTilingProfile(fp32Precision),
+  );
 });
 
 test("CDA browser probe rejects incomplete or forged format-3 precision evidence", () => {
@@ -535,6 +619,63 @@ test("CDA browser probe rejects incomplete or forged format-3 precision evidence
       "precision contract",
       (receipt) => { receipt.precision.coordinate_dtype = "float16"; },
       /precision\.coordinate_dtype must be "float32"/,
+    ],
+    [
+      "missing tiling profile",
+      (receipt) => {
+        delete receipt.runtime_contract.manifest_v2_template.tiling;
+      },
+      /manifest_v2_template\.tiling must be an object/,
+    ],
+    [
+      "halo derivation",
+      (receipt) => {
+        receipt.runtime_contract.manifest_v2_template.tiling
+          .haloDerivation.alignment = 16;
+      },
+      /haloDerivation\.alignment must be 8/,
+    ],
+    [
+      "logical tensor footprint",
+      (receipt) => {
+        receipt.runtime_contract.manifest_v2_template.tiling
+          .largestLogicalBytesPerSourcePixel = 776;
+      },
+      /largestLogicalBytesPerSourcePixel must be 512/,
+    ],
+    [
+      "state atlas format",
+      (receipt) => {
+        receipt.runtime_contract.manifest_v2_template.tiling
+          .stateAtlas.textureFormat = "rgba32float";
+      },
+      /stateAtlas\.textureFormat must be "rgba16float"/,
+    ],
+    [
+      "state ABI count",
+      (receipt) => {
+        const contract = receipt.runtime_contract.manifest_v2_template;
+        contract.graphs.initialize.outputs.next_state_extra = {
+          role: "state-out",
+          state: "extra",
+          dtype: "float16",
+          channels: 64,
+        };
+        contract.graphs.recurrent.inputs.state_extra = {
+          role: "state-in",
+          state: "extra",
+          reset: "required",
+          dtype: "float16",
+          channels: 64,
+        };
+        contract.graphs.recurrent.outputs.next_state_extra = {
+          role: "state-out",
+          state: "extra",
+          dtype: "float16",
+          channels: 64,
+        };
+      },
+      /must expose exactly two 64-channel float16 recurrent states|tiling atlas declares 2 states but the graph declares 3/,
     ],
     [
       "canonical identity",
@@ -606,6 +747,14 @@ test("CDA browser probe rejects incomplete or forged format-3 precision evidence
           "float16";
       },
       /precision_islands\.grid_sample_dtype must be "float32"/,
+    ],
+    [
+      "logical memory evidence",
+      (receipt) => {
+        receipt.graphs.recurrent.logical_memory
+          .grid_sample_sources.largest_bytes_per_source_pixel = 511;
+      },
+      /logical_memory\.grid_sample_sources\.largest_bytes_per_source_pixel must be 512/,
     ],
     [
       "weight derivation",

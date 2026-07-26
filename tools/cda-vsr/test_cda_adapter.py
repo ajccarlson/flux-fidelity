@@ -26,12 +26,14 @@ from cda_adapter import (  # noqa: E402
     dynamic_axes_for,
     dynamic_probe_shape,
     inspect_inputs,
+    logical_memory_contract,
     make_dynamic_motion_warp,
     precision_contract,
     require_expected_hash,
     resolve_source,
     runtime_contract_template,
     sha256_file,
+    temporal_tiling_contract,
 )
 from cda_tool import (  # noqa: E402
     EXPORT_RECEIPT_FORMAT,
@@ -309,6 +311,10 @@ class AdapterStaticTests(unittest.TestCase):
                             "public_outputs"
                         ],
                     },
+                    "logical_memory": logical_memory_contract(
+                        role,
+                        precision,
+                    ),
                 }
                 for index, (role, filename) in enumerate(
                     GRAPH_FILENAMES.items()
@@ -541,6 +547,31 @@ class AdapterStaticTests(unittest.TestCase):
             "manifest": lambda receipt: receipt["runtime_contract"].update(
                 manifest_v2_template={}
             ),
+            "tiling maximum": lambda receipt: receipt["runtime_contract"][
+                "manifest_v2_template"
+            ]["tiling"].update(
+                largestLogicalBytesPerSourcePixel=1
+            ),
+            "tiling halo derivation": lambda receipt: receipt[
+                "runtime_contract"
+            ]["manifest_v2_template"]["tiling"]["haloDerivation"].update(
+                motionSearchRadius=7
+            ),
+            "tiling texture format": lambda receipt: receipt[
+                "runtime_contract"
+            ]["manifest_v2_template"]["tiling"]["stateAtlas"].update(
+                textureFormat="rgba16float"
+            ),
+            "graph logical maximum": lambda receipt: receipt["graphs"][
+                "recurrent"
+            ]["logical_memory"].update(
+                largest_bytes_per_source_pixel=1
+            ),
+            "graph logical structure": lambda receipt: receipt["graphs"][
+                "recurrent"
+            ]["logical_memory"]["deform_align_predictor_input"].update(
+                channels=193
+            ),
             "graph role": lambda receipt: receipt["graphs"].update(
                 unexpected=receipt["graphs"].pop("initializer")
             ),
@@ -709,6 +740,30 @@ class AdapterStaticTests(unittest.TestCase):
         contract = runtime_contract_template()
         self.assertEqual(contract["version"], 2)
         self.assertEqual(contract["mode"], "temporal")
+        self.assertEqual(
+            contract["tiling"],
+            {
+                "kind": "temporal-state-atlas-v1",
+                "scale": 4,
+                "halo": 64,
+                "haloDerivation": {
+                    "motionSearchRadius": 8,
+                    "fixedRecurrentRadius": 35,
+                    "minimum": 64,
+                    "alignment": 8,
+                },
+                "largestLogicalBytesPerSourcePixel": 776,
+                "preferredInputExtent": 512,
+                "inputAlignment": 8,
+                "workgroupSize": 8,
+                "stateAtlas": {
+                    "stateCount": 2,
+                    "channelsPerState": 64,
+                    "arrayLayersPerState": 16,
+                    "textureFormat": "rgba32float",
+                },
+            },
+        )
         recurrent = contract["graphs"]["recurrent"]
         self.assertEqual(
             recurrent["inputs"]["motion"]["provider"],
@@ -721,6 +776,14 @@ class AdapterStaticTests(unittest.TestCase):
             recurrent["outputs"]["next_state_low"]["state"],
         )
         mixed = runtime_contract_template(MIXED_FP16_PRECISION)
+        self.assertEqual(
+            mixed["tiling"]["largestLogicalBytesPerSourcePixel"],
+            512,
+        )
+        self.assertEqual(
+            mixed["tiling"]["stateAtlas"]["textureFormat"],
+            "rgba16float",
+        )
         self.assertEqual(
             mixed["graphs"]["initialize"]["inputs"]["frame"]["dtype"],
             "float32",
@@ -739,6 +802,80 @@ class AdapterStaticTests(unittest.TestCase):
             ],
             "float16",
         )
+
+    def test_logical_memory_contract_proves_precision_specific_winner(self):
+        fp32_recurrent = logical_memory_contract(
+            "recurrent",
+            FP32_PRECISION,
+        )
+        self.assertEqual(
+            fp32_recurrent["deform_align_predictor_input"],
+            {
+                "channels": 194,
+                "dtype": "float32",
+                "spatial_scale": 1,
+                "bytes_per_source_pixel": 776,
+            },
+        )
+        self.assertEqual(
+            fp32_recurrent["largest_tensor_kind"],
+            "conv-input",
+        )
+
+        mixed_recurrent = logical_memory_contract(
+            "recurrent",
+            MIXED_FP16_PRECISION,
+        )
+        self.assertEqual(
+            logical_memory_contract(
+                "initializer",
+                MIXED_FP16_PRECISION,
+            )["largest_bytes_per_source_pixel"],
+            192,
+        )
+        self.assertEqual(
+            mixed_recurrent["deform_align_predictor_input"][
+                "bytes_per_source_pixel"
+            ],
+            388,
+        )
+        self.assertEqual(
+            mixed_recurrent["grid_sample_sources"],
+            {
+                "channels": [32, 32, 32, 32, 128],
+                "dtype": "float32",
+                "spatial_scale": 1,
+                "largest_bytes_per_source_pixel": 512,
+            },
+        )
+        self.assertEqual(
+            mixed_recurrent["largest_tensor_kind"],
+            "grid-sample-source",
+        )
+        self.assertEqual(
+            mixed_recurrent["largest_bytes_per_source_pixel"],
+            512,
+        )
+
+        receipt = self.make_receipt(precision=MIXED_FP16_PRECISION)
+        self.assertEqual(
+            temporal_tiling_contract(
+                MIXED_FP16_PRECISION,
+                graph_facts=receipt["graphs"],
+            )["largestLogicalBytesPerSourcePixel"],
+            512,
+        )
+        receipt["graphs"]["recurrent"]["logical_memory"][
+            "largest_bytes_per_source_pixel"
+        ] = 388
+        with self.assertRaisesRegex(
+            ToolError,
+            "logical-memory evidence",
+        ):
+            temporal_tiling_contract(
+                MIXED_FP16_PRECISION,
+                graph_facts=receipt["graphs"],
+            )
 
     def test_dynamic_axes_leave_only_spatial_dimensions_symbolic(self):
         axes = dynamic_axes_for(["frame", "motion"])

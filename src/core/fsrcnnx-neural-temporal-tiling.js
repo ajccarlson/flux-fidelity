@@ -22,6 +22,39 @@ export const CDA_TEMPORAL_LOGICAL_BYTES = Object.freeze({
   mixed: 512,
 });
 
+const TEMPORAL_PROFILE_FIELDS = Object.freeze([
+  "kind",
+  "scale",
+  "halo",
+  "haloDerivation",
+  "largestLogicalBytesPerSourcePixel",
+  "preferredInputExtent",
+  "inputAlignment",
+  "workgroupSize",
+  "stateAtlas",
+]);
+const HALO_DERIVATION_FIELDS = Object.freeze([
+  "motionSearchRadius",
+  "fixedRecurrentRadius",
+  "minimum",
+  "alignment",
+]);
+const STATE_ATLAS_FIELDS = Object.freeze([
+  "stateCount",
+  "channelsPerState",
+  "arrayLayersPerState",
+  "textureFormat",
+]);
+const LEGACY_PROFILE_FIELDS = Object.freeze([
+  "scale",
+  "halo",
+  "largestLogicalBytesPerSourcePixel",
+  "preferredInputExtent",
+  "inputAlignment",
+  "stateArrayLayers",
+  "workgroupSize",
+]);
+
 function invalid(message) {
   throw new Error(`invalid temporal tiling contract: ${message}`);
 }
@@ -115,36 +148,100 @@ function normalizeLimits(value) {
   });
 }
 
-function normalizeProfile(value) {
+function profileObject(value, label) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    invalid("profile must be an object");
+    invalid(`${label} must be an object`);
   }
-  const kind = value.kind ?? "temporal-state-atlas-v1";
-  if (kind !== "temporal-state-atlas-v1") invalid(`unsupported kind '${kind}'`);
+  return value;
+}
 
-  const scale = value.scale;
-  const halo = value.halo;
+function requireExactFields(value, expected, label) {
+  const expectedSet = new Set(expected);
+  const actual = Object.keys(value);
+  const missing = expected.filter((field) => !Object.hasOwn(value, field));
+  const extra = actual.filter((field) => !expectedSet.has(field));
+  if (missing.length) {
+    invalid(`${label} is missing ${missing.join(", ")}`);
+  }
+  if (extra.length) {
+    invalid(`${label} has unknown ${extra.join(", ")}`);
+  }
+}
+
+function requireLegacyFields(value) {
+  const allowed = new Set(["kind", ...LEGACY_PROFILE_FIELDS]);
+  const missing = LEGACY_PROFILE_FIELDS.filter(
+    (field) => !Object.hasOwn(value, field),
+  );
+  const extra = Object.keys(value).filter((field) => !allowed.has(field));
+  if (missing.length) {
+    invalid(`legacy profile is missing ${missing.join(", ")}`);
+  }
+  if (extra.length) {
+    invalid(`legacy profile has unknown ${extra.join(", ")}`);
+  }
+}
+
+function profilePositiveInteger(value, label) {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    invalid(`${label} must be a positive safe integer`);
+  }
+  return value;
+}
+
+function profileNonNegativeInteger(value, label) {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    invalid(`${label} must be a non-negative safe integer`);
+  }
+  return value;
+}
+
+function deriveTemporalHalo({
+  motionSearchRadius,
+  fixedRecurrentRadius,
+  minimum,
+  alignment,
+}) {
+  const radius = motionSearchRadius + fixedRecurrentRadius;
+  if (!Number.isSafeInteger(radius)) {
+    invalid("haloDerivation radius exceeds the safe integer range");
+  }
+  const remainder = radius % alignment;
+  const aligned = remainder === 0 ? radius : radius + alignment - remainder;
+  if (!Number.isSafeInteger(aligned)) {
+    invalid("haloDerivation result exceeds the safe integer range");
+  }
+  return Math.max(minimum, aligned);
+}
+
+export function normalizeTemporalNeuralTilingProfile(value) {
+  profileObject(value, "profile");
+  requireExactFields(value, TEMPORAL_PROFILE_FIELDS, "profile");
+  if (value.kind !== "temporal-state-atlas-v1") {
+    invalid(`unsupported kind '${value.kind}'`);
+  }
+
+  const scale = profilePositiveInteger(value.scale, "scale");
+  const halo = profileNonNegativeInteger(value.halo, "halo");
   const largestLogicalBytesPerSourcePixel =
-    value.largestLogicalBytesPerSourcePixel;
-  const preferredInputExtent = value.preferredInputExtent ?? 512;
-  const inputAlignment = value.inputAlignment ?? 8;
-  const stateArrayLayers = value.stateArrayLayers ?? 16;
-  const workgroupSize = value.workgroupSize ?? 8;
-
-  for (const [label, candidate] of [
-    ["scale", scale],
-    ["largestLogicalBytesPerSourcePixel", largestLogicalBytesPerSourcePixel],
-    ["preferredInputExtent", preferredInputExtent],
-    ["inputAlignment", inputAlignment],
-    ["stateArrayLayers", stateArrayLayers],
-    ["workgroupSize", workgroupSize],
-  ]) {
-    if (!Number.isSafeInteger(candidate) || candidate <= 0) {
-      invalid(`${label} must be a positive safe integer`);
-    }
-  }
-  if (!Number.isSafeInteger(halo) || halo < 0) {
-    invalid("halo must be a non-negative safe integer");
+    profilePositiveInteger(
+      value.largestLogicalBytesPerSourcePixel,
+      "largestLogicalBytesPerSourcePixel",
+    );
+  const preferredInputExtent = profilePositiveInteger(
+    value.preferredInputExtent,
+    "preferredInputExtent",
+  );
+  const inputAlignment = profilePositiveInteger(
+    value.inputAlignment,
+    "inputAlignment",
+  );
+  const workgroupSize = profilePositiveInteger(
+    value.workgroupSize,
+    "workgroupSize",
+  );
+  if (workgroupSize !== 8) {
+    invalid("workgroupSize must be 8");
   }
   if (halo > Math.floor((Number.MAX_SAFE_INTEGER - 1) / 2)) {
     invalid("halo is too large");
@@ -153,15 +250,92 @@ function normalizeProfile(value) {
     invalid("preferredInputExtent must leave a positive core after both halos");
   }
 
+  const rawDerivation = profileObject(
+    value.haloDerivation,
+    "haloDerivation",
+  );
+  requireExactFields(
+    rawDerivation,
+    HALO_DERIVATION_FIELDS,
+    "haloDerivation",
+  );
+  const haloDerivation = Object.freeze({
+    motionSearchRadius: profileNonNegativeInteger(
+      rawDerivation.motionSearchRadius,
+      "haloDerivation.motionSearchRadius",
+    ),
+    fixedRecurrentRadius: profileNonNegativeInteger(
+      rawDerivation.fixedRecurrentRadius,
+      "haloDerivation.fixedRecurrentRadius",
+    ),
+    minimum: profileNonNegativeInteger(
+      rawDerivation.minimum,
+      "haloDerivation.minimum",
+    ),
+    alignment: profilePositiveInteger(
+      rawDerivation.alignment,
+      "haloDerivation.alignment",
+    ),
+  });
+  if (haloDerivation.motionSearchRadius !== 8) {
+    invalid("haloDerivation.motionSearchRadius must be 8");
+  }
+  if (haloDerivation.fixedRecurrentRadius !== 35) {
+    invalid("haloDerivation.fixedRecurrentRadius must be 35");
+  }
+  if (haloDerivation.minimum !== 64) {
+    invalid("haloDerivation.minimum must be 64");
+  }
+  if (haloDerivation.alignment !== 8) {
+    invalid("haloDerivation.alignment must be 8");
+  }
+  const derivedHalo = deriveTemporalHalo(haloDerivation);
+  if (halo !== derivedHalo) {
+    invalid(`halo ${halo} does not match derived halo ${derivedHalo}`);
+  }
+
+  const rawStateAtlas = profileObject(value.stateAtlas, "stateAtlas");
+  requireExactFields(rawStateAtlas, STATE_ATLAS_FIELDS, "stateAtlas");
+  const stateAtlas = Object.freeze({
+    stateCount: profilePositiveInteger(
+      rawStateAtlas.stateCount,
+      "stateAtlas.stateCount",
+    ),
+    channelsPerState: profilePositiveInteger(
+      rawStateAtlas.channelsPerState,
+      "stateAtlas.channelsPerState",
+    ),
+    arrayLayersPerState: profilePositiveInteger(
+      rawStateAtlas.arrayLayersPerState,
+      "stateAtlas.arrayLayersPerState",
+    ),
+    textureFormat: rawStateAtlas.textureFormat,
+  });
+  if (stateAtlas.stateCount !== 2) {
+    invalid("stateAtlas.stateCount must be 2");
+  }
+  if (stateAtlas.channelsPerState !== 64) {
+    invalid("stateAtlas.channelsPerState must be 64");
+  }
+  if (stateAtlas.arrayLayersPerState !== 16 ||
+      stateAtlas.arrayLayersPerState * 4 !== stateAtlas.channelsPerState) {
+    invalid("stateAtlas.arrayLayersPerState must be 16");
+  }
+  if (stateAtlas.textureFormat !== "rgba16float" &&
+      stateAtlas.textureFormat !== "rgba32float") {
+    invalid("stateAtlas.textureFormat must be rgba16float or rgba32float");
+  }
+
   return Object.freeze({
-    kind,
+    kind: value.kind,
     scale,
     halo,
+    haloDerivation,
     largestLogicalBytesPerSourcePixel,
     preferredInputExtent,
     inputAlignment,
-    stateArrayLayers,
     workgroupSize,
+    stateAtlas,
   });
 }
 
@@ -184,17 +358,83 @@ export function createCdaTemporalTilingProfile({
   searchRadius = 8,
   largestLogicalBytesPerSourcePixel = CDA_TEMPORAL_LOGICAL_BYTES.fp32,
   preferredInputExtent = 512,
+  textureFormat = largestLogicalBytesPerSourcePixel ===
+    CDA_TEMPORAL_LOGICAL_BYTES.fp32
+    ? "rgba32float"
+    : "rgba16float",
 } = {}) {
-  return normalizeProfile({
+  const haloDerivation = Object.freeze({
+    motionSearchRadius: searchRadius,
+    fixedRecurrentRadius: 35,
+    minimum: 64,
+    alignment: 8,
+  });
+  return normalizeTemporalNeuralTilingProfile({
     kind: "temporal-state-atlas-v1",
     scale: 4,
     halo: deriveCdaTemporalHalo(searchRadius),
+    haloDerivation,
     largestLogicalBytesPerSourcePixel,
     preferredInputExtent,
     inputAlignment: 8,
-    stateArrayLayers: 16,
     workgroupSize: 8,
+    stateAtlas: {
+      stateCount: 2,
+      channelsPerState: 64,
+      arrayLayersPerState: 16,
+      textureFormat,
+    },
   });
+}
+
+function normalizeLegacyPlannerProfile(value) {
+  // Contract manifests use the strict exported normalizer. This adapter only
+  // preserves the planner's historical flat profile used by direct unit calls.
+  profileObject(value, "profile");
+  requireLegacyFields(value);
+  const kind = value.kind ?? "temporal-state-atlas-v1";
+  if (kind !== "temporal-state-atlas-v1") invalid(`unsupported kind '${kind}'`);
+  if (value.halo !== deriveCdaTemporalHalo(8)) {
+    invalid("legacy profile halo must be the audited CDA default");
+  }
+  if (value.stateArrayLayers !== 16) {
+    invalid("legacy profile stateArrayLayers must be 16");
+  }
+  return normalizeTemporalNeuralTilingProfile({
+    kind,
+    scale: value.scale,
+    halo: value.halo,
+    haloDerivation: {
+      motionSearchRadius: 8,
+      fixedRecurrentRadius: 35,
+      minimum: 64,
+      alignment: 8,
+    },
+    largestLogicalBytesPerSourcePixel:
+      value.largestLogicalBytesPerSourcePixel,
+    preferredInputExtent: value.preferredInputExtent,
+    inputAlignment: value.inputAlignment,
+    workgroupSize: value.workgroupSize,
+    stateAtlas: {
+      stateCount: 2,
+      channelsPerState: 64,
+      arrayLayersPerState: 16,
+      textureFormat:
+        value.largestLogicalBytesPerSourcePixel ===
+          CDA_TEMPORAL_LOGICAL_BYTES.fp32
+          ? "rgba32float"
+          : "rgba16float",
+    },
+  });
+}
+
+function normalizePlannerProfile(value) {
+  profileObject(value, "profile");
+  if (Object.hasOwn(value, "haloDerivation") ||
+      Object.hasOwn(value, "stateAtlas")) {
+    return normalizeTemporalNeuralTilingProfile(value);
+  }
+  return normalizeLegacyPlannerProfile(value);
 }
 
 function hardInputExtent(bindingLimit, bytesPerPixel) {
@@ -213,9 +453,11 @@ function validatePhysicalFrame(width, height, profile, limits) {
       `${limits.maxTextureDimension2D}`,
     );
   }
-  if (profile.stateArrayLayers > limits.maxTextureArrayLayers) {
+  if (profile.stateAtlas.arrayLayersPerState >
+      limits.maxTextureArrayLayers) {
     throw limitError(
-      `temporal state atlas requires ${profile.stateArrayLayers} layers; ` +
+      `temporal state atlas requires ` +
+      `${profile.stateAtlas.arrayLayersPerState} layers; ` +
       `device limit is ${limits.maxTextureArrayLayers}`,
     );
   }
@@ -257,7 +499,7 @@ export function planTemporalNeuralTiling(
 ) {
   positiveSafeInteger(sourceWidth, "temporal source width");
   positiveSafeInteger(sourceHeight, "temporal source height");
-  const profile = normalizeProfile(declaredProfile);
+  const profile = normalizePlannerProfile(declaredProfile);
   const limits = normalizeLimits(deviceLimits);
   const { outputWidth, outputHeight } = validatePhysicalFrame(
     sourceWidth,

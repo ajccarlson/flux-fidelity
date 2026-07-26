@@ -819,6 +819,12 @@ def validate_receipt_contract(
         if graph_shape_compatible is not dynamic:
             raise ValueError("spatial_shape.graph_shape_compatible is inconsistent")
 
+        graphs = _receipt_mapping(receipt["graphs"], "graphs")
+        if set(graphs) != set(GRAPH_FILENAMES):
+            raise ValueError(
+                "graphs must contain exactly initializer and recurrent"
+            )
+
         contract = _receipt_mapping(receipt["runtime_contract"], "runtime_contract")
         expected_runtime = {
             "prior_provider": PRIOR_CONTRACT,
@@ -828,10 +834,15 @@ def validate_receipt_contract(
             "catalog_compatible_at_graph_shape_level": dynamic,
             "shipping_catalog": False,
         }
-        if dynamic:
-            expected_runtime["manifest_v2_template"] = runtime_contract_template(
-                precision
+        try:
+            manifest_template = runtime_contract_template(
+                precision,
+                graph_facts=graphs,
             )
+        except ToolError as error:
+            raise ValueError(str(error)) from error
+        if dynamic:
+            expected_runtime["manifest_v2_template"] = manifest_template
         else:
             expected_runtime["catalog_blocker"] = (
                 "fixed-shape feasibility fixtures cannot be catalog entries"
@@ -839,9 +850,6 @@ def validate_receipt_contract(
         if contract != expected_runtime:
             raise ValueError("runtime_contract is not the exact expected contract")
 
-        graphs = _receipt_mapping(receipt["graphs"], "graphs")
-        if set(graphs) != set(GRAPH_FILENAMES):
-            raise ValueError("graphs must contain exactly initializer and recurrent")
         for role, filename in GRAPH_FILENAMES.items():
             recorded = _receipt_mapping(graphs[role], f"graphs.{role}")
             if recorded.get("file") != filename:
@@ -985,7 +993,8 @@ def command_export(args) -> dict[str, object]:
     }
     if args.dynamic:
         runtime_contract["manifest_v2_template"] = runtime_contract_template(
-            args.precision
+            args.precision,
+            graph_facts=graphs,
         )
     else:
         runtime_contract["catalog_blocker"] = (
