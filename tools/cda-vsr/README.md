@@ -10,6 +10,12 @@ into two fixed-shape ONNX graphs:
 It does not download, copy, or redistribute upstream source or weights. Review
 their provenance and redistribution terms before publishing any derived model.
 
+The verified reference is
+[`sspBIT/CDA-VSR@5707d997`](https://github.com/sspBIT/CDA-VSR/tree/5707d997759996f19521c3beaddfb3d1ea965d44):
+architecture SHA-256 `0defb80e5fcbaa2abd0eb9cbc4f4f2050a68e94fa6f743aa48a785cc734fd87b`
+and checkpoint SHA-256 `afc8745b890289ae421c500279d9ccf2a27c92cf3e71133b20840c7816e86d3e`.
+Its README names `LICENSE.txt`, but that file is absent at the pinned revision.
+
 ## Convert
 
 First inspect the inputs and copy the two printed hashes:
