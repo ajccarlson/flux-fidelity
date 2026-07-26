@@ -169,6 +169,8 @@ let requestedEngine = "fsrcnnx"; // durable user choice
 let engine = "fsrcnnx"; // effective renderer: may fall back without changing requestedEngine
 let engineSelectionGeneration = 0;
 let neuralEng = null, neuralModelKey = "", neuralBusy = false, neuralFail = 0; // v0.49.0 ONNX engine
+let neuralTemporalResetReason = null;
+let neuralTemporalResetGeneration = 0;
 let rendererFallback = null, neuralLastFailure = null;
 const playbackPerformance = new PlaybackPerformanceGuard();
 let performanceObservationGeneration = 0;
@@ -3326,11 +3328,22 @@ function renderNeuralFrame() {
       frameMetadata.presentedFrames >= 0) {
     frameTemporal.presentedFrames = frameMetadata.presentedFrames;
   }
+  const temporalResetReason = neuralTemporalResetReason;
+  const temporalResetGeneration = neuralTemporalResetGeneration;
+  if (temporalResetReason) {
+    frameTemporal.reset = true;
+    frameTemporal.resetReason = temporalResetReason;
+  }
   const temporal = Object.keys(frameTemporal).length
     ? Object.freeze(frameTemporal)
     : undefined;
   neuralBusy = true;
   runEngine.run(runVideo, srcW, srcH, presentation, temporal).then((res) => {
+    if (temporalResetReason &&
+        neuralTemporalResetGeneration === temporalResetGeneration &&
+        neuralTemporalResetReason === temporalResetReason) {
+      neuralTemporalResetReason = null;
+    }
     if (res && neuralEng === runEngine &&
         video === runVideo && primaryController === runController &&
         sameVideoSource(captureVideoSource(runVideo), runVideoSource) &&
@@ -3374,6 +3387,15 @@ function renderNeuralFrame() {
       activateNeuralFallback("neural-inference-failed", e);
     }
   }).finally(() => { neuralBusy = false; });
+}
+
+function handlePrimarySeek(owner) {
+  if (owner !== primaryController || owner.video !== video) return false;
+  // Keep this protocol value literal and bounded. It is forwarded through the
+  // authenticated frame bridge only when the next neural run starts.
+  neuralTemporalResetGeneration++;
+  neuralTemporalResetReason = "seek";
+  return true;
 }
 
 function ensureSharpenPipeline() {
@@ -3749,6 +3771,7 @@ function attach() {
       }
       notifyState();
     },
+    onSeek: handlePrimarySeek,
     onSourceChange: handlePrimarySourceBoundary,
     resolveHoverRegion: hoverRegionFor,
   });
@@ -3774,6 +3797,8 @@ function detach() {
   primaryController = null;
   if (layoutController === owner) layoutController = null;
   try { owner?.destroy?.(); } catch {}
+  neuralTemporalResetGeneration++;
+  neuralTemporalResetReason = null;
   hoverHidden = false;
   primaryPresentationBoundary = videoPresentationState(null);
   resetPresentedRuntime();

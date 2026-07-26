@@ -322,7 +322,7 @@ def command_export(args) -> dict[str, object]:
                 if args.dynamic
                 else {"height": args.height, "width": args.width}
             ),
-            "runtime_compatible": bool(args.dynamic),
+            "graph_shape_compatible": bool(args.dynamic),
         },
         "inputs": inspection,
         "checkpoint_adapter": checkpoint_info,
@@ -398,6 +398,38 @@ def command_verify(args) -> dict[str, object]:
             height = int(fixture["height"])
             width = int(fixture["width"])
             dynamic = mode == "dynamic"
+            ceiling = spatial["source_resolution_ceiling"]
+            graph_shape_compatible = spatial["graph_shape_compatible"]
+            contract = receipt["runtime_contract"]
+            if dynamic:
+                if ceiling is not None or graph_shape_compatible is not True:
+                    raise ValueError(
+                        "dynamic spatial receipt has inconsistent limits"
+                    )
+                if (
+                    contract.get(
+                        "catalog_compatible_at_graph_shape_level"
+                    )
+                    is not True
+                    or "manifest_v2_template" not in contract
+                ):
+                    raise ValueError(
+                        "dynamic spatial receipt lacks its graph-shape "
+                        "catalog contract"
+                    )
+            elif (
+                ceiling != {"height": height, "width": width}
+                or graph_shape_compatible is not False
+                or contract.get(
+                    "catalog_compatible_at_graph_shape_level"
+                )
+                is not False
+                or "manifest_v2_template" in contract
+            ):
+                raise ValueError(
+                    "fixed spatial receipt incorrectly claims catalog "
+                    "compatibility"
+                )
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
         raise ToolError(f"invalid export receipt: {error}") from error
     graphs = validate_saved_graphs(

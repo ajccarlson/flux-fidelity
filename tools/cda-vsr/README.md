@@ -122,13 +122,16 @@ benefit.
 
 ## Current boundary
 
-These are FP32 feasibility graphs—not extension assets. They have no artificial
-source-resolution ceiling, although device memory, WebGPU limits, and latency
-still impose practical bounds. Browser-provider testing at representative
-video sizes, safe FP16 conversion, and performance work remain. Temporal
-tiling is a possible later memory strategy, not a requirement for variable
-source sizes. Regular parity proves that the graphs match the lowered PyTorch
-network; `dcn-parity` separately tests the lowering against MMCV.
+These are FP32 feasibility graphs—not extension assets. Dynamic shapes remove
+exact-size specialization, not physical WebGPU limits. At a 1280×720 source,
+each 64-channel FP32 state is 225 MiB and the 4× RGB output is 168.75 MiB, so
+individual tensors exceed the common 128 MiB storage-binding limit. A validated
+tiling/state strategy, FP16 conversion, or model redesign—and representative
+browser-provider tests—is therefore required before catalog inclusion. This is
+a hardware/runtime blocker, not an artificial source-resolution policy.
+
+Regular parity proves that the graphs match the lowered PyTorch network;
+`dcn-parity` separately tests the lowering against MMCV.
 
 No checkpoint redistribution license has been established. The report marks
 the generated files experimental/local-only, and the tool never adds them to

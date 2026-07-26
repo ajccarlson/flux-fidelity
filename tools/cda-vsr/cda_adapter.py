@@ -1097,6 +1097,13 @@ def validate_saved_graphs(
             dynamic=dynamic,
         )
         metadata = {item.key: item.value for item in model.metadata_props}
+        if dynamic and any(
+            key in metadata
+            for key in ("fsrcnnx.fixed_height", "fsrcnnx.fixed_width")
+        ):
+            raise ToolError(
+                f"{role} dynamic graph contains fixed-shape metadata"
+            )
         expected = _metadata(
             role=role,
             source_sha256=source_sha256,

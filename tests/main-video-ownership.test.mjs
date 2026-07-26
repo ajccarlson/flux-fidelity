@@ -361,6 +361,8 @@ async function loadNeuralPresentation(deps) {
     const deps = globalThis.__videoOwnershipDeps;
     let device = {}, mode = "upscale", requestedEngine = "neural", engine = "neural", adopting = false;
     let neuralBusy = false, neuralFail = 0, videoSelectionGeneration = 3;
+    let neuralTemporalResetReason = null;
+    let neuralTemporalResetGeneration = 0;
     let engineSelectionGeneration = 0;
     let lastSSimDS = false;
     const video = { videoWidth: 640, videoHeight: 360, currentSrc: "a", src: "a" };
@@ -369,7 +371,10 @@ async function loadNeuralPresentation(deps) {
     const neuralEng = {
       ready: () => true,
       activeEntry: () => ({ scale: 2, padMultiple: 1 }),
-      run: () => deps.run.promise,
+      run: (...args) => {
+        (deps.runArguments ||= []).push(args);
+        return deps.run.promise;
+      },
       canvas: () => outputCanvas,
       bumpSkip() {},
       stop() {},
@@ -385,11 +390,15 @@ async function loadNeuralPresentation(deps) {
     };
     const renderPassthrough = () => {};
     const warn = (...args) => deps.events.push(["warn", ...args]);
+    const performanceFallbackEligible = () => false;
+    const playbackPerformance = { observeRendererSkip() {} };
+    let presentedRuntimeEngine = null;
     const resumeInterpolationAfterNeural = () => {};
     const activateNeuralFallback = () => { engine = "fsrcnnx"; };
     ${sourceIdentity}
     ${production}
-    export function render() { renderNeuralFrame(); }
+    export function render(metadata) { renderNeuralFrame(metadata); }
+    export function seek() { return handlePrimarySeek(primaryController); }
     export function setAdopting(value) { adopting = value; }
     export function changeSource(value) { video.currentSrc = value; video.src = value; }
   `;
@@ -1259,6 +1268,54 @@ test("neural completion cannot present across adoption or same-element source re
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(deps.events.some(([type]) => type === "present"), false);
   }
+});
+
+test("a media seek resets the next non-busy neural run exactly once", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  const run = deferred();
+  const deps = { run, runArguments: [], events: [] };
+  const renderer = await loadNeuralPresentation(deps);
+
+  renderer.render({ mediaTime: 1, presentedFrames: 10 });
+  assert.equal(deps.runArguments.length, 1);
+  assert.deepEqual(deps.runArguments[0][4], {
+    mediaTime: 1,
+    presentedFrames: 10,
+  });
+
+  assert.equal(renderer.seek(), true);
+  renderer.render({ mediaTime: 4, presentedFrames: 11 });
+  assert.equal(
+    deps.runArguments.length,
+    1,
+    "a dropped busy frame must not consume the pending seek reset",
+  );
+
+  run.resolve({
+    presentation: {
+      source: { width: 640, height: 360 },
+      output: { width: 1280, height: 720 },
+      ssimds: null,
+      sharpen: null,
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  renderer.render({ mediaTime: 4, presentedFrames: 12 });
+  assert.deepEqual(deps.runArguments[1][4], {
+    mediaTime: 4,
+    presentedFrames: 12,
+    reset: true,
+    resetReason: "seek",
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  renderer.render({ mediaTime: 4.04, presentedFrames: 13 });
+  assert.deepEqual(deps.runArguments[2][4], {
+    mediaTime: 4.04,
+    presentedFrames: 13,
+  });
 });
 
 test("renderer runtime notifications observe rejected extension-message promises", async (t) => {
