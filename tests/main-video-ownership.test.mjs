@@ -376,7 +376,10 @@ async function loadNeuralPresentation(deps) {
     let neuralTemporalResetGeneration = 0;
     let engineSelectionGeneration = 0;
     let lastSSimDS = false;
-    const video = { videoWidth: 640, videoHeight: 360, currentSrc: "a", src: "a" };
+    const video = {
+      videoWidth: 640, videoHeight: 360, currentSrc: "a", src: "a",
+      seeking: false,
+    };
     const primaryController = { active: true, video };
     const outputCanvas = { style: {} };
     const neuralEng = {
@@ -399,6 +402,9 @@ async function loadNeuralPresentation(deps) {
       deps.events.push(["present", ...args]);
       return true;
     };
+    const hidePrimaryOverlays = () => deps.events.push(["hide"]);
+    const resetPresentedRuntime = () => true;
+    const notifyState = () => deps.events.push(["state"]);
     const renderPassthrough = () => {};
     const warn = (...args) => deps.events.push(["warn", ...args]);
     const performanceFallbackEligible = () => false;
@@ -410,6 +416,7 @@ async function loadNeuralPresentation(deps) {
     ${production}
     export function render(metadata) { renderNeuralFrame(metadata); }
     export function seek() { return handlePrimarySeek(primaryController); }
+    export function setSeeking(value) { video.seeking = value; }
     export function setAdopting(value) { adopting = value; }
     export function changeSource(value) { video.currentSrc = value; video.src = value; }
   `;
@@ -1296,6 +1303,11 @@ test("a media seek resets the next non-busy neural run exactly once", async (t) 
   });
 
   assert.equal(renderer.seek(), true);
+  assert.deepEqual(
+    deps.events.slice(-2).map(([type]) => type),
+    ["hide", "state"],
+    "a seek must relinquish the previously presented overlay immediately",
+  );
   renderer.render({ mediaTime: 4, presentedFrames: 11 });
   assert.equal(
     deps.runArguments.length,
@@ -1305,6 +1317,11 @@ test("a media seek resets the next non-busy neural run exactly once", async (t) 
 
   run.resolve(successfulNeuralRun());
   await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    deps.events.some(([type]) => type === "present"),
+    false,
+    "a pre-seek run must not present after the seek boundary",
+  );
 
   renderer.render({ mediaTime: 4, presentedFrames: 12 });
   assert.deepEqual(deps.runArguments[1][4], {
@@ -1314,12 +1331,59 @@ test("a media seek resets the next non-busy neural run exactly once", async (t) 
     resetReason: "seek",
   });
   await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    deps.events.filter(([type]) => type === "present").length,
+    1,
+    "the first generation-matched post-seek result may present",
+  );
 
   renderer.render({ mediaTime: 4.04, presentedFrames: 13 });
   assert.deepEqual(deps.runArguments[2][4], {
     mediaTime: 4.04,
     presentedFrames: 13,
   });
+});
+
+test("neural capture stays hidden throughout the seeking-to-seeked window", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  const run = deferred();
+  const deps = { run, runArguments: [], events: [] };
+  const renderer = await loadNeuralPresentation(deps);
+
+  renderer.render({ mediaTime: 1, presentedFrames: 10 });
+  renderer.setSeeking(true);
+  assert.equal(renderer.seek(), true);
+  run.resolve(successfulNeuralRun());
+  await new Promise((resolve) => setImmediate(resolve));
+
+  renderer.render({ mediaTime: 3, presentedFrames: 11 });
+  assert.equal(
+    deps.runArguments.length,
+    1,
+    "no neural capture may start while the media element is seeking",
+  );
+  assert.equal(
+    deps.events.some(([type]) => type === "present"),
+    false,
+    "a completion during seeking must remain hidden",
+  );
+
+  renderer.setSeeking(false);
+  assert.equal(renderer.seek(), true);
+  renderer.render({ mediaTime: 4, presentedFrames: 12 });
+  assert.deepEqual(deps.runArguments[1][4], {
+    mediaTime: 4,
+    presentedFrames: 12,
+    reset: true,
+    resetReason: "seek",
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    deps.events.filter(([type]) => type === "present").length,
+    1,
+    "a fresh post-seek result may reveal the overlay",
+  );
 });
 
 test("a seek reset survives failed capture and failed child inference", async (t) => {

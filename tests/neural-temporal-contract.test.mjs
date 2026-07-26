@@ -172,7 +172,7 @@ function noOpDeps() {
   };
 }
 
-test("the exported CDA two-graph ABI is catalog-ready and enumerates both assets", async (t) => {
+test("the exported CDA two-graph ABI is manifest-compatible and enumerates both assets", async (t) => {
   const previous = globalThis.__neuralTemporalTestDeps;
   t.after(() => { globalThis.__neuralTemporalTestDeps = previous; });
   const {

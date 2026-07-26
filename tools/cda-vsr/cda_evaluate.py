@@ -85,6 +85,8 @@ def load_motion(path: Path, height: int, width: int, *, numpy, torch):
             f"motion shape must be (2,{height},{width}) or "
             f"({height},{width},2), got {value.shape}"
         )
+    if not bool(numpy.isfinite(value).all()):
+        raise ToolError("true motion array contains non-finite values")
     return torch.from_numpy(value).unsqueeze(0)
 
 
@@ -112,16 +114,60 @@ def load_residual(
             f"residual shape must be ({height},{width}) or "
             f"(1,{height},{width}), got {value.shape}"
         )
-    return torch.from_numpy(value / divisor).unsqueeze(0)
+    if not bool(numpy.isfinite(value).all()):
+        raise ToolError("true residual array contains non-finite values")
+    normalized = value / divisor
+    if not bool(numpy.isfinite(normalized).all()):
+        raise ToolError(
+            "true residual normalization produced non-finite values"
+        )
+    return torch.from_numpy(normalized).unsqueeze(0)
 
 
-def comparison(reference, candidate, *, torch) -> dict[str, float]:
+def _finite_metric(value, label: str, *, nonnegative: bool = False) -> float:
+    number = float(value)
+    if not math.isfinite(number):
+        raise ToolError(f"{label} is non-finite")
+    if nonnegative and number < 0.0:
+        raise ToolError(f"{label} cannot be negative")
+    return number
+
+
+def psnr_measurement(mse) -> tuple[float | None, bool]:
+    """Return a strict-JSON PSNR value and an explicit infinity marker."""
+
+    mse = _finite_metric(mse, "mean squared error", nonnegative=True)
+    if mse == 0.0:
+        return None, True
+    return -10.0 * math.log10(mse), False
+
+
+def comparison(
+    reference,
+    candidate,
+    *,
+    torch,
+) -> dict[str, float | bool | None]:
     difference = reference - candidate
-    mse = float(torch.mean(difference**2))
+    mse = _finite_metric(
+        torch.mean(difference**2),
+        "mean squared error",
+        nonnegative=True,
+    )
+    psnr, infinite_psnr = psnr_measurement(mse)
     return {
-        "mae": float(torch.mean(difference.abs())),
-        "max_abs": float(difference.abs().max()),
-        "psnr": math.inf if mse == 0.0 else 10.0 * math.log10(1.0 / mse),
+        "mae": _finite_metric(
+            torch.mean(difference.abs()),
+            "mean absolute error",
+            nonnegative=True,
+        ),
+        "max_abs": _finite_metric(
+            difference.abs().max(),
+            "maximum absolute error",
+            nonnegative=True,
+        ),
+        "psnr": psnr,
+        "psnr_infinite": infinite_psnr,
     }
 
 
@@ -147,6 +193,18 @@ def retained_true_benefit(variant_metrics: dict[str, object]):
         true_psnr = variant_metrics["true"]["versus_ground_truth"]["psnr"]
     except KeyError:
         return None
+    psnr_values = (zero_psnr, proxy_psnr, true_psnr)
+    if any(
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        for value in psnr_values
+    ):
+        return {
+            "measurable": False,
+            "reason": "finite PSNR values are required for the retention gate",
+        }
+    zero_psnr, proxy_psnr, true_psnr = map(float, psnr_values)
     true_gain = true_psnr - zero_psnr
     proxy_gain = proxy_psnr - zero_psnr
     if not math.isfinite(true_gain) or true_gain <= 0.0:
@@ -154,13 +212,19 @@ def retained_true_benefit(variant_metrics: dict[str, object]):
             "measurable": False,
             "reason": "true priors did not improve finite PSNR over zero priors",
         }
+    retained_fraction = proxy_gain / true_gain
+    if not math.isfinite(proxy_gain) or not math.isfinite(retained_fraction):
+        return {
+            "measurable": False,
+            "reason": "the retained PSNR benefit is not finite",
+        }
     return {
         "measurable": True,
         "proxy_gain_db": proxy_gain,
         "true_gain_db": true_gain,
-        "retained_fraction": proxy_gain / true_gain,
+        "retained_fraction": retained_fraction,
         "target_fraction": 0.6,
-        "passes_target": proxy_gain / true_gain >= 0.6,
+        "passes_target": retained_fraction >= 0.6,
     }
 
 
@@ -248,6 +312,11 @@ def evaluate_model(
                     previous_low,
                     previous_high,
                 )[0]
+            for name, output in variants.items():
+                if not bool(torch.isfinite(output).all()):
+                    raise ToolError(
+                        f"{name} model output contains non-finite values"
+                    )
     except ToolError:
         raise
     except Exception as error:
@@ -288,7 +357,9 @@ def evaluate_model(
         "format": 1,
         "tool": "FSRCNNX-EXT CDA-VSR decoded-prior evaluator",
         "distribution": {
+            "architecture_license_status": "not-established",
             "checkpoint_redistribution_clearance": False,
+            "checkpoint_license_status": "not-established",
             "generated_assets": "experimental-local-only",
             "shipping_catalog": False,
         },
@@ -312,6 +383,7 @@ def evaluate_model(
                 if args.ground_truth
                 else None
             ),
+            "residual_divisor": args.residual_divisor,
         },
         "frame": {"height": height, "width": width, "scale": 4},
         "prior_contract": {
@@ -338,8 +410,16 @@ def evaluate_model(
         },
         "proxy": {
             **prior_options,
-            "motion_abs_mean": float(proxy_motion.abs().mean()),
-            "residual_mean": float(proxy_residual.mean()),
+            "motion_abs_mean": _finite_metric(
+                proxy_motion.abs().mean(),
+                "proxy motion absolute mean",
+                nonnegative=True,
+            ),
+            "residual_mean": _finite_metric(
+                proxy_residual.mean(),
+                "proxy residual mean",
+                nonnegative=True,
+            ),
         },
         "variants": metrics,
     }

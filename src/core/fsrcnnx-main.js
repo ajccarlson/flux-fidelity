@@ -3302,6 +3302,10 @@ function neuralFramePresentation(srcW, srcH, scale) {
 function renderNeuralFrame() {
   const frameMetadata = arguments[0] ?? null;
   if (!neuralEng || !neuralEng.ready()) { renderPassthrough(); return; }
+  // Do not capture or reveal an indeterminate frame between the browser's
+  // `seeking` and `seeked` events. Both events advance the reset generation,
+  // while this property closes the interval between them.
+  if (video.seeking === true) return;
   if (neuralBusy) {
     if (performanceFallbackEligible() && presentedRuntimeEngine === engine) {
       playbackPerformance.observeRendererSkip();
@@ -3349,6 +3353,8 @@ function renderNeuralFrame() {
         sameVideoSource(captureVideoSource(runVideo), runVideoSource) &&
         runVideoGeneration === videoSelectionGeneration &&
         runEngineGeneration === engineSelectionGeneration &&
+        neuralTemporalResetGeneration === temporalResetGeneration &&
+        runVideo.seeking !== true &&
         !adopting && mode === "upscale" && engine === "neural") {
       const targetCanvas = runEngine.canvas();
       const output = res.presentation?.output;
@@ -3391,6 +3397,12 @@ function renderNeuralFrame() {
 
 function handlePrimarySeek(owner) {
   if (owner !== primaryController || owner.video !== video) return false;
+  // Never leave a pre-seek bitmap covering the browser's newly selected
+  // native frame. A fresh, generation-matched neural result may reveal the
+  // overlay again after the temporal reset completes.
+  hidePrimaryOverlays();
+  const presentationChanged = resetPresentedRuntime();
+  if (presentationChanged) notifyState();
   // Keep this protocol value literal and bounded. It is forwarded through the
   // authenticated frame bridge only when the next neural run starts.
   neuralTemporalResetGeneration++;

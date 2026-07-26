@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import subprocess
 import sys
 import unittest
@@ -9,7 +10,11 @@ TOOL_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(TOOL_DIR))
 
 from cda_adapter import ToolError  # noqa: E402
-from cda_evaluate import retained_true_benefit, validate_prior_pair  # noqa: E402
+from cda_evaluate import (  # noqa: E402
+    psnr_measurement,
+    retained_true_benefit,
+    validate_prior_pair,
+)
 from cda_priors import (  # noqa: E402
     DEFAULT_BLOCK_SIZE,
     DEFAULT_SAMPLE_STRIDE,
@@ -115,6 +120,36 @@ class PriorContractTests(unittest.TestCase):
         self.assertAlmostEqual(result["retained_fraction"], 0.7)
         self.assertTrue(result["passes_target"])
         self.assertIsNone(retained_true_benefit({"zero": {}}))
+        unavailable = {
+            "zero": {"versus_ground_truth": {"psnr": None}},
+            "decoded_proxy": {"versus_ground_truth": {"psnr": 20.7}},
+            "true": {"versus_ground_truth": {"psnr": 21.0}},
+        }
+        result = retained_true_benefit(unavailable)
+        self.assertFalse(result["measurable"])
+        self.assertIn("finite PSNR", result["reason"])
+
+    def test_psnr_measurement_is_finite_or_explicitly_infinite(self):
+        psnr, infinite = psnr_measurement(0.0)
+        self.assertIsNone(psnr)
+        self.assertTrue(infinite)
+        json.dumps(
+            {"psnr": psnr, "psnr_infinite": infinite},
+            allow_nan=False,
+        )
+
+        psnr, infinite = psnr_measurement(0.01)
+        self.assertAlmostEqual(psnr, 20.0)
+        self.assertFalse(infinite)
+        json.dumps(
+            {"psnr": psnr, "psnr_infinite": infinite},
+            allow_nan=False,
+        )
+
+        for value in (float("nan"), float("inf"), float("-inf"), -1.0):
+            with self.subTest(value=value):
+                with self.assertRaises(ToolError):
+                    psnr_measurement(value)
 
     def test_evaluate_help_needs_no_ml_dependencies(self):
         process = subprocess.run(

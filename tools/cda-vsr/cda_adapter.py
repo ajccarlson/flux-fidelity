@@ -1137,8 +1137,10 @@ def _array_metrics(expected, actual, numpy) -> dict[str, float]:
         raise ToolError(
             f"parity shape mismatch: expected {expected.shape}, got {actual.shape}"
         )
+    if not numpy.isfinite(expected).all():
+        raise ToolError("PyTorch parity reference contains non-finite values")
     if not numpy.isfinite(actual).all():
-        raise ToolError("parity output contains non-finite values")
+        raise ToolError("ONNX parity output contains non-finite values")
     difference = numpy.abs(expected.astype(numpy.float64) - actual)
     return {
         "mean_abs": float(difference.mean()),
@@ -1262,6 +1264,16 @@ def _run_graph_parity_shape(
     }
 
 
+def dynamic_probe_shape(height: int, width: int) -> tuple[int, int]:
+    """Return a second odd, non-square spatial fixture."""
+
+    probe_height = height + (2 if height % 2 else 3)
+    probe_width = width + (4 if width % 2 else 5)
+    if probe_height == probe_width:
+        probe_width += 2
+    return probe_height, probe_width
+
+
 def run_graph_parity(
     model,
     output_dir: Path,
@@ -1280,7 +1292,7 @@ def run_graph_parity(
 
     shapes = [(height, width)]
     if dynamic:
-        shapes.append((height + 3, width + 5))
+        shapes.append(dynamic_probe_shape(height, width))
     results = [
         _run_graph_parity_shape(
             model,
@@ -1397,7 +1409,7 @@ def run_mmcv_dcn_parity(
 def atomic_write_json(path: Path, value: Mapping[str, object]) -> None:
     temporary = path.with_name(f".{path.name}.tmp")
     temporary.write_text(
-        json.dumps(value, indent=2, sort_keys=True) + "\n",
+        json.dumps(value, allow_nan=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
     os.replace(temporary, path)

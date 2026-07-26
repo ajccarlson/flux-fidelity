@@ -7,10 +7,12 @@ into two dynamic-spatial ONNX graphs:
 - `cda-vsr-recurrent.onnx`: RGB, motion, residual, and prior states to 4× output
   plus updated states.
 
-It does not download, copy, or redistribute upstream source or weights. Review
-their provenance and redistribution terms before publishing any derived model.
+It does not download, copy, or redistribute upstream source or weights. Only
+run conversion commands on code and weights obtained from a trusted location.
+Review their provenance and redistribution terms before publishing any derived
+model.
 
-The verified reference is
+The hash-pinned reference is
 [`sspBIT/CDA-VSR@5707d997`](https://github.com/sspBIT/CDA-VSR/tree/5707d997759996f19521c3beaddfb3d1ea965d44):
 architecture SHA-256 `0defb80e5fcbaa2abd0eb9cbc4f4f2050a68e94fa6f743aa48a785cc734fd87b`
 and checkpoint SHA-256 `afc8745b890289ae421c500279d9ccf2a27c92cf3e71133b20840c7816e86d3e`.
@@ -18,7 +20,8 @@ Its README names `LICENSE.txt`, but that file is absent at the pinned revision.
 
 ## Convert
 
-First inspect the inputs and copy the two printed hashes:
+First inspect the inputs. This reads and hashes the architecture and checkpoint;
+it does not import the architecture or load the checkpoint:
 
 ```sh
 python tools/cda-vsr/cda_tool.py inspect \
@@ -26,7 +29,10 @@ python tools/cda-vsr/cda_tool.py inspect \
   --checkpoint ../CDA-VSR/pretrained_models/best.pth
 ```
 
-With CPython 3.11 or newer, create an isolated environment and export:
+The printed hashes identify the files but do not establish that they are safe,
+authentic, or licensed. Conversion commands enforce the canonical hashes above
+by default. With CPython 3.11 or newer, create an isolated environment and
+export:
 
 ```sh
 python -m venv .venv
@@ -34,8 +40,6 @@ python -m venv .venv
 .venv/bin/python tools/cda-vsr/cda_tool.py export \
   --source ../CDA-VSR \
   --checkpoint ../CDA-VSR/pretrained_models/best.pth \
-  --source-sha256 SOURCE_SHA256 \
-  --checkpoint-sha256 CHECKPOINT_SHA256 \
   --height 16 --width 16
 ```
 
@@ -48,10 +52,17 @@ second odd, non-square size to catch accidental shape specialization. Use
 `--fixed-shape` only for a capture-size feasibility fixture; its receipt marks
 it incompatible with a model-catalog entry.
 
-`export` executes the hash-pinned architecture file, loads the checkpoint in
-PyTorch's tensor-only mode, lowers the released kernel=1 MMCV operation to
-standard ONNX, validates both graphs, runs recurrent CPU parity, and writes the
-hashes and results to `cda-vsr-export.json`. No MMCV installation is needed.
+`export` imports and executes the selected architecture as Python code without
+a sandbox, loads the checkpoint in PyTorch's tensor-only mode, lowers the
+released kernel=1 MMCV operation to standard ONNX, validates both graphs, runs
+recurrent CPU parity, and writes the input, tool, graph, and parity identities
+to `cda-vsr-export.json`. No MMCV installation is needed.
+
+To work with another source/checkpoint pair that you have independently
+reviewed, add `--source-sha256 <exact-hash>`,
+`--checkpoint-sha256 <exact-hash>`, and `--allow-unpinned-inputs`. That flag
+acknowledges departure from the canonical reference; it does not make the inputs
+trustworthy.
 
 The lowering divides the 128 input channels into four deform groups. Each
 group is sampled with standard ONNX `GridSample` using MMCV's interleaved
@@ -66,17 +77,20 @@ Re-run PyTorch/ONNX sequence parity:
 .venv/bin/python tools/cda-vsr/cda_tool.py parity \
   --source ../CDA-VSR \
   --checkpoint ../CDA-VSR/pretrained_models/best.pth \
-  --source-sha256 SOURCE_SHA256 \
-  --checkpoint-sha256 CHECKPOINT_SHA256 \
   --height 16 --width 16
 ```
 
-Verify graph structure, metadata, receipt hashes, and the absence of custom
-ONNX domains without loading upstream inputs:
+Verify local graph bytes and structure against the receipt, the exact runtime
+ABI and metadata, parity-receipt self-consistency, current toolkit identity,
+and the absence of custom ONNX domains without loading upstream inputs:
 
 ```sh
 .venv/bin/python tools/cda-vsr/cda_tool.py verify
 ```
+
+Receipts are deliberately tied to the exact toolkit files that produced them.
+Verification checks local self-consistency; it does not authenticate the
+original inputs or establish provenance, safety, or licensing.
 
 For a one-time primitive comparison against the original implementation, use
 an upstream-compatible CUDA/PyTorch environment with compiled `mmcv-full`:
@@ -97,8 +111,6 @@ when available, CDA's processed motion/residual arrays:
 .venv/bin/python tools/cda-vsr/cda_tool.py evaluate \
   --source ../CDA-VSR \
   --checkpoint ../CDA-VSR/pretrained_models/best.pth \
-  --source-sha256 SOURCE_SHA256 \
-  --checkpoint-sha256 CHECKPOINT_SHA256 \
   --previous previous.png \
   --current current.png \
   --true-motion current-mv.npy \
@@ -130,9 +142,15 @@ tiling/state strategy, FP16 conversion, or model redesign—and representative
 browser-provider tests—is therefore required before catalog inclusion. This is
 a hardware/runtime blocker, not an artificial source-resolution policy.
 
-Regular parity proves that the graphs match the lowered PyTorch network;
-`dcn-parity` separately tests the lowering against MMCV.
+Regular parity checks sampled numerical agreement between the graphs and the
+lowered PyTorch network; `dcn-parity` separately samples the lowering against
+MMCV.
 
-No checkpoint redistribution license has been established. The report marks
-the generated files experimental/local-only, and the tool never adds them to
-the extension's shipping model catalog.
+`npm run check:cda-feasibility` runs the dependency-free contract tests and is
+part of the normal repository check. The optional ML environment and actual
+source/checkpoint conversion remain explicit local validation steps.
+
+No license for the architecture source, nor checkpoint license or redistribution
+clearance, has been established. The receipt marks generated files
+experimental/local-only, and the tool never adds them to the extension's
+shipping model catalog.
