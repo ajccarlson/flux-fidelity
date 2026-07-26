@@ -621,6 +621,8 @@ test("v2 execution selects static reset/recurrent graphs and retains GPU state t
 
   await engine.run(source, 2, 2, { auxiliary });
   assert.equal(calls[1].graph, "recurrent");
+  assert.equal(engine.stats().temporalResetRuns, 1);
+  assert.equal(engine.stats().temporalRecurrentRuns, 1);
   assert.deepEqual(Object.keys(calls[1].feeds), [
     "frame",
     "motion",
@@ -674,6 +676,8 @@ test("v2 execution selects static reset/recurrent graphs and retains GPU state t
     "initialize",
     "a rejected initializer state must not make recurrent state ready",
   );
+  assert.equal(engine.stats().temporalResetRuns, 4);
+  assert.equal(engine.stats().temporalRecurrentRuns, 1);
   await engine.dispose();
   assert.deepEqual(releases, { initialize: 1, recurrent: 1 });
   assert.equal(disposed.rgb, 6);

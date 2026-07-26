@@ -337,6 +337,8 @@ test("run snapshots synchronously and keeps the one-tile path ABI exact", async 
     n: 1,
     skip: 0,
     fails: 0,
+    temporalResetRuns: 0,
+    temporalRecurrentRuns: 0,
     lastTiles: 1,
     tileRuns: 1,
     maxTileW: 320,

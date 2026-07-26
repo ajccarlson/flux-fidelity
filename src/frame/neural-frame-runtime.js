@@ -186,6 +186,7 @@ async function loadRuntimeDependencies() {
     buildSharpenShader: sharpen.buildSharpenShader,
     createCdaPriorGenerator: cdaPriors.createCdaPriorGenerator,
     CdaTemporalTracker: cdaPriors.CdaTemporalTracker,
+    CdaSceneCutDetector: cdaPriors.CdaSceneCutDetector,
   };
 }
 
@@ -237,7 +238,7 @@ function sanitizeEngineStats(stats) {
   const result = {};
   for (const key of [
     "last", "mu", "n", "skip", "fails", "lastTiles", "tileRuns",
-    "maxTileW", "maxTileH",
+    "maxTileW", "maxTileH", "temporalResetRuns", "temporalRecurrentRuns",
   ]) {
     const value = Number(stats[key]);
     if (Number.isFinite(value) && value >= 0) result[key] = value;
@@ -402,6 +403,7 @@ export function createNeuralFrameSession({
   let sourceTextureHeight = 0;
   let cdaPriorGenerator = null;
   let cdaTemporalTracker = null;
+  let cdaSceneCutDetector = null;
   let cdaNeedsReset = false;
   let uploadCanvas = null;
   let uploadContext = null;
@@ -426,6 +428,7 @@ export function createNeuralFrameSession({
     stagedUploads: 0,
     cdaPriorRuns: 0,
     cdaPriorResets: 0,
+    cdaSceneCuts: 0,
     lastRunMs: 0,
     meanRunMs: 0,
   };
@@ -528,6 +531,7 @@ export function createNeuralFrameSession({
     sourceTextureHeight = 0;
     cdaPriorGenerator = null;
     cdaTemporalTracker = null;
+    cdaSceneCutDetector = null;
     cdaNeedsReset = false;
     uploadCanvas = null;
     uploadContext = null;
@@ -872,6 +876,7 @@ export function createNeuralFrameSession({
       { width, height },
     );
     stats.stagedUploads++;
+    return uploadPixels;
   }
 
   function ensureSharpenPipeline(ownerDevice, format, strength) {
@@ -1044,7 +1049,8 @@ export function createNeuralFrameSession({
     );
     if (needsDecodedCdaPriors) {
       if (typeof loaded.createCdaPriorGenerator !== "function" ||
-          typeof loaded.CdaTemporalTracker !== "function") {
+          typeof loaded.CdaTemporalTracker !== "function" ||
+          typeof loaded.CdaSceneCutDetector !== "function") {
         throw new NeuralFrameError(
           "runtime-unavailable",
           "Decoded CDA prior support is unavailable",
@@ -1053,11 +1059,13 @@ export function createNeuralFrameSession({
       try { cdaPriorGenerator?.dispose?.(); } catch {}
       cdaPriorGenerator = loaded.createCdaPriorGenerator(nextDevice);
       cdaTemporalTracker = new loaded.CdaTemporalTracker();
+      cdaSceneCutDetector = new loaded.CdaSceneCutDetector();
       cdaNeedsReset = false;
     } else {
       try { cdaPriorGenerator?.dispose?.(); } catch {}
       cdaPriorGenerator = null;
       cdaTemporalTracker = null;
+      cdaSceneCutDetector = null;
       cdaNeedsReset = false;
     }
     device = nextDevice;
@@ -1120,9 +1128,16 @@ export function createNeuralFrameSession({
       }
       const source = ensureSourceTexture(runDevice, srcW, srcH);
       const started = now();
-      uploadSourceFrame(runDevice, inputFrame, source, srcW, srcH);
+      const uploadPixels = uploadSourceFrame(
+        runDevice,
+        inputFrame,
+        source,
+        srcW,
+        srcH,
+      );
       let effectiveTemporal = temporal;
       let engineOptions = { temporal };
+      let cdaSceneCandidate = null;
       if (cdaPriorGenerator) {
         const recoveringFromFailedRun = cdaNeedsReset;
         // The prior generator snapshots the current frame before inference.
@@ -1141,12 +1156,24 @@ export function createNeuralFrameSession({
             width: srcW,
             height: srcH,
             forceReset: temporal.reset === true,
+            forceResetReason: temporal.resetReason || "explicit",
           });
         } else {
           cdaTemporalTracker.reset(temporal.resetReason || "metadata-unavailable");
           boundary = Object.freeze({
             reset: true,
             reason: temporal.resetReason || "metadata-unavailable",
+            frameIndex: 0,
+          });
+        }
+        cdaSceneCandidate = cdaSceneCutDetector.prepare(uploadPixels, srcW, srcH, {
+          reset: boundary.reset,
+        });
+        if (cdaSceneCandidate.sceneCut) {
+          cdaTemporalTracker.rebase("scene-cut");
+          boundary = Object.freeze({
+            reset: true,
+            reason: "scene-cut",
             frameIndex: 0,
           });
         }
@@ -1330,6 +1357,11 @@ export function createNeuralFrameSession({
             strength: presentation.sharpenStrength,
           }) : null,
         });
+        if (cdaPriorGenerator) {
+          cdaSceneCutDetector.commit(cdaSceneCandidate);
+          if (cdaSceneCandidate.sceneCut) stats.cdaSceneCuts++;
+          cdaNeedsReset = false;
+        }
         const result = Object.freeze({
           srcW,
           srcH,
@@ -1340,7 +1372,6 @@ export function createNeuralFrameSession({
           stats: snapshotStats(),
           bitmap: outputBitmap,
         });
-        if (cdaPriorGenerator) cdaNeedsReset = false;
         return result;
       } catch (error) {
         safeCloseBitmap(outputBitmap);

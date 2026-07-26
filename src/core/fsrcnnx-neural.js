@@ -830,6 +830,8 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     n: 0,
     skip: 0,
     fails: 0,
+    temporalResetRuns: 0,
+    temporalRecurrentRuns: 0,
     lastTiles: 0,
     tileRuns: 0,
     maxTileW: 0,
@@ -1887,6 +1889,12 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
       const dt = performance.now() - t0;
       stats.last = dt;
       stats.mu = stats.n === 0 ? dt : stats.mu * 0.9 + dt * 0.1;
+      if (isV2 && runModelContract.mode === "temporal") {
+        if (runGraphName === runModelContract.resetGraph) stats.temporalResetRuns++;
+        else if (runGraphName === runModelContract.recurrentGraph) {
+          stats.temporalRecurrentRuns++;
+        }
+      }
       stats.n++;
       return { tex: runOutTex, outW, outH };
     } catch (error) {

@@ -1151,6 +1151,8 @@ function emptyNeuralStats() {
     n: 0,
     skip: 0,
     fails: 0,
+    temporalResetRuns: 0,
+    temporalRecurrentRuns: 0,
     lastTiles: 0,
     tileRuns: 0,
     maxTileW: 0,

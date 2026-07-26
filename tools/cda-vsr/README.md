@@ -92,6 +92,23 @@ Receipts are deliberately tied to the exact toolkit files that produced them.
 Verification checks local self-consistency; it does not authenticate the
 original inputs or establish provenance, safety, or licensing.
 
+## Probe the graphs in Chromium
+
+After `verify` succeeds, run the external graphs through the real extension
+integration without adding them to the repository:
+
+```sh
+npm run probe:cda-browser -- --onnx-dir tmp/cda-vsr/onnx
+```
+
+Set `FSRCNNX_BROWSER` when browser auto-detection is insufficient. The probe
+rechecks the dynamic, local-only export receipt and exact graph hashes, builds
+the normal package into an operating-system temporary directory, appends a
+local CDA-VSR manifest entry, selects that exact model for real-video
+validation, requires successful initializer and recurrent executions, and
+removes the temporary package afterward. It never changes the shipping neural
+manifest or copies the graphs into the repository.
+
 For a one-time primitive comparison against the original implementation, use
 an upstream-compatible CUDA/PyTorch environment with compiled `mmcv-full`:
 
