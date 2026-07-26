@@ -46,6 +46,7 @@ function controlledBridge({
     stop: 0,
     dispose: 0,
   };
+  const runArguments = [];
   let callbacks = null;
   const bridge = {
     state: "idle",
@@ -70,8 +71,9 @@ function controlledBridge({
       });
       return operation;
     },
-    run() {
+    run(...args) {
       calls.run++;
+      runArguments.push(args);
       return runGate?.promise ?? Promise.resolve({
         presentation: { output: { width: 2, height: 2 } },
       });
@@ -93,6 +95,7 @@ function controlledBridge({
   return {
     bridge,
     calls,
+    runArguments,
     install(nextCallbacks) { callbacks = nextCallbacks; },
     fail(error) {
       bridge.state = "failed";
@@ -101,7 +104,7 @@ function controlledBridge({
   };
 }
 
-async function loadAdapter(control) {
+async function loadAdapter(control, { createImageBitmapImpl } = {}) {
   const source = await readFile(mainUrl, "utf8");
   const production = section(
     source,
@@ -115,6 +118,7 @@ async function loadAdapter(control) {
     canvasRemovals: 0,
     outputCanvases: [],
     inputCanvases: [],
+    createImageBitmap: createImageBitmapImpl ?? (async () => ({ close() {} })),
     bridgeCreations: 0,
     createBridge(callbacks) {
       const controls = Array.isArray(control) ? control : [control];
@@ -151,7 +155,7 @@ async function loadAdapter(control) {
     const log = () => {};
     const warn = (...args) => deps.warnings.push(args);
     const SRGB_COLOR_SPACE = "srgb";
-    const createImageBitmap = async () => ({ close() {} });
+    const createImageBitmap = (...args) => deps.createImageBitmap(...args);
     const createNeuralOutputCanvas = () => {
       const canvas = {
         width: 1,
@@ -252,6 +256,71 @@ test("Neural adapter stop fences handshake, attachment, and remote initializatio
     assert.equal(engine.ready(), false);
     assert.equal(engine.activeEntry(), null);
   });
+});
+
+test("Neural adapter transfers a direct ImageBitmap without page-side staging", async () => {
+  const originalVideoFrame = globalThis.VideoFrame;
+  let videoFramesCreated = 0;
+  class FakeVideoFrame {
+    constructor() { videoFramesCreated++; }
+  }
+  globalThis.VideoFrame = FakeVideoFrame;
+  const captures = [];
+  const bitmap = {
+    width: 320,
+    height: 180,
+    close() {},
+  };
+  try {
+    const control = controlledBridge();
+    const { engine, deps } = await loadAdapter(control, {
+      createImageBitmapImpl: async (...args) => {
+        captures.push(args);
+        return bitmap;
+      },
+    });
+    await engine.init("model-image-bitmap");
+    const source = { videoWidth: 320, videoHeight: 180 };
+    const temporal = { mediaTime: 1.25, presentedFrames: 42 };
+    await engine.run(source, 320, 180, {
+      width: 640,
+      height: 360,
+    }, temporal);
+
+    assert.equal(deps.inputCanvases.length, 0);
+    assert.equal(videoFramesCreated, 0);
+    assert.deepEqual(captures, [[source, 0, 0, 320, 180]]);
+    assert.strictEqual(control.runArguments[0][0], bitmap);
+    assert.deepEqual(control.runArguments[0][1], {
+      srcW: 320,
+      srcH: 180,
+      presentation: { width: 640, height: 360 },
+      temporal,
+    });
+    await engine.dispose();
+  } finally {
+    if (originalVideoFrame === undefined) delete globalThis.VideoFrame;
+    else globalThis.VideoFrame = originalVideoFrame;
+  }
+});
+
+test("Neural adapter falls back to a page canvas when direct capture fails", async () => {
+  const control = controlledBridge();
+  const { engine, deps } = await loadAdapter(control, {
+    createImageBitmapImpl: async () => {
+      throw new Error("injected direct capture failure");
+    },
+  });
+  await engine.init("model-canvas-fallback");
+  const source = { videoWidth: 320, videoHeight: 180 };
+  await engine.run(source, 320, 180, { width: 640, height: 360 });
+
+  assert.equal(deps.inputCanvases.length, 1);
+  assert.equal(deps.inputCanvases[0].width, 320);
+  assert.equal(deps.inputCanvases[0].height, 180);
+  assert.equal(control.runArguments[0][0].width, 320);
+  assert.equal(control.runArguments[0][0].height, 180);
+  await engine.dispose();
 });
 
 test("Neural adapter stop cancels active work and releases both page-side canvas backings", async () => {

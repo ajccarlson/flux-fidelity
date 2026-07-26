@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, isAbsolute, relative, resolve } from "node:path";
 import { validateModelBundle } from "../src/core/fsrcnnx-model-bundle.js";
-import { validateNeuralManifest } from "../src/core/fsrcnnx-neural.js";
+import {
+  neuralModelFiles,
+  validateNeuralManifest,
+} from "../src/core/fsrcnnx-neural.js";
 import { PACKAGE_FILES } from "./package-files.mjs";
 
 const root = resolve(import.meta.dirname, "..");
@@ -146,23 +149,25 @@ try {
     JSON.parse(readFileSync(resolve(neuralDir, "manifest.json"), "utf8")),
   );
   for (const entry of neuralManifest) {
-    const file = resolve(neuralDir, entry.file);
-    const localPath = relative(neuralDir, file);
-    if (!localPath || isAbsolute(localPath) || localPath === ".." || localPath.startsWith("../")) {
-      errors.push(`neural manifest: model path escapes neural directory (${entry.file})`);
-      continue;
-    }
-    const packagePath = `model/neural/${entry.file}`;
-    if (!PACKAGE_FILES.includes(packagePath)) {
-      errors.push(`neural manifest: ${packagePath} is outside the package boundary`);
-    }
-    if (!Object.hasOwn(pinnedArtifacts, packagePath)) {
-      errors.push(`neural manifest: ${packagePath} has no pinned SHA-256`);
-    }
-    try {
-      if (!statSync(file).isFile()) throw new Error();
-    } catch {
-      errors.push(`neural manifest: missing model ${entry.file}`);
+    for (const modelFile of neuralModelFiles(entry)) {
+      const file = resolve(neuralDir, modelFile);
+      const localPath = relative(neuralDir, file);
+      if (!localPath || isAbsolute(localPath) || localPath === ".." || localPath.startsWith("../")) {
+        errors.push(`neural manifest: model path escapes neural directory (${modelFile})`);
+        continue;
+      }
+      const packagePath = `model/neural/${modelFile}`;
+      if (!PACKAGE_FILES.includes(packagePath)) {
+        errors.push(`neural manifest: ${packagePath} is outside the package boundary`);
+      }
+      if (!Object.hasOwn(pinnedArtifacts, packagePath)) {
+        errors.push(`neural manifest: ${packagePath} has no pinned SHA-256`);
+      }
+      try {
+        if (!statSync(file).isFile()) throw new Error();
+      } catch {
+        errors.push(`neural manifest: missing model ${modelFile}`);
+      }
     }
   }
 } catch (error) {

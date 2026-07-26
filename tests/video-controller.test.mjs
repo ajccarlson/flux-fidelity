@@ -252,21 +252,32 @@ test("VideoController cleans observers, hover listeners, timers, and parent styl
 test("VideoController owns direct media-source boundary listeners", () => {
   const video = videoElement(styledParent());
   const boundaries = [];
+  const seeks = [];
   const controller = new VideoController(video, {
     window: eventTarget(),
     document: eventTarget(),
     ResizeObserver: null,
     MutationObserver: null,
     onSourceChange: (owner, event) => boundaries.push([owner.video, event.type]),
+    onSeek: (owner, event) => seeks.push([owner.video, event.type]),
   }).start();
 
   for (const type of ["loadstart", "emptied", "loadedmetadata"]) video.emit(type, { type });
+  for (const type of ["seeking", "seeked"]) video.emit(type, { type });
   assert.deepEqual(boundaries, [
     [video, "loadstart"], [video, "emptied"], [video, "loadedmetadata"],
   ]);
+  assert.deepEqual(seeks, [
+    [video, "seeking"], [video, "seeked"],
+  ]);
+  assert.equal(boundaries.length, 3, "seek events are not media-source boundaries");
   controller.destroy();
   video.emit("loadstart", { type: "loadstart" });
+  video.emit("seeking", { type: "seeking" });
   assert.equal(boundaries.length, 3, "destroy removes every source-boundary listener");
+  assert.equal(seeks.length, 2, "destroy removes every seek listener");
+  assert.equal(video.listeners.get("seeking")?.size || 0, 0);
+  assert.equal(video.listeners.get("seeked")?.size || 0, 0);
 });
 
 test("VideoController reference-counts a position lease shared by multiple owners", () => {

@@ -1993,7 +1993,16 @@ async function runRealVideoIntegration(
       status.scale === 2 && status.presentation?.committed === true &&
       status.presentation?.output?.width === status.presentation?.source?.width * 2 &&
       status.presentation?.output?.height === status.presentation?.source?.height * 2, signal);
-    const upscaledFirstPage = await fixtureSnapshot(fixturePage.client);
+    const upscaledFirstPage = await waitFor(
+      "FSRCNNX force2 overlay dimensions",
+      () => fixtureSnapshot(fixturePage.client),
+      (snapshot) => {
+        const overlay = visibleOverlay(snapshot, "primary");
+        return overlay?.width === upscaled.status.presentation.source.width * 2 &&
+          overlay?.height === upscaled.status.presentation.source.height * 2;
+      },
+      { timeoutMs: CDP_TIMEOUT_MS, signal },
+    );
     const upscaledFirstOverlay = visibleOverlay(upscaledFirstPage, "primary");
     requireCondition(upscaledFirstOverlay?.width === upscaled.status.presentation.source.width * 2 &&
       upscaledFirstOverlay?.height === upscaled.status.presentation.source.height * 2,
@@ -2054,7 +2063,16 @@ async function runRealVideoIntegration(
       acceptedNeuralF16Fallback = true;
       checkpoint("Neural ONNX hardware fallback (shader-f16 unavailable)");
     } else {
-      const neuralFirstPage = await fixtureSnapshot(fixturePage.client);
+      const neuralFirstPage = await waitFor(
+        "Neural ONNX overlay dimensions",
+        () => fixtureSnapshot(fixturePage.client),
+        (snapshot) => {
+          const overlay = visibleOverlay(snapshot, "primary");
+          return overlay?.width === neural.status.presentation.output.width &&
+            overlay?.height === neural.status.presentation.output.height;
+        },
+        { timeoutMs: CDP_TIMEOUT_MS, signal },
+      );
       const neuralFirstOverlay = visibleOverlay(neuralFirstPage, "primary");
       requireCondition(
         neural.status.presentation.source.width === neuralFirstPage.video.width &&

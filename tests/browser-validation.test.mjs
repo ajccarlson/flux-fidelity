@@ -195,6 +195,13 @@ test("browser validation is release-blocking without slowing internal packaging"
 });
 
 test("CI validates the staged package under Xvfb without disabling the sandbox", () => {
+  assert.equal(
+    (workflow.match(
+      /actions\/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405/g,
+    ) || []).length,
+    2,
+  );
+  assert.equal((workflow.match(/python-version: "3\.11"/g) || []).length, 2);
   assert.match(workflow, /browser-integration:/);
   assert.match(workflow, /name: Validate packaged extension in Chromium/);
   assert.match(workflow, /FSRCNNX_BROWSER: chromium/);

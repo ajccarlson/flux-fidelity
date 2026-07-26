@@ -12,16 +12,16 @@
 //   await bridge.start();
 //   await bridge.attachCanvas(htmlCanvas);
 //   await bridge.init(modelKey);
-//   await bridge.run(bitmap, { srcW, srcH, presentation: { width, height } });
+//   await bridge.run(frame, { srcW, srcH, presentation: { width, height } });
 //   await bridge.stop();
 //   await bridge.dispose();
 //
 // The HTMLCanvasElement always remains page-owned. The child renders into its
 // own extension-realm OffscreenCanvas and transfers a finished ImageBitmap back;
 // this avoids transferring a placeholder-controlled canvas across Chromium's
-// OOPIF boundary. A validated run() transfers its input ImageBitmap to the child
-// and consumes/closes the returned bitmap through bitmaprenderer (or a 2D
-// fallback). run() rejects with
+// OOPIF boundary. A validated run() transfers an input ImageBitmap or VideoFrame
+// to the child and consumes/closes the returned bitmap through bitmaprenderer
+// (or a 2D fallback). run() rejects with
 // `run-busy` while a previous run is unresolved, giving the render loop an
 // explicit backpressure signal instead of accumulating stale video frames.
 
@@ -33,6 +33,7 @@ const NONCE_PATTERN = /^[A-Za-z0-9_-]{16,128}$/;
 const CAPABILITY_PATTERN = /^[a-f0-9]{48}$/;
 const ERROR_CODE_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
 const MODEL_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const RESET_REASON_PATTERN = /^[a-z][a-z0-9-]{0,47}$/;
 const MAX_ERROR_MESSAGE_LENGTH = 1000;
 const MAX_TIMEOUT_MS = 5 * 60 * 1000;
 const MAX_PENDING_REQUESTS = 16;
@@ -159,6 +160,51 @@ function normalizePresentation(value) {
   return presentation;
 }
 
+function normalizeTemporal(value) {
+  if (value == null) return {};
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("neural temporal metadata must be an object");
+  }
+  const allowed = new Set(["mediaTime", "presentedFrames", "reset", "resetReason"]);
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) {
+      throw new TypeError(`neural temporal metadata contains unsupported field '${key}'`);
+    }
+  }
+  const temporal = {};
+  if (value.mediaTime != null) {
+    if (!Number.isFinite(value.mediaTime) ||
+        value.mediaTime < 0 || value.mediaTime > Number.MAX_SAFE_INTEGER) {
+      throw new TypeError("neural temporal mediaTime must be a finite non-negative number");
+    }
+    temporal.mediaTime = value.mediaTime;
+  }
+  if (value.presentedFrames != null) {
+    if (!Number.isSafeInteger(value.presentedFrames) || value.presentedFrames < 0) {
+      throw new TypeError(
+        "neural temporal presentedFrames must be a non-negative safe integer",
+      );
+    }
+    temporal.presentedFrames = value.presentedFrames;
+  }
+  if (value.reset != null) {
+    if (typeof value.reset !== "boolean") {
+      throw new TypeError("neural temporal reset must be a boolean");
+    }
+    temporal.reset = value.reset;
+  }
+  if (value.resetReason != null) {
+    if (typeof value.resetReason !== "string" ||
+        !RESET_REASON_PATTERN.test(value.resetReason)) {
+      throw new TypeError(
+        "neural temporal resetReason must be a bounded lowercase identifier",
+      );
+    }
+    temporal.resetReason = value.resetReason;
+  }
+  return temporal;
+}
+
 function deferred() {
   let resolve;
   let reject;
@@ -220,6 +266,7 @@ function requireEnvironment(environment = {}) {
   const HTMLCanvasElementCtor =
     environment.HTMLCanvasElement ?? globalObject.HTMLCanvasElement;
   const ImageBitmapCtor = environment.ImageBitmap ?? globalObject.ImageBitmap;
+  const VideoFrameCtor = environment.VideoFrame ?? globalObject.VideoFrame;
   const cryptoObject = environment.crypto ?? globalObject.crypto;
   const setTimerSource = environment.setTimeout ??
     parentWindow?.setTimeout ??
@@ -265,6 +312,7 @@ function requireEnvironment(environment = {}) {
     MutationObserver: MutationObserverCtor,
     HTMLCanvasElement: HTMLCanvasElementCtor,
     ImageBitmap: ImageBitmapCtor,
+    VideoFrame: VideoFrameCtor,
     crypto: cryptoObject,
     setTimeout: setTimer,
     clearTimeout: clearTimer,
@@ -1038,7 +1086,8 @@ export class NeuralFrameBridge {
 
     try {
       // The transfer list is always explicit. Only run transfers an input
-      // ImageBitmap; the page-owned output canvas never crosses the OOPIF.
+      // ImageBitmap/VideoFrame; the page-owned output canvas never crosses the
+      // OOPIF.
       this._port.postMessage({
         channel: NEURAL_FRAME_CHANNEL,
         kind: "request",
@@ -1115,7 +1164,7 @@ export class NeuralFrameBridge {
     return this._request("init", { modelKey });
   }
 
-  run(bitmap, { srcW, srcH, presentation } = {}) {
+  run(frame, { srcW, srcH, presentation, temporal } = {}) {
     if (this._runPromise) {
       return Promise.reject(bridgeError(
         "run-busy",
@@ -1124,22 +1173,33 @@ export class NeuralFrameBridge {
       ));
     }
     const BitmapCtor = this._environment.ImageBitmap;
-    if ((typeof BitmapCtor === "function" && !(bitmap instanceof BitmapCtor)) ||
-        !bitmap || typeof bitmap !== "object") {
-      return Promise.reject(new TypeError("run requires an ImageBitmap"));
+    const VideoFrameCtor = this._environment.VideoFrame;
+    const isBitmap = typeof BitmapCtor === "function" && frame instanceof BitmapCtor;
+    const isVideoFrame =
+      typeof VideoFrameCtor === "function" && frame instanceof VideoFrameCtor;
+    const constructorsAvailable =
+      typeof BitmapCtor === "function" || typeof VideoFrameCtor === "function";
+    if (!frame || typeof frame !== "object" ||
+        (constructorsAvailable && !isBitmap && !isVideoFrame)) {
+      return Promise.reject(
+        new TypeError("run requires an ImageBitmap or VideoFrame"),
+      );
     }
     try {
       srcW = positiveDimension(srcW, "neural source width");
       srcH = positiveDimension(srcH, "neural source height");
       presentation = normalizePresentation(presentation);
+      temporal = normalizeTemporal(temporal);
     } catch (error) {
       return Promise.reject(error);
     }
 
     const operation = this._request(
       "run",
-      { bitmap, srcW, srcH, presentation },
-      [bitmap],
+      // Keep the v1 field name for wire compatibility. The value may now be
+      // either transferable external-image type.
+      { bitmap: frame, srcW, srcH, presentation, temporal },
+      [frame],
       { runGeneration: this._runGeneration },
     );
     this._runPromise = operation;
@@ -1149,8 +1209,8 @@ export class NeuralFrameBridge {
       },
       () => {
         // If connection or posting failed, ownership never reached the child.
-        // close() is also safe on an already-transferred (detached) bitmap.
-        try { bitmap.close?.(); } catch {}
+        // close() is also safe on an already-transferred/detached media frame.
+        try { frame.close?.(); } catch {}
         if (this._runPromise === operation) this._runPromise = null;
       },
     );

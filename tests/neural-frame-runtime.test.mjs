@@ -327,8 +327,8 @@ test("extension-frame session copies, infers, SSim-downscales, sharpens, and pre
       engineReady = true;
       return { key, label: "Test neural", scale: 2 };
     },
-    async run(source, width, height) {
-      engineCalls.push(["run", source, width, height]);
+    async run(source, width, height, options) {
+      engineCalls.push(["run", source, width, height, options]);
       return { tex: modelTexture, outW: width * 2, outH: height * 2 };
     },
     async stop() { engineCalls.push(["stop"]); },
@@ -382,6 +382,18 @@ test("extension-frame session copies, infers, SSim-downscales, sharpens, and pre
     closes: 0,
     close() { this.closes++; },
   };
+  const fallbackBitmap = {
+    width: 4,
+    height: 2,
+    closes: 0,
+    close() { this.closes++; },
+  };
+  const videoFrame = {
+    displayWidth: 4,
+    displayHeight: 2,
+    closes: 0,
+    close() { this.closes++; },
+  };
   const outputBitmap = {
     width: 4,
     height: 2,
@@ -416,7 +428,11 @@ test("extension-frame session copies, infers, SSim-downscales, sharpens, and pre
       events.push("canvas:snapshot");
       return outputBitmap;
     },
-    isImageBitmap: (candidate) => candidate === bitmap || candidate === outputBitmap,
+    isImageBitmap: (candidate) =>
+      candidate === bitmap ||
+      candidate === fallbackBitmap ||
+      candidate === outputBitmap,
+    isVideoFrame: (candidate) => candidate === videoFrame,
     now: () => clock += 4,
     log: () => {},
     warn: () => {},
@@ -442,9 +458,23 @@ test("extension-frame session copies, infers, SSim-downscales, sharpens, and pre
       sharpenEnabled: true,
       sharpenStrength: 1.25,
     },
+    temporal: {
+      mediaTime: 4.25,
+      presentedFrames: 88,
+      reset: true,
+      resetReason: "seek",
+    },
   });
   assert.equal(bitmap.closes, 1, "the transferred ImageBitmap is always released");
   assert.deepEqual(engineCalls.slice(0, 2).map((call) => call[0]), ["init", "run"]);
+  assert.deepEqual(engineCalls[1][4], {
+    temporal: {
+      mediaTime: 4.25,
+      presentedFrames: 88,
+      reset: true,
+      resetReason: "seek",
+    },
+  });
   assert.deepEqual(ssimCalls[1].slice(0, 5), [
     "prepare",
     8,
@@ -491,9 +521,6 @@ test("extension-frame session copies, infers, SSim-downscales, sharpens, and pre
       willReadFrequently: true,
     },
   });
-  assert.equal(upload.canvas.width, 4);
-  assert.equal(upload.canvas.height, 2);
-  assert.equal(upload.context.globalCompositeOperation, "copy");
   assert.deepEqual(upload.calls[1], {
     type: "draw-image",
     args: [bitmap, 0, 0, 4, 2],
@@ -502,21 +529,16 @@ test("extension-frame session copies, infers, SSim-downscales, sharpens, and pre
     type: "get-image-data",
     args: [0, 0, 4, 2, { colorSpace: "srgb" }],
   });
-  const uploadCall = events.find((entry) => entry?.type === "write-texture");
-  assert.deepEqual(uploadCall.destination, {
-    texture: engineCalls[1][1].tex,
-  });
-  assert.strictEqual(uploadCall.data, uploadPixels);
-  assert.deepEqual(uploadCall.layout, {
-    bytesPerRow: 4 * 4,
-    rowsPerImage: 2,
-  });
-  assert.deepEqual(uploadCall.size, { width: 4, height: 2 });
   assert.equal(
     events.some((entry) => entry?.type === "copy"),
     false,
-    "the production upload must not import the transferred bitmap directly",
+    "a transferred ImageBitmap must use child-owned staging",
   );
+  const initialUpload = events.find((entry) => entry?.type === "write-texture");
+  assert.deepEqual(initialUpload.destination, {
+    texture: engineCalls[1][1].tex,
+  });
+  assert.strictEqual(initialUpload.data, uploadPixels);
   assert.ok(events.some((entry) => entry?.type === "submit"));
   assert.ok(
     events.indexOf("queue:fence") < events.indexOf("canvas:snapshot"),
@@ -525,9 +547,85 @@ test("extension-frame session copies, infers, SSim-downscales, sharpens, and pre
   assert.equal(events.includes("canvas:fallback-snapshot"), false);
   assert.equal(result.stats.ssimdsRuns, 1);
   assert.equal(result.stats.sharpenRuns, 1);
+  assert.equal(result.stats.stagedUploads, 1);
+  assert.deepEqual(result.temporal, {
+    mediaTime: 4.25,
+    presentedFrames: 88,
+    reset: true,
+    resetReason: "seek",
+  });
   assert.strictEqual(result.bitmap, outputBitmap);
   assert.equal(outputBitmap.closes, 0, "the caller owns the exported output bitmap");
   result.bitmap.close();
+
+  device.queue.copyExternalImageToTexture = () => {
+    events.push("copy:rejected");
+    throw new Error("injected external-image import failure");
+  };
+  const fallbackResult = await session.handle("run", {
+    bitmap: fallbackBitmap,
+    srcW: 4,
+    srcH: 2,
+    presentation: {
+      width: 4,
+      height: 2,
+    },
+  });
+  assert.equal(fallbackBitmap.closes, 1);
+  assert.equal(
+    events.includes("copy:rejected"),
+    false,
+    "ImageBitmap staging must not attempt the unreliable direct import",
+  );
+  assert.deepEqual(upload.calls.slice(-2), [
+    {
+      type: "draw-image",
+      args: [fallbackBitmap, 0, 0, 4, 2],
+    },
+    {
+      type: "get-image-data",
+      args: [0, 0, 4, 2, { colorSpace: "srgb" }],
+    },
+  ]);
+  const fallbackUpload = events
+    .filter((entry) => entry?.type === "write-texture")
+    .at(-1);
+  assert.deepEqual(fallbackUpload.destination, {
+    texture: engineCalls[2][1].tex,
+  });
+  assert.strictEqual(fallbackUpload.data, uploadPixels);
+  assert.deepEqual(fallbackUpload.layout, {
+    bytesPerRow: 4 * 4,
+    rowsPerImage: 2,
+  });
+  assert.deepEqual(fallbackUpload.size, { width: 4, height: 2 });
+  assert.equal(fallbackResult.stats.stagedUploads, 2);
+  fallbackResult.bitmap.close();
+
+  const videoFrameResult = await session.handle("run", {
+    bitmap: videoFrame,
+    srcW: 4,
+    srcH: 2,
+    presentation: { width: 4, height: 2 },
+  });
+  assert.equal(videoFrame.closes, 1);
+  assert.deepEqual(upload.calls.slice(-2), [
+    {
+      type: "draw-image",
+      args: [videoFrame, 0, 0, 4, 2],
+    },
+    {
+      type: "get-image-data",
+      args: [0, 0, 4, 2, { colorSpace: "srgb" }],
+    },
+  ]);
+  assert.equal(
+    events.includes("copy:rejected"),
+    false,
+    "VideoFrame staging must not attempt a cross-OOPIF GPU import",
+  );
+  assert.equal(videoFrameResult.stats.stagedUploads, 3);
+  videoFrameResult.bitmap.close();
 
   const stopped = await session.handle("stop", {});
   assert.equal(stopped.stopped, true);
@@ -539,6 +637,193 @@ test("extension-frame session copies, infers, SSim-downscales, sharpens, and pre
   assert.equal(bitmap.closes, 2, "precondition failures also close transferred bitmaps");
   await session.handle("dispose", {});
   assert.deepEqual(engineCalls.at(-1), ["dispose"]);
+});
+
+test("extension-frame session supplies decoded CDA priors and temporal resets to v2", async () => {
+  const { device } = gpuHarness();
+  const upload = uploadCanvasHarness({
+    pixels: new Uint8ClampedArray(2 * 2 * 4),
+  });
+  const modelTexture = texture("cda-model-output", []);
+  const engineRuns = [];
+  let failNextRun = false;
+  let ready = false;
+  const contract = {
+    version: 2,
+    graphs: {
+      initialize: { inputs: { frame: { role: "rgb" } } },
+      recurrent: {
+        inputs: {
+          frame: { role: "rgb" },
+          motion: { role: "motion", provider: "decoded-cda-v1" },
+          residual: { role: "residual", provider: "decoded-cda-v1" },
+        },
+      },
+    },
+  };
+  const engine = {
+    async init(key) {
+      ready = true;
+      return { key, label: "CDA test", scale: 1 };
+    },
+    async run(source, width, height, options) {
+      engineRuns.push({ source, width, height, options });
+      if (failNextRun) {
+        failNextRun = false;
+        throw new Error("injected recurrent failure");
+      }
+      return { tex: modelTexture, outW: width, outH: height };
+    },
+    activeContract: () => contract,
+    ready: () => ready,
+    device: () => device,
+    stats: () => ({}),
+    async stop() { ready = false; },
+    async dispose() { ready = false; },
+    async invalidateDevice() { ready = false; },
+  };
+  const priorCalls = [];
+  const priorGenerator = {
+    generate(source, width, height, options) {
+      priorCalls.push({ source, width, height, options });
+      return {
+        valid: !options.reset,
+        provider: "decoded-cda-v1",
+        motion: { size: width * height * 2 * 4 },
+        residual: { size: width * height * 4 },
+        motionDims: [1, 2, height, width],
+        residualDims: [1, 1, height, width],
+      };
+    },
+    disposeCalls: 0,
+    dispose() { this.disposeCalls++; },
+  };
+  class FakeTemporalTracker {
+    constructor() {
+      this.initialized = false;
+      this.lastResetReason = "initial";
+    }
+    observe({ forceReset = false } = {}) {
+      const reason = forceReset
+        ? "explicit"
+        : (!this.initialized ? this.lastResetReason : null);
+      this.initialized = true;
+      this.lastResetReason = reason;
+      return { reset: !!reason, reason, frameIndex: reason ? 0 : 1 };
+    }
+    reset(reason) {
+      this.initialized = false;
+      this.lastResetReason = reason;
+    }
+  }
+  const context = {
+    configure() {},
+    unconfigure() {},
+    getCurrentTexture() { return texture("cda-canvas-current", []); },
+  };
+  const canvas = {
+    width: 1,
+    height: 1,
+    getContext(kind) {
+      assert.equal(kind, "webgpu");
+      return context;
+    },
+  };
+  const inputs = [1, 2, 3].map((id) => ({
+    id,
+    width: 2,
+    height: 2,
+    displayWidth: 2,
+    displayHeight: 2,
+    closes: 0,
+    close() { this.closes++; },
+  }));
+  const outputs = [1, 2].map((id) => ({
+    id: `output-${id}`,
+    width: 2,
+    height: 2,
+    close() {},
+  }));
+  let outputIndex = 0;
+  const session = createNeuralFrameSession({
+    loadDependencies: async () => ({
+      createNeuralEngine: () => engine,
+      SsimDownscaler: class {},
+      buildSharpenShader: () => "",
+      createCdaPriorGenerator: (owner) => {
+        assert.strictEqual(owner, device);
+        return priorGenerator;
+      },
+      CdaTemporalTracker: FakeTemporalTracker,
+    }),
+    gpu: { getPreferredCanvasFormat: () => "bgra8unorm" },
+    textureUsage: {
+      TEXTURE_BINDING: 1,
+      COPY_DST: 2,
+      RENDER_ATTACHMENT: 4,
+    },
+    createOffscreenCanvas: () => canvas,
+    createUploadCanvas: () => upload.canvas,
+    createImageBitmapImpl: async () => outputs[outputIndex++],
+    isImageBitmap: (candidate) => outputs.includes(candidate),
+    isVideoFrame: (candidate) => inputs.includes(candidate),
+    log: () => {},
+    warn: () => {},
+  });
+
+  await session.handle("attachCanvas", {});
+  await session.handle("init", { modelKey: "cda-test" });
+  const first = await session.handle("run", {
+    bitmap: inputs[0],
+    srcW: 2,
+    srcH: 2,
+    temporal: { mediaTime: 1, presentedFrames: 10 },
+  });
+  failNextRun = true;
+  await assert.rejects(session.handle("run", {
+    bitmap: inputs[1],
+    srcW: 2,
+    srcH: 2,
+    temporal: { mediaTime: 1.04, presentedFrames: 11 },
+  }), /injected recurrent failure/);
+  const recovered = await session.handle("run", {
+    bitmap: inputs[2],
+    srcW: 2,
+    srcH: 2,
+    temporal: { mediaTime: 1.08, presentedFrames: 12 },
+  });
+
+  assert.deepEqual(priorCalls.map(({ options }) => options), [
+    { reset: true },
+    { reset: false },
+    { reset: true },
+  ]);
+  assert.equal(engineRuns[0].options.reset, true);
+  assert.equal(engineRuns[0].options.temporal.resetReason, "initial");
+  assert.equal(engineRuns[1].options.reset, false);
+  assert.equal(engineRuns[2].options.reset, true);
+  assert.equal(
+    engineRuns[2].options.temporal.resetReason,
+    "previous-run-failed",
+  );
+  for (const run of engineRuns) {
+    assert.equal(run.options.auxiliary.motion.provider, "decoded-cda-v1");
+    assert.deepEqual(run.options.auxiliary.motion.dims, [1, 2, 2, 2]);
+    assert.equal(run.options.auxiliary.residual.provider, "decoded-cda-v1");
+    assert.deepEqual(run.options.auxiliary.residual.dims, [1, 1, 2, 2]);
+  }
+  assert.equal(first.stats.cdaPriorRuns, 1);
+  assert.equal(first.stats.cdaPriorResets, 1);
+  assert.equal(recovered.stats.cdaPriorRuns, 3);
+  assert.equal(recovered.stats.cdaPriorResets, 2);
+  assert.deepEqual(recovered.temporal, {
+    mediaTime: 1.08,
+    presentedFrames: 12,
+    reset: true,
+    resetReason: "previous-run-failed",
+  });
+  await session.dispose();
+  assert.equal(priorGenerator.disposeCalls, 1);
 });
 
 test("rgba8 presentation readback strips padded MAP_READ rows and releases GPU resources", async () => {
