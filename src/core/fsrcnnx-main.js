@@ -169,6 +169,8 @@ let requestedEngine = "fsrcnnx"; // durable user choice
 let engine = "fsrcnnx"; // effective renderer: may fall back without changing requestedEngine
 let engineSelectionGeneration = 0;
 let neuralEng = null, neuralModelKey = "", neuralBusy = false, neuralFail = 0; // v0.49.0 ONNX engine
+let neuralTemporalResetReason = null;
+let neuralTemporalResetGeneration = 0;
 let rendererFallback = null, neuralLastFailure = null;
 const playbackPerformance = new PlaybackPerformanceGuard();
 let performanceObservationGeneration = 0;
@@ -1159,7 +1161,7 @@ function emptyNeuralStats() {
 // The ONNX runtime lives in an extension-owned iframe because Chromium applies
 // a host page's WebAssembly policy to content-script worlds. This adapter keeps
 // the renderer-facing lifecycle small while the bridge owns the authenticated
-// MessagePort, output presentation, and ImageBitmap handoff.
+// MessagePort, output presentation, and transferable media-frame handoff.
 function createEmbeddedNeuralEngine({ log: engineLog = log, warn: engineWarn = warn } = {}) {
   let bridge = null;
   let outputCanvas = null;
@@ -1186,7 +1188,28 @@ function createEmbeddedNeuralEngine({ log: engineLog = log, warn: engineWarn = w
     remoteStats = { ...remoteStats, ...next };
   };
 
-  const captureSourceBitmap = async (source, width, height) => {
+  const frameHasDimensions = (frame, width, height) => {
+    const frameWidth = Number(frame?.displayWidth ?? frame?.width);
+    const frameHeight = Number(frame?.displayHeight ?? frame?.height);
+    return frameWidth === width && frameHeight === height;
+  };
+
+  const captureSourceFrame = async (source, width, height) => {
+    // A direct ImageBitmap is transferable and avoids allocating a page-side
+    // staging canvas. Transferred VideoFrame objects are not used here: current
+    // Edge can accept them across the OOPIF boundary but then stall when the
+    // child tries to materialize their pixels.
+    if (typeof createImageBitmap === "function") {
+      let bitmap = null;
+      try {
+        bitmap = await createImageBitmap(source, 0, 0, width, height);
+        if (frameHasDimensions(bitmap, width, height)) return bitmap;
+      } catch {}
+      try { bitmap?.close?.(); } catch {}
+    }
+
+    // Compatibility path for browsers that cannot snapshot the source into a
+    // directly transferable external image.
     if (!inputCanvas) {
       inputCanvas = typeof globalThis.OffscreenCanvas === "function"
         ? new globalThis.OffscreenCanvas(width, height)
@@ -1210,7 +1233,7 @@ function createEmbeddedNeuralEngine({ log: engineLog = log, warn: engineWarn = w
     const bitmap = typeof inputCanvas.transferToImageBitmap === "function"
       ? inputCanvas.transferToImageBitmap()
       : await createImageBitmap(inputCanvas, 0, 0, width, height);
-    if (!bitmap || bitmap.width !== width || bitmap.height !== height) {
+    if (!frameHasDimensions(bitmap, width, height)) {
       try { bitmap?.close?.(); } catch {}
       throw new Error("neural input capture returned invalid dimensions");
     }
@@ -1311,21 +1334,26 @@ function createEmbeddedNeuralEngine({ log: engineLog = log, warn: engineWarn = w
     return operation;
   };
 
-  const run = async (source, srcW, srcH, presentation) => {
+  const run = async (source, srcW, srcH, presentation, temporal) => {
     if (!initialized || !bridge || bridge.state !== "ready") {
       throw new Error("neural frame is not initialized");
     }
     const generation = lifecycleGeneration;
-    let bitmap;
+    let inputFrame;
     try {
-      bitmap = await captureSourceBitmap(source, srcW, srcH);
+      inputFrame = await captureSourceFrame(source, srcW, srcH);
       if (generation !== lifecycleGeneration || !initialized || !bridge) {
         const error = new Error("neural inference cancelled by stop");
         error.code = "NEURAL_SUPERSEDED";
         throw error;
       }
-      const result = await bridge.run(bitmap, { srcW, srcH, presentation });
-      bitmap = null; // ownership transferred through the bridge
+      const result = await bridge.run(inputFrame, {
+        srcW,
+        srcH,
+        presentation,
+        temporal,
+      });
+      inputFrame = null; // ownership transferred through the bridge
       if (generation !== lifecycleGeneration || !initialized || !bridge) {
         const error = new Error("neural inference cancelled by stop");
         error.code = "NEURAL_SUPERSEDED";
@@ -1334,7 +1362,7 @@ function createEmbeddedNeuralEngine({ log: engineLog = log, warn: engineWarn = w
       updateStats(result);
       return result;
     } finally {
-      try { bitmap?.close?.(); } catch {}
+      try { inputFrame?.close?.(); } catch {}
     }
   };
 
@@ -3272,7 +3300,12 @@ function neuralFramePresentation(srcW, srcH, scale) {
 }
 
 function renderNeuralFrame() {
+  const frameMetadata = arguments[0] ?? null;
   if (!neuralEng || !neuralEng.ready()) { renderPassthrough(); return; }
+  // Do not capture or reveal an indeterminate frame between the browser's
+  // `seeking` and `seeked` events. Both events advance the reset generation,
+  // while this property closes the interval between them.
+  if (video.seeking === true) return;
   if (neuralBusy) {
     if (performanceFallbackEligible() && presentedRuntimeEngine === engine) {
       playbackPerformance.observeRendererSkip();
@@ -3291,13 +3324,37 @@ function renderNeuralFrame() {
   const runController = primaryController;
   const runVideoGeneration = videoSelectionGeneration;
   const runEngineGeneration = engineSelectionGeneration;
+  const frameTemporal = {};
+  if (Number.isFinite(frameMetadata?.mediaTime) && frameMetadata.mediaTime >= 0) {
+    frameTemporal.mediaTime = frameMetadata.mediaTime;
+  }
+  if (Number.isSafeInteger(frameMetadata?.presentedFrames) &&
+      frameMetadata.presentedFrames >= 0) {
+    frameTemporal.presentedFrames = frameMetadata.presentedFrames;
+  }
+  const temporalResetReason = neuralTemporalResetReason;
+  const temporalResetGeneration = neuralTemporalResetGeneration;
+  if (temporalResetReason) {
+    frameTemporal.reset = true;
+    frameTemporal.resetReason = temporalResetReason;
+  }
+  const temporal = Object.keys(frameTemporal).length
+    ? Object.freeze(frameTemporal)
+    : undefined;
   neuralBusy = true;
-  runEngine.run(runVideo, srcW, srcH, presentation).then((res) => {
+  runEngine.run(runVideo, srcW, srcH, presentation, temporal).then((res) => {
+    if (res && temporalResetReason &&
+        neuralTemporalResetGeneration === temporalResetGeneration &&
+        neuralTemporalResetReason === temporalResetReason) {
+      neuralTemporalResetReason = null;
+    }
     if (res && neuralEng === runEngine &&
         video === runVideo && primaryController === runController &&
         sameVideoSource(captureVideoSource(runVideo), runVideoSource) &&
         runVideoGeneration === videoSelectionGeneration &&
         runEngineGeneration === engineSelectionGeneration &&
+        neuralTemporalResetGeneration === temporalResetGeneration &&
+        runVideo.seeking !== true &&
         !adopting && mode === "upscale" && engine === "neural") {
       const targetCanvas = runEngine.canvas();
       const output = res.presentation?.output;
@@ -3336,6 +3393,21 @@ function renderNeuralFrame() {
       activateNeuralFallback("neural-inference-failed", e);
     }
   }).finally(() => { neuralBusy = false; });
+}
+
+function handlePrimarySeek(owner) {
+  if (owner !== primaryController || owner.video !== video) return false;
+  // Never leave a pre-seek bitmap covering the browser's newly selected
+  // native frame. A fresh, generation-matched neural result may reveal the
+  // overlay again after the temporal reset completes.
+  hidePrimaryOverlays();
+  const presentationChanged = resetPresentedRuntime();
+  if (presentationChanged) notifyState();
+  // Keep this protocol value literal and bounded. It is forwarded through the
+  // authenticated frame bridge only when the next neural run starts.
+  neuralTemporalResetGeneration++;
+  neuralTemporalResetReason = "seek";
+  return true;
 }
 
 function ensureSharpenPipeline() {
@@ -3602,7 +3674,7 @@ function loop(owner, frameNow = null, frameMetadata = null) {
       scheduleMainLoop();
       return;
     }
-    if (mode === "upscale" && engine === "neural") renderNeuralFrame();
+    if (mode === "upscale" && engine === "neural") renderNeuralFrame(frameMetadata);
     else if (mode === "upscale") renderUpscale();
     else renderPassthrough();
     if (mode === "off" || owner !== primaryController || owner.video !== video) return;
@@ -3711,6 +3783,7 @@ function attach() {
       }
       notifyState();
     },
+    onSeek: handlePrimarySeek,
     onSourceChange: handlePrimarySourceBoundary,
     resolveHoverRegion: hoverRegionFor,
   });
@@ -3736,6 +3809,8 @@ function detach() {
   primaryController = null;
   if (layoutController === owner) layoutController = null;
   try { owner?.destroy?.(); } catch {}
+  neuralTemporalResetGeneration++;
+  neuralTemporalResetReason = null;
   hoverHidden = false;
   primaryPresentationBoundary = videoPresentationState(null);
   resetPresentedRuntime();

@@ -14,8 +14,10 @@
 //   -> caller presents. The frame has no policy resolution ceiling; only the
 //   adapter's unavoidable source/final-texture dimensions can reject it.
 //
-// The model catalog lives in model/neural/manifest.json. The reproducible export
-// kit in tools/neural-export/ produces the bundled dynamic-shape ONNX graph.
+// Legacy v1 models retain that tiled single-graph ABI. Contract-v2 models may
+// instead expose named full-frame spatial or reset/recurrent graph sessions,
+// auxiliary GPU-buffer inputs, and recurrent GPU state. The model catalog lives
+// in model/neural/manifest.json.
 
 import {
   createOrtSession,
@@ -27,6 +29,28 @@ import {
 const NEURAL_KEY = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const NEURAL_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]*\.onnx$/;
 const TENSOR_NAME = /^[A-Za-z_][A-Za-z0-9_.-]{0,127}$/;
+const STATE_KEY = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const GRAPH_KEY = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+const V2_INPUT_ROLES = new Set([
+  "rgb",
+  "motion",
+  "residual",
+  "state-in",
+  "reset",
+  "auxiliary",
+]);
+const V2_OUTPUT_ROLES = new Set(["rgb", "state-out", "auxiliary"]);
+const V2_DTYPES = new Set([
+  "float16",
+  "float32",
+  "int32",
+  "int64",
+  "uint8",
+  "bool",
+]);
+const V2_LAYOUTS = new Set(["nchw", "scalar"]);
+const V2_AUXILIARY_PROVIDERS = new Set(["decoded-cda-v1"]);
+const validatedContracts = new WeakMap();
 export const DEFAULT_NEURAL_TILE_SIZE = 512;
 export const DEFAULT_NEURAL_TILE_OVERLAP = 24;
 const MIN_NEURAL_TILE_SIZE = 64;
@@ -39,6 +63,273 @@ export function isValidNeuralModelKey(value) {
   return typeof value === "string" && NEURAL_KEY.test(value);
 }
 
+function freezeTensorDescriptor(name, value, kind, at) {
+  if (!TENSOR_NAME.test(name)) throw new Error(`${at} has an invalid ${kind} tensor name '${name}'`);
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${at} ${kind} '${name}' must be an object`);
+  }
+  const roles = kind === "input" ? V2_INPUT_ROLES : V2_OUTPUT_ROLES;
+  if (!roles.has(value.role)) {
+    throw new Error(`${at} ${kind} '${name}' has an invalid role`);
+  }
+  if (!V2_DTYPES.has(value.dtype)) {
+    throw new Error(`${at} ${kind} '${name}' has an invalid dtype`);
+  }
+  const layout = value.layout ?? (value.role === "reset" ? "scalar" : "nchw");
+  if (!V2_LAYOUTS.has(layout)) {
+    throw new Error(`${at} ${kind} '${name}' has an invalid layout`);
+  }
+  const channels = value.channels ?? (layout === "scalar" ? 1 : null);
+  if (!Number.isInteger(channels) || channels < 1 || channels > 4096) {
+    throw new Error(`${at} ${kind} '${name}' has invalid channels`);
+  }
+  if (layout === "scalar" && channels !== 1) {
+    throw new Error(`${at} ${kind} '${name}' scalar layout must have one channel`);
+  }
+  if (value.role === "rgb" && (value.dtype !== "float32" || channels !== 3 || layout !== "nchw")) {
+    throw new Error(`${at} ${kind} '${name}' RGB tensors must be float32 NCHW with three channels`);
+  }
+  if (value.role === "motion" && (channels !== 2 || layout !== "nchw")) {
+    throw new Error(`${at} ${kind} '${name}' motion tensors must be NCHW with two channels`);
+  }
+  if (value.role === "residual" && (channels !== 1 || layout !== "nchw")) {
+    throw new Error(`${at} ${kind} '${name}' residual tensors must be NCHW with one channel`);
+  }
+  if (value.role === "reset" && kind !== "input") {
+    throw new Error(`${at} reset tensors may only be inputs`);
+  }
+
+  const isState = value.role === "state-in" || value.role === "state-out";
+  if (isState) {
+    if (typeof value.state !== "string" || !STATE_KEY.test(value.state)) {
+      throw new Error(`${at} ${kind} '${name}' has an invalid state key`);
+    }
+    if (layout !== "nchw") {
+      throw new Error(`${at} ${kind} '${name}' state tensors must use NCHW layout`);
+    }
+  } else if (value.state != null) {
+    throw new Error(`${at} ${kind} '${name}' may not declare a state key`);
+  }
+  let provider;
+  if (value.provider != null) {
+    if ((value.role !== "motion" && value.role !== "residual") ||
+        !V2_AUXILIARY_PROVIDERS.has(value.provider)) {
+      throw new Error(`${at} ${kind} '${name}' has an invalid auxiliary provider`);
+    }
+    provider = value.provider;
+  }
+
+  let reset;
+  if (value.role === "state-in") {
+    reset = value.reset ?? "required";
+    if (reset !== "required") {
+      throw new Error(`${at} ${kind} '${name}' has an invalid reset policy`);
+    }
+  } else if (value.reset != null) {
+    throw new Error(`${at} ${kind} '${name}' may not declare a reset policy`);
+  }
+
+  return Object.freeze({
+    name,
+    role: value.role,
+    dtype: value.dtype,
+    channels,
+    layout,
+    ...(isState ? { state: value.state } : {}),
+    ...(reset ? { reset } : {}),
+    ...(provider ? { provider } : {}),
+  });
+}
+
+function freezeDescriptorMap(value, kind, at) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${at} ${kind}s must be a named descriptor map`);
+  }
+  const entries = Object.entries(value);
+  if (!entries.length) throw new Error(`${at} must declare at least one ${kind}`);
+  const descriptors = {};
+  for (const [name, descriptor] of entries) {
+    descriptors[name] = freezeTensorDescriptor(name, descriptor, kind, at);
+  }
+  return Object.freeze(descriptors);
+}
+
+function requireSingleRole(descriptors, role, kind, at) {
+  const matches = Object.values(descriptors).filter((descriptor) => descriptor.role === role);
+  if (matches.length !== 1) {
+    throw new Error(`${at} must declare exactly one ${kind} with role '${role}'`);
+  }
+  return matches[0];
+}
+
+function stateDescriptors(descriptors, role) {
+  return new Map(Object.values(descriptors)
+    .filter((descriptor) => descriptor.role === role)
+    .map((descriptor) => [descriptor.state, descriptor]));
+}
+
+function requireMatchingStateSets(left, right, at) {
+  if (left.size !== right.size || [...left.keys()].some((key) => !right.has(key))) {
+    throw new Error(`${at} state-in/state-out keys do not match`);
+  }
+  for (const [key, input] of left) {
+    const output = right.get(key);
+    if (input.dtype !== output.dtype ||
+        input.channels !== output.channels ||
+        input.layout !== output.layout) {
+      throw new Error(`${at} state '${key}' input/output contracts do not match`);
+    }
+  }
+}
+
+function freezeV2Graph(name, value, at) {
+  const graphAt = `${at} graph '${name}'`;
+  if (!GRAPH_KEY.test(name)) throw new Error(`${at} has an invalid graph name '${name}'`);
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${graphAt} must be an object`);
+  }
+  if (typeof value.file !== "string" || !NEURAL_FILE.test(value.file)) {
+    throw new Error(`${graphAt} has an invalid model filename`);
+  }
+  const inputs = freezeDescriptorMap(value.inputs, "input", graphAt);
+  const outputs = freezeDescriptorMap(value.outputs, "output", graphAt);
+  requireSingleRole(inputs, "rgb", "input", graphAt);
+  requireSingleRole(outputs, "rgb", "output", graphAt);
+  const roleCounts = new Map();
+  for (const descriptor of Object.values(inputs)) {
+    if (descriptor.role === "auxiliary" || descriptor.role === "state-in") continue;
+    roleCounts.set(descriptor.role, (roleCounts.get(descriptor.role) || 0) + 1);
+  }
+  for (const [role, count] of roleCounts) {
+    if (count > 1) throw new Error(`${graphAt} declares ambiguous '${role}' inputs`);
+  }
+  const stateOut = stateDescriptors(outputs, "state-out");
+  if (stateOut.size !== Object.values(outputs).filter(({ role }) => role === "state-out").length) {
+    throw new Error(`${graphAt} duplicates a state-out key`);
+  }
+  const stateIn = stateDescriptors(inputs, "state-in");
+  if (stateIn.size !== Object.values(inputs).filter(({ role }) => role === "state-in").length) {
+    throw new Error(`${graphAt} duplicates a state-in key`);
+  }
+  const decodedCdaInputs = Object.values(inputs).filter(
+    ({ provider }) => provider === "decoded-cda-v1",
+  );
+  if (decodedCdaInputs.length) {
+    const roles = new Set(decodedCdaInputs.map(({ role }) => role));
+    if (decodedCdaInputs.length !== 2 ||
+        !roles.has("motion") || !roles.has("residual")) {
+      throw new Error(
+        `${graphAt} decoded-cda-v1 inputs must be one motion/residual pair`,
+      );
+    }
+  }
+  return Object.freeze({ name, file: value.file, inputs, outputs });
+}
+
+export function normalizeNeuralModelContract(entry, at = "neural manifest entry") {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    throw new Error(`${at} must be an object`);
+  }
+  const declared = entry.contract;
+  if (declared == null || declared?.version === 1) {
+    if (declared != null &&
+        (!declared || typeof declared !== "object" || Array.isArray(declared))) {
+      throw new Error(`${at} has an invalid v1 contract`);
+    }
+    return Object.freeze({
+      version: 1,
+      mode: "spatial",
+      inputs: Object.freeze([Object.freeze({
+        name: entry.input ?? null,
+        role: "rgb",
+        dtype: "float32",
+        channels: 3,
+        layout: "nchw",
+      })]),
+      outputs: Object.freeze([Object.freeze({
+        name: entry.output ?? null,
+        role: "rgb",
+        dtype: "float32",
+        channels: 3,
+        layout: "nchw",
+      })]),
+      states: Object.freeze([]),
+    });
+  }
+  if (!declared || typeof declared !== "object" || Array.isArray(declared) ||
+      declared.version !== 2) {
+    throw new Error(`${at} has an unsupported neural contract version`);
+  }
+  if (entry.file != null || entry.input != null || entry.output != null) {
+    throw new Error(`${at} v2 contract may not mix legacy file/input/output fields`);
+  }
+  const mode = declared.mode;
+  if (mode !== "spatial" && mode !== "temporal") {
+    throw new Error(`${at} v2 contract has an invalid mode`);
+  }
+  if (!declared.graphs || typeof declared.graphs !== "object" || Array.isArray(declared.graphs)) {
+    throw new Error(`${at} v2 contract graphs must be a named map`);
+  }
+  const graphEntries = Object.entries(declared.graphs);
+  if (!graphEntries.length || graphEntries.length > 8) {
+    throw new Error(`${at} v2 contract must declare between one and eight graphs`);
+  }
+  const graphs = {};
+  for (const [name, graph] of graphEntries) graphs[name] = freezeV2Graph(name, graph, at);
+
+  let resetGraph;
+  let recurrentGraph;
+  if (mode === "temporal") {
+    resetGraph = declared.resetGraph ?? "initialize";
+    recurrentGraph = declared.recurrentGraph ?? "recurrent";
+    if (!Object.hasOwn(graphs, resetGraph) || !Object.hasOwn(graphs, recurrentGraph) ||
+        resetGraph === recurrentGraph) {
+      throw new Error(`${at} temporal contract must name distinct reset and recurrent graphs`);
+    }
+    const reset = graphs[resetGraph];
+    const recurrent = graphs[recurrentGraph];
+    const resetInputs = stateDescriptors(reset.inputs, "state-in");
+    if (resetInputs.size) throw new Error(`${at} reset graph may not consume recurrent state`);
+    const resetOutputs = stateDescriptors(reset.outputs, "state-out");
+    const recurrentInputs = stateDescriptors(recurrent.inputs, "state-in");
+    const recurrentOutputs = stateDescriptors(recurrent.outputs, "state-out");
+    if (!resetOutputs.size) throw new Error(`${at} temporal contract must produce recurrent state`);
+    requireMatchingStateSets(recurrentInputs, recurrentOutputs, `${at} recurrent graph`);
+    requireMatchingStateSets(recurrentInputs, resetOutputs, `${at} reset/recurrent graphs`);
+  } else {
+    resetGraph = declared.resetGraph ?? graphEntries[0][0];
+    recurrentGraph = null;
+    if (!Object.hasOwn(graphs, resetGraph)) {
+      throw new Error(`${at} spatial contract names an unknown graph`);
+    }
+    for (const graph of Object.values(graphs)) {
+      if (stateDescriptors(graph.inputs, "state-in").size ||
+          stateDescriptors(graph.outputs, "state-out").size) {
+        throw new Error(`${at} spatial contract may not declare recurrent state`);
+      }
+    }
+  }
+
+  const stateKeys = mode === "temporal"
+    ? [...stateDescriptors(graphs[recurrentGraph].inputs, "state-in").keys()]
+    : [];
+  return Object.freeze({
+    version: 2,
+    mode,
+    resetGraph,
+    recurrentGraph,
+    graphs: Object.freeze(graphs),
+    states: Object.freeze(stateKeys),
+  });
+}
+
+export function neuralModelFiles(entry, at = "neural manifest entry") {
+  const contract = normalizeNeuralModelContract(entry, at);
+  return Object.freeze(contract.version === 1
+    ? [entry.file]
+    : Object.values(contract.graphs).map((graph) => graph.file));
+}
+
 export function validateNeuralManifest(value) {
   const raw = Array.isArray(value) ? value : value?.models;
   if (!Array.isArray(raw)) throw new Error("neural manifest must be an array or {models: array}");
@@ -49,8 +340,6 @@ export function validateNeuralManifest(value) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error(`${at} must be an object`);
     if (!isValidNeuralModelKey(entry.key)) throw new Error(`${at} has an invalid key`);
     if (keys.has(entry.key)) throw new Error(`${at} duplicates key '${entry.key}'`);
-    if (typeof entry.file !== "string" || !NEURAL_FILE.test(entry.file)) throw new Error(`${at} has an invalid model filename`);
-    if (files.has(entry.file)) throw new Error(`${at} duplicates model file '${entry.file}'`);
     if (!Number.isInteger(entry.scale) || entry.scale < 1 || entry.scale > 16) throw new Error(`${at} has an invalid scale`);
     if (entry.padMultiple != null &&
         (!Number.isInteger(entry.padMultiple) || entry.padMultiple < 1 || entry.padMultiple > 256)) {
@@ -63,6 +352,23 @@ export function validateNeuralManifest(value) {
       if (entry[field] != null && (typeof entry[field] !== "string" || !TENSOR_NAME.test(entry[field]))) {
         throw new Error(`${at} has an invalid ${field} tensor name`);
       }
+    }
+    const contract = normalizeNeuralModelContract(entry, at);
+    if (contract.version === 2) {
+      if (entry.padMultiple != null && entry.padMultiple !== 1) {
+        throw new Error(`${at} v2 full-frame contract does not support padded input`);
+      }
+      if (entry.tileSize != null || entry.tileOverlap != null) {
+        throw new Error(`${at} v2 full-frame contract may not declare tile controls`);
+      }
+    }
+    const entryFiles = neuralModelFiles(entry, at);
+    for (const file of entryFiles) {
+      if (typeof file !== "string" || !NEURAL_FILE.test(file)) {
+        throw new Error(`${at} has an invalid model filename`);
+      }
+      if (files.has(file)) throw new Error(`${at} duplicates model file '${file}'`);
+      files.add(file);
     }
     if (entry.fp16 != null && typeof entry.fp16 !== "boolean") throw new Error(`${at} has an invalid fp16 flag`);
     const tileSize = entry.tileSize ?? DEFAULT_NEURAL_TILE_SIZE;
@@ -77,8 +383,12 @@ export function validateNeuralManifest(value) {
       throw new Error(`${at} has an invalid tileOverlap`);
     }
     keys.add(entry.key);
-    files.add(entry.file);
-    return Object.freeze({ ...entry });
+    const normalized = Object.freeze({
+      ...entry,
+      ...(contract.version === 2 ? { contract } : {}),
+    });
+    validatedContracts.set(normalized, contract);
+    return normalized;
   });
 }
 
@@ -241,9 +551,95 @@ function validateTensorMetadata(metadata, kind, name) {
   }
 }
 
-function validateSessionContract(session, entry) {
+function validateV2TensorMetadata(metadata, kind, descriptor) {
+  if (metadata == null) return;
+  const { name, dtype, channels, layout } = descriptor;
+  if (metadata.isTensor === false) {
+    throw new Error(`neural ${kind} '${name}' is not a tensor`);
+  }
+  const type = metadata.type ?? metadata.dataType;
+  if (type != null && type !== dtype) {
+    throw new Error(`neural ${kind} '${name}' has dtype '${type}' (expected ${dtype})`);
+  }
+  const shape = metadata.shape ?? metadata.dims ?? metadata.dimensions;
+  if (shape == null) return;
+  if (!Array.isArray(shape)) {
+    throw new Error(`neural ${kind} '${name}' has invalid tensor shape metadata`);
+  }
+  if (layout === "scalar") {
+    if (!(shape.length === 0 || (shape.length === 1 && shape[0] === 1))) {
+      throw new Error(`neural ${kind} '${name}' must be a scalar or one-element tensor`);
+    }
+    return;
+  }
+  if (shape.length !== 4) {
+    throw new Error(`neural ${kind} '${name}' has shape [${shape.join(",")}] (expected NCHW rank 4)`);
+  }
+  if (shape[0] !== 1 && !isDynamicDimension(shape[0])) {
+    throw new Error(`neural ${kind} '${name}' batch dimension must be 1 or dynamic`);
+  }
+  if (shape[1] !== channels) {
+    throw new Error(`neural ${kind} '${name}' channel dimension must be ${channels}`);
+  }
+  if (!isDynamicDimension(shape[2]) || !isDynamicDimension(shape[3])) {
+    throw new Error(
+      `neural ${kind} '${name}' spatial dimensions must be dynamic`,
+    );
+  }
+}
+
+function sameNames(actual, declared) {
+  return actual.length === declared.length &&
+    declared.every((name) => actual.includes(name));
+}
+
+function contractForEntry(entry) {
+  return validatedContracts.get(entry) || normalizeNeuralModelContract(entry);
+}
+
+export function validateNeuralSessionContract(session, entry, graphName = null) {
+  const declaredContract = contractForEntry(entry);
   const inputs = sessionNames(session, "input");
   const outputs = sessionNames(session, "output");
+  if (declaredContract.version === 2) {
+    const selectedGraphName = graphName ?? declaredContract.resetGraph;
+    const graph = declaredContract.graphs[selectedGraphName];
+    if (!graph) throw new Error(`neural contract names unknown graph '${selectedGraphName}'`);
+    const declaredInputs = Object.keys(graph.inputs);
+    const declaredOutputs = Object.keys(graph.outputs);
+    if (!sameNames(inputs, declaredInputs)) {
+      throw new Error(
+        `neural graph '${selectedGraphName}' inputs [${inputs.join(",")}] do not match manifest [${declaredInputs.join(",")}]`,
+      );
+    }
+    if (!sameNames(outputs, declaredOutputs)) {
+      throw new Error(
+        `neural graph '${selectedGraphName}' outputs [${outputs.join(",")}] do not match manifest [${declaredOutputs.join(",")}]`,
+      );
+    }
+    for (const descriptor of Object.values(graph.inputs)) {
+      validateV2TensorMetadata(
+        sessionMetadata(session, "input", descriptor.name, inputs),
+        "input",
+        descriptor,
+      );
+    }
+    for (const descriptor of Object.values(graph.outputs)) {
+      validateV2TensorMetadata(
+        sessionMetadata(session, "output", descriptor.name, outputs),
+        "output",
+        descriptor,
+      );
+    }
+    return Object.freeze({
+      version: 2,
+      mode: declaredContract.mode,
+      graphName: selectedGraphName,
+      graph,
+      inputName: requireSingleRole(graph.inputs, "rgb", "input", `neural graph '${selectedGraphName}'`).name,
+      outputName: requireSingleRole(graph.outputs, "rgb", "output", `neural graph '${selectedGraphName}'`).name,
+    });
+  }
   const selectedInput = selectSessionName(inputs, entry.input, "input");
   const selectedOutput = selectSessionName(outputs, entry.output, "output");
   validateTensorMetadata(
@@ -256,7 +652,68 @@ function validateSessionContract(session, entry) {
     "output",
     selectedOutput,
   );
-  return { inputName: selectedInput, outputName: selectedOutput };
+  return Object.freeze({
+    version: 1,
+    mode: "spatial",
+    graphName: "default",
+    graph: null,
+    inputName: selectedInput,
+    outputName: selectedOutput,
+  });
+}
+
+function v2GraphRole(graph, role, kind = "input") {
+  const descriptors = graph?.[`${kind}s`];
+  if (!descriptors) return null;
+  return Object.values(descriptors).find((descriptor) => descriptor.role === role) || null;
+}
+
+export function resolveNeuralAuxiliaryInputs(contract, graphName, auxiliary = {}) {
+  if (!contract || contract.version !== 2) {
+    throw new Error("neural auxiliary bindings require a v2 contract");
+  }
+  const graph = contract.graphs?.[graphName];
+  if (!graph) throw new Error(`neural contract names unknown graph '${graphName}'`);
+  if (!auxiliary || typeof auxiliary !== "object" || Array.isArray(auxiliary)) {
+    throw new Error("neural auxiliary inputs must be a named object");
+  }
+
+  const recognized = new Set();
+  for (const candidateGraph of Object.values(contract.graphs)) {
+    const roleCounts = new Map();
+    for (const descriptor of Object.values(candidateGraph.inputs)) {
+      recognized.add(descriptor.name);
+      roleCounts.set(descriptor.role, (roleCounts.get(descriptor.role) || 0) + 1);
+    }
+    for (const [role, count] of roleCounts) {
+      if (count === 1) recognized.add(role);
+    }
+  }
+  for (const key of Object.keys(auxiliary)) {
+    if (!recognized.has(key)) {
+      throw new Error(`neural auxiliary input '${key}' is not declared by the contract`);
+    }
+  }
+
+  const resolved = {};
+  for (const descriptor of Object.values(graph.inputs)) {
+    if (descriptor.role === "rgb" || descriptor.role === "state-in") continue;
+    const byName = auxiliary[descriptor.name];
+    const byRole = auxiliary[descriptor.role];
+    if (byName != null && byRole != null && byName !== byRole) {
+      throw new Error(
+        `neural auxiliary input '${descriptor.name}' was provided by both name and role`,
+      );
+    }
+    const value = byName ?? byRole;
+    if (value == null) {
+      throw new Error(
+        `neural graph '${graphName}' requires auxiliary input '${descriptor.name}' (${descriptor.role})`,
+      );
+    }
+    resolved[descriptor.name] = value;
+  }
+  return Object.freeze(resolved);
 }
 
 const SNAPSHOT_EXT_WGSL = `
@@ -329,9 +786,13 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
   let device = null;
   // tileSize/tileOverlap tune bounded work only; omitted entries use 512/24.
   // They never limit the source dimensions or skip a frame by policy.
-  let manifest = null;          // [{key,label,file,scale,padMultiple?,input?,output?,fp16?,tileSize?,tileOverlap?}]
+  let manifest = null;          // validated legacy-v1 or named-graph-v2 model entries
   let active = null;            // manifest entry of the loaded model
   let inputName = "input", outputName = "output";
+  let activeContract = null;
+  let temporalState = new Map();
+  const sessionGroups = new WeakMap();
+  const releasedSessionGroups = new WeakSet();
   let fp16Model = false;
   let initGeneration = 0;
   let initTail = Promise.resolve();
@@ -419,12 +880,35 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     });
   }
 
+  async function releaseManagedSession(primarySession) {
+    if (!primarySession || releasedSessionGroups.has(primarySession)) return;
+    releasedSessionGroups.add(primarySession);
+    const group = sessionGroups.get(primarySession);
+    sessionGroups.delete(primarySession);
+    const sessions = group?.sessions || [primarySession];
+    const failures = [];
+    for (const candidate of new Set(sessions.filter(Boolean))) {
+      try { await candidate?.release?.(); }
+      catch (error) { failures.push(error); }
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length) {
+      throw new AggregateError(failures, "neural session group release failed");
+    }
+  }
+
+  function clearTemporalState(ownerDevice = device) {
+    const stale = [...temporalState.values()];
+    temporalState = new Map();
+    retireTensors(ownerDevice, ...stale);
+  }
+
   async function releaseDeferredSessions() {
     const pending = deferredSessionReleases;
     deferredSessionReleases = [];
     const failures = [];
     for (const oldSession of pending) {
-      try { await oldSession?.release?.(); }
+      try { await releaseManagedSession(oldSession); }
       catch (error) {
         failures.push(error);
         sessionReleaseFailures.push(error);
@@ -667,6 +1151,7 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     const list = await loadManifest();
     if (!list.length) throw new Error("no neural models: model/neural/manifest.json missing or empty");
     const entry = list.find((m) => m.key === key) || list[0];
+    const modelContract = contractForEntry(entry);
     if (generation !== initGeneration) return null;
     if (session && device && active?.key === entry.key) return active;
 
@@ -675,63 +1160,116 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     // Create the new session before releasing the old one. The ORT device's
     // lifetime follows its sessions, so its refcount must not reach zero during
     // a live model swap.
-    const url = resolvePackagedAssetUrl("model/neural/" + entry.file);
     const opts = {
       executionProviders: [{ name: "webgpu" }],
       graphOptimizationLevel: "all",
       enableGraphCapture: false,
       preferredOutputLocation: "gpu-buffer",
     };
-    let next;
     const requestedExecutionFp16 = entry.fp16 === true;
     let executionFp16 = requestedExecutionFp16;
-    if (requestedExecutionFp16) {
-      try {
-        next = await createOrtSession(url, opts, { enableFp16: true });
-      } catch (fp16Error) {
-        if (generation !== initGeneration) return null;
-        executionFp16 = false;
-        warn(`neural: FP16 execution session failed for ${entry.file}; retrying FP32: ${fp16Error.message}`);
+    const graphSpecs = modelContract.version === 1
+      ? [{ name: "default", file: entry.file }]
+      : Object.values(modelContract.graphs);
+    const graphSessions = new Map();
+    const createdSessions = [];
+    const releaseCreatedSessions = async () => {
+      for (const stale of createdSessions.splice(0)) {
+        try { await stale?.release?.(); } catch {}
+      }
+    };
+    for (const graphSpec of graphSpecs) {
+      const url = resolvePackagedAssetUrl("model/neural/" + graphSpec.file);
+      let created;
+      if (requestedExecutionFp16) {
         try {
-          next = await createOrtSession(url, opts, { enableFp16: false });
+          created = await createOrtSession(url, opts, { enableFp16: true });
+        } catch (fp16Error) {
+          if (generation !== initGeneration) {
+            await releaseCreatedSessions();
+            return null;
+          }
+          executionFp16 = false;
+          warn(`neural: FP16 execution session failed for ${graphSpec.file}; retrying FP32: ${fp16Error.message}`);
+          try {
+            created = await createOrtSession(url, opts, { enableFp16: false });
+          } catch (fp32Error) {
+            if (generation !== initGeneration) {
+              await releaseCreatedSessions();
+              return null;
+            }
+            await releaseCreatedSessions();
+            throw new Error(`neural session create failed (${graphSpec.file}): ${fp32Error.message}`);
+          }
+        }
+      } else {
+        try {
+          created = await createOrtSession(url, opts, { enableFp16: false });
         } catch (fp32Error) {
-          if (generation !== initGeneration) return null;
-          throw new Error(`neural session create failed (${entry.file}): ${fp32Error.message}`);
+          if (generation !== initGeneration) {
+            await releaseCreatedSessions();
+            return null;
+          }
+          await releaseCreatedSessions();
+          throw new Error(`neural session create failed (${graphSpec.file}): ${fp32Error.message}`);
         }
       }
-    } else {
-      try {
-        next = await createOrtSession(url, opts, { enableFp16: false });
-      } catch (fp32Error) {
-        if (generation !== initGeneration) return null;
-        throw new Error(`neural session create failed (${entry.file}): ${fp32Error.message}`);
+      graphSessions.set(graphSpec.name, created);
+      createdSessions.push(created);
+      if (generation !== initGeneration) {
+        await releaseCreatedSessions();
+        return null;
       }
     }
+    const primaryGraphName = modelContract.version === 1
+      ? "default"
+      : modelContract.resetGraph;
+    const next = graphSessions.get(primaryGraphName);
+    sessionGroups.set(next, {
+      sessions: createdSessions,
+      graphs: graphSessions,
+      contract: modelContract,
+      resolvedGraphs: null,
+    });
     if (generation !== initGeneration) {
-      try { await next?.release?.(); } catch {}
+      try { await releaseManagedSession(next); } catch {}
       return null;
     }
-    let contract;
+    const resolvedGraphs = new Map();
     try {
-      contract = validateSessionContract(next, entry);
+      for (const [graphName, graphSession] of graphSessions) {
+        resolvedGraphs.set(
+          graphName,
+          validateNeuralSessionContract(
+            graphSession,
+            entry,
+            modelContract.version === 1 ? null : graphName,
+          ),
+        );
+      }
     } catch (contractError) {
       try {
-        await next?.release?.();
+        await releaseManagedSession(next);
       } catch (releaseError) {
         throw new AggregateError(
           [contractError, releaseError],
-          `neural model contract rejection cleanup failed (${entry.file})`,
+          `neural model contract rejection cleanup failed (${graphSpecs.map(({ file }) => file).join(", ")})`,
         );
       }
-      throw new Error(`neural model contract rejected (${entry.file}): ${contractError.message}`, {
+      throw new Error(`neural model contract rejected (${graphSpecs.map(({ file }) => file).join(", ")}): ${contractError.message}`, {
         cause: contractError,
       });
     }
+    sessionGroups.get(next).resolvedGraphs = resolvedGraphs;
     const nextOrt = await ensureOrt();
     const nextDevice = getOrtSessionDevice(next);
     if (!nextDevice) {
-      try { await next?.release?.(); } catch {}
+      try { await releaseManagedSession(next); } catch {}
       throw new Error("ORT device unavailable after neural session create");
+    }
+    if (createdSessions.some((candidate) => getOrtSessionDevice(candidate) !== nextDevice)) {
+      try { await releaseManagedSession(next); } catch {}
+      throw new Error("neural graph sessions did not share one ORT device");
     }
     // Subscribe before publication and yield once. A device can be returned with
     // an already-settled `lost` promise; accepting that session would let init()
@@ -739,11 +1277,11 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     watchDevice(nextDevice);
     await Promise.resolve();
     if (generation !== initGeneration) {
-      try { await next?.release?.(); } catch {}
+      try { await releaseManagedSession(next); } catch {}
       return null;
     }
     if (lostDevices.has(nextDevice)) {
-      try { await next?.release?.(); } catch {}
+      try { await releaseManagedSession(next); } catch {}
       throw new Error("ORT device was lost during neural session initialization");
     }
 
@@ -752,7 +1290,7 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     // synchronous commit once the idle promise resolves.
     await whenRunsIdle();
     if (generation !== initGeneration) {
-      try { await next?.release?.(); } catch {}
+      try { await releaseManagedSession(next); } catch {}
       return null;
     }
 
@@ -765,16 +1303,19 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     } catch (error) {
       destroyGpuResources(nextDevice);
       device = oldDevice;
-      try { await next?.release?.(); } catch {}
+      try { await releaseManagedSession(next); } catch {}
       throw error;
     }
 
     ort = nextOrt;
     session = next;
     active = entry;
-    inputName = contract.inputName;
-    outputName = contract.outputName;
-    fp16Model = /fp16/i.test(entry.file) || entry.fp16 === true;
+    activeContract = modelContract;
+    const primaryContract = resolvedGraphs.get(primaryGraphName);
+    inputName = primaryContract.inputName;
+    outputName = primaryContract.outputName;
+    clearTemporalState(nextDevice);
+    fp16Model = graphSpecs.some(({ file }) => /fp16/i.test(file)) || entry.fp16 === true;
     sessionGeneration++;
     // Transfer the prior session out of this initializer's local ownership before
     // yielding. A concurrent dispose/device-loss can clear the just-published
@@ -798,7 +1339,7 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
         deferredSessionReleases = deferredSessionReleases.filter(
           (candidate) => candidate !== oldSession,
         );
-        try { await oldSession.release?.(); }
+        try { await releaseManagedSession(oldSession); }
         catch (error) {
           sessionReleaseFailures.push(error);
           warn("neural: old session release failed:", error.message);
@@ -849,6 +1390,7 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
   }
 
   function destroyGpuResources(ownerDevice = device) {
+    clearTemporalState(ownerDevice);
     const resources = [inBuf, snapshotU, packU, compU, snapshotTex, outTex];
     inBuf = null; inBufSize = 0;
     snapshotU = null; packU = null; compU = null;
@@ -900,7 +1442,7 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
       const failures = [];
       try { await cleanup; } catch (error) { failures.push(error); }
       for (const candidate of claimedSessions) {
-        try { await candidate?.release?.(); }
+        try { await releaseManagedSession(candidate); }
         catch (error) {
           failures.push(error);
           warn("neural: device-loss session release failed:", error.message);
@@ -941,32 +1483,183 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     return { strideW: expectedDims[3], plane: expectedDims[2] * expectedDims[3] };
   }
 
-  async function run(src, srcW, srcH) {
+  function tensorElementBytes(dtype) {
+    switch (dtype) {
+      case "float16": return 2;
+      case "float32":
+      case "int32": return 4;
+      case "int64": return 8;
+      case "uint8":
+      case "bool": return 1;
+      default: throw new Error(`unsupported neural tensor dtype '${dtype}'`);
+    }
+  }
+
+  function validateRuntimeTensor(value, descriptor, label, expectedSpatial = null) {
+    if (!value || typeof value !== "object" || !value.gpuBuffer) {
+      throw new Error(`${label} must provide a GPU buffer`);
+    }
+    const dtype = value.dataType ?? value.type;
+    if (dtype !== descriptor.dtype) {
+      throw new Error(`${label} has dtype '${dtype || "unknown"}' (expected ${descriptor.dtype})`);
+    }
+    if (descriptor.provider != null && value.provider !== descriptor.provider) {
+      throw new Error(
+        `${label} came from provider '${value.provider || "unknown"}' (expected ${descriptor.provider})`,
+      );
+    }
+    const dims = Array.from(value.dims || [], Number);
+    if (descriptor.layout === "scalar") {
+      if (!(dims.length === 0 || (dims.length === 1 && dims[0] === 1))) {
+        throw new Error(`${label} must be a scalar or one-element tensor`);
+      }
+    } else {
+      if (dims.length !== 4 || dims[0] !== 1 || dims[1] !== descriptor.channels ||
+          dims.some((dimension) => !Number.isSafeInteger(dimension) || dimension < 1)) {
+        throw new Error(
+          `${label} shape [${dims.join(",")}] does not match NCHW channels ${descriptor.channels}`,
+        );
+      }
+      if (expectedSpatial &&
+          (dims[2] !== expectedSpatial.height || dims[3] !== expectedSpatial.width)) {
+        throw new Error(
+          `${label} spatial shape ${dims[3]}x${dims[2]} does not match ${expectedSpatial.width}x${expectedSpatial.height}`,
+        );
+      }
+    }
+    const elements = dims.length
+      ? dims.reduce((product, dimension) => checkedProduct(label, product, dimension), 1)
+      : 1;
+    const expectedBytes = checkedProduct(label, elements, tensorElementBytes(dtype));
+    const bufferBytes = Number(value.gpuBuffer.size);
+    if (!Number.isFinite(bufferBytes) || bufferBytes < expectedBytes) {
+      throw new Error(`${label} GPU buffer is ${bufferBytes || 0} bytes; expected at least ${expectedBytes}`);
+    }
+    return { dataType: dtype, dims };
+  }
+
+  function fullFrameTile(srcW, srcH, scale) {
+    return Object.freeze({
+      coreX: 0,
+      coreY: 0,
+      coreW: srcW,
+      coreH: srcH,
+      inputX: 0,
+      inputY: 0,
+      inputW: srcW,
+      inputH: srcH,
+      padW: srcW,
+      padH: srcH,
+      cropX: 0,
+      cropY: 0,
+      dstX: 0,
+      dstY: 0,
+      outW: checkedProduct("neural output width", srcW, scale),
+      outH: checkedProduct("neural output height", srcH, scale),
+    });
+  }
+
+  // Contract-v2 options:
+  //   { temporal?: { reset?: boolean }, reset?: boolean,
+  //     auxiliary?: { [tensorNameOrUniqueRole]: { provider?, gpuBuffer, dataType, dims } } }
+  // The provider owns GPUBuffer lifetime; this engine owns the ORT wrappers and
+  // recurrent state tensors it receives from the graph.
+  async function run(src, srcW, srcH, options = undefined) {
     if (!session || !device) throw new Error("neural engine not initialized");
     if (runBusy) throw new Error("neural inference already in progress");
     if (!Number.isInteger(srcW) || !Number.isInteger(srcH) || srcW <= 0 || srcH <= 0) {
       throw new Error(`invalid neural input dimensions ${srcW}x${srcH}`);
     }
 
-    const runSession = session;
     const runDevice = device;
     const runOrt = ort;
     const runEntry = active;
-    const runInputName = inputName;
-    const runOutputName = outputName;
+    const runPrimarySession = session;
+    const runModelContract = activeContract || contractForEntry(runEntry);
+    const isV2 = runModelContract.version === 2;
+    let runSession = session;
+    let runInputName = inputName;
+    let runOutputName = outputName;
+    let runGraph = null;
+    let runGraphName = "default";
+    let runAuxiliary = Object.freeze({});
+    let resettingTemporalState = false;
+    if (isV2) {
+      if (options != null && (!options || typeof options !== "object" || Array.isArray(options))) {
+        throw new Error("neural v2 run options must be an object");
+      }
+      const temporal = options?.temporal;
+      if (temporal != null &&
+          (!temporal || typeof temporal !== "object" || Array.isArray(temporal))) {
+        throw new Error("neural v2 temporal metadata must be an object");
+      }
+      if (options?.reset != null && temporal?.reset != null &&
+          options.reset !== temporal.reset) {
+        throw new Error("neural v2 reset conflicts with temporal metadata");
+      }
+      const reset = options?.reset ?? temporal?.reset ?? false;
+      if (typeof reset !== "boolean") throw new Error("neural v2 reset must be boolean");
+      const recurrentGraph = runModelContract.mode === "temporal"
+        ? runModelContract.graphs[runModelContract.recurrentGraph]
+        : null;
+      const recurrentStates = recurrentGraph
+        ? stateDescriptors(recurrentGraph.inputs, "state-in")
+        : new Map();
+      const stateReady = runModelContract.states.every((key) => {
+        const tensor = temporalState.get(key);
+        const descriptor = recurrentStates.get(key);
+        if (!tensor || !descriptor) return false;
+        try {
+          validateRuntimeTensor(
+            tensor,
+            descriptor,
+            `neural recurrent state '${key}'`,
+            { width: srcW, height: srcH },
+          );
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      resettingTemporalState = runModelContract.mode === "temporal" && (reset || !stateReady);
+      runGraphName = runModelContract.mode === "temporal" && !resettingTemporalState
+        ? runModelContract.recurrentGraph
+        : runModelContract.resetGraph;
+      runGraph = runModelContract.graphs[runGraphName];
+      const group = sessionGroups.get(session);
+      runSession = group?.graphs?.get(runGraphName);
+      if (!runSession) throw new Error(`neural graph session '${runGraphName}' is unavailable`);
+      runInputName = v2GraphRole(runGraph, "rgb", "input").name;
+      runOutputName = v2GraphRole(runGraph, "rgb", "output").name;
+      runAuxiliary = resolveNeuralAuxiliaryInputs(
+        runModelContract,
+        runGraphName,
+        options?.auxiliary ?? {},
+      );
+      if (resettingTemporalState) clearTemporalState(runDevice);
+      for (const descriptor of Object.values(runGraph.inputs)) {
+        if (descriptor.role === "state-in" && !temporalState.has(descriptor.state)) {
+          throw new Error(
+            `neural graph '${runGraphName}' is missing recurrent state '${descriptor.state}'`,
+          );
+        }
+      }
+    }
     const runSessionGeneration = sessionGeneration;
     const runLifecycleGeneration = lifecycleGeneration;
-    const mult = Math.max(1, runEntry.padMultiple | 0 || 1);
+    const mult = isV2 ? 1 : Math.max(1, runEntry.padMultiple | 0 || 1);
     const scale = runEntry.scale;
     const outW = checkedProduct("neural output width", srcW, scale);
     const outH = checkedProduct("neural output height", srcH, scale);
     validateFrameAllocationLimits(srcW, srcH, outW, outH);
-    const tiles = planNeuralTiles(srcW, srcH, {
-      tileSize: runEntry.tileSize ?? DEFAULT_NEURAL_TILE_SIZE,
-      tileOverlap: runEntry.tileOverlap ?? DEFAULT_NEURAL_TILE_OVERLAP,
-      padMultiple: mult,
-      scale,
-    });
+    const tiles = isV2
+      ? Object.freeze([fullFrameTile(srcW, srcH, scale)])
+      : planNeuralTiles(srcW, srcH, {
+        tileSize: runEntry.tileSize ?? DEFAULT_NEURAL_TILE_SIZE,
+        tileOverlap: runEntry.tileOverlap ?? DEFAULT_NEURAL_TILE_OVERLAP,
+        padMultiple: mult,
+        scale,
+      });
     for (const tile of tiles) validateTileAllocationLimits(tile, scale);
     const largestTile = tiles.reduce((largest, tile) =>
       tile.padW * tile.padH > largest.padW * largest.padH ? tile : largest);
@@ -1058,7 +1751,9 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
       for (let tileIndex = 0; tileIndex < tiles.length; tileIndex++) {
         const tile = tiles[tileIndex];
         let inTensor = null;
+        let auxiliaryTensors = [];
         let resultTensors = [];
+        let retainedResultTensors = new Set();
         try {
           if (tileIndex > 0) {
             if (runLifecycleGeneration !== lifecycleGeneration) {
@@ -1074,7 +1769,33 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
             dataType: "float32",
             dims: [1, 3, tile.padH, tile.padW],
           });
-          const result = await runSession.run({ [runInputName]: inTensor }, [runOutputName]);
+          const feeds = { [runInputName]: inTensor };
+          let fetches = [runOutputName];
+          if (isV2) {
+            for (const descriptor of Object.values(runGraph.inputs)) {
+              if (descriptor.role === "rgb") continue;
+              if (descriptor.role === "state-in") {
+                feeds[descriptor.name] = temporalState.get(descriptor.state);
+                continue;
+              }
+              const provided = runAuxiliary[descriptor.name];
+              const expectedSpatial =
+                descriptor.role === "motion" || descriptor.role === "residual"
+                  ? { width: tile.padW, height: tile.padH }
+                  : null;
+              const tensorOptions = validateRuntimeTensor(
+                provided,
+                descriptor,
+                `neural auxiliary input '${descriptor.name}'`,
+                expectedSpatial,
+              );
+              const wrapper = runOrt.Tensor.fromGpuBuffer(provided.gpuBuffer, tensorOptions);
+              auxiliaryTensors.push(wrapper);
+              feeds[descriptor.name] = wrapper;
+            }
+            fetches = Object.keys(runGraph.outputs);
+          }
+          const result = await runSession.run(feeds, fetches);
           if (!result || typeof result !== "object") {
             throw new Error("neural session returned an invalid result");
           }
@@ -1083,8 +1804,27 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
           if (runLifecycleGeneration !== lifecycleGeneration) {
             throw new Error("neural inference cancelled by stop");
           }
-          if (runSessionGeneration !== sessionGeneration || runSession !== session) {
+          if (runSessionGeneration !== sessionGeneration || runPrimarySession !== session) {
             throw new Error("neural session changed during inference");
+          }
+          let nextTemporalState = null;
+          if (isV2 && runModelContract.mode === "temporal") {
+            nextTemporalState = new Map();
+            for (const descriptor of Object.values(runGraph.outputs)) {
+              if (descriptor.role !== "state-out") continue;
+              const stateTensor = result[descriptor.name];
+              validateRuntimeTensor(
+                stateTensor,
+                descriptor,
+                `neural state output '${descriptor.name}'`,
+                { width: tile.padW, height: tile.padH },
+              );
+              nextTemporalState.set(descriptor.state, stateTensor);
+            }
+            if (nextTemporalState.size !== runModelContract.states.length ||
+                runModelContract.states.some((key) => !nextTemporalState.has(key))) {
+              throw new Error(`neural graph '${runGraphName}' returned incomplete recurrent state`);
+            }
           }
           const shape = validateOutputTensor(
             outT,
@@ -1119,12 +1859,28 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
           cp.dispatchWorkgroups(Math.ceil(tile.outW / 8), Math.ceil(tile.outH / 8));
           cp.end();
           runDevice.queue.submit([enc.finish()]);
+          if (nextTemporalState) {
+            const previousState = temporalState;
+            temporalState = nextTemporalState;
+            retainedResultTensors = new Set(nextTemporalState.values());
+            retireTensors(
+              runDevice,
+              ...[...previousState.values()].filter(
+                (tensor) => !retainedResultTensors.has(tensor),
+              ),
+            );
+          }
           stats.tileRuns++;
         } finally {
           // Each tile can release its wrappers after its composite is submitted;
           // this bounds wrapper/output lifetime instead of retaining a frame's
           // worth of ONNX tensors until every tile finishes.
-          retireTensors(runDevice, inTensor, ...resultTensors);
+          retireTensors(
+            runDevice,
+            inTensor,
+            ...auxiliaryTensors,
+            ...resultTensors.filter((tensor) => !retainedResultTensors.has(tensor)),
+          );
         }
       }
 
@@ -1135,6 +1891,7 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
       return { tex: runOutTex, outW, outH };
     } catch (error) {
       stats.fails++;
+      if (isV2 && runModelContract.mode === "temporal") clearTemporalState(runDevice);
       throw error;
     } finally {
       runBusy = false;
@@ -1143,11 +1900,12 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
   }
 
   function cancel() {
-    // Logical cancellation is deliberately synchronous and allocation-free.
-    // The serialized stop/dispose command owns physical GPU/session cleanup after
-    // the active session.run() observes this generation change and unwinds.
+    // Publish logical cancellation synchronously. Recurrent wrappers retire
+    // behind the queue fence; stop/dispose owns the remaining GPU/session cleanup
+    // after the active session.run() observes this generation change and unwinds.
     ++lifecycleGeneration;
     ++initGeneration;
+    if (activeRuns === 0) clearTemporalState();
   }
 
   function stop() {
@@ -1190,6 +1948,7 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     session = null;
     device = null;
     active = null;
+    activeContract = null;
     inputName = "input";
     outputName = "output";
     fp16Model = false;
@@ -1233,7 +1992,7 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
       for (const error of sessionReleaseFailures) failures.add(error);
       sessionReleaseFailures = [];
       for (const old of sessionsToRelease) {
-        try { await old?.release?.(); }
+        try { await releaseManagedSession(old); }
         catch (error) {
           failures.add(error);
           warn("neural: session release failed:", error.message);
@@ -1262,6 +2021,7 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     invalidateDevice,
     ready: () => !!(session && device),
     activeEntry: () => active,
+    activeContract: () => activeContract,
     device: () => device,
     stats: () => ({ ...stats }),
     bumpSkip: () => { stats.skip++; },

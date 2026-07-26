@@ -7,7 +7,8 @@ FSRCNNX-EXT is a pre-release Chromium extension for local, real-time WebGPU vide
 - A current Chromium-based browser with WebGPU and a compatible GPU.
 - A readable, non-DRM BT.709/sRGB SDR video in the top-level page. HDR, wide-gamut, cross-origin, iframe, and page-specific restrictions may leave a video on the browser's native renderer.
 - A strict host Content Security Policy can prevent RIFE from starting. Neural runs in an extension-owned frame to avoid that specific restriction.
-- Node.js 20.11 or newer for repository checks and packaging. The extension itself has no npm dependency.
+- Node.js 20.11 or newer and CPython 3.11 or newer for repository checks and
+  packaging. The extension itself has no npm or Python dependency.
 
 Processing stays on the device. See [Privacy](PRIVACY.md) for the data and permission boundaries.
 
@@ -33,11 +34,15 @@ Performance-driven fallbacks are advanced per-site settings and are off by defau
 
 ## Validate and package
 
-Run the complete offline check:
+Run the standard offline repository check:
 
 ```sh
 npm run check
 ```
+
+This includes dependency-free CDA-VSR contract tests, not the optional ML
+conversion environment or user-supplied CDA artifacts documented under
+`tools/cda-vsr/`.
 
 Run browser and GPU smoke checks against the checkout in a temporary Chromium profile:
 

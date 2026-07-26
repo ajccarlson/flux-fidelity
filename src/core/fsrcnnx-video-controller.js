@@ -160,6 +160,7 @@ export class VideoController {
     onLayout,
     onHoverChange,
     onPresentationChange,
+    onSeek,
     onSourceChange,
     resolveHoverRegion,
     window: ownerWindow = globalThis.window,
@@ -178,6 +179,7 @@ export class VideoController {
     this.onLayout = callable(onLayout, () => {});
     this.onHoverChange = callable(onHoverChange, () => {});
     this.onPresentationChange = callable(onPresentationChange, () => {});
+    this.onSeek = callable(onSeek, () => {});
     this.onSourceChange = callable(onSourceChange, () => {});
     this.resolveHoverRegion = callable(resolveHoverRegion, (element) => element.parentElement || element);
     this.window = ownerWindow || null;
@@ -242,6 +244,10 @@ export class VideoController {
       if (!this.active) return;
       try { this.onSourceChange(this, event); } catch {}
     };
+    this._seekCallback = (event) => {
+      if (!this.active) return;
+      try { this.onSeek(this, event); } catch {}
+    };
     this._pictureInPictureCallback = () => {
       if (!this.active) return;
       this._emitPresentationState();
@@ -272,6 +278,9 @@ export class VideoController {
     this.video.addEventListener?.("leavepictureinpicture", this._pictureInPictureCallback);
     for (const type of ["loadstart", "emptied", "loadedmetadata"]) {
       this.video.addEventListener?.(type, this._sourceCallback);
+    }
+    for (const type of ["seeking", "seeked"]) {
+      this.video.addEventListener?.(type, this._seekCallback);
     }
     this._refreshHoverRegion();
     this._emitPresentationState();
@@ -459,6 +468,9 @@ export class VideoController {
     this.video.removeEventListener?.("leavepictureinpicture", this._pictureInPictureCallback);
     for (const type of ["loadstart", "emptied", "loadedmetadata"]) {
       this.video.removeEventListener?.(type, this._sourceCallback);
+    }
+    for (const type of ["seeking", "seeked"]) {
+      this.video.removeEventListener?.(type, this._seekCallback);
     }
     if (this._fullscreenTimer != null) {
       try { this.clearTimer(this._fullscreenTimer.id); } catch {}

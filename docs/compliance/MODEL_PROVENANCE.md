@@ -4,7 +4,7 @@ Audit date: 2026-07-25.
 
 This inventory is a release gate for bundled model, generated shader, and inference-runtime artifacts. A matching hash proves byte identity, not ownership or permission. `Verified` means the recorded bytes, source, and stated upstream license were checked. `Blocked` means at least one public-distribution surface remains unsafe. `Accepted risk` records a nonblocking repository-owner release decision without claiming legal clearance. A removed artifact remains as a historical tombstone while any Git ref still exposes it.
 
-The machine-readable gate ledger is [`release-clearance.json`](https://github.com/ajccarlson/fsrcnnx-ext/blob/main/docs/compliance/release-clearance.json). `npm run release:check` must pass before public distribution.
+The machine-readable gate ledger is [`release-clearance.json`](https://github.com/ajccarlson/fsrcnnx-ext/blob/main/docs/compliance/release-clearance.json). `npm run release:check` must pass for each public release or distributable package.
 
 ## Public-release status
 

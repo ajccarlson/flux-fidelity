@@ -42,6 +42,7 @@
         "src/core/fsrcnnx-settings-store.js",
         "src/core/fsrcnnx-color-support.js",
         "src/core/fsrcnnx-color.js",
+        "src/core/fsrcnnx-cda-priors.js",
         "model/*.wgsl",
         "model/*.json",
         "src/core/fsrcnnx-ssimds.js",
