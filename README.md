@@ -53,7 +53,9 @@ Set `FSRCNNX_BROWSER` if no browser is found automatically. The manually loaded 
 npm run validate:browser -- --extension-root dist/fsrcnnx-ext
 ```
 
-`npm run package` also enforces the public-release gate and currently stops on unresolved items in [Model provenance](docs/compliance/MODEL_PROVENANCE.md).
+`npm run package` enforces the release-clearance ledger, creates the
+deterministic archive, and validates the exact staged extension in a temporary
+browser profile.
 
 ## Licensing
 
