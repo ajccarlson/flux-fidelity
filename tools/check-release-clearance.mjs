@@ -22,9 +22,19 @@ export const REQUIRED_RELEASE_GATE_IDS = Object.freeze([
 ]);
 const HIGH_X2_GATE_ID = "unknown-high-x2-shader-origin";
 const LGPL_GATE_ID = "lgpl-compliance-review";
-const ACCEPTED_RISK_GATE_IDS = new Set([
+const ACCEPTED_HISTORY_RISK_GATE_IDS = new Set([
+  "unidentified-rife-model",
+  "missing-x3-x4-shader-sources",
+  "unreproducible-span-smoke-model",
+  "unresolved-deband-port-origin",
+]);
+const ACCEPTED_REVIEW_RISK_GATE_IDS = new Set([
   LGPL_GATE_ID,
   "onnx-runtime-third-party-review",
+]);
+const ACCEPTED_RISK_GATE_IDS = new Set([
+  ...ACCEPTED_HISTORY_RISK_GATE_IDS,
+  ...ACCEPTED_REVIEW_RISK_GATE_IDS,
 ]);
 const NEURAL_MODEL_GATE_ID = "neural-model-provenance";
 const NEURAL_MODEL_ARTIFACTS = Object.freeze(new Map([
@@ -263,10 +273,15 @@ export function inspectReleaseClearance({
     }
     if (gate.status === "accepted-risk") {
       if (!ACCEPTED_RISK_GATE_IDS.has(gate.id)) {
-        errors.push(`${label}: accepted-risk is allowed only for a designated review gate`);
+        errors.push(`${label}: accepted-risk is allowed only for a designated release gate`);
       }
-      if (gate.artifacts.some((artifact) => artifact?.disposition === "removed")) {
-        errors.push(`${label}: accepted-risk cannot cover a removed historical artifact`);
+      if (ACCEPTED_HISTORY_RISK_GATE_IDS.has(gate.id) &&
+          gate.artifacts.some((artifact) => artifact?.disposition !== "removed")) {
+        errors.push(`${label}: historical accepted-risk requires every artifact to be removed`);
+      }
+      if (ACCEPTED_REVIEW_RISK_GATE_IDS.has(gate.id) &&
+          gate.artifacts.some((artifact) => artifact?.disposition === "removed")) {
+        errors.push(`${label}: review accepted-risk cannot cover a removed historical artifact`);
       }
       if (typeof gate.riskAcceptance?.acceptedBy !== "string" ||
           !gate.riskAcceptance.acceptedBy.trim()) {
@@ -276,8 +291,16 @@ export function inspectReleaseClearance({
           !/^\d{4}-\d{2}-\d{2}$/.test(gate.riskAcceptance.acceptedOn)) {
         errors.push(`${label}: accepted-risk requires riskAcceptance.acceptedOn in YYYY-MM-DD form`);
       }
-      if (gate.riskAcceptance?.reviewDeferred !== true) {
+      if (ACCEPTED_REVIEW_RISK_GATE_IDS.has(gate.id) &&
+          gate.riskAcceptance?.reviewDeferred !== true) {
         errors.push(`${label}: accepted-risk requires riskAcceptance.reviewDeferred to be true`);
+      }
+      if (ACCEPTED_HISTORY_RISK_GATE_IDS.has(gate.id) &&
+          gate.riskAcceptance?.historyRetentionAccepted !== true) {
+        errors.push(
+          `${label}: historical accepted-risk requires ` +
+          "riskAcceptance.historyRetentionAccepted to be true",
+        );
       }
       if (typeof gate.riskAcceptance?.rationale !== "string" ||
           !gate.riskAcceptance.rationale.trim()) {
