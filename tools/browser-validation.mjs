@@ -816,8 +816,8 @@ function unexpectedRuntimeEvents(events) {
     (event.kind === "console" && ["error", "warning", "assert"].includes(event.type)));
 }
 
-function assertRuntimeClean(events, context) {
-  const failures = unexpectedRuntimeEvents(events);
+function assertRuntimeClean(events, context, ignore = () => false) {
+  const failures = unexpectedRuntimeEvents(events).filter((event) => !ignore(event));
   if (!failures.length) return;
   const error = new Error(`${context} emitted ${failures.length} warning/error/exception event(s)`);
   error.browserEvents = events;
@@ -1853,6 +1853,14 @@ export function isUnsupportedNeuralF16Fallback(status) {
     unsupportedF16(runtime?.lastFailure?.detail);
 }
 
+export function isUnsupportedNeuralF16Warning(event) {
+  return event?.kind === "console" &&
+    event?.type === "warning" &&
+    typeof event?.text === "string" &&
+    event.text.startsWith("[FSRCNNX] neural init failed:") &&
+    /\brequires f16 but the device does not support it\b/i.test(event.text);
+}
+
 async function runRealVideoIntegration(
   httpBase,
   controlClient,
@@ -1869,6 +1877,7 @@ async function runRealVideoIntegration(
   const fixtureEvents = [];
   const popupEvents = [];
   const checkpoints = [];
+  let acceptedNeuralF16Fallback = false;
   const checkpoint = (label) => {
     checkpoints.push(label);
     console.log(`Real-video checkpoint ${checkpoints.length}: ${label}`);
@@ -2042,6 +2051,7 @@ async function runRealVideoIntegration(
         allowNeuralF16Unavailable && isUnsupportedNeuralF16Fallback(neural.status),
         neuralFailure,
       );
+      acceptedNeuralF16Fallback = true;
       checkpoint("Neural ONNX hardware fallback (shader-f16 unavailable)");
     } else {
       const neuralFirstPage = await fixtureSnapshot(fixturePage.client);
@@ -2332,7 +2342,11 @@ async function runRealVideoIntegration(
       finalPopup.runtimeLive === "polite", "popup live-region roles are incomplete");
     checkpoint("popup state and accessibility");
 
-    assertRuntimeClean(fixtureEvents, "real-video fixture");
+    assertRuntimeClean(
+      fixtureEvents,
+      "real-video fixture",
+      acceptedNeuralF16Fallback ? isUnsupportedNeuralF16Warning : undefined,
+    );
     assertRuntimeClean(popupEvents, "real popup");
     return { checkpoints, fixtureEvents, popupEvents };
   } catch (error) {

@@ -8,6 +8,7 @@ import {
   browserVersion,
   fixtureDisplayDimensions,
   isUnsupportedNeuralF16Fallback,
+  isUnsupportedNeuralF16Warning,
 } from "../tools/browser-validation.mjs";
 
 const root = resolve(import.meta.dirname, "..");
@@ -99,6 +100,18 @@ test("CI may accept only the explicit shader-f16 hardware fallback", () => {
     mutate(changed);
     assert.equal(isUnsupportedNeuralF16Fallback(changed), false);
   }
+
+  const warning = {
+    kind: "console",
+    type: "warning",
+    text: "[FSRCNNX] neural init failed: Program Transpose requires f16 but the device does not support it.",
+  };
+  assert.equal(isUnsupportedNeuralF16Warning(warning), true);
+  assert.equal(isUnsupportedNeuralF16Warning({ ...warning, type: "error" }), false);
+  assert.equal(isUnsupportedNeuralF16Warning({
+    ...warning,
+    text: "[FSRCNNX] another warning: Program Transpose requires f16 but the device does not support it.",
+  }), false);
 });
 
 test("fixture display scaling maps requested physical pixels through the live DPR", () => {
