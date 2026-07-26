@@ -68,6 +68,22 @@ test("CDA history resets on actual temporal boundaries and its trained horizon",
   }).reason, "explicit");
 });
 
+test("CDA default history starts initializer windows at frames 0, 25, and 50", () => {
+  const tracker = new CdaTemporalTracker();
+  const resetFrames = [];
+  for (let frame = 0; frame <= 50; frame++) {
+    const boundary = tracker.observe({
+      mediaTime: frame / 60,
+      presentedFrames: frame + 1,
+      width: 1280,
+      height: 720,
+      sourceKey: "history-fixture",
+    });
+    if (boundary.reset) resetFrames.push(frame);
+  }
+  assert.deepEqual(resetFrames, [0, 25, 50]);
+});
+
 test("CDA shaders use bounded block search and produce dense motion and residual planes", () => {
   const shaders = buildCdaPriorShaders({
     blockSize: 8,

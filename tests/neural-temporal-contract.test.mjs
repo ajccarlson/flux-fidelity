@@ -118,8 +118,8 @@ function cdaTemporalEntry() {
           },
           outputs: {
             output: { role: "rgb", dtype: "float32", channels: 3 },
-            ...stateOutput("next_state_low", "state-low"),
-            ...stateOutput("next_state_high", "state-high"),
+            ...stateOutput("next_state_low", "low"),
+            ...stateOutput("next_state_high", "high"),
           },
         },
         recurrent: {
@@ -140,21 +140,23 @@ function cdaTemporalEntry() {
             },
             state_low: {
               role: "state-in",
-              state: "state-low",
+              state: "low",
+              reset: "required",
               dtype: "float32",
               channels: 64,
             },
             state_high: {
               role: "state-in",
-              state: "state-high",
+              state: "high",
+              reset: "required",
               dtype: "float32",
               channels: 64,
             },
           },
           outputs: {
             output: { role: "rgb", dtype: "float32", channels: 3 },
-            ...stateOutput("next_state_low", "state-low"),
-            ...stateOutput("next_state_high", "state-high"),
+            ...stateOutput("next_state_low", "low"),
+            ...stateOutput("next_state_high", "high"),
           },
         },
       },
@@ -181,7 +183,7 @@ test("the exported CDA two-graph ABI is catalog-ready and enumerates both assets
   const [entry] = validateNeuralManifest({ models: [cdaTemporalEntry()] });
   assert.equal(entry.key, "cda-vsr-4x");
   assert.equal(entry.scale, 4);
-  assert.deepEqual(entry.contract.states, ["state-low", "state-high"]);
+  assert.deepEqual(entry.contract.states, ["low", "high"]);
   assert.deepEqual(neuralModelFiles(entry), [
     "cda-vsr-initializer.onnx",
     "cda-vsr-recurrent.onnx",
@@ -363,6 +365,105 @@ function fakeDevice() {
   };
   return { device, buffers };
 }
+
+test("the exact CDA descriptor is selectable and initializes both packaged graph URLs", async (t) => {
+  const previous = {
+    chrome: globalThis.chrome,
+    fetch: globalThis.fetch,
+    GPUBufferUsage: globalThis.GPUBufferUsage,
+    GPUTextureUsage: globalThis.GPUTextureUsage,
+    deps: globalThis.__neuralTemporalTestDeps,
+  };
+  t.after(() => {
+    globalThis.chrome = previous.chrome;
+    globalThis.fetch = previous.fetch;
+    globalThis.GPUBufferUsage = previous.GPUBufferUsage;
+    globalThis.GPUTextureUsage = previous.GPUTextureUsage;
+    globalThis.__neuralTemporalTestDeps = previous.deps;
+  });
+  globalThis.chrome = { runtime: { getURL: (path) => `extension://${path}` } };
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({
+      models: [
+        {
+          key: "legacy",
+          file: "legacy.onnx",
+          scale: 2,
+          input: "input",
+          output: "output",
+        },
+        cdaTemporalEntry(),
+      ],
+    }),
+  });
+  globalThis.GPUBufferUsage = { UNIFORM: 1, COPY_DST: 2, STORAGE: 4 };
+  globalThis.GPUTextureUsage = { STORAGE_BINDING: 1, TEXTURE_BINDING: 2 };
+
+  const { device } = fakeDevice();
+  const dynamic = (name, channels, multiplier = 1) => ({
+    name,
+    isTensor: true,
+    type: "float32",
+    shape: [1, channels, `height*${multiplier}`, `width*${multiplier}`],
+  });
+  const releases = [];
+  const sessions = [
+    {
+      device,
+      inputNames: ["frame"],
+      outputNames: ["output", "next_state_low", "next_state_high"],
+      inputMetadata: [dynamic("frame", 3)],
+      outputMetadata: [
+        dynamic("output", 3, 4),
+        dynamic("next_state_low", 64),
+        dynamic("next_state_high", 64),
+      ],
+      async release() { releases.push("initialize"); },
+    },
+    {
+      device,
+      inputNames: ["frame", "motion", "residual", "state_low", "state_high"],
+      outputNames: ["output", "next_state_low", "next_state_high"],
+      inputMetadata: [
+        dynamic("frame", 3),
+        dynamic("motion", 2),
+        dynamic("residual", 1),
+        dynamic("state_low", 64),
+        dynamic("state_high", 64),
+      ],
+      outputMetadata: [
+        dynamic("output", 3, 4),
+        dynamic("next_state_low", 64),
+        dynamic("next_state_high", 64),
+      ],
+      async release() { releases.push("recurrent"); },
+    },
+  ];
+  const createdUrls = [];
+  const deps = {
+    ensureOrt: async () => ({}),
+    getOrtSessionDevice: (candidate) => candidate.device,
+    createOrtSession: async (url) => {
+      createdUrls.push(url);
+      return sessions[createdUrls.length - 1];
+    },
+  };
+  const { createNeuralEngine } = await loadNeuralEngine(deps);
+  const engine = createNeuralEngine({ log: () => {}, warn: () => {} });
+
+  const entry = await engine.init("cda-vsr-4x");
+  assert.equal(entry.key, "cda-vsr-4x");
+  assert.equal(engine.activeEntry().scale, 4);
+  assert.deepEqual(engine.activeContract().states, ["low", "high"]);
+  assert.deepEqual(createdUrls, [
+    "extension://model/neural/cda-vsr-initializer.onnx",
+    "extension://model/neural/cda-vsr-recurrent.onnx",
+  ]);
+
+  await engine.dispose();
+  assert.deepEqual(releases.sort(), ["initialize", "recurrent"]);
+});
 
 test("v2 execution selects static reset/recurrent graphs and retains GPU state transactionally", async (t) => {
   const previous = {

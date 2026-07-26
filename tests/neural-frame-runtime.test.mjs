@@ -671,6 +671,7 @@ test("extension-frame session supplies decoded CDA priors and temporal resets to
   const { device } = gpuHarness();
   const modelTexture = texture("cda-model-output", []);
   const engineRuns = [];
+  let failNextRun = false;
   let ready = false;
   const contract = {
     version: 2,
@@ -692,6 +693,10 @@ test("extension-frame session supplies decoded CDA priors and temporal resets to
     },
     async run(source, width, height, options) {
       engineRuns.push({ source, width, height, options });
+      if (failNextRun) {
+        failNextRun = false;
+        throw new Error("injected recurrent failure");
+      }
       return { tex: modelTexture, outW: width, outH: height };
     },
     activeContract: () => contract,
@@ -720,13 +725,21 @@ test("extension-frame session supplies decoded CDA priors and temporal resets to
   };
   class FakeTemporalTracker {
     constructor() {
-      this.observations = 0;
+      this.initialized = false;
+      this.lastResetReason = "initial";
     }
-    observe() {
-      const reset = this.observations++ === 0;
-      return { reset, reason: reset ? "initial" : null, frameIndex: reset ? 0 : 1 };
+    observe({ forceReset = false } = {}) {
+      const reason = forceReset
+        ? "explicit"
+        : (!this.initialized ? this.lastResetReason : null);
+      this.initialized = true;
+      this.lastResetReason = reason;
+      return { reset: !!reason, reason, frameIndex: reason ? 0 : 1 };
     }
-    reset() {}
+    reset(reason) {
+      this.initialized = false;
+      this.lastResetReason = reason;
+    }
   }
   const context = {
     configure() {},
@@ -741,7 +754,7 @@ test("extension-frame session supplies decoded CDA priors and temporal resets to
       return context;
     },
   };
-  const inputs = [1, 2].map((id) => ({
+  const inputs = [1, 2, 3].map((id) => ({
     id,
     width: 2,
     height: 2,
@@ -790,20 +803,33 @@ test("extension-frame session supplies decoded CDA priors and temporal resets to
     srcH: 2,
     temporal: { mediaTime: 1, presentedFrames: 10 },
   });
-  const second = await session.handle("run", {
+  failNextRun = true;
+  await assert.rejects(session.handle("run", {
     bitmap: inputs[1],
     srcW: 2,
     srcH: 2,
     temporal: { mediaTime: 1.04, presentedFrames: 11 },
+  }), /injected recurrent failure/);
+  const recovered = await session.handle("run", {
+    bitmap: inputs[2],
+    srcW: 2,
+    srcH: 2,
+    temporal: { mediaTime: 1.08, presentedFrames: 12 },
   });
 
   assert.deepEqual(priorCalls.map(({ options }) => options), [
     { reset: true },
     { reset: false },
+    { reset: true },
   ]);
   assert.equal(engineRuns[0].options.reset, true);
   assert.equal(engineRuns[0].options.temporal.resetReason, "initial");
   assert.equal(engineRuns[1].options.reset, false);
+  assert.equal(engineRuns[2].options.reset, true);
+  assert.equal(
+    engineRuns[2].options.temporal.resetReason,
+    "previous-run-failed",
+  );
   for (const run of engineRuns) {
     assert.equal(run.options.auxiliary.motion.provider, "decoded-cda-v1");
     assert.deepEqual(run.options.auxiliary.motion.dims, [1, 2, 2, 2]);
@@ -812,12 +838,13 @@ test("extension-frame session supplies decoded CDA priors and temporal resets to
   }
   assert.equal(first.stats.cdaPriorRuns, 1);
   assert.equal(first.stats.cdaPriorResets, 1);
-  assert.equal(second.stats.cdaPriorRuns, 2);
-  assert.equal(second.stats.cdaPriorResets, 1);
-  assert.deepEqual(second.temporal, {
-    mediaTime: 1.04,
-    presentedFrames: 11,
-    reset: false,
+  assert.equal(recovered.stats.cdaPriorRuns, 3);
+  assert.equal(recovered.stats.cdaPriorResets, 2);
+  assert.deepEqual(recovered.temporal, {
+    mediaTime: 1.08,
+    presentedFrames: 12,
+    reset: true,
+    resetReason: "previous-run-failed",
   });
   await session.dispose();
   assert.equal(priorGenerator.disposeCalls, 1);

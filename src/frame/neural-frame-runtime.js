@@ -402,6 +402,7 @@ export function createNeuralFrameSession({
   let sourceTextureHeight = 0;
   let cdaPriorGenerator = null;
   let cdaTemporalTracker = null;
+  let cdaNeedsReset = false;
   let uploadCanvas = null;
   let uploadContext = null;
   let readbackTexture = null;
@@ -529,6 +530,7 @@ export function createNeuralFrameSession({
     sourceTextureHeight = 0;
     cdaPriorGenerator = null;
     cdaTemporalTracker = null;
+    cdaNeedsReset = false;
     uploadCanvas = null;
     uploadContext = null;
     readbackTexture = null;
@@ -1076,10 +1078,12 @@ export function createNeuralFrameSession({
       try { cdaPriorGenerator?.dispose?.(); } catch {}
       cdaPriorGenerator = loaded.createCdaPriorGenerator(nextDevice);
       cdaTemporalTracker = new loaded.CdaTemporalTracker();
+      cdaNeedsReset = false;
     } else {
       try { cdaPriorGenerator?.dispose?.(); } catch {}
       cdaPriorGenerator = null;
       cdaTemporalTracker = null;
+      cdaNeedsReset = false;
     }
     device = nextDevice;
     initialized = true;
@@ -1147,6 +1151,14 @@ export function createNeuralFrameSession({
       let effectiveTemporal = temporal;
       let engineOptions = { temporal };
       if (cdaPriorGenerator) {
+        const recoveringFromFailedRun = cdaNeedsReset;
+        // The prior generator snapshots the current frame before inference.
+        // Keep this latch set until the output is actually published so any
+        // failure cannot leave prior history ahead of recurrent model state.
+        cdaNeedsReset = true;
+        if (recoveringFromFailedRun) {
+          cdaTemporalTracker.reset("previous-run-failed");
+        }
         let boundary;
         if (Number.isFinite(temporal.mediaTime) &&
             Number.isSafeInteger(temporal.presentedFrames)) {
@@ -1345,7 +1357,7 @@ export function createNeuralFrameSession({
             strength: presentation.sharpenStrength,
           }) : null,
         });
-        return Object.freeze({
+        const result = Object.freeze({
           srcW,
           srcH,
           modelWidth,
@@ -1355,6 +1367,8 @@ export function createNeuralFrameSession({
           stats: snapshotStats(),
           bitmap: outputBitmap,
         });
+        if (cdaPriorGenerator) cdaNeedsReset = false;
+        return result;
       } catch (error) {
         safeCloseBitmap(outputBitmap);
         throw error;
