@@ -38,6 +38,8 @@ const fsrcnnxSources = Object.freeze([
 ]);
 
 const complianceHashes = Object.freeze({
+  "LICENSES/GPL-3.0.txt": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+  "LICENSES/LGPL-3.0.txt": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118",
   "LICENSES/Real-ESRGAN-BSD-3-Clause.txt": "4a699ec4863d96a91fc265948a0c90033f7e8735d515524dcf3444736406e0c2",
   "docs/compliance/LGPL_REBUILDING.md": "e1948c021281cdf7420c4fb881b30a93ac7f53937a47d38af1939111eeaf52eb",
   "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl": standardSourceSha,

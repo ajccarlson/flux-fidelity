@@ -62,6 +62,26 @@ const highX2ProvenanceMarkers = [
   "b507e0ec6c0d9ab22d440736677cd2ccb8a8b5441e190889ca7ec762d53ca063",
   "34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6",
 ];
+const lgplLicenseArtifacts = new Map([
+  [
+    "LICENSES/GPL-3.0.txt",
+    "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+  ],
+  [
+    "LICENSES/LGPL-3.0.txt",
+    "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118",
+  ],
+]);
+const debandVersions = Object.freeze({
+  initial: Object.freeze({
+    bytes: 3932,
+    sha256: "05495befe6af578baa3fb84b69983a0dddc943d60b249411cc81c7eca1bbbbaf",
+  }),
+  later: Object.freeze({
+    bytes: 4160,
+    sha256: "56155c7bd5a15b5524ec1b44baeb4b5cb368e57f9adaf5ff8635bd1a2dba3f84",
+  }),
+});
 
 function writeComplianceFile(rootDir, name, contents) {
   const directory = join(rootDir, "docs", "compliance");
@@ -111,11 +131,38 @@ test("current release-clearance record is structurally valid and explicitly bloc
   for (const reference of neuralModelEvidence) assert.ok(neuralGate.evidence.includes(reference));
   for (const marker of neuralModelProvenanceMarkers) assert.ok(provenance.includes(marker));
 
+  const debandGate = result.ledger.gates.find(
+    (gate) => gate.id === "unresolved-deband-port-origin",
+  );
+  assert.deepEqual(debandGate.artifacts, [{
+    path: "fsrcnnx-deband.js",
+    sha256: debandVersions.later.sha256,
+    historicalSha256: [debandVersions.initial.sha256],
+    disposition: "removed",
+  }]);
+  assert.ok(provenance.includes(
+    `Initial ${debandVersions.initial.bytes.toLocaleString("en-US")}-byte revision: ` +
+    `\`${debandVersions.initial.sha256}\``,
+  ));
+  assert.ok(provenance.includes(
+    `later ${debandVersions.later.bytes.toLocaleString("en-US")}-byte revision: ` +
+    `\`${debandVersions.later.sha256}\``,
+  ));
+
   const lgplGate = result.ledger.gates.find((gate) => gate.id === "lgpl-compliance-review");
   const ortGate = result.ledger.gates.find((gate) => gate.id === "onnx-runtime-third-party-review");
   assert.equal(lgplGate.status, "blocked");
   assert.equal(ortGate.status, "blocked");
   assert.ok(lgplGate.evidence.includes("docs/compliance/LGPL_REBUILDING.md"));
+  assert.deepEqual(
+    lgplGate.artifacts
+      .filter((artifact) => lgplLicenseArtifacts.has(artifact.path))
+      .map(({ path, sha256 }) => [path, sha256]),
+    [...lgplLicenseArtifacts],
+  );
+  for (const path of lgplLicenseArtifacts.keys()) {
+    assert.ok(lgplGate.evidence.includes(path));
+  }
   for (const [path, sha256] of highX2Artifacts) {
     assert.ok(lgplGate.artifacts.some((artifact) =>
       artifact.path === path && artifact.sha256 === sha256));
@@ -326,6 +373,8 @@ test("cleared FP16 gate requires its artifact hash in the provenance record", ()
 test("cleared removal records retain historical hashes and enforce absence", () => {
   const fixture = mkdtempSync(join(tmpdir(), "fsrcnnx-release-clearance-removed-"));
   try {
+    const primaryHash = createHash("sha256").update("historical bytes").digest("hex");
+    const olderHash = createHash("sha256").update("older historical bytes").digest("hex");
     const ledger = {
       schemaVersion: 1,
       scope: "test",
@@ -334,7 +383,8 @@ test("cleared removal records retain historical hashes and enforce absence", () 
         status: "cleared",
         artifacts: [{
           path: "removed.bin",
-          sha256: createHash("sha256").update("historical bytes").digest("hex"),
+          sha256: primaryHash,
+          historicalSha256: [olderHash],
           disposition: "removed",
         }],
         evidence: ["evidence.txt"],
@@ -359,6 +409,83 @@ test("cleared removal records retain historical hashes and enforce absence", () 
     assert.deepEqual(restored.errors, [
       "release clearance gate 1 artifact 1: removed artifact removed.bin must remain absent",
     ]);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("historicalSha256 accepts only unique additional hashes for removed artifacts", () => {
+  const fixture = mkdtempSync(join(tmpdir(), "fsrcnnx-release-clearance-history-"));
+  try {
+    const primaryBytes = "primary bytes";
+    const primaryHash = createHash("sha256").update(primaryBytes).digest("hex");
+    const olderHash = createHash("sha256").update("older bytes").digest("hex");
+    writeFileSync(join(fixture, "evidence.txt"), "Historical artifact inventory.\n");
+
+    const inspectArtifact = (artifact) => {
+      writeLedger(fixture, {
+        schemaVersion: 1,
+        scope: "test",
+        gates: [{
+          id: "history-gate",
+          status: "blocked",
+          artifacts: [artifact],
+          evidence: ["evidence.txt"],
+          resolution: "Retain every historical byte identity.",
+        }],
+      });
+      return inspectReleaseClearance({
+        rootDir: fixture,
+        requiredGateIds: ["history-gate"],
+      }).errors;
+    };
+    const removedArtifact = {
+      path: "removed.bin",
+      sha256: primaryHash,
+      disposition: "removed",
+    };
+
+    for (const { historicalSha256, expected } of [
+      {
+        historicalSha256: [],
+        expected: "historicalSha256 must be a non-empty array when present",
+      },
+      {
+        historicalSha256: olderHash,
+        expected: "historicalSha256 must be a non-empty array when present",
+      },
+      {
+        historicalSha256: [olderHash.toUpperCase()],
+        expected: "historicalSha256 1: hash must be 64 lowercase hexadecimal characters",
+      },
+      {
+        historicalSha256: [olderHash, olderHash],
+        expected: `historicalSha256 2: duplicate historical hash ${olderHash}`,
+      },
+      {
+        historicalSha256: [primaryHash],
+        expected: "historicalSha256 1: hash must differ from primary sha256",
+      },
+    ]) {
+      assert.deepEqual(
+        inspectArtifact({ ...removedArtifact, historicalSha256 }),
+        [`release clearance gate 1 artifact 1: ${expected}`],
+      );
+    }
+
+    writeFileSync(join(fixture, "present.bin"), primaryBytes);
+    assert.deepEqual(
+      inspectArtifact({
+        path: "present.bin",
+        sha256: primaryHash,
+        historicalSha256: [olderHash],
+        disposition: "present",
+      }),
+      [
+        "release clearance gate 1 artifact 1: " +
+        "historicalSha256 is allowed only for removed artifacts",
+      ],
+    );
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }

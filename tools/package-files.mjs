@@ -6,6 +6,8 @@ export const EXPECTED_PACKAGE_FILE_COUNT = 83;
 // shader portions and retain exact licenses for bundled third-party components.
 // Keep the inventory separate so package tests can enforce it explicitly.
 export const REQUIRED_COMPLIANCE_FILES = Object.freeze([
+  "LICENSES/GPL-3.0.txt",
+  "LICENSES/LGPL-3.0.txt",
   "LICENSES/Real-ESRGAN-BSD-3-Clause.txt",
   "docs/compliance/LGPL_REBUILDING.md",
   "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl",

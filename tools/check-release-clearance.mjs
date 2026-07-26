@@ -182,10 +182,41 @@ export function inspectReleaseClearance({
         continue;
       }
 
-      if (artifact.sha256 !== undefined &&
-          (typeof artifact.sha256 !== "string" || !SHA256_PATTERN.test(artifact.sha256))) {
+      const primaryShaValid = artifact.sha256 === undefined ||
+        (typeof artifact.sha256 === "string" && SHA256_PATTERN.test(artifact.sha256));
+      if (!primaryShaValid) {
         errors.push(`${artifactLabel}: sha256 must be 64 lowercase hexadecimal characters`);
-        continue;
+      }
+
+      if (artifact.historicalSha256 !== undefined) {
+        if (disposition !== "removed") {
+          errors.push(`${artifactLabel}: historicalSha256 is allowed only for removed artifacts`);
+        }
+        if (!Array.isArray(artifact.historicalSha256) ||
+            artifact.historicalSha256.length === 0) {
+          errors.push(
+            `${artifactLabel}: historicalSha256 must be a non-empty array when present`,
+          );
+        } else {
+          const historicalHashes = new Set();
+          for (const [hashIndex, hash] of artifact.historicalSha256.entries()) {
+            const hashLabel = `${artifactLabel}: historicalSha256 ${hashIndex + 1}`;
+            if (typeof hash !== "string" || !SHA256_PATTERN.test(hash)) {
+              errors.push(
+                `${hashLabel}: hash must be 64 lowercase hexadecimal characters`,
+              );
+              continue;
+            }
+            if (historicalHashes.has(hash)) {
+              errors.push(`${hashLabel}: duplicate historical hash ${hash}`);
+              continue;
+            }
+            historicalHashes.add(hash);
+            if (hash === artifact.sha256) {
+              errors.push(`${hashLabel}: hash must differ from primary sha256`);
+            }
+          }
+        }
       }
 
       const absolute = resolve(rootDir, artifact.path);
@@ -209,7 +240,7 @@ export function inspectReleaseClearance({
       const checkedPath = inspectRegularFile(rootDir, artifact.path, artifactLabel, errors);
       if (checkedPath === null) continue;
 
-      if (artifact.sha256 !== undefined) {
+      if (artifact.sha256 !== undefined && primaryShaValid) {
         const actual = createHash("sha256").update(readFileSync(checkedPath)).digest("hex");
         if (actual !== artifact.sha256) {
           errors.push(`${artifactLabel}: ${artifact.path} hash is ${actual}, expected ${artifact.sha256}`);

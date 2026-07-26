@@ -151,6 +151,9 @@
         {
           "path": "fsrcnnx-deband.js",
           "sha256": "56155c7bd5a15b5524ec1b44baeb4b5cb368e57f9adaf5ff8635bd1a2dba3f84",
+          "historicalSha256": [
+            "05495befe6af578baa3fb84b69983a0dddc943d60b249411cc81c7eca1bbbbaf"
+          ],
           "disposition": "removed"
         }
       ],
@@ -211,6 +214,14 @@
         {
           "path": "LICENSE",
           "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        },
+        {
+          "path": "LICENSES/GPL-3.0.txt",
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+        },
+        {
+          "path": "LICENSES/LGPL-3.0.txt",
+          "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
         },
         {
           "path": "NOTICE",
