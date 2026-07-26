@@ -7,7 +7,7 @@ const root = resolve(import.meta.dirname, "..");
 const DEFAULT_LEDGER_FILE = "docs/compliance/release-clearance.json";
 const PROVENANCE_FILE = "docs/compliance/MODEL_PROVENANCE.md";
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
-const STATUS_VALUES = new Set(["blocked", "cleared"]);
+const STATUS_VALUES = new Set(["blocked", "cleared", "accepted-risk"]);
 const ARTIFACT_DISPOSITIONS = new Set(["present", "removed"]);
 export const REQUIRED_RELEASE_GATE_IDS = Object.freeze([
   "unidentified-rife-model",
@@ -22,6 +22,10 @@ export const REQUIRED_RELEASE_GATE_IDS = Object.freeze([
 ]);
 const HIGH_X2_GATE_ID = "unknown-high-x2-shader-origin";
 const LGPL_GATE_ID = "lgpl-compliance-review";
+const ACCEPTED_RISK_GATE_IDS = new Set([
+  LGPL_GATE_ID,
+  "onnx-runtime-third-party-review",
+]);
 const NEURAL_MODEL_GATE_ID = "neural-model-provenance";
 const NEURAL_MODEL_ARTIFACTS = Object.freeze(new Map([
   [
@@ -156,7 +160,7 @@ export function inspectReleaseClearance({
     }
 
     if (!STATUS_VALUES.has(gate?.status)) {
-      errors.push(`${label}: status must be blocked or cleared`);
+      errors.push(`${label}: status must be blocked, cleared, or accepted-risk`);
     }
     if (typeof gate?.resolution !== "string" || !gate.resolution.trim()) {
       errors.push(`${label}: resolution must be a non-empty string`);
@@ -253,8 +257,34 @@ export function inspectReleaseClearance({
     if (!validEvidenceInventory) {
       errors.push(`${label}: evidence must contain only non-empty string references`);
     }
-    if (gate.status === "cleared" && (!Array.isArray(gate.evidence) || gate.evidence.length === 0)) {
-      errors.push(`${label}: a cleared gate must retain at least one evidence reference`);
+    if (gate.status !== "blocked" &&
+        (!Array.isArray(gate.evidence) || gate.evidence.length === 0)) {
+      errors.push(`${label}: a nonblocking gate must retain at least one evidence reference`);
+    }
+    if (gate.status === "accepted-risk") {
+      if (!ACCEPTED_RISK_GATE_IDS.has(gate.id)) {
+        errors.push(`${label}: accepted-risk is allowed only for a designated review gate`);
+      }
+      if (gate.artifacts.some((artifact) => artifact?.disposition === "removed")) {
+        errors.push(`${label}: accepted-risk cannot cover a removed historical artifact`);
+      }
+      if (typeof gate.riskAcceptance?.acceptedBy !== "string" ||
+          !gate.riskAcceptance.acceptedBy.trim()) {
+        errors.push(`${label}: accepted-risk requires a non-empty riskAcceptance.acceptedBy`);
+      }
+      if (typeof gate.riskAcceptance?.acceptedOn !== "string" ||
+          !/^\d{4}-\d{2}-\d{2}$/.test(gate.riskAcceptance.acceptedOn)) {
+        errors.push(`${label}: accepted-risk requires riskAcceptance.acceptedOn in YYYY-MM-DD form`);
+      }
+      if (gate.riskAcceptance?.reviewDeferred !== true) {
+        errors.push(`${label}: accepted-risk requires riskAcceptance.reviewDeferred to be true`);
+      }
+      if (typeof gate.riskAcceptance?.rationale !== "string" ||
+          !gate.riskAcceptance.rationale.trim()) {
+        errors.push(`${label}: accepted-risk requires a non-empty riskAcceptance.rationale`);
+      }
+    } else if (gate.riskAcceptance !== undefined) {
+      errors.push(`${label}: riskAcceptance is allowed only with accepted-risk status`);
     }
     // Local evidence must remain inspectable even while a gate is blocked. A
     // blocked record is still an auditable claim about the current boundary;

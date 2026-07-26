@@ -151,8 +151,10 @@ test("current release-clearance record is structurally valid and explicitly bloc
 
   const lgplGate = result.ledger.gates.find((gate) => gate.id === "lgpl-compliance-review");
   const ortGate = result.ledger.gates.find((gate) => gate.id === "onnx-runtime-third-party-review");
-  assert.equal(lgplGate.status, "blocked");
-  assert.equal(ortGate.status, "blocked");
+  assert.equal(lgplGate.status, "accepted-risk");
+  assert.equal(ortGate.status, "accepted-risk");
+  assert.equal(lgplGate.riskAcceptance.reviewDeferred, true);
+  assert.equal(ortGate.riskAcceptance.reviewDeferred, true);
   assert.ok(lgplGate.evidence.includes("docs/compliance/LGPL_REBUILDING.md"));
   assert.deepEqual(
     lgplGate.artifacts
@@ -288,7 +290,7 @@ test("release-clearance validation rejects a deleted gate inventory", () => {
   }
 });
 
-test("cleared gates require meaningful evidence references", () => {
+test("nonblocking gates require meaningful evidence references", () => {
   const fixture = mkdtempSync(join(tmpdir(), "fsrcnnx-release-clearance-evidence-"));
   try {
     writeFileSync(join(fixture, "artifact.bin"), "fixture");
@@ -308,6 +310,46 @@ test("cleared gates require meaningful evidence references", () => {
     assert.deepEqual(result.errors, [
       "release clearance gate 1: evidence must contain only non-empty string references",
     ]);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("accepted-risk is limited to documented present-artifact review gates", () => {
+  const fixture = mkdtempSync(join(tmpdir(), "fsrcnnx-release-clearance-risk-"));
+  try {
+    writeFileSync(join(fixture, "artifact.bin"), "fixture");
+    writeFileSync(join(fixture, "evidence.txt"), "evidence");
+    const gate = {
+      id: "lgpl-compliance-review",
+      status: "accepted-risk",
+      artifacts: [{ path: "artifact.bin" }],
+      evidence: ["evidence.txt"],
+      resolution: "The repository owner deferred external review without claiming legal clearance.",
+      riskAcceptance: {
+        acceptedBy: "repository owner",
+        acceptedOn: "2026-07-25",
+        reviewDeferred: true,
+        rationale: "Preserve the compliance materials and defer external review.",
+      },
+    };
+
+    writeLedger(fixture, { schemaVersion: 1, scope: "test", gates: [gate] });
+    const valid = inspectReleaseClearance({
+      rootDir: fixture,
+      requiredGateIds: ["lgpl-compliance-review"],
+    });
+    assert.deepEqual(valid.errors, []);
+    assert.deepEqual(valid.blocked, []);
+
+    gate.artifacts[0].disposition = "removed";
+    writeLedger(fixture, { schemaVersion: 1, scope: "test", gates: [gate] });
+    const removed = inspectReleaseClearance({
+      rootDir: fixture,
+      requiredGateIds: ["lgpl-compliance-review"],
+    });
+    assert.ok(removed.errors.some((error) =>
+      error.includes("accepted-risk cannot cover a removed historical artifact")));
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }

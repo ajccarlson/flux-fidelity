@@ -1,14 +1,12 @@
 # Rebuilding and replacing LGPL-covered portions
 
-This package provides the source and practical replacement information below for its LGPL-3.0-or-later portions. It does not represent a completed legal review or clear the `lgpl-compliance-review` release gate.
-
 ## Covered portions and exact sources
 
 - `shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl` and its transformed outputs, `model/FSRCNNX_x2_16-0-4-1.wgsl` and `model/FSRCNNX_x2_16-0-4-1.passes.json`. The source is the FSRCNN-TensorFlow 1.1 release asset at <https://github.com/igv/FSRCNN-TensorFlow/releases/download/1.1/FSRCNNX_x2_16-0-4-1.glsl>, SHA-256 `d5a24a271e5d9a3f7f7a053b150c460a44c25b3cf7f770857d57cc3a2e1c9965`. Release tag commit: `1aa11ab0e1fc12741fdb84cef31da5619a478670`; the asset checksum identifies the later-attached bytes.
 - `shaders/upstream/FSRCNNX_x2_56-16-4-1.glsl` and its transformed outputs, `model/FSRCNNX_x2_56-16-4-1.wgsl` and `model/FSRCNNX_x2_56-16-4-1.passes.json`. Archived release-1.1 pages list the High source through 2019-10-21, and the archived parameter bundle plus tag-1.1 generator reproduce the checked-in 362,441-byte LF source exactly. The source SHA-256 is `34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6`; the full reproduction record is in [`MODEL_PROVENANCE.md`](MODEL_PROVENANCE.md).
 - `shaders/upstream/SSimDownscaler.glsl` and its hand port, `src/core/fsrcnnx-ssimds.js`. The source is gist revision `38992bce7f9ff844f800820df0908692b65bb74a` at <https://gist.githubusercontent.com/igv/36508af3ffc84410fe39761d6969be10/raw/38992bce7f9ff844f800820df0908692b65bb74a/SSimDownscaler.glsl>, SHA-256 `f46f4710a162d17058b9d82ed8610588b0c04d7be07cef6bf2a8c4077828f804`.
 
-The Standard and SSim sources state LGPL-3.0-or-later. The High source has no embedded header; this project treats the officially released High source and its generated pair as LGPL-3.0-or-later consistently with Standard. The overall distribution plan remains subject to qualified review. [`LICENSES/LGPL-3.0.txt`](../../LICENSES/LGPL-3.0.txt) and its GPL-3.0 companion, [`LICENSES/GPL-3.0.txt`](../../LICENSES/GPL-3.0.txt), are included in this package.
+The Standard and SSim sources state LGPL-3.0-or-later. The High source has no embedded header; this project treats the officially released High source and its generated pair as LGPL-3.0-or-later consistently with Standard. [`LICENSES/LGPL-3.0.txt`](../../LICENSES/LGPL-3.0.txt) and its GPL-3.0 companion, [`LICENSES/GPL-3.0.txt`](../../LICENSES/GPL-3.0.txt), are included in this package.
 
 ## Local modifications
 
