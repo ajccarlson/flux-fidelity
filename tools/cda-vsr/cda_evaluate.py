@@ -13,7 +13,7 @@ from cda_adapter import (
     atomic_write_json,
     sha256_file,
 )
-from cda_priors import decoded_block_priors
+from cda_priors import decoded_block_priors, normalize_prior_options
 
 
 def validate_prior_pair(true_motion, true_residual) -> None:
@@ -183,17 +183,22 @@ def evaluate_model(
             "previous and current decoded frames must have identical dimensions"
         )
     _, _, height, width = current.shape
+    try:
+        prior_options = normalize_prior_options(
+            block_size=args.block_size,
+            search_radius=args.search_radius,
+            sample_stride=args.sample_stride,
+        )
+    except ValueError as error:
+        raise ToolError(f"invalid decoded-prior options: {error}") from error
 
     try:
         with torch.inference_mode():
             previous_sr, previous_low, previous_high = initializer(previous)
-            proxy_motion, proxy_residual, proxy_confidence = (
-                decoded_block_priors(
-                    previous,
-                    current,
-                    block_size=args.block_size,
-                    search_radius=args.search_radius,
-                )
+            proxy_motion, proxy_residual = decoded_block_priors(
+                previous,
+                current,
+                **prior_options,
             )
             zero_motion = torch.zeros_like(proxy_motion)
             zero_residual = torch.zeros_like(proxy_residual)
@@ -311,13 +316,28 @@ def evaluate_model(
         "frame": {"height": height, "width": width, "scale": 4},
         "prior_contract": {
             "id": PRIOR_CONTRACT,
-            "provider": "decoded-block-sad-reference",
+            "provider": "decoded-cda-v1-offline-reference",
             "production_ready": False,
+            "semantics": {
+                "search": "sampled block SAD",
+                "current_out_of_bounds": "skip",
+                "reference_out_of_bounds_cost": 1.0,
+                "candidate_order": "dy outer, dx inner, ascending",
+                "tie_break": (
+                    "score epsilon 1e-7, then smaller Manhattan magnitude, "
+                    "then first candidate"
+                ),
+                "history_storage": "rgba16float",
+                "dense_residual_sampling": "rounded integer motion, edge clamp",
+            },
+            "numerical_boundary": (
+                "The CPU reference preserves the shader algorithm and storage "
+                "quantization, but WGSL f32 arithmetic/reduction and browser "
+                "video-to-texture conversion can differ at numerical ties."
+            ),
         },
         "proxy": {
-            "block_size": args.block_size,
-            "search_radius": args.search_radius,
-            "confidence_mean": float(proxy_confidence.mean()),
+            **prior_options,
             "motion_abs_mean": float(proxy_motion.abs().mean()),
             "residual_mean": float(proxy_residual.mean()),
         },

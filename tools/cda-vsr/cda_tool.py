@@ -33,6 +33,11 @@ from cda_adapter import (
     validate_saved_graphs,
 )
 from cda_evaluate import evaluate_model, validate_prior_pair
+from cda_priors import (
+    DEFAULT_BLOCK_SIZE,
+    DEFAULT_SAMPLE_STRIDE,
+    DEFAULT_SEARCH_RADIUS,
+)
 
 
 TOOL_DIR = Path(__file__).resolve().parent
@@ -168,11 +173,20 @@ def parser() -> argparse.ArgumentParser:
         default=255.0,
     )
     evaluate_parser.add_argument("--ground-truth", type=Path)
-    evaluate_parser.add_argument("--block-size", type=positive_integer, default=8)
+    evaluate_parser.add_argument(
+        "--block-size",
+        type=positive_integer,
+        default=DEFAULT_BLOCK_SIZE,
+    )
     evaluate_parser.add_argument(
         "--search-radius",
         type=nonnegative_integer,
-        default=4,
+        default=DEFAULT_SEARCH_RADIUS,
+    )
+    evaluate_parser.add_argument(
+        "--sample-stride",
+        type=positive_integer,
+        default=DEFAULT_SAMPLE_STRIDE,
     )
     evaluate_parser.add_argument("--output-dir", type=Path)
     return result

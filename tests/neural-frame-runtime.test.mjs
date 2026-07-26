@@ -312,7 +312,6 @@ async function readbackLifecycleHarness(createImageBitmapImpl) {
 
 test("extension-frame session copies, infers, SSim-downscales, sharpens, and presents", async () => {
   const { device, events } = gpuHarness();
-  const directExternalCopy = device.queue.copyExternalImageToTexture;
   const uploadPixels = Uint8ClampedArray.from(
     { length: 4 * 2 * 4 },
     (_, index) => index + 1,
@@ -395,12 +394,6 @@ test("extension-frame session copies, infers, SSim-downscales, sharpens, and pre
     closes: 0,
     close() { this.closes++; },
   };
-  const fallbackVideoFrame = {
-    displayWidth: 4,
-    displayHeight: 2,
-    closes: 0,
-    close() { this.closes++; },
-  };
   const outputBitmap = {
     width: 4,
     height: 2,
@@ -439,8 +432,7 @@ test("extension-frame session copies, infers, SSim-downscales, sharpens, and pre
       candidate === bitmap ||
       candidate === fallbackBitmap ||
       candidate === outputBitmap,
-    isVideoFrame: (candidate) =>
-      candidate === videoFrame || candidate === fallbackVideoFrame,
+    isVideoFrame: (candidate) => candidate === videoFrame,
     now: () => clock += 4,
     log: () => {},
     warn: () => {},
@@ -555,7 +547,6 @@ test("extension-frame session copies, infers, SSim-downscales, sharpens, and pre
   assert.equal(events.includes("canvas:fallback-snapshot"), false);
   assert.equal(result.stats.ssimdsRuns, 1);
   assert.equal(result.stats.sharpenRuns, 1);
-  assert.equal(result.stats.externalCopies, 0);
   assert.equal(result.stats.stagedUploads, 1);
   assert.deepEqual(result.temporal, {
     mediaTime: 4.25,
@@ -608,12 +599,9 @@ test("extension-frame session copies, infers, SSim-downscales, sharpens, and pre
     rowsPerImage: 2,
   });
   assert.deepEqual(fallbackUpload.size, { width: 4, height: 2 });
-  assert.equal(fallbackResult.stats.externalCopies, 0);
-  assert.equal(fallbackResult.stats.externalCopyFailures, 0);
   assert.equal(fallbackResult.stats.stagedUploads, 2);
   fallbackResult.bitmap.close();
 
-  device.queue.copyExternalImageToTexture = directExternalCopy;
   const videoFrameResult = await session.handle("run", {
     bitmap: videoFrame,
     srcW: 4,
@@ -621,40 +609,24 @@ test("extension-frame session copies, infers, SSim-downscales, sharpens, and pre
     presentation: { width: 4, height: 2 },
   });
   assert.equal(videoFrame.closes, 1);
-  const directCopies = events.filter((entry) => entry?.type === "copy");
-  assert.deepEqual(directCopies.at(-1).source, { source: videoFrame });
-  assert.equal(videoFrameResult.stats.externalCopies, 1);
-  assert.equal(videoFrameResult.stats.stagedUploads, 2);
-  videoFrameResult.bitmap.close();
-
-  device.queue.copyExternalImageToTexture = () => {
-    events.push("copy:rejected");
-    throw new Error("injected VideoFrame import failure");
-  };
-  const videoFrameFallbackResult = await session.handle("run", {
-    bitmap: fallbackVideoFrame,
-    srcW: 4,
-    srcH: 2,
-    presentation: { width: 4, height: 2 },
-  });
-  assert.equal(fallbackVideoFrame.closes, 1);
-  assert.ok(events.includes("copy:rejected"));
   assert.deepEqual(upload.calls.slice(-2), [
     {
       type: "draw-image",
-      args: [fallbackVideoFrame, 0, 0, 4, 2],
+      args: [videoFrame, 0, 0, 4, 2],
     },
     {
       type: "get-image-data",
       args: [0, 0, 4, 2, { colorSpace: "srgb" }],
     },
   ]);
-  assert.equal(videoFrameFallbackResult.stats.externalCopies, 1);
-  assert.equal(videoFrameFallbackResult.stats.externalCopyFailures, 1);
-  assert.equal(videoFrameFallbackResult.stats.stagedUploads, 3);
-  videoFrameFallbackResult.bitmap.close();
+  assert.equal(
+    events.includes("copy:rejected"),
+    false,
+    "VideoFrame staging must not attempt a cross-OOPIF GPU import",
+  );
+  assert.equal(videoFrameResult.stats.stagedUploads, 3);
+  videoFrameResult.bitmap.close();
 
-  device.queue.copyExternalImageToTexture = directExternalCopy;
   const stopped = await session.handle("stop", {});
   assert.equal(stopped.stopped, true);
   assert.equal(context.unconfigures, 1);
@@ -669,6 +641,9 @@ test("extension-frame session copies, infers, SSim-downscales, sharpens, and pre
 
 test("extension-frame session supplies decoded CDA priors and temporal resets to v2", async () => {
   const { device } = gpuHarness();
+  const upload = uploadCanvasHarness({
+    pixels: new Uint8ClampedArray(2 * 2 * 4),
+  });
   const modelTexture = texture("cda-model-output", []);
   const engineRuns = [];
   let failNextRun = false;
@@ -788,6 +763,7 @@ test("extension-frame session supplies decoded CDA priors and temporal resets to
       RENDER_ATTACHMENT: 4,
     },
     createOffscreenCanvas: () => canvas,
+    createUploadCanvas: () => upload.canvas,
     createImageBitmapImpl: async () => outputs[outputIndex++],
     isImageBitmap: (candidate) => outputs.includes(candidate),
     isVideoFrame: (candidate) => inputs.includes(candidate),

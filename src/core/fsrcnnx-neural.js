@@ -121,8 +121,8 @@ function freezeTensorDescriptor(name, value, kind, at) {
 
   let reset;
   if (value.role === "state-in") {
-    reset = value.reset ?? "zeros";
-    if (reset !== "zeros" && reset !== "required") {
+    reset = value.reset ?? "required";
+    if (reset !== "required") {
       throw new Error(`${at} ${kind} '${name}' has an invalid reset policy`);
     }
   } else if (value.reset != null) {
@@ -210,6 +210,18 @@ function freezeV2Graph(name, value, at) {
   const stateIn = stateDescriptors(inputs, "state-in");
   if (stateIn.size !== Object.values(inputs).filter(({ role }) => role === "state-in").length) {
     throw new Error(`${graphAt} duplicates a state-in key`);
+  }
+  const decodedCdaInputs = Object.values(inputs).filter(
+    ({ provider }) => provider === "decoded-cda-v1",
+  );
+  if (decodedCdaInputs.length) {
+    const roles = new Set(decodedCdaInputs.map(({ role }) => role));
+    if (decodedCdaInputs.length !== 2 ||
+        !roles.has("motion") || !roles.has("residual")) {
+      throw new Error(
+        `${graphAt} decoded-cda-v1 inputs must be one motion/residual pair`,
+      );
+    }
   }
   return Object.freeze({ name, file: value.file, inputs, outputs });
 }
@@ -1588,7 +1600,28 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
       }
       const reset = options?.reset ?? temporal?.reset ?? false;
       if (typeof reset !== "boolean") throw new Error("neural v2 reset must be boolean");
-      const stateReady = runModelContract.states.every((key) => temporalState.has(key));
+      const recurrentGraph = runModelContract.mode === "temporal"
+        ? runModelContract.graphs[runModelContract.recurrentGraph]
+        : null;
+      const recurrentStates = recurrentGraph
+        ? stateDescriptors(recurrentGraph.inputs, "state-in")
+        : new Map();
+      const stateReady = runModelContract.states.every((key) => {
+        const tensor = temporalState.get(key);
+        const descriptor = recurrentStates.get(key);
+        if (!tensor || !descriptor) return false;
+        try {
+          validateRuntimeTensor(
+            tensor,
+            descriptor,
+            `neural recurrent state '${key}'`,
+            { width: srcW, height: srcH },
+          );
+          return true;
+        } catch {
+          return false;
+        }
+      });
       resettingTemporalState = runModelContract.mode === "temporal" && (reset || !stateReady);
       runGraphName = runModelContract.mode === "temporal" && !resettingTemporalState
         ? runModelContract.recurrentGraph
@@ -1785,6 +1818,7 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
                 stateTensor,
                 descriptor,
                 `neural state output '${descriptor.name}'`,
+                { width: tile.padW, height: tile.padH },
               );
               nextTemporalState.set(descriptor.state, stateTensor);
             }

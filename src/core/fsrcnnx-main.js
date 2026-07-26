@@ -1193,8 +1193,8 @@ function createEmbeddedNeuralEngine({ log: engineLog = log, warn: engineWarn = w
   };
 
   const captureSourceFrame = async (source, width, height) => {
-    // VideoFrame remains decoder-backed and transferable, allowing the
-    // extension frame to import it directly with copyExternalImageToTexture.
+    // VideoFrame remains decoder-backed and transferable, avoiding a
+    // page-side staging canvas before the extension frame materializes it.
     const VideoFrameCtor = globalThis.VideoFrame;
     if (typeof VideoFrameCtor === "function") {
       let frame = null;

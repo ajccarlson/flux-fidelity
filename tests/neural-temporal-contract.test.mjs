@@ -72,7 +72,7 @@ function temporalEntry() {
             previous_feature: {
               role: "state-in",
               state: "feature",
-              reset: "zeros",
+              reset: "required",
               dtype: "float32",
               channels: 4,
             },
@@ -205,7 +205,7 @@ test("v2 temporal manifests normalize named graphs, providers, and paired state"
   assert.equal(contract.mode, "temporal");
   assert.deepEqual(contract.states, ["feature"]);
   assert.equal(contract.graphs.recurrent.inputs.motion.provider, "decoded-cda-v1");
-  assert.equal(contract.graphs.recurrent.inputs.previous_feature.reset, "zeros");
+  assert.equal(contract.graphs.recurrent.inputs.previous_feature.reset, "required");
   assert.equal(Object.isFrozen(contract.graphs.recurrent.inputs), true);
 
   const motion = { gpuBuffer: {}, dataType: "float32", dims: [1, 2, 2, 2] };
@@ -250,6 +250,10 @@ test("v2 temporal manifests reject ambiguous graphs and unsafe tensor semantics"
     mutate((entry) => { entry.file = "legacy.onnx"; }),
     mutate((entry) => { entry.contract.graphs.recurrent.inputs.motion.provider = "unknown"; }),
     mutate((entry) => { entry.contract.graphs.recurrent.inputs.motion.channels = 3; }),
+    mutate((entry) => { delete entry.contract.graphs.recurrent.inputs.residual; }),
+    mutate((entry) => {
+      entry.contract.graphs.recurrent.inputs.previous_feature.reset = "zeros";
+    }),
     mutate((entry) => { entry.contract.graphs.recurrent.inputs.previous_feature.dtype = "float16"; }),
     mutate((entry) => { delete entry.contract.graphs.initialize.outputs.initial_feature; }),
     mutate((entry) => { entry.tileSize = 512; }),
@@ -493,6 +497,7 @@ test("v2 execution selects static reset/recurrent graphs and retains GPU state t
   const disposed = { wrappers: 0, rgb: 0, states: 0 };
   const releases = { initialize: 0, recurrent: 0 };
   let stateId = 0;
+  let emitWrongInitializerState = false;
   const tensor = (type, dims, kind) => {
     const size = dims.reduce((product, value) => product * value, 1);
     return {
@@ -524,7 +529,11 @@ test("v2 execution selects static reset/recurrent graphs and retains GPU state t
       const [, , height, width] = feeds.frame.dims;
       return {
         image: tensor("float32", [1, 3, height * 2, width * 2], "rgb"),
-        initial_feature: tensor("float32", [1, 4, height, width], "state"),
+        initial_feature: tensor(
+          "float32",
+          [1, 4, emitWrongInitializerState ? height + 1 : height, width],
+          "state",
+        ),
       };
     },
     async release() { releases.initialize++; },
@@ -615,15 +624,49 @@ test("v2 execution selects static reset/recurrent graphs and retains GPU state t
     }),
     /provider 'unknown'/,
   );
+
+  const resizedAuxiliary = {
+    motion: {
+      provider: "decoded-cda-v1",
+      gpuBuffer: { size: 1 * 2 * 3 * 3 * 4 },
+      dataType: "float32",
+      dims: [1, 2, 3, 3],
+    },
+    residual: {
+      provider: "decoded-cda-v1",
+      gpuBuffer: { size: 1 * 1 * 3 * 3 * 4 },
+      dataType: "float32",
+      dims: [1, 1, 3, 3],
+    },
+  };
+  await engine.run(source, 3, 3, { auxiliary: resizedAuxiliary });
+  assert.equal(
+    calls[2].graph,
+    "initialize",
+    "a source resize must not feed stale recurrent state",
+  );
+
   await engine.run(source, 2, 2, { temporal: { reset: true }, auxiliary });
-  assert.equal(calls[2].graph, "initialize");
+  assert.equal(calls[3].graph, "initialize");
+  emitWrongInitializerState = true;
+  await assert.rejects(
+    engine.run(source, 2, 2, { reset: true, auxiliary }),
+    /state output 'initial_feature' spatial shape 2x3 does not match 2x2/,
+  );
+  emitWrongInitializerState = false;
+  await engine.run(source, 2, 2, { auxiliary });
+  assert.equal(
+    calls[5].graph,
+    "initialize",
+    "a rejected initializer state must not make recurrent state ready",
+  );
   await engine.dispose();
   assert.deepEqual(releases, { initialize: 1, recurrent: 1 });
-  assert.equal(disposed.rgb, 3);
-  assert.equal(disposed.states, 3);
+  assert.equal(disposed.rgb, 6);
+  assert.equal(disposed.states, 6);
   assert.equal(
     disposed.wrappers,
-    6,
+    9,
     "successful wrappers and the rejected frame's RGB wrapper all retire",
   );
 });

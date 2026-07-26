@@ -423,9 +423,7 @@ export function createNeuralFrameSession({
     ssimdsRuns: 0,
     ssimdsBypasses: 0,
     sharpenRuns: 0,
-    externalCopies: 0,
     stagedUploads: 0,
-    externalCopyFailures: 0,
     cdaPriorRuns: 0,
     cdaPriorResets: 0,
     lastRunMs: 0,
@@ -860,35 +858,12 @@ export function createNeuralFrameSession({
     }
   }
 
-  function uploadSourceFrame(
-    ownerDevice,
-    frame,
-    source,
-    width,
-    height,
-    { directExternalCopy = false } = {},
-  ) {
+  function uploadSourceFrame(ownerDevice, frame, source, width, height) {
     const queue = ownerDevice?.queue;
-    // A transferred ImageBitmap can be accepted here yet import as all-zero
-    // pixels across Chromium's OOPIF boundary. Decoder-backed VideoFrame is the
-    // only direct path; ImageBitmap retains the child-owned staging path.
-    if (directExternalCopy &&
-        typeof queue?.copyExternalImageToTexture === "function") {
-      try {
-        queue.copyExternalImageToTexture(
-          { source: frame },
-          { texture: source, colorSpace: SRGB_COLOR_SPACE },
-          { width, height },
-        );
-        stats.externalCopies++;
-        return;
-      } catch {
-        // A transferred external image can be unsupported for a particular
-        // Chromium/GPU combination even when the queue method exists. Preserve
-        // the deterministic child-owned pixel upload as a compatibility path.
-        stats.externalCopyFailures++;
-      }
-    }
+    // Chromium can accept a cross-OOPIF ImageBitmap import yet produce all-zero
+    // pixels, and a transferred VideoFrame import can stall the GPU queue. Keep
+    // the page-side transfer cheap, then materialize child-owned pixels before
+    // the deterministic texture upload.
     const uploadPixels = stageSourceFrame(frame, width, height);
     queue.writeTexture(
       { texture: source },
@@ -1145,9 +1120,7 @@ export function createNeuralFrameSession({
       }
       const source = ensureSourceTexture(runDevice, srcW, srcH);
       const started = now();
-      uploadSourceFrame(runDevice, inputFrame, source, srcW, srcH, {
-        directExternalCopy: videoFrame,
-      });
+      uploadSourceFrame(runDevice, inputFrame, source, srcW, srcH);
       let effectiveTemporal = temporal;
       let engineOptions = { temporal };
       if (cdaPriorGenerator) {

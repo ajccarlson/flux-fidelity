@@ -35,6 +35,10 @@ DEFORM_GROUPS = 4
 DEFORM_LOWERING = "kernel1-grid-sample-mask-concat-conv1x1"
 OFFSET_ORDER = "deform-group-interleaved-yx"
 PRIOR_CONTRACT = "decoded-cda-v1"
+DYNAMIC_HEIGHT = "height"
+DYNAMIC_WIDTH = "width"
+DYNAMIC_OUTPUT_HEIGHT = "output_height_x4"
+DYNAMIC_OUTPUT_WIDTH = "output_width_x4"
 
 
 class ToolError(RuntimeError):
@@ -370,6 +374,47 @@ def dependency_versions() -> dict[str, str]:
     return versions
 
 
+def make_dynamic_motion_warp(torch):
+    """Mirror upstream mv_warp_avg_patch without freezing H/W at export."""
+
+    def dynamic_motion_warp(
+        value,
+        motion,
+        interpolation="nearest",
+        padding_mode="zeros",
+        align_corners=True,
+    ):
+        shape = torch._shape_as_tensor(value)
+        height, width = value.shape[-2:]
+        grid_y, grid_x = torch.meshgrid(
+            torch.arange(height, device=value.device),
+            torch.arange(width, device=value.device),
+            indexing="ij",
+        )
+        grid = torch.stack((grid_x, grid_y), dim=2).type_as(value)
+        flow = motion.permute(0, 2, 3, 1)
+        grid_flow = grid + flow
+        grid_flow = grid_flow[:, :height, :width, :]
+        width_denominator = torch.clamp(shape[3] - 1, min=1).type_as(value)
+        height_denominator = torch.clamp(shape[2] - 1, min=1).type_as(value)
+        grid_flow_x = (
+            2.0 * grid_flow[:, :, :, 0] / width_denominator - 1.0
+        )
+        grid_flow_y = (
+            2.0 * grid_flow[:, :, :, 1] / height_denominator - 1.0
+        )
+        sample_grid = torch.stack((grid_flow_x, grid_flow_y), dim=3)
+        return torch.nn.functional.grid_sample(
+            value.float(),
+            sample_grid,
+            mode=interpolation,
+            padding_mode=padding_mode,
+            align_corners=align_corners,
+        )
+
+    return dynamic_motion_warp
+
+
 def make_lowered_dcn_class(torch):
     """Build an nn.Module replacing CDA's exact kernel=1 MMCV operation."""
 
@@ -439,6 +484,7 @@ def make_lowered_dcn_class(torch):
             # slice. GridSample then performs the same zero-padded bilinear
             # sample, after which the modulation mask and original 1x1
             # convolution are applied.
+            shape = torch._shape_as_tensor(source)
             height, width = source.shape[-2:]
             rows = torch.arange(
                 height, dtype=source.dtype, device=source.device
@@ -449,8 +495,12 @@ def make_lowered_dcn_class(torch):
             grid_y, grid_x = torch.meshgrid(rows, columns, indexing="ij")
             channels_per_group = self.in_channels // self.deform_groups
             sampled_groups = []
-            width_denominator = max(width - 1, 1)
-            height_denominator = max(height - 1, 1)
+            width_denominator = torch.clamp(shape[3] - 1, min=1).type_as(
+                source
+            )
+            height_denominator = torch.clamp(shape[2] - 1, min=1).type_as(
+                source
+            )
             for group_index in range(self.deform_groups):
                 channel_start = group_index * channels_per_group
                 channel_end = channel_start + channels_per_group
@@ -555,6 +605,10 @@ def instantiate_lowered_source_model(source_path: Path, torch):
     try:
         with _temporary_modules(_make_upstream_stubs(torch)):
             spec.loader.exec_module(module)
+            # The released helper uses Python max(w - 1, 1), which legacy
+            # torch.onnx tracing captures as a constant. This equivalent
+            # tensor-shape implementation keeps spatial dimensions symbolic.
+            module.mv_warp_avg_patch = make_dynamic_motion_warp(torch)
             model = module.CDAVSR()
     except Exception as error:
         sys.modules.pop(module_name, None)
