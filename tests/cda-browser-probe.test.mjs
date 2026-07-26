@@ -836,7 +836,10 @@ test("CDA browser probe appends a local entry without replacing the shipping smo
   assert.equal(probe[1].key, CDA_BROWSER_PROBE_MODEL_KEY);
   assert.equal(probe[1].fp16, false);
   assert.equal(probe[1].contract.version, 2);
-  assert.equal(probe[1].contract.graphs.initialize.file, "cda-vsr-initializer.onnx");
+  assert.equal(
+    probe[1].contract.graphs.initialize.file,
+    "cda-vsr-local-probe-initializer.onnx",
+  );
 });
 
 test("CDA browser probe stages and removes only a disposable extension copy", async (t) => {
@@ -870,7 +873,7 @@ test("CDA browser probe stages and removes only a disposable extension copy", as
     assert.notEqual(dirname(dirname(extensionRoot)), root);
     assert.deepEqual(
       await readFile(
-        join(extensionRoot, "model/neural/cda-vsr-initializer.onnx"),
+        join(extensionRoot, "model/neural/cda-vsr-local-probe-initializer.onnx"),
       ),
       fixture.initializer,
     );

@@ -168,7 +168,7 @@ const ART_FILES = ARTCNN_MODEL_NAMES;
 let requestedEngine = "fsrcnnx"; // durable user choice
 let engine = "fsrcnnx"; // effective renderer: may fall back without changing requestedEngine
 let engineSelectionGeneration = 0;
-let neuralEng = null, neuralModelKey = "", neuralBusy = false, neuralFail = 0; // v0.49.0 ONNX engine
+let neuralEng = null, neuralModelKey = "", neuralBusy = false, neuralFail = 0; // v0.50.0 ONNX engine
 let neuralTemporalResetReason = null;
 let neuralTemporalResetGeneration = 0;
 let rendererFallback = null, neuralLastFailure = null;
@@ -3055,7 +3055,7 @@ function finalizeToCanvas(enc, srcTex) {
 }
 
 
-// ---- neural engine (v0.49.0) ----------------------------------------------
+// ---- neural engine (v0.50.0) ----------------------------------------------
 // Bundled ONNX super-resolution runs in the extension-owned Neural frame.
 // It returns a full-RGB bitmap after optional SSimDownscaler and sharpening;
 // the page-side adapter presents that bitmap on its dedicated overlay canvas.

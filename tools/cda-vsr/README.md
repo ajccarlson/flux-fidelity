@@ -1,4 +1,4 @@
-# CDA-VSR local conversion and browser probe
+# CDA-VSR conversion, bundle promotion, and browser probe
 
 This offline toolkit adapts a user-supplied CDA-VSR source file and checkpoint
 into two dynamic-spatial ONNX graphs:
@@ -7,10 +7,9 @@ into two dynamic-spatial ONNX graphs:
 - `cda-vsr-recurrent.onnx`: RGB, motion, residual, and prior states to 4× output
   plus updated states.
 
-It does not download, copy, or redistribute upstream source or weights. Only
-run conversion commands on code and weights obtained from a trusted location.
-Review their provenance and redistribution terms before publishing any derived
-model.
+It does not download upstream source or weights. Only run conversion commands
+on code and weights obtained from a trusted location. The extension bundles one
+exact reviewed mixed-FP16 graph pair; arbitrary exports remain local-only.
 
 The hash-pinned reference is
 [`sspBIT/CDA-VSR@5707d997`](https://github.com/sspBIT/CDA-VSR/tree/5707d997759996f19521c3beaddfb3d1ea965d44):
@@ -110,6 +109,26 @@ Receipts are deliberately tied to the exact toolkit files that produced them.
 Verification checks local self-consistency; it does not authenticate the
 original inputs or establish provenance, safety, or licensing.
 
+## Promote the reviewed bundle
+
+The shipping pair is derived only from the exact mixed-FP16 export recorded in
+[Model provenance](../../docs/compliance/MODEL_PROVENANCE.md). Promote that
+verified export with:
+
+```sh
+.venv/bin/python tools/cda-vsr/promote_bundled.py \
+  --source-dir tmp/cda-vsr/onnx \
+  --output-dir model/neural \
+  --write
+```
+
+The script rejects any other parent hashes, proves that graph content is
+unchanged, runs the full ONNX checker, and requires the reviewed output hashes.
+It changes only metadata to identify catalog inclusion, the parent export, the
+upstream license as `not-specified`, and the repository-owner accepted-risk
+distribution decision. Promotion does not establish permission or legal
+clearance.
+
 ## Probe the graphs in Chromium
 
 After `verify` succeeds, run the external graphs through the real extension
@@ -122,11 +141,10 @@ npm run probe:cda-browser -- --onnx-dir tmp/cda-vsr/onnx
 Set `FSRCNNX_BROWSER` when browser auto-detection is insufficient. The probe
 rechecks the dynamic, local-only export receipt and exact graph hashes, builds
 the normal package into an operating-system temporary directory, appends a
-local CDA-VSR manifest entry, selects that exact model for real-video
-validation, requires successful state-atlas initializer and recurrent
-executions without fallback, and removes the temporary package afterward. It
-never changes the shipping neural manifest or copies the graphs into the
-repository.
+local CDA-VSR manifest entry under probe-only filenames, selects that exact
+model for real-video validation, requires successful state-atlas initializer
+and recurrent executions without fallback, and removes the temporary package
+afterward. It never changes the shipping neural manifest or repository files.
 
 For a one-time primitive comparison against the original implementation, use
 an upstream-compatible CUDA/PyTorch environment with compiled `mmcv-full`:
@@ -170,12 +188,12 @@ benefit.
 
 ## Current boundary
 
-The graphs remain user-supplied local artifacts rather than bundled extension
-assets, but the browser execution path is implemented. The receipt declares an
-audited `temporal-state-atlas-v1` contract. The runtime bounds ONNX work with
-overlapping input halos, reads prior state from a committed full-frame atlas,
-writes only each tile's owned core to a second atlas, and swaps banks only after
-the complete frame succeeds.
+The exact promoted mixed-FP16 graph pair is bundled as `cda-vsr-4x`; all other
+converter outputs remain user-supplied local artifacts. The runtime uses the
+audited `temporal-state-atlas-v1` contract: it bounds ONNX work with overlapping
+input halos, reads prior state from a committed full-frame atlas, writes only
+each tile's owned core to a second atlas, and swaps banks only after the
+complete frame succeeds.
 
 There is no source-resolution policy ceiling. Device texture dimensions,
 storage-binding limits, allocation failures, and device loss remain physical
@@ -192,7 +210,7 @@ MMCV.
 part of the normal repository check. The optional ML environment and actual
 source/checkpoint conversion remain explicit local validation steps.
 
-No license for the architecture source, nor checkpoint license or redistribution
-clearance, has been established. The receipt marks generated files
-experimental/local-only, and the tool never adds them to the extension's
-shipping model catalog.
+The upstream license for CDA-specific source and checkpoint is not specified.
+Bundling is an explicit repository-owner accepted-risk decision, not a claim of
+redistribution clearance. Converter receipts remain experimental/local-only;
+only the exact hash-pinned pair can pass the separate promotion step.

@@ -1,6 +1,6 @@
 # FSRCNNX-EXT
 
-FSRCNNX-EXT is a pre-release Chromium extension for local, real-time WebGPU video enhancement. It supports FSRCNNX, ArtCNN, and bundled Real-ESRGAN ONNX upscaling; optional SSimDownscaler and sharpening; and RIFE or blend frame interpolation.
+FSRCNNX-EXT is a pre-release Chromium extension for local, real-time WebGPU video enhancement. It supports FSRCNNX, ArtCNN, and bundled Real-ESRGAN or temporal CDA-VSR ONNX upscaling; optional SSimDownscaler and sharpening; and RIFE or blend frame interpolation.
 
 ## Requirements
 
@@ -19,7 +19,7 @@ Processing stays on the device. See [Privacy](PRIVACY.md) for the data and permi
 3. Play a supported video, open the extension popup, choose an engine and its available options, then select **Upscale**.
 4. Select **Off** to restore native rendering. Reload the extension after changing the checkout.
 
-Settings are stored per site; local-file pages share one local-file scope. The extension has no configured source-resolution or pixel-area ceiling. Requested inputs, outputs, and model resources must still fit the browser's and GPU adapter's actual limits. Neural uses the bundled Real-ESRGAN AnimeVideo XS 2× model with tiled inference and pauses frame interpolation while selected.
+Settings are stored per site; local-file pages share one local-file scope. The extension has no configured source-resolution or pixel-area ceiling. Requested inputs, outputs, and model resources must still fit the browser's and GPU adapter's actual limits. Neural offers tiled Real-ESRGAN AnimeVideo XS 2× and temporal CDA-VSR 4×; CDA-VSR targets compressed video but uses substantially more GPU memory. Neural pauses frame interpolation while selected.
 
 Performance-driven fallbacks are advanced per-site settings and are off by default. **Automatic quality fallback** lowers FSRCNNX High, ArtCNN, or Neural to standard FSRCNNX after sustained frame drops or GPU backlog; **Automatic blend fallback** replaces RIFE when it cannot maintain a useful frame rate.
 
@@ -40,9 +40,10 @@ Run the standard offline repository check:
 npm run check
 ```
 
-This includes dependency-free CDA-VSR contract tests. The optional
-[`tools/cda-vsr/`](tools/cda-vsr/) workflow converts user-supplied artifacts and
-probes tiled temporal execution without adding those artifacts to the package.
+This includes dependency-free CDA-VSR contract tests and exact bundled-model
+hash checks. [`tools/cda-vsr/`](tools/cda-vsr/) documents conversion,
+reproduction, deterministic promotion of the reviewed bundled pair, and an
+isolated browser probe for external exports.
 
 Run browser and GPU smoke checks against the checkout in a temporary Chromium profile:
 
@@ -59,8 +60,8 @@ npm run validate:browser -- --extension-root dist/fsrcnnx-ext
 ```
 
 `npm run package` enforces the release-clearance ledger, creates the
-deterministic archive, and validates the exact staged extension in a temporary
-browser profile.
+deterministic archive, and validates the exact staged CDA-VSR model through
+initializer and recurrent real-video runs in a temporary browser profile.
 
 ## Licensing
 

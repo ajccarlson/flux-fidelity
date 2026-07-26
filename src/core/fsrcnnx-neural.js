@@ -406,6 +406,12 @@ export function validateNeuralManifest(value) {
     if (entry.label != null && (typeof entry.label !== "string" || !entry.label.trim() || entry.label.length > 160)) {
       throw new Error(`${at} has an invalid label`);
     }
+    if (entry.license != null &&
+        (typeof entry.license !== "string" ||
+         !entry.license.trim() ||
+         entry.license.length > 160)) {
+      throw new Error(`${at} has an invalid license description`);
+    }
     for (const field of ["input", "output"]) {
       if (entry[field] != null && (typeof entry[field] !== "string" || !TENSOR_NAME.test(entry[field]))) {
         throw new Error(`${at} has an invalid ${field} tensor name`);

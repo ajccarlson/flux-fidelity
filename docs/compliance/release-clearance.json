@@ -71,6 +71,38 @@
       "resolution": "Retain the exact official checkpoint record, deterministic checked export, FP32 dynamic RGB ABI, bundled upstream BSD-3-Clause license, and browser inference validation."
     },
     {
+      "id": "cda-vsr-license-review",
+      "status": "accepted-risk",
+      "artifacts": [
+        {
+          "path": "model/neural/cda-vsr-initializer.onnx",
+          "sha256": "7773490658a7cad663e9b4f7e9cc8269b3d0c7a9a8e5840ec3151e895c1161f1",
+          "disposition": "present"
+        },
+        {
+          "path": "model/neural/cda-vsr-recurrent.onnx",
+          "sha256": "442be6f8d356889070ed70acdb49f9d2d77f24b6947e51e823404ca5a6d66a05",
+          "disposition": "present"
+        }
+      ],
+      "evidence": [
+        "docs/compliance/MODEL_PROVENANCE.md",
+        "THIRD_PARTY_NOTICES.md",
+        "tools/cda-vsr/README.md",
+        "tools/cda-vsr/promote_bundled.py",
+        "https://github.com/sspBIT/CDA-VSR/tree/5707d997759996f19521c3beaddfb3d1ea965d44",
+        "https://github.com/sspBIT/CDA-VSR/blob/5707d997759996f19521c3beaddfb3d1ea965d44/README.md",
+        "https://github.com/sspBIT/CDA-VSR/blob/5707d997759996f19521c3beaddfb3d1ea965d44/NOTICE"
+      ],
+      "riskAcceptance": {
+        "acceptedBy": "repository owner",
+        "acceptedOn": "2026-07-26",
+        "reviewDeferred": true,
+        "rationale": "The upstream repository does not specify a license for its CDA-specific source or pretrained checkpoint. The repository owner directed inclusion of the exact reviewed converted artifacts while accepting that unresolved redistribution risk."
+      },
+      "resolution": "Label the upstream license as not specified, retain exact source, checkpoint, export, promotion, and runtime-validation identities, and do not represent this owner-accepted inclusion as legal clearance."
+    },
+    {
       "id": "unknown-high-x2-shader-origin",
       "status": "cleared",
       "artifacts": [

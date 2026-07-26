@@ -24,6 +24,8 @@ const pinnedArtifacts = {
   "docs/compliance/LGPL_REBUILDING.md": "1e7843deaf5da74a884a78b98205f99d034cf12cdfece0b8bec1b72cf36843bd",
   "model/rife_v4.26.onnx": "af25762dfec02a4bbb949decea63988b01fa56c46c0ff9dc66ac8e2f12cbb661",
   "model/rife_v4.26_fp16.onnx": "d5672f39b493609220c95c709542d6b99204145a67d9ca496d4500cd8895301f",
+  "model/neural/cda-vsr-initializer.onnx": "7773490658a7cad663e9b4f7e9cc8269b3d0c7a9a8e5840ec3151e895c1161f1",
+  "model/neural/cda-vsr-recurrent.onnx": "442be6f8d356889070ed70acdb49f9d2d77f24b6947e51e823404ca5a6d66a05",
   "model/neural/realesrganv2_animevideo_xsx2.fp16.onnx": "f674a410b528aec55bb9f9f594cb1aaea580237adb29abd9dc32296d34b690a0",
   "vendor/ort/LICENSE": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
   "vendor/ort/ThirdPartyNotices.txt": "0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2",

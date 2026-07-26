@@ -218,6 +218,8 @@ test("browser validation is release-blocking without slowing internal packaging"
   const releaseCheck = packageJson.scripts["release:check"];
   assert.match(releaseCheck, /npm run package:stage/);
   assert.match(releaseCheck, /npm run validate:browser -- --extension-root dist\/fsrcnnx-ext/);
+  assert.match(releaseCheck, /--neural-model-key cda-vsr-4x/);
+  assert.match(releaseCheck, /--require-temporal-neural-runs/);
   assert.ok(releaseCheck.indexOf("npm run package:stage") < releaseCheck.indexOf("npm run validate:browser"));
   assert.equal(packageJson.scripts.package, "npm run release:check");
   assert.doesNotMatch(packageJson.scripts["package:internal"], /validate:browser/);
@@ -246,6 +248,8 @@ test("CI validates the staged package under Xvfb without disabling the sandbox",
   assert.doesNotMatch(workflow, /FSRCNNX_BROWSER: google-chrome/);
   assert.match(workflow, /npm run package:internal/);
   assert.match(workflow, /--extension-root dist\/fsrcnnx-ext/);
+  assert.match(workflow, /--neural-model-key cda-vsr-4x/);
+  assert.match(workflow, /--require-temporal-neural-runs/);
   assert.match(workflow, /--allow-neural-f16-unavailable/);
   assert.match(workflow, /xvfb-run/);
   assert.doesNotMatch(workflow, /--no-sandbox/);
