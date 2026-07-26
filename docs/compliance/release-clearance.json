@@ -4,7 +4,7 @@
   "gates": [
     {
       "id": "unidentified-rife-model",
-      "status": "blocked",
+      "status": "accepted-risk",
       "artifacts": [
         {
           "path": "model/rife.onnx",
@@ -17,7 +17,13 @@
         "tools/package-files.mjs",
         "docs/compliance/MODEL_PROVENANCE.md"
       ],
-      "resolution": "The artifact is absent from the current tree, package, and writable branch history. GitHub's read-only refs/pull/1/head through refs/pull/4/head still retain the pre-rewrite object; do not make the repository public until GitHub Support confirms reference and cache removal plus garbage collection."
+      "riskAcceptance": {
+        "acceptedBy": "repository owner",
+        "acceptedOn": "2026-07-25",
+        "historyRetentionAccepted": true,
+        "rationale": "The artifact is absent from the current tree, extension package, and writable branch history; retained legacy pull-request history is nonblocking."
+      },
+      "resolution": "The artifact is absent from the current tree, extension package, and writable branch history; retained legacy history is accepted and nonblocking."
     },
     {
       "id": "unproven-rife-fp16-conversion",
@@ -97,7 +103,7 @@
     },
     {
       "id": "missing-x3-x4-shader-sources",
-      "status": "blocked",
+      "status": "accepted-risk",
       "artifacts": [
         {
           "path": "model/FSRCNNX_x3_16-0-4-1.wgsl",
@@ -125,11 +131,17 @@
         "tools/package-files.mjs",
         "docs/compliance/MODEL_PROVENANCE.md"
       ],
-      "resolution": "The assets are absent from the current tree, package, and writable branch history. GitHub's read-only refs/pull/1/head through refs/pull/4/head still retain the pre-rewrite objects; do not make the repository public until GitHub Support confirms reference and cache removal plus garbage collection."
+      "riskAcceptance": {
+        "acceptedBy": "repository owner",
+        "acceptedOn": "2026-07-25",
+        "historyRetentionAccepted": true,
+        "rationale": "The assets are absent from the current tree, extension package, and writable branch history; retained legacy pull-request history is nonblocking."
+      },
+      "resolution": "The assets are absent from the current tree, extension package, and writable branch history; retained legacy history is accepted and nonblocking."
     },
     {
       "id": "unreproducible-span-smoke-model",
-      "status": "blocked",
+      "status": "accepted-risk",
       "artifacts": [
         {
           "path": "model/neural/span2x_smoke.fp16.onnx",
@@ -142,11 +154,17 @@
         "tools/package-files.mjs",
         "docs/compliance/MODEL_PROVENANCE.md"
       ],
-      "resolution": "The artifact is absent from the current tree, package, and writable branch history. GitHub's read-only refs/pull/1/head through refs/pull/4/head still retain the pre-rewrite object; do not make the repository public until GitHub Support confirms reference and cache removal plus garbage collection."
+      "riskAcceptance": {
+        "acceptedBy": "repository owner",
+        "acceptedOn": "2026-07-25",
+        "historyRetentionAccepted": true,
+        "rationale": "The artifact is absent from the current tree, extension package, and writable branch history; retained legacy pull-request history is nonblocking."
+      },
+      "resolution": "The artifact is absent from the current tree, extension package, and writable branch history; retained legacy history is accepted and nonblocking."
     },
     {
       "id": "unresolved-deband-port-origin",
-      "status": "blocked",
+      "status": "accepted-risk",
       "artifacts": [
         {
           "path": "fsrcnnx-deband.js",
@@ -161,7 +179,13 @@
         "tools/package-files.mjs",
         "docs/compliance/MODEL_PROVENANCE.md"
       ],
-      "resolution": "The artifact is absent from the current tree, package, and writable branch history. GitHub's read-only refs/pull/1/head through refs/pull/4/head still retain the pre-rewrite object; do not make the repository public until GitHub Support confirms reference and cache removal plus garbage collection."
+      "riskAcceptance": {
+        "acceptedBy": "repository owner",
+        "acceptedOn": "2026-07-25",
+        "historyRetentionAccepted": true,
+        "rationale": "Both historical revisions are absent from the current tree, extension package, and writable branch history; retained legacy pull-request history is nonblocking."
+      },
+      "resolution": "Both historical revisions are absent from the current tree, extension package, and writable branch history; retained legacy history is accepted and nonblocking."
     },
     {
       "id": "lgpl-compliance-review",
