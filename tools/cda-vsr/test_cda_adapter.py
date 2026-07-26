@@ -16,7 +16,9 @@ TOOL_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(TOOL_DIR))
 
 from cda_adapter import (  # noqa: E402
+    FP32_PRECISION,
     GRAPH_FILENAMES,
+    MIXED_FP16_PRECISION,
     OPSET,
     ToolError,
     atomic_write_json,
@@ -24,11 +26,14 @@ from cda_adapter import (  # noqa: E402
     dynamic_axes_for,
     dynamic_probe_shape,
     inspect_inputs,
+    logical_memory_contract,
     make_dynamic_motion_warp,
+    precision_contract,
     require_expected_hash,
     resolve_source,
     runtime_contract_template,
     sha256_file,
+    temporal_tiling_contract,
 )
 from cda_tool import (  # noqa: E402
     EXPORT_RECEIPT_FORMAT,
@@ -41,6 +46,7 @@ from cda_tool import (  # noqa: E402
     discard_stale_receipt,
     invalidate_export_receipt,
     parser as cda_parser,
+    parity_limits,
     positive_float,
     temporal_frame_count,
     tool_identity,
@@ -93,23 +99,48 @@ class AdapterStaticTests(unittest.TestCase):
         checkpoint.write_bytes(b"local-test-checkpoint")
         return temporary, root, source, checkpoint
 
-    def make_receipt(self, *, dynamic=True, skipped=False):
+    def make_receipt(
+        self,
+        *,
+        dynamic=True,
+        skipped=False,
+        precision=FP32_PRECISION,
+    ):
         height = 8
         width = 10
+        limits = (
+            {
+                "output": {"max_abs": 5e-3, "max_mean": 5e-4},
+                "state": {"max_abs": 2e-2, "max_mean": 2e-3},
+            }
+            if precision == MIXED_FP16_PRECISION
+            else {
+                "output": {"max_abs": 2e-4, "max_mean": 2e-5},
+                "state": {"max_abs": 2e-4, "max_mean": 2e-5},
+            }
+        )
+        max_abs = max(item["max_abs"] for item in limits.values())
+        max_mean = max(item["max_mean"] for item in limits.values())
         shapes = [{"height": height, "width": width}]
         if dynamic:
             probe_height, probe_width = dynamic_probe_shape(height, width)
             shapes.append({"height": probe_height, "width": probe_width})
 
-        def shape_result(shape, shape_index):
+        def shape_result(shape, shape_index, motion_fixture):
             records = []
             record_maxima = []
             record_means = []
+            record_p99_9 = []
             for frame_index in range(3):
                 maximum = float((shape_index + 1) * (frame_index + 1)) * 1e-6
                 mean = maximum / 2
+                p99_9 = maximum * 0.75
                 tensors = {
-                    name: {"mean_abs": mean, "max_abs": maximum}
+                    name: {
+                        "mean_abs": mean,
+                        "p99_9_abs": p99_9,
+                        "max_abs": maximum,
+                    }
                     for name in (
                         "output",
                         "next_state_low",
@@ -127,47 +158,75 @@ class AdapterStaticTests(unittest.TestCase):
                 )
                 record_maxima.append(maximum)
                 record_means.append(mean)
+                record_p99_9.append(p99_9)
+            worst = {
+                "worst_max_abs": max(record_maxima),
+                "worst_mean_abs": max(record_means),
+                "worst_p99_9_abs": max(record_p99_9),
+            }
             return {
                 **shape,
                 "frames": 3,
                 "seed": PARITY_SEED,
-                "max_abs_limit": 2e-4,
-                "max_mean_limit": 2e-5,
-                "worst_max_abs": max(record_maxima),
-                "worst_mean_abs": max(record_means),
+                "motion_fixture": motion_fixture,
+                "max_abs_limit": max_abs,
+                "max_mean_limit": max_mean,
+                "tensor_limits": copy.deepcopy(limits),
+                "worst_by_tensor_class": {
+                    "output": dict(worst),
+                    "state": dict(worst),
+                },
+                **worst,
                 "records": records,
             }
 
         shape_results = [
-            shape_result(shape, shape_index)
+            shape_result(shape, shape_index, "decoded-integer")
             for shape_index, shape in enumerate(shapes)
         ]
+        fractional = shape_result(
+            shapes[0],
+            len(shapes),
+            "fractional-stress",
+        )
         parity = None
         if not skipped:
+            all_results = [*shape_results, fractional]
             parity = {
                 "spatial_shape": "dynamic" if dynamic else "fixed",
+                "reference_precision": FP32_PRECISION,
+                "state_chains": "independent",
+                "primary_motion_fixture": "decoded-integer",
                 "tested_shapes": shapes,
                 "frames_per_shape": 3,
                 "seed": PARITY_SEED,
-                "max_abs_limit": 2e-4,
-                "max_mean_limit": 2e-5,
+                "max_abs_limit": max_abs,
+                "max_mean_limit": max_mean,
+                "tensor_limits": copy.deepcopy(limits),
                 "worst_max_abs": max(
-                    result["worst_max_abs"] for result in shape_results
+                    result["worst_max_abs"] for result in all_results
                 ),
                 "worst_mean_abs": max(
-                    result["worst_mean_abs"] for result in shape_results
+                    result["worst_mean_abs"] for result in all_results
+                ),
+                "worst_p99_9_abs": max(
+                    result["worst_p99_9_abs"] for result in all_results
                 ),
                 "shape_results": shape_results,
+                "fractional_motion_stress": fractional,
             }
         runtime_contract = {
             "prior_provider": "decoded-cda-v1",
             "motion_component_order": ["x", "y"],
             "motion_units": "low-resolution-pixels",
+            "precision_profile": precision,
             "catalog_compatible_at_graph_shape_level": dynamic,
             "shipping_catalog": False,
         }
         if dynamic:
-            runtime_contract["manifest_v2_template"] = runtime_contract_template()
+            runtime_contract["manifest_v2_template"] = runtime_contract_template(
+                precision
+            )
         else:
             runtime_contract["catalog_blocker"] = (
                 "fixed-shape feasibility fixtures cannot be catalog entries"
@@ -176,6 +235,7 @@ class AdapterStaticTests(unittest.TestCase):
             "format": EXPORT_RECEIPT_FORMAT,
             "tool": EXPORT_TOOL_NAME,
             "opset": OPSET,
+            "precision": precision_contract(precision),
             "distribution": {
                 "architecture_license_status": "not-established",
                 "checkpoint_redistribution_clearance": False,
@@ -219,8 +279,15 @@ class AdapterStaticTests(unittest.TestCase):
             "runtime_contract": runtime_contract,
             "parity_policy": {
                 "frames": 3,
-                "max_abs": 2e-4,
-                "max_mean": 2e-5,
+                "max_abs": max_abs,
+                "max_mean": max_mean,
+                "tensor_limits": copy.deepcopy(limits),
+                "reference_precision": FP32_PRECISION,
+                "state_chains": "independent",
+                "motion_fixtures": [
+                    "decoded-integer",
+                    "fractional-stress",
+                ],
                 "skipped": skipped,
                 "dynamic_shape_runtime_validated": dynamic and not skipped,
             },
@@ -229,6 +296,25 @@ class AdapterStaticTests(unittest.TestCase):
                     "file": filename,
                     "bytes": 1000 + index,
                     "sha256": str(index + 1) * 64,
+                    "precision_profile": precision,
+                    "public_dtypes": {
+                        "inputs": (
+                            {
+                                "frame": precision_contract(precision)[
+                                    "public_inputs"
+                                ]["frame"]
+                            }
+                            if role == "initializer"
+                            else precision_contract(precision)["public_inputs"]
+                        ),
+                        "outputs": precision_contract(precision)[
+                            "public_outputs"
+                        ],
+                    },
+                    "logical_memory": logical_memory_contract(
+                        role,
+                        precision,
+                    ),
                 }
                 for index, (role, filename) in enumerate(
                     GRAPH_FILENAMES.items()
@@ -290,6 +376,49 @@ class AdapterStaticTests(unittest.TestCase):
                 REFERENCE_CHECKPOINT_SHA256,
             )
             self.assertFalse(parsed.allow_unpinned_inputs)
+
+    def test_precision_is_opt_in_and_uses_tensor_specific_limits(self):
+        base = [
+            "--source",
+            "source",
+            "--checkpoint",
+            "checkpoint",
+        ]
+        fp32 = cda_parser().parse_args(["export", *base])
+        self.assertEqual(fp32.precision, FP32_PRECISION)
+        self.assertEqual(fp32.frames, 25)
+        self.assertEqual(
+            parity_limits(fp32),
+            {
+                "output": {"max_abs": 2e-4, "max_mean": 2e-5},
+                "state": {"max_abs": 2e-4, "max_mean": 2e-5},
+            },
+        )
+
+        mixed = cda_parser().parse_args(
+            ["export", *base, "--precision", MIXED_FP16_PRECISION]
+        )
+        self.assertEqual(
+            parity_limits(mixed),
+            {
+                "output": {"max_abs": 5e-3, "max_mean": 5e-4},
+                "state": {"max_abs": 2e-2, "max_mean": 2e-3},
+            },
+        )
+        overridden = cda_parser().parse_args(
+            [
+                "export",
+                *base,
+                "--precision",
+                MIXED_FP16_PRECISION,
+                "--max-abs",
+                "0.1",
+                "--max-output-abs",
+                "0.01",
+            ]
+        )
+        self.assertEqual(parity_limits(overridden)["output"]["max_abs"], 0.01)
+        self.assertEqual(parity_limits(overridden)["state"]["max_abs"], 0.1)
 
     def test_unpinned_hashes_require_explicit_acknowledgement(self):
         temporary, root, _source, checkpoint = self.make_inputs()
@@ -364,18 +493,36 @@ class AdapterStaticTests(unittest.TestCase):
             self.assertEqual(destination.read_text(encoding="utf-8"), "original")
 
     def test_receipt_contract_accepts_dynamic_fixed_and_skipped_exports(self):
-        for dynamic, skipped in ((True, False), (False, False), (True, True)):
-            with self.subTest(dynamic=dynamic, skipped=skipped):
-                receipt = self.make_receipt(dynamic=dynamic, skipped=skipped)
+        cases = (
+            (True, False, FP32_PRECISION),
+            (False, False, FP32_PRECISION),
+            (True, True, FP32_PRECISION),
+            (True, False, MIXED_FP16_PRECISION),
+        )
+        for dynamic, skipped, precision in cases:
+            with self.subTest(
+                dynamic=dynamic,
+                skipped=skipped,
+                precision=precision,
+            ):
+                receipt = self.make_receipt(
+                    dynamic=dynamic,
+                    skipped=skipped,
+                    precision=precision,
+                )
                 identity = validate_receipt_contract(receipt)
                 self.assertEqual(identity[0], REFERENCE_SOURCE_SHA256)
                 self.assertEqual(identity[1], REFERENCE_CHECKPOINT_SHA256)
                 self.assertEqual(identity[4], dynamic)
+                self.assertEqual(identity[5], precision)
 
     def test_receipt_contract_rejects_policy_and_identity_tampering(self):
         mutations = {
             "format": lambda receipt: receipt.update(format=1),
             "opset": lambda receipt: receipt.update(opset=OPSET - 1),
+            "precision": lambda receipt: receipt["precision"].update(
+                state_dtype="float16"
+            ),
             "clearance": lambda receipt: receipt["distribution"].update(
                 checkpoint_redistribution_clearance=True
             ),
@@ -399,6 +546,31 @@ class AdapterStaticTests(unittest.TestCase):
             ].update(catalog_compatible_at_graph_shape_level=False),
             "manifest": lambda receipt: receipt["runtime_contract"].update(
                 manifest_v2_template={}
+            ),
+            "tiling maximum": lambda receipt: receipt["runtime_contract"][
+                "manifest_v2_template"
+            ]["tiling"].update(
+                largestLogicalBytesPerSourcePixel=1
+            ),
+            "tiling halo derivation": lambda receipt: receipt[
+                "runtime_contract"
+            ]["manifest_v2_template"]["tiling"]["haloDerivation"].update(
+                motionSearchRadius=7
+            ),
+            "tiling texture format": lambda receipt: receipt[
+                "runtime_contract"
+            ]["manifest_v2_template"]["tiling"]["stateAtlas"].update(
+                textureFormat="rgba16float"
+            ),
+            "graph logical maximum": lambda receipt: receipt["graphs"][
+                "recurrent"
+            ]["logical_memory"].update(
+                largest_bytes_per_source_pixel=1
+            ),
+            "graph logical structure": lambda receipt: receipt["graphs"][
+                "recurrent"
+            ]["logical_memory"]["deform_align_predictor_input"].update(
+                channels=193
             ),
             "graph role": lambda receipt: receipt["graphs"].update(
                 unexpected=receipt["graphs"].pop("initializer")
@@ -431,6 +603,17 @@ class AdapterStaticTests(unittest.TestCase):
             "parity frames": lambda receipt: receipt["parity_policy"].update(
                 frames=1
             ),
+            "parity reference": lambda receipt: receipt[
+                "parity_policy"
+            ].update(reference_precision="float16"),
+            "state chain": lambda receipt: receipt["parity"].update(
+                state_chains="shared"
+            ),
+            "fractional fixture": lambda receipt: receipt[
+                "parity"
+            ]["fractional_motion_stress"].update(
+                motion_fixture="decoded-integer"
+            ),
         }
         for label, mutate in mutations.items():
             with self.subTest(label=label):
@@ -450,6 +633,13 @@ class AdapterStaticTests(unittest.TestCase):
         receipt = self.make_receipt()
         receipt["parity"]["worst_max_abs"] = 0.0
         with self.assertRaisesRegex(ToolError, "worst_max_abs"):
+            validate_receipt_contract(receipt)
+
+        receipt = self.make_receipt()
+        receipt["parity"]["shape_results"][0]["records"][0]["tensors"][
+            "output"
+        ]["p99_9_abs"] = 1.0
+        with self.assertRaisesRegex(ToolError, "p99_9_abs|impossible"):
             validate_receipt_contract(receipt)
 
         receipt = self.make_receipt(skipped=True)
@@ -550,6 +740,30 @@ class AdapterStaticTests(unittest.TestCase):
         contract = runtime_contract_template()
         self.assertEqual(contract["version"], 2)
         self.assertEqual(contract["mode"], "temporal")
+        self.assertEqual(
+            contract["tiling"],
+            {
+                "kind": "temporal-state-atlas-v1",
+                "scale": 4,
+                "halo": 64,
+                "haloDerivation": {
+                    "motionSearchRadius": 8,
+                    "fixedRecurrentRadius": 35,
+                    "minimum": 64,
+                    "alignment": 8,
+                },
+                "largestLogicalBytesPerSourcePixel": 776,
+                "preferredInputExtent": 512,
+                "inputAlignment": 8,
+                "workgroupSize": 8,
+                "stateAtlas": {
+                    "stateCount": 2,
+                    "channelsPerState": 64,
+                    "arrayLayersPerState": 16,
+                    "textureFormat": "rgba32float",
+                },
+            },
+        )
         recurrent = contract["graphs"]["recurrent"]
         self.assertEqual(
             recurrent["inputs"]["motion"]["provider"],
@@ -561,6 +775,107 @@ class AdapterStaticTests(unittest.TestCase):
             recurrent["inputs"]["state_low"]["state"],
             recurrent["outputs"]["next_state_low"]["state"],
         )
+        mixed = runtime_contract_template(MIXED_FP16_PRECISION)
+        self.assertEqual(
+            mixed["tiling"]["largestLogicalBytesPerSourcePixel"],
+            512,
+        )
+        self.assertEqual(
+            mixed["tiling"]["stateAtlas"]["textureFormat"],
+            "rgba16float",
+        )
+        self.assertEqual(
+            mixed["graphs"]["initialize"]["inputs"]["frame"]["dtype"],
+            "float32",
+        )
+        self.assertEqual(
+            mixed["graphs"]["recurrent"]["inputs"]["motion"]["dtype"],
+            "float32",
+        )
+        self.assertEqual(
+            mixed["graphs"]["recurrent"]["inputs"]["state_low"]["dtype"],
+            "float16",
+        )
+        self.assertEqual(
+            mixed["graphs"]["recurrent"]["outputs"]["next_state_high"][
+                "dtype"
+            ],
+            "float16",
+        )
+
+    def test_logical_memory_contract_proves_precision_specific_winner(self):
+        fp32_recurrent = logical_memory_contract(
+            "recurrent",
+            FP32_PRECISION,
+        )
+        self.assertEqual(
+            fp32_recurrent["deform_align_predictor_input"],
+            {
+                "channels": 194,
+                "dtype": "float32",
+                "spatial_scale": 1,
+                "bytes_per_source_pixel": 776,
+            },
+        )
+        self.assertEqual(
+            fp32_recurrent["largest_tensor_kind"],
+            "conv-input",
+        )
+
+        mixed_recurrent = logical_memory_contract(
+            "recurrent",
+            MIXED_FP16_PRECISION,
+        )
+        self.assertEqual(
+            logical_memory_contract(
+                "initializer",
+                MIXED_FP16_PRECISION,
+            )["largest_bytes_per_source_pixel"],
+            192,
+        )
+        self.assertEqual(
+            mixed_recurrent["deform_align_predictor_input"][
+                "bytes_per_source_pixel"
+            ],
+            388,
+        )
+        self.assertEqual(
+            mixed_recurrent["grid_sample_sources"],
+            {
+                "channels": [32, 32, 32, 32, 128],
+                "dtype": "float32",
+                "spatial_scale": 1,
+                "largest_bytes_per_source_pixel": 512,
+            },
+        )
+        self.assertEqual(
+            mixed_recurrent["largest_tensor_kind"],
+            "grid-sample-source",
+        )
+        self.assertEqual(
+            mixed_recurrent["largest_bytes_per_source_pixel"],
+            512,
+        )
+
+        receipt = self.make_receipt(precision=MIXED_FP16_PRECISION)
+        self.assertEqual(
+            temporal_tiling_contract(
+                MIXED_FP16_PRECISION,
+                graph_facts=receipt["graphs"],
+            )["largestLogicalBytesPerSourcePixel"],
+            512,
+        )
+        receipt["graphs"]["recurrent"]["logical_memory"][
+            "largest_bytes_per_source_pixel"
+        ] = 388
+        with self.assertRaisesRegex(
+            ToolError,
+            "logical-memory evidence",
+        ):
+            temporal_tiling_contract(
+                MIXED_FP16_PRECISION,
+                graph_facts=receipt["graphs"],
+            )
 
     def test_dynamic_axes_leave_only_spatial_dimensions_symbolic(self):
         axes = dynamic_axes_for(["frame", "motion"])

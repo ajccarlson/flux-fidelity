@@ -66,9 +66,11 @@ const FIXTURE_ROUTES = Object.freeze(new Map([
   ["/media/bt2020-sdr.webm", ["media/bt2020-sdr.webm", "video/webm"]],
 ]));
 
-function parseArguments(argv) {
+export function parseArguments(argv) {
   let extensionRoot = PROJECT_ROOT;
   let allowNeuralF16Unavailable = false;
+  let neuralModelKey = null;
+  let requireTemporalNeuralRuns = false;
   for (let index = 0; index < argv.length; index++) {
     const argument = argv[index];
     if (argument === "--extension-root") {
@@ -81,9 +83,30 @@ function parseArguments(argv) {
       allowNeuralF16Unavailable = true;
       continue;
     }
+    if (argument === "--neural-model-key") {
+      const value = argv[++index];
+      if (!value || value.startsWith("--")) throw new Error("--neural-model-key requires a key");
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value)) {
+        throw new Error("--neural-model-key is not a valid neural model key");
+      }
+      neuralModelKey = value;
+      continue;
+    }
+    if (argument === "--require-temporal-neural-runs") {
+      requireTemporalNeuralRuns = true;
+      continue;
+    }
     throw new Error(`unknown browser-validation argument: ${argument}`);
   }
-  return Object.freeze({ extensionRoot, allowNeuralF16Unavailable });
+  if (requireTemporalNeuralRuns && !neuralModelKey) {
+    throw new Error("--require-temporal-neural-runs requires --neural-model-key");
+  }
+  return Object.freeze({
+    extensionRoot,
+    allowNeuralF16Unavailable,
+    neuralModelKey,
+    requireTemporalNeuralRuns,
+  });
 }
 
 function abortReason(signal) {
@@ -1868,7 +1891,11 @@ async function runRealVideoIntegration(
   extensionId,
   expectedName,
   signal,
-  { allowNeuralF16Unavailable = false } = {},
+  {
+    allowNeuralF16Unavailable = false,
+    neuralModelKey = null,
+    requireTemporalNeuralRuns = false,
+  } = {},
 ) {
   const fixtureUrl = new URL("video.html", fixtureBase).href;
   const popupUrl = `chrome-extension://${extensionId}/popup.html`;
@@ -2022,6 +2049,22 @@ async function runRealVideoIntegration(
     await waitForBadge(popupPage.client, fixtureTab.id, "ON", signal);
     checkpoint("FSRCNNX force2 presentation");
 
+    if (neuralModelKey) {
+      await sendContentCommand(
+        popupPage.client,
+        "FSRCNNX_SETNEURALMODEL",
+        { model: neuralModelKey },
+        fixtureTab.id,
+      );
+      await waitForStatus(
+        popupPage.client,
+        fixtureTab.id,
+        `Neural model ${neuralModelKey} selection`,
+        (status) => status.neuralModel === neuralModelKey,
+        signal,
+      );
+      checkpoint(`Neural model selection (${neuralModelKey})`);
+    }
     await changePopupControl(popupPage.client, "engine", "neural");
     const neuralIsReady = (status) => {
       const scale = status.neural?.scale;
@@ -2035,6 +2078,8 @@ async function runRealVideoIntegration(
         status.neuralRuntime?.phase === "active" &&
         typeof status.neuralRuntime?.activeModel === "string" &&
         status.neuralRuntime.activeModel.length > 0 &&
+        (!neuralModelKey || status.neuralRuntime.activeModel === neuralModelKey) &&
+        (!requireTemporalNeuralRuns || status.neural?.temporalResetRuns >= 1) &&
         status.neural?.ready === true && status.neural?.model === status.neuralRuntime.activeModel &&
         Number.isInteger(scale) && scale > 0 &&
         status.neural?.n > 0 && status.presentation?.committed === true &&
@@ -2054,6 +2099,7 @@ async function runRealVideoIntegration(
     const neuralFailure = `Neural ONNX activation failed: ${JSON.stringify({
         fallback: neural.status.renderer?.fallback || null,
         runtime: neural.status.neuralRuntime || null,
+        neural: neural.status.neural || null,
       })}`;
     if (!neuralIsReady(neural.status)) {
       requireCondition(
@@ -2092,7 +2138,7 @@ async function runRealVideoIntegration(
       );
       const neuralGeneration = neural.status.presentation.generation;
       const neuralRuns = neural.status.neural.n;
-      await waitForStatus(
+      const neuralProgress = await waitForStatus(
         popupPage.client,
         fixtureTab.id,
         "Neural ONNX frame progression",
@@ -2102,7 +2148,10 @@ async function runRealVideoIntegration(
           status.renderer?.fallback == null && status.neuralRuntime?.phase === "active" &&
           status.presentation?.committed === true &&
           status.presentation.generation >= neuralGeneration + 2 &&
-          status.neural?.n >= neuralRuns + 2,
+          status.neural?.n >= neuralRuns + 2 &&
+          (!requireTemporalNeuralRuns ||
+            (status.neural?.temporalResetRuns >= 1 &&
+              status.neural?.temporalRecurrentRuns >= 2)),
         signal,
       );
       const neuralPixels = await waitForRenderedOverlayPixels(
@@ -2112,7 +2161,13 @@ async function runRealVideoIntegration(
         signal,
       );
       requirePixelProgression(neuralFirstPixels, neuralPixels, "Neural ONNX compositor");
-      checkpoint("Neural ONNX presentation without fallback");
+      checkpoint(
+        requireTemporalNeuralRuns
+          ? "Neural ONNX presentation without fallback " +
+            `(temporal reset=${neuralProgress.status.neural.temporalResetRuns}, ` +
+            `recurrent=${neuralProgress.status.neural.temporalRecurrentRuns})`
+          : "Neural ONNX presentation without fallback",
+      );
     }
 
     await changePopupControl(popupPage.client, "engine", "fsrcnnx");
@@ -2459,7 +2514,11 @@ async function main(signal, options) {
       discovery.extensionId,
       manifest.name,
       signal,
-      { allowNeuralF16Unavailable: options.allowNeuralF16Unavailable },
+      {
+        allowNeuralF16Unavailable: options.allowNeuralF16Unavailable,
+        neuralModelKey: options.neuralModelKey,
+        requireTemporalNeuralRuns: options.requireTemporalNeuralRuns,
+      },
     );
     const webGpu = state.results.find((result) => result.id === "webgpu");
     console.log(

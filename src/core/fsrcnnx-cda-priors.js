@@ -15,6 +15,14 @@ const DEFAULT_BLOCK_SIZE = 16;
 const DEFAULT_SEARCH_RADIUS = 8;
 const DEFAULT_SAMPLE_STRIDE = 4;
 const DEFAULT_HISTORY_FRAMES = 25;
+const DEFAULT_SCENE_SAMPLE_COLUMNS = 64;
+const DEFAULT_SCENE_SAMPLE_ROWS = 36;
+const DEFAULT_SCENE_SAMPLE_DELTA = 0.14;
+const DEFAULT_SCENE_STRONG_HISTOGRAM_DISTANCE = 0.42;
+const DEFAULT_SCENE_HISTOGRAM_DISTANCE = 0.28;
+const DEFAULT_SCENE_MEAN_DISTANCE = 0.18;
+const DEFAULT_SCENE_CHANGED_RATIO = 0.65;
+const DEFAULT_SCENE_STRONG_CHANGED_RATIO = 0.45;
 const MIN_BLOCK_SIZE = 4;
 const MAX_BLOCK_SIZE = 32;
 const MAX_SEARCH_RADIUS = 32;
@@ -32,6 +40,14 @@ function boundedInteger(value, fallback, minimum, maximum, label) {
   const selected = value ?? fallback;
   if (!Number.isInteger(selected) || selected < minimum || selected > maximum) {
     throw new Error(`${label} must be an integer from ${minimum} to ${maximum}`);
+  }
+  return selected;
+}
+
+function boundedNumber(value, fallback, minimum, maximum, label) {
+  const selected = value ?? fallback;
+  if (!Number.isFinite(selected) || selected < minimum || selected > maximum) {
+    throw new Error(`${label} must be a finite number from ${minimum} to ${maximum}`);
   }
   return selected;
 }
@@ -109,6 +125,287 @@ export function planCdaPriorBuffers(width, height, options = {}) {
   });
 }
 
+export function normalizeCdaSceneCutOptions(options = {}) {
+  if (!options || typeof options !== "object" || Array.isArray(options)) {
+    throw new TypeError("CDA scene-cut options must be an object");
+  }
+  return Object.freeze({
+    sampleColumns: boundedInteger(
+      options.sampleColumns,
+      DEFAULT_SCENE_SAMPLE_COLUMNS,
+      4,
+      64,
+      "CDA scene sampleColumns",
+    ),
+    sampleRows: boundedInteger(
+      options.sampleRows,
+      DEFAULT_SCENE_SAMPLE_ROWS,
+      4,
+      64,
+      "CDA scene sampleRows",
+    ),
+    sampleDelta: boundedNumber(
+      options.sampleDelta,
+      DEFAULT_SCENE_SAMPLE_DELTA,
+      0,
+      1,
+      "CDA scene sampleDelta",
+    ),
+    strongHistogramDistance: boundedNumber(
+      options.strongHistogramDistance,
+      DEFAULT_SCENE_STRONG_HISTOGRAM_DISTANCE,
+      0,
+      1,
+      "CDA scene strongHistogramDistance",
+    ),
+    histogramDistance: boundedNumber(
+      options.histogramDistance,
+      DEFAULT_SCENE_HISTOGRAM_DISTANCE,
+      0,
+      1,
+      "CDA scene histogramDistance",
+    ),
+    meanDistance: boundedNumber(
+      options.meanDistance,
+      DEFAULT_SCENE_MEAN_DISTANCE,
+      0,
+      1,
+      "CDA scene meanDistance",
+    ),
+    changedRatio: boundedNumber(
+      options.changedRatio,
+      DEFAULT_SCENE_CHANGED_RATIO,
+      0,
+      1,
+      "CDA scene changedRatio",
+    ),
+    strongChangedRatio: boundedNumber(
+      options.strongChangedRatio,
+      DEFAULT_SCENE_STRONG_CHANGED_RATIO,
+      0,
+      1,
+      "CDA scene strongChangedRatio",
+    ),
+  });
+}
+
+function requireRgbaPixels(pixels, width, height) {
+  positiveSafeInteger(width, "CDA scene width");
+  positiveSafeInteger(height, "CDA scene height");
+  if (!ArrayBuffer.isView(pixels) || pixels.BYTES_PER_ELEMENT !== 1 ||
+      !Number.isSafeInteger(pixels.length)) {
+    throw new TypeError("CDA scene pixels must be an 8-bit typed array");
+  }
+  const required = checkedProduct("CDA scene RGBA bytes", width, height, 4);
+  if (pixels.length < required) {
+    throw new Error(`CDA scene pixels contain ${pixels.length} bytes; expected ${required}`);
+  }
+}
+
+function clampByte(value) {
+  return Math.max(0, Math.min(255, value));
+}
+
+function writeYcbcr(samples, offset, red, green, blue) {
+  samples[offset] = clampByte(
+    (54 * red + 183 * green + 19 * blue + 128) >> 8,
+  );
+  samples[offset + 1] = clampByte(
+    128 + ((-29 * red - 99 * green + 128 * blue + 128) >> 8),
+  );
+  samples[offset + 2] = clampByte(
+    128 + ((128 * red - 116 * green - 12 * blue + 128) >> 8),
+  );
+}
+
+function sceneSampleHash(column, row) {
+  let value = Math.imul(column + 1, 0x9e3779b1) ^
+    Math.imul(row + 1, 0x85ebca77);
+  value ^= value >>> 16;
+  value = Math.imul(value, 0x7feb352d);
+  value ^= value >>> 15;
+  value = Math.imul(value, 0x846ca68b);
+  return (value ^ (value >>> 16)) >>> 0;
+}
+
+function buildSceneSignature(pixels, width, height, options) {
+  requireRgbaPixels(pixels, width, height);
+  const columns = Math.min(width, options.sampleColumns);
+  const rows = Math.min(height, options.sampleRows);
+  const sampleCount = checkedProduct("CDA scene sample count", columns, rows);
+  const samples = new Uint8Array(sampleCount * 3);
+  const histogram = new Uint16Array(8 * 4 * 4);
+  const centralHistogram = new Uint16Array(histogram.length);
+  let centralSamples = 0;
+  let sample = 0;
+  for (let row = 0; row < rows; row++) {
+    const top = Math.floor((row * height) / rows);
+    const bottom = Math.max(top + 1, Math.floor(((row + 1) * height) / rows));
+    for (let column = 0; column < columns; column++) {
+      const left = Math.floor((column * width) / columns);
+      const right = Math.max(left + 1, Math.floor(((column + 1) * width) / columns));
+      const hash = sceneSampleHash(column, row);
+      const x = Math.min(width - 1, left + (hash % (right - left)));
+      const y = Math.min(height - 1, top + ((hash >>> 16) % (bottom - top)));
+      const source = (y * width + x) * 4;
+      const target = sample * 3;
+      const red = pixels[source];
+      const green = pixels[source + 1];
+      const blue = pixels[source + 2];
+      writeYcbcr(samples, target, red, green, blue);
+      const luma = samples[target];
+      const cb = samples[target + 1];
+      const cr = samples[target + 2];
+      const bin = (luma >>> 5) * 16 + (cb >>> 6) * 4 + (cr >>> 6);
+      histogram[bin]++;
+      if (column * 10 >= columns && column * 10 < columns * 9 &&
+          row * 10 >= rows && row * 10 < rows * 9) {
+        centralHistogram[bin]++;
+        centralSamples++;
+      }
+      sample++;
+    }
+  }
+  return Object.freeze({
+    width,
+    height,
+    columns,
+    rows,
+    sampleCount,
+    centralSamples,
+    samples,
+    histogram,
+    centralHistogram,
+  });
+}
+
+function histogramDistance(previous, current, samples) {
+  let delta = 0;
+  for (let index = 0; index < current.length; index++) {
+    delta += Math.abs(current[index] - previous[index]);
+  }
+  return samples > 0 ? delta / (2 * samples) : 0;
+}
+
+function nearBlackNeutral(samples, offset) {
+  return samples[offset] <= 16 &&
+    Math.abs(samples[offset + 1] - 128) <= 12 &&
+    Math.abs(samples[offset + 2] - 128) <= 12;
+}
+
+function compareSceneSignatures(previous, current, options) {
+  if (previous.width !== current.width || previous.height !== current.height ||
+      previous.columns !== current.columns || previous.rows !== current.rows ||
+      previous.sampleCount !== current.sampleCount) {
+    throw new Error("CDA scene signatures are not comparable");
+  }
+  let sampleDelta = 0;
+  let changedSamples = 0;
+  let relevantSamples = 0;
+  for (let sample = 0; sample < current.sampleCount; sample++) {
+    const offset = sample * 3;
+    if (nearBlackNeutral(previous.samples, offset) &&
+        nearBlackNeutral(current.samples, offset)) {
+      continue;
+    }
+    const luma = Math.abs(current.samples[offset] - previous.samples[offset]) / 255;
+    const cb = Math.abs(current.samples[offset + 1] - previous.samples[offset + 1]) / 255;
+    const cr = Math.abs(current.samples[offset + 2] - previous.samples[offset + 2]) / 255;
+    const delta = (2 * luma + cb + cr) / 4;
+    sampleDelta += delta;
+    if (delta >= options.sampleDelta) changedSamples++;
+    relevantSamples++;
+  }
+  const globalHistogramDistance = histogramDistance(
+    previous.histogram,
+    current.histogram,
+    current.sampleCount,
+  );
+  const centralHistogramDistance = histogramDistance(
+    previous.centralHistogram,
+    current.centralHistogram,
+    current.centralSamples,
+  );
+  const meanDistance = relevantSamples ? sampleDelta / relevantSamples : 0;
+  const changedRatio = relevantSamples ? changedSamples / relevantSamples : 0;
+  const strongestHistogram = Math.max(
+    globalHistogramDistance,
+    centralHistogramDistance,
+  );
+  const strongCut =
+    globalHistogramDistance >= options.strongHistogramDistance &&
+    changedRatio >= options.strongChangedRatio;
+  const balancedCut =
+    globalHistogramDistance >= options.histogramDistance / 4 &&
+    strongestHistogram >= options.histogramDistance &&
+    meanDistance >= options.meanDistance &&
+    changedRatio >= options.changedRatio;
+  return Object.freeze({
+    sceneCut: strongCut || balancedCut,
+    histogramDistance: globalHistogramDistance,
+    centralHistogramDistance,
+    meanDistance,
+    changedRatio,
+    changedSamples,
+    relevantSamples,
+    sampleCount: current.sampleCount,
+  });
+}
+
+// Uses the child-owned RGBA staging bytes that already feed WebGPU. Work and
+// retained memory are fixed by the sample grid, independent of source size.
+// Candidates are committed only after the corresponding output is published,
+// keeping detection history aligned with recurrent model state after failures.
+export class CdaSceneCutDetector {
+  constructor(options = {}) {
+    this.options = normalizeCdaSceneCutOptions(options);
+    this.previous = null;
+    this.candidates = new WeakMap();
+  }
+
+  reset() {
+    this.previous = null;
+    this.candidates = new WeakMap();
+  }
+
+  prepare(pixels, width, height, { reset = false } = {}) {
+    if (typeof reset !== "boolean") {
+      throw new TypeError("CDA scene reset must be a boolean");
+    }
+    const signature = buildSceneSignature(pixels, width, height, this.options);
+    const comparable = !reset && this.previous &&
+      this.previous.width === width && this.previous.height === height;
+    const result = comparable
+      ? compareSceneSignatures(this.previous, signature, this.options)
+      : Object.freeze({
+        sceneCut: false,
+        histogramDistance: 0,
+        centralHistogramDistance: 0,
+        meanDistance: 0,
+        changedRatio: 0,
+        changedSamples: 0,
+        relevantSamples: signature.sampleCount,
+        sampleCount: signature.sampleCount,
+      });
+    const candidate = Object.freeze({ ...result, reset });
+    this.candidates.set(candidate, signature);
+    return candidate;
+  }
+
+  commit(candidate) {
+    const signature = this.candidates.get(candidate);
+    if (!signature) throw new Error("CDA scene candidate is unknown or already consumed");
+    this.candidates.delete(candidate);
+    this.previous = signature;
+  }
+
+  discard(candidate) {
+    if (!this.candidates.delete(candidate)) {
+      throw new Error("CDA scene candidate is unknown or already consumed");
+    }
+  }
+}
+
 function safeSourceKey(value) {
   if (value == null) return "";
   const text = String(value);
@@ -141,6 +438,15 @@ export class CdaTemporalTracker {
     this.lastResetReason = String(reason || "explicit").slice(0, 80);
   }
 
+  rebase(reason = "scene-cut") {
+    if (!this.initialized) {
+      this.reset(reason);
+      return;
+    }
+    this.framesSinceReset = 0;
+    this.lastResetReason = String(reason || "scene-cut").slice(0, 80);
+  }
+
   observe({
     mediaTime,
     presentedFrames,
@@ -148,6 +454,7 @@ export class CdaTemporalTracker {
     height,
     sourceKey = "",
     forceReset = false,
+    forceResetReason = "explicit",
   } = {}) {
     positiveSafeInteger(width, "CDA frame width");
     positiveSafeInteger(height, "CDA frame height");
@@ -159,7 +466,7 @@ export class CdaTemporalTracker {
     }
     const nextSourceKey = safeSourceKey(sourceKey);
     let reason = null;
-    if (forceReset) reason = "explicit";
+    if (forceReset) reason = String(forceResetReason || "explicit").slice(0, 80);
     else if (!this.initialized) reason = this.lastResetReason || "initial";
     else if (width !== this.width || height !== this.height) reason = "dimensions";
     else if (nextSourceKey !== this.sourceKey) reason = "source";

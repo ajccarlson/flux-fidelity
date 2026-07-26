@@ -647,6 +647,7 @@ test("extension-frame session supplies decoded CDA priors and temporal resets to
   const modelTexture = texture("cda-model-output", []);
   const engineRuns = [];
   let failNextRun = false;
+  let sceneCutNext = false;
   let ready = false;
   const contract = {
     version: 2,
@@ -683,6 +684,8 @@ test("extension-frame session supplies decoded CDA priors and temporal resets to
     async invalidateDevice() { ready = false; },
   };
   const priorCalls = [];
+  const sceneCandidates = [];
+  const sceneCommits = [];
   const priorGenerator = {
     generate(source, width, height, options) {
       priorCalls.push({ source, width, height, options });
@@ -715,6 +718,23 @@ test("extension-frame session supplies decoded CDA priors and temporal resets to
       this.initialized = false;
       this.lastResetReason = reason;
     }
+    rebase(reason) {
+      this.initialized = true;
+      this.lastResetReason = reason;
+    }
+  }
+  class FakeSceneCutDetector {
+    prepare(_pixels, _width, _height, { reset = false } = {}) {
+      const sceneCut = !reset && sceneCutNext;
+      sceneCutNext = false;
+      const candidate = Object.freeze({
+        id: sceneCandidates.length + 1,
+        sceneCut,
+      });
+      sceneCandidates.push(candidate);
+      return candidate;
+    }
+    commit(candidate) { sceneCommits.push(candidate.id); }
   }
   const context = {
     configure() {},
@@ -729,7 +749,7 @@ test("extension-frame session supplies decoded CDA priors and temporal resets to
       return context;
     },
   };
-  const inputs = [1, 2, 3].map((id) => ({
+  const inputs = [1, 2, 3, 4].map((id) => ({
     id,
     width: 2,
     height: 2,
@@ -738,7 +758,7 @@ test("extension-frame session supplies decoded CDA priors and temporal resets to
     closes: 0,
     close() { this.closes++; },
   }));
-  const outputs = [1, 2].map((id) => ({
+  const outputs = [1, 2, 3].map((id) => ({
     id: `output-${id}`,
     width: 2,
     height: 2,
@@ -755,6 +775,7 @@ test("extension-frame session supplies decoded CDA priors and temporal resets to
         return priorGenerator;
       },
       CdaTemporalTracker: FakeTemporalTracker,
+      CdaSceneCutDetector: FakeSceneCutDetector,
     }),
     gpu: { getPreferredCanvasFormat: () => "bgra8unorm" },
     textureUsage: {
@@ -792,12 +813,26 @@ test("extension-frame session supplies decoded CDA priors and temporal resets to
     srcH: 2,
     temporal: { mediaTime: 1.08, presentedFrames: 12 },
   });
+  sceneCutNext = true;
+  const sceneCut = await session.handle("run", {
+    bitmap: inputs[3],
+    srcW: 2,
+    srcH: 2,
+    temporal: { mediaTime: 1.12, presentedFrames: 13 },
+  });
 
   assert.deepEqual(priorCalls.map(({ options }) => options), [
     { reset: true },
     { reset: false },
     { reset: true },
+    { reset: true },
   ]);
+  assert.equal(sceneCandidates.length, 4);
+  assert.deepEqual(
+    sceneCommits,
+    [1, 3, 4],
+    "the failed frame must not advance the committed scene baseline",
+  );
   assert.equal(engineRuns[0].options.reset, true);
   assert.equal(engineRuns[0].options.temporal.resetReason, "initial");
   assert.equal(engineRuns[1].options.reset, false);
@@ -806,6 +841,8 @@ test("extension-frame session supplies decoded CDA priors and temporal resets to
     engineRuns[2].options.temporal.resetReason,
     "previous-run-failed",
   );
+  assert.equal(engineRuns[3].options.reset, true);
+  assert.equal(engineRuns[3].options.temporal.resetReason, "scene-cut");
   for (const run of engineRuns) {
     assert.equal(run.options.auxiliary.motion.provider, "decoded-cda-v1");
     assert.deepEqual(run.options.auxiliary.motion.dims, [1, 2, 2, 2]);
@@ -816,11 +853,21 @@ test("extension-frame session supplies decoded CDA priors and temporal resets to
   assert.equal(first.stats.cdaPriorResets, 1);
   assert.equal(recovered.stats.cdaPriorRuns, 3);
   assert.equal(recovered.stats.cdaPriorResets, 2);
+  assert.equal(recovered.stats.cdaSceneCuts, 0);
   assert.deepEqual(recovered.temporal, {
     mediaTime: 1.08,
     presentedFrames: 12,
     reset: true,
     resetReason: "previous-run-failed",
+  });
+  assert.equal(sceneCut.stats.cdaPriorRuns, 4);
+  assert.equal(sceneCut.stats.cdaPriorResets, 3);
+  assert.equal(sceneCut.stats.cdaSceneCuts, 1);
+  assert.deepEqual(sceneCut.temporal, {
+    mediaTime: 1.12,
+    presentedFrames: 13,
+    reset: true,
+    resetReason: "scene-cut",
   });
   await session.dispose();
   assert.equal(priorGenerator.disposeCalls, 1);
