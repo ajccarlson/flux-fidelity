@@ -40,6 +40,22 @@ test("three sustained dropped-frame windows trigger one sticky fallback signal",
   assert.match(state.triggered.detail, /persisted across 3 observation windows/);
 });
 
+test("sustained renderer skips contribute to fallback pressure", () => {
+  const guard = new PlaybackPerformanceGuard({
+    windowMs: 1000,
+    minFrames: 10,
+    dropRatio: 0.2,
+  });
+  for (let index = 1; index <= 36; index++) {
+    guard.observeFrame({ now: index * 100 });
+    if (index % 3 === 0) guard.observeRendererSkip();
+  }
+  const state = guard.snapshot();
+  assert.equal(state.triggered.code, "sustained-frame-drops");
+  assert.ok(state.triggered.evidence.rendererSkips > 0);
+  assert.ok(state.triggered.evidence.dropRatio >= 0.2);
+});
+
 test("GPU backlog requires consecutive slow samples and uses frame cadence", () => {
   const guard = new PlaybackPerformanceGuard({
     backlogThresholdMs: 100,

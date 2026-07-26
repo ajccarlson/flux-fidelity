@@ -99,6 +99,20 @@ function bitmap() {
   return { width: 100, height: 100, closed: false, close() { this.closed = true; } };
 }
 
+test("image dimensions have no fixed pixel-area ceiling below the adapter limit", async () => {
+  const warnings = [], errors = [];
+  const up = makeUpscaler([], { warnings, errors });
+
+  assert.equal(up._dimensionsAllowed(4096, 2500, 8192, 5000, true), true,
+    "an x2 output above the former 8K-area budget remains adapter-valid");
+  assert.equal(up._dimensionsAllowed(4097, 2500, 8194, 5000, true), false,
+    "the adapter's per-axis texture limit still applies");
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].code, "limits");
+  assert.match(errors[0].message, /8192px per edge/);
+  await up.destroy();
+});
+
 test("disable and re-enable resets one-shot processed state", async (t) => {
   const img = new FakeImageElement("https://example.test/a.png");
   const cleanup = installDom([img]); t.after(cleanup);

@@ -128,6 +128,7 @@ function popupDocument() {
     ["hover-reveal", ""],
     ["all-videos", ""],
     ["idle-power-saving", ""],
+    ["auto-quality-fallback", ""],
     ["images", ""],
     ["interpolate", ""],
     ["interp-avoff", "0"],
@@ -140,7 +141,7 @@ function popupDocument() {
   document.getElementById("ssimds").checked = true;
   document.getElementById("interp-diag").checked = true;
   document.getElementById("interp-invert").checked = true;
-  document.getElementById("interp-autofallback").checked = true;
+  document.getElementById("interp-autofallback").checked = false;
 
   const placeholder = document.createElement("option");
   placeholder.value = "";
@@ -185,9 +186,10 @@ function readyStatus(overrides = {}) {
     hasVideo: true,
     hoverReveal: false,
     idlePowerSaving: false,
+    autoQualityFallback: false,
     imageCount: 0,
     images: false,
-    interpAutoFallback: true,
+    interpAutoFallback: false,
     interpAvOffsetMs: 0,
     interpInvert: true,
     interpLadder: false,
@@ -874,6 +876,35 @@ test("failed commands roll focused controls back from authoritative status and k
   await controller.refresh();
   assert.equal(document.getElementById("operation-status").textContent, "That setting is not valid.");
   assert.equal(document.getElementById("operation-status").dataset.tone, "error");
+  controller.stop();
+});
+
+test("automatic quality fallback is off by default and sends an explicit opt-in command", async () => {
+  let enabled = false;
+  const messages = [];
+  const transport = {
+    async send(type, payload = {}) {
+      messages.push([type, payload]);
+      if (type === "FSRCNNX_SETAUTOQUALITYFALLBACK") {
+        enabled = payload.on;
+        return { ok: true, autoQualityFallback: enabled };
+      }
+      return readyStatus({ autoQualityFallback: enabled });
+    },
+  };
+  const { controller, document } = controllerHarness({ transport });
+  controller.start();
+  await flush();
+
+  const toggle = document.getElementById("auto-quality-fallback");
+  assert.equal(toggle.checked, false);
+  toggle.checked = true;
+  toggle.emit("change");
+  await flush(16);
+
+  assert.ok(messages.some(([type, payload]) =>
+    type === "FSRCNNX_SETAUTOQUALITYFALLBACK" && payload.on === true));
+  assert.equal(toggle.checked, true);
   controller.stop();
 });
 

@@ -12,22 +12,93 @@ import {
 
 const FMT = "rgba16float";
 
-// Direct Catmull-Rom integration grows with the source/output ratio. These limits
-// keep a transient tiny display target from turning one frame into an enormous
-// fragment-shader loop. Callers need no special fallback: run() returns the input
-// texture when prepare() elects to bypass, so their normal final blit performs the
-// downscale instead.
+// Direct Catmull-Rom integration grows with the source/output ratio. These are
+// per-pass bounds, not source-resolution or total-work ceilings: ratios that
+// exceed them use a logarithmic sequence of bounded separable moment passes.
 export const SSIMDS_WORK_BUDGET = Object.freeze({
   maxAxisTaps: 129,
   maxMeanTapsPerPixel: 4096,
-  maxEstimatedTextureSamples: 512_000_000,
 });
+const SSIMDS_MAX_STAGE_RATIO = (SSIMDS_WORK_BUDGET.maxAxisTaps - 1) / 4;
 
 function requireDimension(value, label) {
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new RangeError(`${label} must be a positive safe integer`);
   }
   return value;
+}
+
+function checkedProduct(values, label) {
+  let result = 1;
+  for (const value of values) {
+    if (!Number.isSafeInteger(value) || value <= 0 ||
+        result > Number.MAX_SAFE_INTEGER / value) {
+      throw new RangeError(`${label} exceeds safe integer arithmetic`);
+    }
+    result *= value;
+  }
+  return result;
+}
+
+function checkedSum(values, label) {
+  let result = 0;
+  for (const value of values) {
+    if (!Number.isSafeInteger(value) || value < 0 ||
+        result > Number.MAX_SAFE_INTEGER - value) {
+      throw new RangeError(`${label} exceeds safe integer arithmetic`);
+    }
+    result += value;
+  }
+  return result;
+}
+
+function tapCount(ratio, label) {
+  const scaled = ratio * 4;
+  const taps = Math.ceil(scaled) + 1;
+  if (!Number.isFinite(ratio) || ratio < 1 ||
+      !Number.isSafeInteger(taps) || taps <= 0) {
+    throw new RangeError(`${label} tap count exceeds safe integer arithmetic`);
+  }
+  return taps;
+}
+
+function buildMomentStages(hiW, hiH, dW, dH) {
+  const stages = [];
+  let inputWidth = hiW;
+  let inputHeight = hiH;
+  while (inputWidth !== dW || inputHeight !== dH) {
+    const outputWidth = inputWidth / dW <= SSIMDS_MAX_STAGE_RATIO
+      ? dW
+      : Math.ceil(inputWidth / SSIMDS_MAX_STAGE_RATIO);
+    const outputHeight = inputHeight / dH <= SSIMDS_MAX_STAGE_RATIO
+      ? dH
+      : Math.ceil(inputHeight / SSIMDS_MAX_STAGE_RATIO);
+    if (outputWidth > inputWidth || outputHeight > inputHeight ||
+        (outputWidth === inputWidth && outputHeight === inputHeight)) {
+      throw new RangeError("SSimDownscaler could not construct a bounded moment plan");
+    }
+    const ratioX = inputWidth / outputWidth;
+    const ratioY = inputHeight / outputHeight;
+    const tapsX = tapCount(ratioX, "horizontal stage");
+    const tapsY = tapCount(ratioY, "vertical stage");
+    if (tapsX > SSIMDS_WORK_BUDGET.maxAxisTaps ||
+        tapsY > SSIMDS_WORK_BUDGET.maxAxisTaps) {
+      throw new RangeError("SSimDownscaler moment stage exceeds its per-pass tap bound");
+    }
+    stages.push(Object.freeze({
+      inputWidth,
+      inputHeight,
+      outputWidth,
+      outputHeight,
+      ratioX,
+      ratioY,
+      tapsX,
+      tapsY,
+    }));
+    inputWidth = outputWidth;
+    inputHeight = outputHeight;
+  }
+  return Object.freeze(stages);
 }
 
 // Pure estimator exported for deterministic tests and diagnostics. Tap counts are
@@ -42,36 +113,54 @@ export function estimateSsimWork(hiW, hiH, dW, dH) {
   }
 
   const ratioX = hiW / dW, ratioY = hiH / dH;
-  const tapsX = Math.ceil(4 * ratioX) + 1;
-  const tapsY = Math.ceil(4 * ratioY) + 1;
-  const meanTapsPerPixel = tapsX * tapsY;
-  const outputPixels = dW * dH;
-  const terms = [
-    outputPixels * meanTapsPerPixel, // mean pass
-    hiW * dH * tapsY,               // vertical L2 pass
-    outputPixels * tapsX,           // horizontal L2 pass
-    outputPixels * 28,              // MR (18 reads) + final (10 reads)
+  const tapsX = tapCount(ratioX, "horizontal direct pass");
+  const tapsY = tapCount(ratioY, "vertical direct pass");
+  const meanTapsPerPixel = checkedProduct([tapsX, tapsY], "mean taps per pixel");
+  const outputPixels = checkedProduct([dW, dH], "SSimDownscaler output area");
+  const directTerms = [
+    checkedProduct([outputPixels, meanTapsPerPixel], "direct mean samples"),
+    checkedProduct([hiW, dH, tapsY], "direct vertical second-moment samples"),
+    checkedProduct([outputPixels, tapsX], "direct horizontal second-moment samples"),
+    checkedProduct([outputPixels, 28], "SSimDownscaler reconstruction samples"),
   ];
-  const estimatedTextureSamples = terms.reduce((sum, term) => sum + term, 0);
-  const reasons = [];
-  if (![tapsX, tapsY, meanTapsPerPixel, outputPixels, ...terms, estimatedTextureSamples]
-    .every(Number.isSafeInteger)) {
-    reasons.push("work estimate exceeds safe integer arithmetic");
-  }
-  if (tapsX > SSIMDS_WORK_BUDGET.maxAxisTaps || tapsY > SSIMDS_WORK_BUDGET.maxAxisTaps) {
-    reasons.push(`axis taps exceed ${SSIMDS_WORK_BUDGET.maxAxisTaps}`);
-  }
-  if (meanTapsPerPixel > SSIMDS_WORK_BUDGET.maxMeanTapsPerPixel) {
-    reasons.push(`mean taps per pixel exceed ${SSIMDS_WORK_BUDGET.maxMeanTapsPerPixel}`);
-  }
-  if (estimatedTextureSamples > SSIMDS_WORK_BUDGET.maxEstimatedTextureSamples) {
-    reasons.push(`estimated texture samples exceed ${SSIMDS_WORK_BUDGET.maxEstimatedTextureSamples}`);
-  }
+  const directEstimatedTextureSamples = checkedSum(
+    directTerms,
+    "direct SSimDownscaler sample estimate",
+  );
+  const direct = tapsX <= SSIMDS_WORK_BUDGET.maxAxisTaps &&
+    tapsY <= SSIMDS_WORK_BUDGET.maxAxisTaps &&
+    meanTapsPerPixel <= SSIMDS_WORK_BUDGET.maxMeanTapsPerPixel;
+  const stages = direct ? Object.freeze([]) : buildMomentStages(hiW, hiH, dW, dH);
+  const progressiveTerms = stages.flatMap((stage) => {
+    const verticalPixels = checkedProduct(
+      [stage.inputWidth, stage.outputHeight],
+      "moment-stage vertical area",
+    );
+    const horizontalPixels = checkedProduct(
+      [stage.outputWidth, stage.outputHeight],
+      "moment-stage horizontal area",
+    );
+    const oneMoment = checkedSum([
+      checkedProduct([verticalPixels, stage.tapsY], "moment-stage vertical samples"),
+      checkedProduct([horizontalPixels, stage.tapsX], "moment-stage horizontal samples"),
+    ], "moment-stage samples");
+    return [checkedProduct([oneMoment, 2], "two-moment stage samples")];
+  });
+  const estimatedTextureSamples = direct
+    ? directEstimatedTextureSamples
+    : checkedSum([
+      ...progressiveTerms,
+      checkedProduct([outputPixels, 28], "SSimDownscaler reconstruction samples"),
+    ], "multistage SSimDownscaler sample estimate");
   return {
     hiW, hiH, dW, dH, ratioX, ratioY, tapsX, tapsY, meanTapsPerPixel,
+    directEstimatedTextureSamples,
     estimatedTextureSamples,
-    allowed: reasons.length === 0,
-    reason: reasons.join("; ") || null,
+    direct,
+    path: direct ? "direct" : "multistage",
+    stages,
+    allowed: true,
+    reason: null,
   };
 }
 
@@ -83,7 +172,7 @@ export class SsimDownscaler {
     this.pipelines = null;
     this.textures = null;
     this.bindGroups = null;
-    this.bypassed = false;
+    this.path = null;
     this.lastPlan = null;
   }
 
@@ -106,95 +195,179 @@ export class SsimDownscaler {
 
   // (Re)build for a given hi-res input and display target.
   prepare(hiW, hiH, dW, dH, hiTex) {
-    const plan = estimateSsimWork(hiW, hiH, dW, dH);
     if (!hiTex || typeof hiTex.createView !== "function") {
       throw new TypeError("hiTex must be a GPU texture");
+    }
+    for (const [value, label] of [
+      [hiW, "hiW"], [hiH, "hiH"], [dW, "dW"], [dH, "dH"],
+    ]) {
+      requireDimension(value, label);
+    }
+    if (dW > hiW || dH > hiH) {
+      throw new RangeError("SSimDownscaler only accepts output dimensions no larger than its input");
     }
     const maxDim = Number(this.device?.limits?.maxTextureDimension2D);
     if (Number.isFinite(maxDim) && maxDim > 0 &&
         [hiW, hiH, dW, dH].some((dimension) => dimension > maxDim)) {
       throw new RangeError(`SSimDownscaler dimensions exceed device limit ${maxDim}`);
     }
+    const plan = estimateSsimWork(hiW, hiH, dW, dH);
 
     const sizesSame = hiW === this.hiW && hiH === this.hiH && dW === this.dW && dH === this.dH;
-    if (sizesSame && this.hiTex === hiTex && this.bindGroups && !this.bypassed) return true;
-
-    if (!plan.allowed) {
-      const oldTextures = this.textures;
-      this.lastPlan = plan;
-      this.hiW = hiW; this.hiH = hiH; this.dW = dW; this.dH = dH; this.hiTex = hiTex;
-      this.bypassed = true;
-      this.pipelines = null;
-      this.textures = null;
-      this.bindGroups = null;
-      destroyTextureSet(oldTextures);
-      return false;
-    }
+    if (sizesSame && this.hiTex === hiTex && this.bindGroups) return true;
 
     const { ratioX, ratioY } = plan;
-    const replaceOwned = !sizesSame || !this.pipelines || !this.textures || this.bypassed;
+    const replaceOwned = !sizesSame || !this.pipelines || !this.textures ||
+      this.path !== plan.path;
     let candidatePipelines = this.pipelines;
     let candidateTextures = this.textures;
     const createdTextures = [];
     try {
       if (replaceOwned) {
-        candidatePipelines = {
-          mean: this._renderPipeline(buildMeanShader(ratioX, ratioY)),
-          l2v: this._renderPipeline(buildL2Shader(1, ratioY)), // vertical, squares input
-          l2h: this._renderPipeline(buildL2Shader(0, ratioX)), // horizontal
-          mr: this._renderPipeline(SSIMDS_MR_WGSL),
-          final: this._renderPipeline(SSIMDS_FINAL_WGSL),
-        };
         const makeTexture = (w, h, label) => {
           const texture = this._tex(w, h, label);
           createdTextures.push(texture);
           return texture;
         };
-        candidateTextures = {
-          mean: makeTexture(dW, dH, "ssimds-mean"),
-          l2v: makeTexture(hiW, dH, "ssimds-l2v"),
-          l2: makeTexture(dW, dH, "ssimds-l2"),
-          mr: makeTexture(dW, dH, "ssimds-mr"),
-          out: makeTexture(dW, dH, "ssimds-out"),
-        };
+        if (plan.path === "direct") {
+          candidatePipelines = {
+            mean: this._renderPipeline(buildMeanShader(ratioX, ratioY)),
+            l2v: this._renderPipeline(buildL2Shader(1, ratioY)), // vertical, squares input
+            l2h: this._renderPipeline(buildL2Shader(0, ratioX)), // horizontal
+            mr: this._renderPipeline(SSIMDS_MR_WGSL),
+            final: this._renderPipeline(SSIMDS_FINAL_WGSL),
+          };
+          candidateTextures = {
+            mean: makeTexture(dW, dH, "ssimds-mean"),
+            l2v: makeTexture(hiW, dH, "ssimds-l2v"),
+            l2: makeTexture(dW, dH, "ssimds-l2"),
+            mr: makeTexture(dW, dH, "ssimds-mr"),
+            out: makeTexture(dW, dH, "ssimds-out"),
+          };
+        } else {
+          candidatePipelines = {
+            stages: plan.stages.map((stage, index) => {
+              const verticalMean = this._renderPipeline(
+                buildL2Shader(1, stage.ratioY, false),
+              );
+              const verticalL2 = index === 0
+                ? this._renderPipeline(buildL2Shader(1, stage.ratioY, true))
+                : verticalMean;
+              return {
+                verticalMean,
+                verticalL2,
+                horizontal: this._renderPipeline(
+                  buildL2Shader(0, stage.ratioX, false),
+                ),
+              };
+            }),
+            mr: this._renderPipeline(SSIMDS_MR_WGSL),
+            final: this._renderPipeline(SSIMDS_FINAL_WGSL),
+          };
+          candidateTextures = {
+            stages: plan.stages.map((stage, index) => ({
+              vertical: makeTexture(
+                stage.inputWidth,
+                stage.outputHeight,
+                `ssimds-moment-v-${index}`,
+              ),
+              mean: makeTexture(
+                stage.outputWidth,
+                stage.outputHeight,
+                `ssimds-mean-${index}`,
+              ),
+              l2: makeTexture(
+                stage.outputWidth,
+                stage.outputHeight,
+                `ssimds-l2-${index}`,
+              ),
+            })),
+            mr: makeTexture(dW, dH, "ssimds-mr"),
+            out: makeTexture(dW, dH, "ssimds-out"),
+          };
+        }
       }
 
       const s = this.sampler;
       const bg = (pipe, entries) =>
         this.device.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries });
-      const candidateBindGroups = {
-        mean: bg(candidatePipelines.mean, [
-          { binding: 0, resource: s }, { binding: 1, resource: hiTex.createView() },
-        ]),
-        l2v: bg(candidatePipelines.l2v, [
-          { binding: 0, resource: s }, { binding: 1, resource: hiTex.createView() },
-        ]),
-        l2h: bg(candidatePipelines.l2h, [
-          { binding: 0, resource: s }, { binding: 1, resource: candidateTextures.l2v.createView() },
-        ]),
-        mr: bg(candidatePipelines.mr, [
-          { binding: 0, resource: s },
-          { binding: 1, resource: candidateTextures.mean.createView() },
-          { binding: 2, resource: candidateTextures.l2.createView() },
-        ]),
-        final: bg(candidatePipelines.final, [
-          { binding: 0, resource: s },
-          { binding: 1, resource: candidateTextures.mean.createView() },
-          { binding: 2, resource: candidateTextures.mr.createView() },
-        ]),
-      };
+      let candidateBindGroups;
+      if (plan.path === "direct") {
+        candidateBindGroups = {
+          mean: bg(candidatePipelines.mean, [
+            { binding: 0, resource: s }, { binding: 1, resource: hiTex.createView() },
+          ]),
+          l2v: bg(candidatePipelines.l2v, [
+            { binding: 0, resource: s }, { binding: 1, resource: hiTex.createView() },
+          ]),
+          l2h: bg(candidatePipelines.l2h, [
+            { binding: 0, resource: s }, { binding: 1, resource: candidateTextures.l2v.createView() },
+          ]),
+          mr: bg(candidatePipelines.mr, [
+            { binding: 0, resource: s },
+            { binding: 1, resource: candidateTextures.mean.createView() },
+            { binding: 2, resource: candidateTextures.l2.createView() },
+          ]),
+          final: bg(candidatePipelines.final, [
+            { binding: 0, resource: s },
+            { binding: 1, resource: candidateTextures.mean.createView() },
+            { binding: 2, resource: candidateTextures.mr.createView() },
+          ]),
+        };
+      } else {
+        let meanSource = hiTex;
+        let l2Source = hiTex;
+        const stageBindGroups = plan.stages.map((stage, index) => {
+          const pipes = candidatePipelines.stages[index];
+          const textures = candidateTextures.stages[index];
+          const groups = {
+            verticalMean: bg(pipes.verticalMean, [
+              { binding: 0, resource: s },
+              { binding: 1, resource: meanSource.createView() },
+            ]),
+            horizontalMean: bg(pipes.horizontal, [
+              { binding: 0, resource: s },
+              { binding: 1, resource: textures.vertical.createView() },
+            ]),
+            verticalL2: bg(pipes.verticalL2, [
+              { binding: 0, resource: s },
+              { binding: 1, resource: l2Source.createView() },
+            ]),
+            horizontalL2: bg(pipes.horizontal, [
+              { binding: 0, resource: s },
+              { binding: 1, resource: textures.vertical.createView() },
+            ]),
+          };
+          meanSource = textures.mean;
+          l2Source = textures.l2;
+          return groups;
+        });
+        candidateBindGroups = {
+          stages: stageBindGroups,
+          mr: bg(candidatePipelines.mr, [
+            { binding: 0, resource: s },
+            { binding: 1, resource: meanSource.createView() },
+            { binding: 2, resource: l2Source.createView() },
+          ]),
+          final: bg(candidatePipelines.final, [
+            { binding: 0, resource: s },
+            { binding: 1, resource: meanSource.createView() },
+            { binding: 2, resource: candidateTextures.mr.createView() },
+          ]),
+        };
+      }
 
       const oldTextures = this.textures;
       this.lastPlan = plan;
       this.hiW = hiW; this.hiH = hiH; this.dW = dW; this.dH = dH; this.hiTex = hiTex;
-      this.bypassed = false;
+      this.path = plan.path;
       this.pipelines = candidatePipelines;
       this.textures = candidateTextures;
       this.bindGroups = candidateBindGroups;
       if (replaceOwned) destroyTextureSet(oldTextures);
       return true;
     } catch (error) {
-      destroyTextureSet(Object.fromEntries(createdTextures.map((texture, index) => [index, texture])));
+      destroyTextureSet(createdTextures);
       throw error;
     }
   }
@@ -211,17 +384,32 @@ export class SsimDownscaler {
 
   // Records the chain into `enc`. Returns the output texture (display-res RGB).
   run(enc, hiTex) {
-    // Budget bypass contract: return the original texture without recording work.
-    // Existing callers subsequently sample it into their display-sized target.
-    if (this.bypassed) return hiTex;
     if (!this.pipelines || !this.textures || !this.bindGroups || this.hiTex !== hiTex) {
       throw new Error("SSimDownscaler.run requires a successful prepare for the same input texture");
     }
-    this._pass(enc, this.pipelines.mean, this.bindGroups.mean, this.textures.mean);
-    this._pass(enc, this.pipelines.l2v, this.bindGroups.l2v, this.textures.l2v);
-    this._pass(enc, this.pipelines.l2h, this.bindGroups.l2h, this.textures.l2);
+    let meanTexture;
+    if (this.path === "direct") {
+      this._pass(enc, this.pipelines.mean, this.bindGroups.mean, this.textures.mean);
+      this._pass(enc, this.pipelines.l2v, this.bindGroups.l2v, this.textures.l2v);
+      this._pass(enc, this.pipelines.l2h, this.bindGroups.l2h, this.textures.l2);
+      meanTexture = this.textures.mean;
+    } else if (this.path === "multistage") {
+      for (let index = 0; index < this.lastPlan.stages.length; index++) {
+        const pipes = this.pipelines.stages[index];
+        const textures = this.textures.stages[index];
+        const groups = this.bindGroups.stages[index];
+        this._pass(enc, pipes.verticalMean, groups.verticalMean, textures.vertical);
+        this._pass(enc, pipes.horizontal, groups.horizontalMean, textures.mean);
+        this._pass(enc, pipes.verticalL2, groups.verticalL2, textures.vertical);
+        this._pass(enc, pipes.horizontal, groups.horizontalL2, textures.l2);
+      }
+      meanTexture = this.textures.stages.at(-1)?.mean || null;
+    } else {
+      throw new Error("SSimDownscaler has no prepared execution path");
+    }
     this._pass(enc, this.pipelines.mr, this.bindGroups.mr, this.textures.mr);
     this._pass(enc, this.pipelines.final, this.bindGroups.final, this.textures.out);
+    if (!meanTexture) throw new Error("SSimDownscaler prepared no mean texture");
     return this.textures.out;
   }
 
@@ -235,14 +423,31 @@ export class SsimDownscaler {
     this.pipelines = null;
     this.hiTex = null;
     this.hiW = 0; this.hiH = 0; this.dW = 0; this.dH = 0;
-    this.bypassed = false;
+    this.path = null;
     this.lastPlan = null;
   }
 }
 
 function destroyTextureSet(textures) {
   if (!textures) return;
-  for (const texture of new Set(Object.values(textures))) {
+  const found = new Set();
+  const visited = new Set();
+  const visit = (value) => {
+    if (!value || (typeof value !== "object" && typeof value !== "function") ||
+        visited.has(value)) return;
+    visited.add(value);
+    if (typeof value.destroy === "function") {
+      found.add(value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+    for (const item of Object.values(value)) visit(item);
+  };
+  visit(textures);
+  for (const texture of found) {
     try { texture?.destroy?.(); } catch {}
   }
 }

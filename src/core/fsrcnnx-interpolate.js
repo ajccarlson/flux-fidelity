@@ -165,8 +165,8 @@ export class Interpolator {
     // inference resolution, resolution no longer has to be maxed to avoid jitter —
     // so Auto can pick the resolution that holds cadence (much cheaper). Motion is
     // forgiving of lower res; static stability comes from passthrough, not res.
-    this.resMode = "auto";
-    this._autoScale = 0.625; // start moderate; adapt toward the cadence budget
+    this.resMode = "full";
+    this._autoScale = 0.625; // explicit Auto starts moderate, then adapts toward the cadence budget
     // A/V fine-trim (ms) ON TOP of the measured buffer delay. The measured delay
     // (frame dwell time in the buffer) now matches the real gap, so this defaults
     // to 0 and is just a small manual nudge for hardware that needs it.
@@ -180,6 +180,7 @@ export class Interpolator {
     this._interpMode = "rife";           // "rife" | "blend"
     this._fallbackRatio = 1.5;
     this._fallbackArmed = true;          // false once we've fallen back (until reset)
+    this._autoFallback = false;           // performance downgrade is opt-in
     // Blend can multi-tween up to a target framerate (blend is ~free). Target is the
     // display refresh rate (auto-detected from rAF), with a manual override. RIFE
     // stays 2x (one tween) — N inferences per gap would be far too costly.
@@ -377,7 +378,7 @@ export class Interpolator {
   setLadder(on) { this._ladderOn = !!on; return this._ladderOn; }
 
   // Toggle the PERFORMANCE fallback evaluator (RIFE→blend when output ratio
-  // sags). Persisted per site; default ON. The error CIRCUIT BREAKER (5
+  // sags). Persisted per site; default OFF. The error CIRCUIT BREAKER (5
   // consecutive inference failures → blend) is deliberately NOT gated by this —
   // it guards against error storms, not slowness, and always announces itself.
   setAutoFallback(on) {

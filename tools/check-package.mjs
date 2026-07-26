@@ -30,18 +30,23 @@ function localImportReferences(source) {
 
 function runtimeUrlReferences(source) {
   const references = [];
-  const getUrlPattern = /chrome\.runtime\.getURL\(\s*(["'`])([^"'`]*)\1/g;
-  for (const match of source.matchAll(getUrlPattern)) {
-    const quote = match[1];
-    const expressionTail = source.slice(match.index + match[0].length);
-    const templateMarker = quote === "`" ? match[2].indexOf("${") : -1;
-    const expressionContinues = !/^\s*\)/.test(expressionTail);
-    if (templateMarker >= 0) {
-      references.push({ type: "prefix", value: match[2].slice(0, templateMarker) });
-    } else if (expressionContinues || match[2].endsWith("/")) {
-      references.push({ type: "prefix", value: match[2] });
-    } else {
-      references.push({ type: "file", value: match[2] });
+  const patterns = [
+    /\bchrome\.runtime\.getURL\(\s*(["'`])([^"'`]*)\1/g,
+    /\bresolvePackagedAssetUrl\(\s*(["'`])([^"'`]*)\1/g,
+  ];
+  for (const pattern of patterns) {
+    for (const match of source.matchAll(pattern)) {
+      const quote = match[1];
+      const expressionTail = source.slice(match.index + match[0].length);
+      const templateMarker = quote === "`" ? match[2].indexOf("${") : -1;
+      const expressionContinues = !/^\s*(?:,|\))/.test(expressionTail);
+      if (templateMarker >= 0) {
+        references.push({ type: "prefix", value: match[2].slice(0, templateMarker) });
+      } else if (expressionContinues || match[2].endsWith("/")) {
+        references.push({ type: "prefix", value: match[2] });
+      } else {
+        references.push({ type: "file", value: match[2] });
+      }
     }
   }
   return references;
@@ -132,15 +137,25 @@ export function validatePackage({ rootDir = root, packageFiles = PACKAGE_FILES }
       }
     }
 
-    const webAccessiblePatterns = (manifest.web_accessible_resources || [])
-      .flatMap((group) => group.resources || []);
-    const isWebAccessible = (file) => webAccessiblePatterns.some((pattern) => (
-      pattern.includes("*") ? globRegex(pattern).test(file) : pattern === file
-    ));
-    const requireWebAccessible = (file, source) => {
-      if (!isWebAccessible(file)) {
+    const webAccessibleGroups = manifest.web_accessible_resources || [];
+    const matchingWebAccessibleGroups = (file) => webAccessibleGroups.filter((group) =>
+      (group.resources || []).some((pattern) => (
+        pattern.includes("*") ? globRegex(pattern).test(file) : pattern === file
+      )));
+    for (const file of packageFiles) {
+      const matchedGroups = matchingWebAccessibleGroups(file);
+      if (matchedGroups.some((group) => group.use_dynamic_url === true) &&
+          matchedGroups.some((group) => group.use_dynamic_url !== true)) {
         errors.push(
-          `${source}: content-script dependency ${file} is not declared in web_accessible_resources`,
+          `${file}: matches both static and dynamic web_accessible_resources groups`,
+        );
+      }
+    }
+    const requireWebAccessible = (file, source) => {
+      if (!matchingWebAccessibleGroups(file).some((group) => group.use_dynamic_url !== true)) {
+        errors.push(
+          `${source}: content-script dependency ${file} is not declared in a static ` +
+          "web_accessible_resources group",
         );
       }
     };
@@ -148,8 +163,10 @@ export function validatePackage({ rootDir = root, packageFiles = PACKAGE_FILES }
     // Content scripts execute against arbitrary pages. Walk every module and
     // runtime URL reachable from those entry points so a packaged file cannot
     // work in extension-owned pages while failing only when the content script
-    // attempts to load it. Extension pages and the service worker deliberately
-    // remain outside this graph and do not need to be exposed to page origins.
+    // attempts to load it. These dependencies must be in a static group:
+    // Edge 150 cannot reliably import a content-script module through a dynamic
+    // WAR URL. Extension pages and the service worker deliberately remain
+    // outside this graph and do not need to be exposed to page origins.
     const pendingContentModules = (manifest.content_scripts || [])
       .flatMap((script) => script.js || []);
     const visitedContentModules = new Set();

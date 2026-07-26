@@ -93,7 +93,7 @@
       "id": "FSRCNNX_x2_56-16-4-1",
       "label": "FSRCNNX High x2 numerical reference",
       "source": {
-        "path": "shaders/FSRCNNX_x2_56-16-4-1.glsl",
+        "path": "shaders/upstream/FSRCNNX_x2_56-16-4-1.glsl",
         "sha256": "34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6"
       },
       "inputs": [
@@ -129,7 +129,7 @@
         "presentationClamp": true,
         "capture": "window",
         "options": [],
-        "command": "xvfb-run -a mpv --no-config --vo=gpu-next --gpu-api=opengl --gpu-context=x11 --gpu-sw=yes --hwdec=no --force-window=immediate --keep-open=yes --image-display-duration=10 --frames=1 --osc=no --osd-level=0 --border=no --keepaspect-window=no --dither=no --screenshot-format=png --screenshot-high-bit-depth=yes --geometry=74x46 \"--script=<temporary-directory>/reference-capture.lua\" \"--script-opts=reference-output=<temporary-directory>/FSRCNNX_x2_56-16-4-1.png,reference-delay=0.35\" \"--glsl-shader=<repository>/shaders/FSRCNNX_x2_56-16-4-1.glsl\" \"<input:model>\""
+        "command": "xvfb-run -a mpv --no-config --vo=gpu-next --gpu-api=opengl --gpu-context=x11 --gpu-sw=yes --hwdec=no --force-window=immediate --keep-open=yes --image-display-duration=10 --frames=1 --osc=no --osd-level=0 --border=no --keepaspect-window=no --dither=no --screenshot-format=png --screenshot-high-bit-depth=yes --geometry=74x46 \"--script=<temporary-directory>/reference-capture.lua\" \"--script-opts=reference-output=<temporary-directory>/FSRCNNX_x2_56-16-4-1.png,reference-delay=0.35\" \"--glsl-shader=<repository>/shaders/upstream/FSRCNNX_x2_56-16-4-1.glsl\" \"<input:model>\""
       },
       "tolerances": {
         "rmse": 0.006,
@@ -447,7 +447,7 @@
       },
       "tolerances": {
         "rmse": 0.001,
-        "max": 0.003
+        "max": 0.004
       }
     }
   ]

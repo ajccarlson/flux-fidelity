@@ -14,6 +14,7 @@ export const VALIDATION_TIMEOUT_MS = 30_000;
 export const ONNX_VALIDATION_CHECKS = Object.freeze([
   Object.freeze({ id: "onnx:rife-v4.26-fp16", label: "ORT RIFE 4.26 FP16 WASM asset/inference smoke" }),
   Object.freeze({ id: "onnx:rife-v4.26", label: "ORT default RIFE 4.26 WebGPU inference smoke" }),
+  Object.freeze({ id: "onnx:neural", label: "ORT bundled Neural RGB super-resolution inference smoke" }),
 ]);
 
 export const REFERENCE_VALIDATION_CHECKS = Object.freeze([
@@ -42,6 +43,90 @@ export function createValidationPlan(catalog) {
     throw new Error("validation plan contains duplicate check identifiers");
   }
   return Object.freeze(plan);
+}
+
+function checkedTensorElements(label, dims) {
+  let elements = 1;
+  for (const value of dims) {
+    if (!Number.isSafeInteger(value) || value <= 0 || elements > Number.MAX_SAFE_INTEGER / value) {
+      throw new RangeError(`${label} dimensions exceed the safe integer range`);
+    }
+    elements *= value;
+  }
+  return elements;
+}
+
+function roundUpToMultiple(value, multiple) {
+  const rounded = Math.ceil(value / multiple) * multiple;
+  if (!Number.isSafeInteger(rounded) || rounded <= 0) {
+    throw new RangeError("neural validation padded dimensions exceed the safe integer range");
+  }
+  return rounded;
+}
+
+export function createNeuralValidationFixture(
+  entry,
+  { sourceWidth = 17, sourceHeight = 13 } = {},
+) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    throw new TypeError("neural validation manifest entry must be an object");
+  }
+  if (!Number.isInteger(entry.scale) || entry.scale < 1 || entry.scale > 16) {
+    throw new TypeError("neural validation manifest scale is invalid");
+  }
+  const padMultiple = entry.padMultiple ?? 1;
+  if (!Number.isInteger(padMultiple) || padMultiple < 1 || padMultiple > 256) {
+    throw new TypeError("neural validation manifest padMultiple is invalid");
+  }
+  if (!Number.isSafeInteger(sourceWidth) || sourceWidth < 2 ||
+      !Number.isSafeInteger(sourceHeight) || sourceHeight < 2) {
+    throw new TypeError("neural validation source dimensions must be safe integers greater than one");
+  }
+
+  const padWidth = roundUpToMultiple(sourceWidth, padMultiple);
+  const padHeight = roundUpToMultiple(sourceHeight, padMultiple);
+  const outputWidth = padWidth * entry.scale;
+  const outputHeight = padHeight * entry.scale;
+  if (!Number.isSafeInteger(outputWidth) || !Number.isSafeInteger(outputHeight)) {
+    throw new RangeError("neural validation output dimensions exceed the safe integer range");
+  }
+  const inputDims = Object.freeze([1, 3, padHeight, padWidth]);
+  const outputDims = Object.freeze([1, 3, outputHeight, outputWidth]);
+  const inputElements = checkedTensorElements("neural validation input", inputDims);
+  const outputElements = checkedTensorElements("neural validation output", outputDims);
+  // This page is a smoke test, not a stress test. Refuse a manifest contract that
+  // would turn its deliberately small source into more than 64 MiB of FP32 output.
+  if (outputElements * Float32Array.BYTES_PER_ELEMENT > 64 * 1024 * 1024) {
+    throw new RangeError("neural validation output fixture exceeds 64 MiB");
+  }
+
+  const plane = padWidth * padHeight;
+  const data = new Float32Array(inputElements);
+  for (let y = 0; y < padHeight; y++) {
+    const sourceY = Math.min(y, sourceHeight - 1);
+    const fy = sourceY / (sourceHeight - 1);
+    for (let x = 0; x < padWidth; x++) {
+      const sourceX = Math.min(x, sourceWidth - 1);
+      const fx = sourceX / (sourceWidth - 1);
+      const index = y * padWidth + x;
+      data[index] = 0.05 + 0.8 * fx;
+      data[plane + index] = 0.05 + 0.8 * fy;
+      data[2 * plane + index] = 0.15 + 0.6 * ((fx + fy) / 2);
+    }
+  }
+
+  return Object.freeze({
+    sourceWidth,
+    sourceHeight,
+    padWidth,
+    padHeight,
+    scale: entry.scale,
+    inputDims,
+    outputDims,
+    sourceOutputWidth: sourceWidth * entry.scale,
+    sourceOutputHeight: sourceHeight * entry.scale,
+    data,
+  });
 }
 
 export async function inspectOrtFloatTensor(tensor, expectedDims, label = "ORT output") {

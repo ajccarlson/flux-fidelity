@@ -574,6 +574,35 @@ test("GpuInterp validates texture and storage limits before allocation", async (
   await gpu.destroy();
 });
 
+test("GpuInterp defaults admit high-resolution sources within advertised device limits", async (t) => {
+  installWebGpuGlobals(t);
+  const device = makeDevice("high-resolution-defaults", {
+    limits: {
+      maxBufferSize: 1024 * 1024 * 1024,
+      maxStorageBufferBindingSize: 1024 * 1024 * 1024,
+    },
+  });
+  const gpu = new GpuInterp({ log() {}, warn() {} });
+  assert.equal(await gpu.init(device, { Tensor: { fromGpuBuffer() {} } }), true);
+
+  const plan = gpu._size(8192, 8192, 8, 7, 0.5);
+  assert.deepEqual(plan, { padW: 4096, padH: 4096 });
+  assert.equal(gpu._activeFrameBytes, 8192 * 8192 * 4 * 2,
+    "the persistent frame pair exceeds the former fixed default");
+  assert.equal(gpu._activeInputBytes, 7 * 4096 * 4096 * 4,
+    "the model input exceeds the former fixed default");
+
+  const pooled = [
+    gpu._acquireTex(8192, 8192),
+    gpu._acquireTex(8192, 8192),
+    gpu._acquireTex(8192, 8192),
+  ];
+  assert.ok(gpu._pooledBytesInUse() > 512 * 1024 * 1024,
+    "the live pool exceeds the former fixed default");
+  for (const texture of pooled) gpu.releaseTex(texture);
+  await gpu.destroy();
+});
+
 test("GpuInterp bounds pooled textures by aggregate bytes before allocation", async (t) => {
   installWebGpuGlobals(t);
   const device = makeDevice("pool-budget");
@@ -597,9 +626,9 @@ test("GpuInterp bounds pooled textures by aggregate bytes before allocation", as
   assert.throws(() => new GpuInterp({ maxPoolBytes: 0 }), RangeError);
   assert.throws(() => new GpuInterp({ maxFrameBytes: 0 }), RangeError);
   assert.throws(() => new GpuInterp({ maxInputBytes: 0 }), RangeError);
-  assert.ok(DEFAULT_GPU_POOL_BUDGET_BYTES >= frameBytes * 2);
-  assert.ok(DEFAULT_GPU_FRAME_BUDGET_BYTES >= frameBytes * 2);
-  assert.ok(DEFAULT_GPU_INPUT_BUDGET_BYTES >= frameBytes * 2);
+  assert.equal(DEFAULT_GPU_POOL_BUDGET_BYTES, Number.MAX_SAFE_INTEGER);
+  assert.equal(DEFAULT_GPU_FRAME_BUDGET_BYTES, Number.MAX_SAFE_INTEGER);
+  assert.equal(DEFAULT_GPU_INPUT_BUDGET_BYTES, Number.MAX_SAFE_INTEGER);
 });
 
 test("GpuInterp evicts every stale free texture and retries after fenced retirement", async (t) => {

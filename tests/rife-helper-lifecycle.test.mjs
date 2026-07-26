@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import {
+  ORT_WASM_BYTE_LENGTH,
+  ORT_WASM_FILE,
+  ORT_WASM_MODULE_FILE,
+} from "../src/core/fsrcnnx-rife.js";
+
 function deferred() {
   let resolve;
   let reject;
@@ -33,6 +39,11 @@ test("module GPU-helper lifecycle serializes RIFE, blend, and teardown", async (
     initGates: [],
     destroyGates: new Map(),
     create() {
+      assert.deepEqual(state.env.wasm.wasmPaths, {
+        mjs: `https://extension.test/vendor/ort/${ORT_WASM_MODULE_FILE}`,
+        wasm: `https://extension.test/vendor/ort/${ORT_WASM_FILE}`,
+      });
+      assert.equal(state.env.wasm.numThreads, 1);
       state.env.webgpu.device = targetDevice;
       return session;
     },
@@ -91,6 +102,8 @@ test("module GPU-helper lifecycle serializes RIFE, blend, and teardown", async (
   `;
   const runtimeUrl = `data:text/javascript,${encodeURIComponent(runtimeSource)}`;
   const gpuUrl = `data:text/javascript,${encodeURIComponent(gpuSource)}`;
+  const testOrtWasm = new Uint8Array(ORT_WASM_BYTE_LENGTH);
+  testOrtWasm.set([0x00, 0x61, 0x73, 0x6d]);
 
   globalThis.__rifeHelperLifecycle = state;
   globalThis.chrome = {
@@ -102,7 +115,17 @@ test("module GPU-helper lifecycle serializes RIFE, blend, and teardown", async (
       },
     },
   };
-  globalThis.fetch = async () => ({ ok: true, status: 200 });
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith(ORT_WASM_FILE)) {
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => String(testOrtWasm.byteLength) },
+        arrayBuffer: async () => testOrtWasm.buffer,
+      };
+    }
+    return { ok: true, status: 200 };
+  };
 
   const rife = await import(`../src/core/fsrcnnx-rife.js?helper-lifecycle=${Date.now()}`);
   t.after(async () => {

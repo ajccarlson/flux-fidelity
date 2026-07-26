@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -13,6 +13,7 @@ import {
   acquireValidationDevice,
   alignedBytesPerRow,
   buildCorePipelines,
+  createNeuralValidationFixture,
   createValidationPlan,
   float16ToNumber,
   inspectRgba16Float,
@@ -44,7 +45,7 @@ test("the shared generated-model catalog is complete, immutable, and backed by f
 
 test("validation accounting is fixed before execution and treats skips as incompatible", () => {
   const plan = createValidationPlan(GENERATED_MODEL_CATALOG);
-  assert.equal(plan.length, 24);
+  assert.equal(plan.length, 25);
   assert.equal(new Set(plan.map(({ id }) => id)).size, plan.length);
   assert.equal(Object.isFrozen(ONNX_VALIDATION_CHECKS), true);
   assert.ok(ONNX_VALIDATION_CHECKS.every(Object.isFrozen));
@@ -56,13 +57,14 @@ test("validation accounting is fixed before execution and treats skips as incomp
     "filter:ssimds-reference",
     "filter:sharpen-reference",
   ]);
-  assert.deepEqual(plan.slice(7, 9).map(({ id }) => id), [
+  assert.deepEqual(plan.slice(7, 10).map(({ id }) => id), [
     "onnx:rife-v4.26-fp16",
     "onnx:rife-v4.26",
+    "onnx:neural",
   ]);
   const results = new Map();
   assert.deepEqual(summarizeValidation(plan, results), {
-    pass: 0, fail: 0, skip: 0, pending: 24, total: 24, complete: false, ok: false,
+    pass: 0, fail: 0, skip: 0, pending: 25, total: 25, complete: false, ok: false,
   });
   for (const check of plan) results.set(check.id, { status: "pass" });
   assert.equal(summarizeValidation(plan, results).ok, true);
@@ -73,6 +75,54 @@ test("validation accounting is fixed before execution and treats skips as incomp
   assert.equal(incompatible.ok, false);
   results.set("unknown", { status: "pass" });
   assert.throws(() => summarizeValidation(plan, results), /does not belong/);
+});
+
+test("neural validation fixture derives padded FP32 RGB shapes from the manifest contract", () => {
+  const fixture = createNeuralValidationFixture({
+    key: "fixture",
+    file: "fixture.onnx",
+    scale: 2,
+    padMultiple: 4,
+  });
+  assert.equal(Object.isFrozen(fixture), true);
+  assert.deepEqual(fixture.inputDims, [1, 3, 16, 20]);
+  assert.deepEqual(fixture.outputDims, [1, 3, 32, 40]);
+  assert.equal(fixture.sourceWidth, 17);
+  assert.equal(fixture.sourceHeight, 13);
+  assert.equal(fixture.sourceOutputWidth, 34);
+  assert.equal(fixture.sourceOutputHeight, 26);
+  assert.equal(fixture.data.length, 3 * 20 * 16);
+
+  const plane = 20 * 16;
+  const at = (channel, x, y) => fixture.data[channel * plane + y * 20 + x];
+  assert.ok(at(0, 0, 0) < at(0, 16, 0), "red must vary across the unpadded source width");
+  assert.ok(at(1, 0, 0) < at(1, 0, 12), "green must vary across the unpadded source height");
+  assert.equal(at(0, 16, 0), at(0, 19, 0), "right padding must replicate the source edge");
+  assert.equal(at(1, 0, 12), at(1, 0, 15), "bottom padding must replicate the source edge");
+  assert.ok(fixture.data.every((value) => Number.isFinite(value) && value >= 0 && value <= 1));
+
+  assert.throws(() => createNeuralValidationFixture({ scale: 0 }), /scale is invalid/);
+  assert.throws(
+    () => createNeuralValidationFixture({ scale: 16, padMultiple: 256 }),
+    /exceeds 64 MiB/,
+  );
+  assert.throws(
+    () => createNeuralValidationFixture({ scale: 2 }, { sourceWidth: 1 }),
+    /greater than one/,
+  );
+});
+
+test("validation page runs the first bundled neural model through ORT with a reported CPU fallback", () => {
+  const source = readFileSync(new URL("../validation/validate.js", import.meta.url), "utf8");
+  assert.match(source, /validateNeuralManifest\(await response\.json\(\)\)/);
+  assert.match(source, /const entry = entries\[0\]/);
+  assert.match(source, /createNeuralValidationFixture\(entry\)/);
+  assert.match(source, /provider: "webgpu"/);
+  assert.match(source, /gpuInput: true/);
+  assert.match(source, /gpuOutput: true/);
+  assert.match(source, /provider: "wasm"/);
+  assert.match(source, /WASM CPU fallback/);
+  assert.match(source, /inspectOrtFloatTensor\(output, outputDims/);
 });
 
 test("ORT output inspection reads GPU tensors and rejects shape, dtype, and numeric corruption", async () => {

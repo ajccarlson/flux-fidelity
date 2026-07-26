@@ -112,12 +112,18 @@ export function buildMeanShader(ratioX, ratioY) {
 
 // P1+P2 combined as one separable build: vertical then horizontal MN on tex*tex.
 // We emit two shaders sharing the kernel. axis 1 = vertical (P1), axis 0 = horiz.
-export function buildL2Shader(axis, ratio) {
+export function buildL2Shader(axis, ratio, squareInput = axis === 1) {
   if (axis !== 0 && axis !== 1) throw new RangeError("axis must be 0 or 1");
+  if (typeof squareInput !== "boolean") {
+    throw new TypeError("squareInput must be a boolean");
+  }
   const r = requireDownscaleRatio(ratio, "ratio").toFixed(6);
   const isV = axis === 1;
-  // P1 reads hiTex (rgb), squares it. P2 reads l2v (already squared), no square.
-  const square = isV ? "s = s * s;" : "";
+  // Direct P1 reads hiTex (rgb) and squares it; P2 reads an existing second
+  // moment. The explicit flag also lets the runtime carry first and second
+  // moments independently through bounded multistage downscales.
+  const square = squareInput ? "s = s * s;" : "";
+  const fallbackSquare = squareInput ? "fallback = fallback * fallback;" : "";
   const dimAxis = isV ? "dim.y" : "dim.x";
   const uvStep = isV ? "vec2f(0.0, step)" : "vec2f(step, 0.0)";
   const centerAxis = isV ? "center.y" : "center.x";
@@ -144,7 +150,7 @@ export function buildL2Shader(axis, ratio) {
   }
   if (abs(W) <= NUM_EPS) {
     var fallback = textureSampleLevel(src, samp, uv, 0.0);
-    ${isV ? "fallback = fallback * fallback;" : ""}
+    ${fallbackSquare}
     return fallback;
   }
   return acc / W;

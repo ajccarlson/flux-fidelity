@@ -106,6 +106,7 @@ function completeApi(overrides = {}) {
     setHoverReveal: () => ({ ok: true }),
     setAllVideos: () => ({ ok: true }),
     setIdlePowerSaving: () => ({ ok: true }),
+    setAutoQualityFallback: () => ({ ok: true }),
     setSharpen: () => ({ ok: true }),
     setSharpenStrength: () => ({ ok: true }),
     setSSimDS: () => ({ ok: true }),
@@ -134,8 +135,8 @@ const COMMAND_CASES = [
   },
   {
     type: "FSRCNNX_SETNEURALMODEL", method: "setNeuralModel", field: "model",
-    valid: ["local2x", "future4x", "vendor.model-v2"],
-    invalid: ["", "../local2x", "key/with/slash", "contains space", null],
+    valid: ["local2x", "future4x", "vendor.model-v2", "a".repeat(64)],
+    invalid: ["", "../local2x", "key/with/slash", "contains space", "a".repeat(65), ".hidden", null],
   },
   {
     type: "FSRCNNX_SETARTVARIANT", method: "setArtVariant", field: "variant",
@@ -168,6 +169,7 @@ const COMMAND_CASES = [
   booleanCommand("FSRCNNX_SETHOVERREVEAL", "setHoverReveal"),
   booleanCommand("FSRCNNX_SETALLVIDEOS", "setAllVideos"),
   booleanCommand("FSRCNNX_SETIDLEPOWERSAVING", "setIdlePowerSaving"),
+  booleanCommand("FSRCNNX_SETAUTOQUALITYFALLBACK", "setAutoQualityFallback"),
   booleanCommand("FSRCNNX_SETSHARPEN", "setSharpen"),
   {
     type: "FSRCNNX_SETSHARPENSTR", method: "setSharpenStrength", field: "strength",

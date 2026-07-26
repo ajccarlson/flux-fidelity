@@ -816,6 +816,7 @@ export function createPopupController({
     syncCheckbox("hover-reveal", status.hoverReveal);
     syncCheckbox("all-videos", status.allVideos);
     syncCheckbox("idle-power-saving", status.idlePowerSaving);
+    syncCheckbox("auto-quality-fallback", status.autoQualityFallback);
     syncCheckbox("images", status.images);
     syncCheckbox("interpolate", status.interpolate);
     syncCheckbox("interp-diag", status.interpStaticPassthrough);
@@ -929,6 +930,7 @@ export function createPopupController({
     command("hover-reveal", "change", "Updating hover reveal", "FSRCNNX_SETHOVERREVEAL", () => ({ on: $("hover-reveal").checked }));
     command("all-videos", "change", "Updating multi-video processing", "FSRCNNX_SETALLVIDEOS", () => ({ on: $("all-videos").checked }));
     command("idle-power-saving", "change", "Updating idle power saving", "FSRCNNX_SETIDLEPOWERSAVING", () => ({ on: $("idle-power-saving").checked }));
+    command("auto-quality-fallback", "change", "Updating automatic quality fallback", "FSRCNNX_SETAUTOQUALITYFALLBACK", () => ({ on: $("auto-quality-fallback").checked }));
     command("neural-model", "change", "Changing neural model", "FSRCNNX_SETNEURALMODEL", () => ({ model: $("neural-model").value }));
 
     $("sharpen-str").addEventListener("input", () => {

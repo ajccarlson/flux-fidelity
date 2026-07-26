@@ -30,6 +30,12 @@ async function loadLifecycle(deps) {
     let neuralEng = { stop: () => deps.events.push("neural-stop") };
     let interpolator = { stop: () => deps.events.push("interp-stop") };
     let imageUpscaler = { stop: () => deps.events.push("image-stop") };
+    const stopNeuralEngine = () => Promise.resolve(neuralEng?.stop?.());
+    const hidePrimaryOverlays = () => {
+      if (!canvas) return;
+      canvas.style.display = "none";
+      canvas.style.opacity = "1";
+    };
     const initialColorCache = new WeakMap();
     let videoColorSupportCache = initialColorCache;
     const uncheckedColorSupport = (detail) => ({ supported: false, code: "color-not-checked", detail });

@@ -1,5 +1,9 @@
 {
   "name": "FSRCNNX_x2_56-16-4-1",
+  "license": "LGPL-3.0-or-later",
+  "sourcePath": "shaders/upstream/FSRCNNX_x2_56-16-4-1.glsl",
+  "sourceSha256": "34cd5d0087ebb6ae5f9bff2578382205457da53baa364d52de8021d6925b7fd6",
+  "modificationNotice": "Transpiled in 2026 from the mpv/libplacebo GLSL hook format to WGSL compute passes and a JSON pass manifest for FSRCNNX-EXT; model weights and pass order are preserved.",
   "whenThreshold": 1.4,
   "passes": [
     {

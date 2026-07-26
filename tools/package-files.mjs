@@ -1,15 +1,20 @@
 import { GENERATED_MODEL_ASSET_PATHS } from "../src/core/fsrcnnx-model-catalog.js";
 
-export const EXPECTED_PACKAGE_FILE_COUNT = 77;
+export const EXPECTED_PACKAGE_FILE_COUNT = 83;
 
 // These files let recipients inspect, rebuild, and substitute the LGPL-covered
-// shader portions and retain the exact license for the vendored ONNX Runtime.
+// shader portions and retain exact licenses for bundled third-party components.
 // Keep the inventory separate so package tests can enforce it explicitly.
 export const REQUIRED_COMPLIANCE_FILES = Object.freeze([
-  "LGPL_REBUILDING.md",
+  "LICENSES/GPL-3.0.txt",
+  "LICENSES/LGPL-3.0.txt",
+  "LICENSES/Real-ESRGAN-BSD-3-Clause.txt",
+  "docs/compliance/LGPL_REBUILDING.md",
   "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl",
+  "shaders/upstream/FSRCNNX_x2_56-16-4-1.glsl",
   "shaders/upstream/SSimDownscaler.glsl",
   "shaders/upstream/adaptive-sharpen.glsl",
+  "tools/package.json",
   "tools/transpile.js",
   "vendor/ort/LICENSE",
 ]);
@@ -20,6 +25,7 @@ export const REQUIRED_COMPLIANCE_FILES = Object.freeze([
 // validation instead of degrading only the affected model at runtime.
 export const REQUIRED_RUNTIME_MODEL_FILES = Object.freeze([
   ...GENERATED_MODEL_ASSET_PATHS,
+  "model/neural/realesrganv2_animevideo_xsx2.fp16.onnx",
   "model/rife_v4.26.onnx",
   "model/rife_v4.26_fp16.onnx",
 ]);
@@ -27,13 +33,15 @@ export const REQUIRED_RUNTIME_MODEL_FILES = Object.freeze([
 // This list is the package boundary. Additions and removals must be deliberate:
 // package creation and package reference validation both consume this exact set.
 export const PACKAGE_FILES = Object.freeze([
-  "GPL-3.0.txt",
-  "LGPL-3.0.txt",
-  "LGPL_REBUILDING.md",
   "LICENSE",
-  "MODEL_PROVENANCE.md",
+  "LICENSES/GPL-3.0.txt",
+  "LICENSES/LGPL-3.0.txt",
+  "LICENSES/Real-ESRGAN-BSD-3-Clause.txt",
+  "NOTICE",
   "PRIVACY.md",
   "THIRD_PARTY_NOTICES.md",
+  "docs/compliance/LGPL_REBUILDING.md",
+  "docs/compliance/MODEL_PROVENANCE.md",
   "icons/icon-128.png",
   "icons/icon-16.png",
   "icons/icon-32.png",
@@ -54,12 +62,12 @@ export const PACKAGE_FILES = Object.freeze([
   "model/FSRCNNX_x2_56-16-4-1.passes.json",
   "model/FSRCNNX_x2_56-16-4-1.wgsl",
   "model/neural/manifest.json",
+  "model/neural/realesrganv2_animevideo_xsx2.fp16.onnx",
   "model/rife_v4.26.onnx",
   "model/rife_v4.26_fp16.onnx",
   "popup.html",
-  "release-clearance.json",
-  "shaders/FSRCNNX_x2_56-16-4-1.glsl",
   "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl",
+  "shaders/upstream/FSRCNNX_x2_56-16-4-1.glsl",
   "shaders/upstream/SSimDownscaler.glsl",
   "shaders/upstream/adaptive-sharpen.glsl",
   "src/background.js",
@@ -73,6 +81,7 @@ export const PACKAGE_FILES = Object.freeze([
   "src/core/fsrcnnx-main.js",
   "src/core/fsrcnnx-model-bundle.js",
   "src/core/fsrcnnx-model-catalog.js",
+  "src/core/fsrcnnx-neural-frame-bridge.js",
   "src/core/fsrcnnx-neural.js",
   "src/core/fsrcnnx-performance.js",
   "src/core/fsrcnnx-rife-gpu.js",
@@ -83,7 +92,10 @@ export const PACKAGE_FILES = Object.freeze([
   "src/core/fsrcnnx-ssimds-runtime.js",
   "src/core/fsrcnnx-ssimds.js",
   "src/core/fsrcnnx-video-controller.js",
+  "src/frame/neural-frame-runtime.js",
+  "src/frame/neural-frame.html",
   "src/popup.js",
+  "tools/package.json",
   "tools/transpile.js",
   "validate.html",
   "validation/README.md",
@@ -101,8 +113,8 @@ export const PACKAGE_FILES = Object.freeze([
   "validation/validate.js",
   "vendor/ort/LICENSE",
   "vendor/ort/ThirdPartyNotices.txt",
-  "vendor/ort/ort-wasm-simd-threaded.asyncify.mjs",
-  "vendor/ort/ort-wasm-simd-threaded.asyncify.wasm",
+  "vendor/ort/ort-wasm-simd.asyncify.mjs",
+  "vendor/ort/ort-wasm-simd.asyncify.wasm",
   "vendor/ort/ort.webgpu.min.mjs",
 ]);
 

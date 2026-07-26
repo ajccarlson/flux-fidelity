@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import * as rife from "../src/core/fsrcnnx-rife.js";
 
 let runtimeRevision = 0;
+const testOrtWasm = new Uint8Array(rife.ORT_WASM_BYTE_LENGTH);
+testOrtWasm.set([0x00, 0x61, 0x73, 0x6d]);
 
 function deferred() {
   let resolve;
@@ -11,6 +13,111 @@ function deferred() {
   const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
   return { promise, resolve, reject };
 }
+
+test("ORT WebAssembly bootstrap requires the exact packaged byte contract", () => {
+  assert.equal(rife.validateOrtWasmBinary(testOrtWasm), testOrtWasm);
+  assert.throws(
+    () => rife.validateOrtWasmBinary(testOrtWasm.subarray(0, 8)),
+    new RegExp(`has 8 bytes; expected ${rife.ORT_WASM_BYTE_LENGTH}`),
+  );
+  testOrtWasm[0] = 0x01;
+  try {
+    assert.throws(
+      () => rife.validateOrtWasmBinary(testOrtWasm),
+      /invalid magic bytes \(01 61 73 6d\)/,
+    );
+  } finally {
+    testOrtWasm[0] = 0x00;
+  }
+});
+
+test("packaged assets use static extension-page URLs and browser-selected content URLs", () => {
+  const runtimeCalls = [];
+  const runtime = {
+    getURL(path) {
+      runtimeCalls.push(path);
+      if (path === "") return "chrome-extension://static-extension/";
+      return `chrome-extension://transient-war/${path}`;
+    },
+  };
+
+  assert.equal(
+    rife.resolveOrtAssetUrl(rife.ORT_WEBGPU_MODULE_FILE, {
+      runtime,
+      location: { origin: "chrome-extension://static-extension" },
+    }),
+    "chrome-extension://static-extension/vendor/ort/ort.webgpu.min.mjs",
+  );
+  assert.equal(
+    rife.resolveOrtAssetUrl(rife.ORT_WASM_FILE, {
+      runtime,
+      location: { origin: "https://video.example" },
+    }),
+    "chrome-extension://transient-war/vendor/ort/ort-wasm-simd.asyncify.wasm",
+  );
+  assert.equal(
+    rife.resolveOrtAssetUrl(rife.ORT_WASM_MODULE_FILE, {
+      runtime,
+      location: { origin: "chrome-extension://static-extension" },
+    }),
+    "chrome-extension://static-extension/vendor/ort/ort-wasm-simd.asyncify.mjs",
+  );
+  assert.deepEqual(
+    runtimeCalls,
+    [
+      "",
+      "",
+      "vendor/ort/ort-wasm-simd.asyncify.wasm",
+      "",
+    ],
+    "only the page-world request asks the browser to resolve the asset URL",
+  );
+  assert.throws(
+    () => rife.resolveOrtAssetUrl("../unexpected.js", {
+      runtime,
+      location: { origin: "chrome-extension://static-extension" },
+    }),
+    /Unsupported ORT asset/,
+  );
+});
+
+test("ORT WebAssembly bootstrap reports transport and body failures precisely", async () => {
+  const url = `chrome-extension://fixture/vendor/ort/${rife.ORT_WASM_FILE}`;
+  const loaded = await rife.fetchOrtWasmBinary(url, async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => String(testOrtWasm.byteLength) },
+    arrayBuffer: async () => testOrtWasm.buffer,
+  }));
+  assert.equal(loaded.buffer, testOrtWasm.buffer);
+
+  await assert.rejects(
+    rife.fetchOrtWasmBinary(url, async () => ({
+      ok: false,
+      status: 404,
+    })),
+    /ORT WebAssembly asset HTTP 404 .*chrome-extension:/,
+  );
+  await assert.rejects(
+    rife.fetchOrtWasmBinary(url, async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => "7" },
+    })),
+    new RegExp(`advertised 7 bytes; expected ${rife.ORT_WASM_BYTE_LENGTH}`),
+  );
+  await assert.rejects(
+    rife.fetchOrtWasmBinary(url, async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      arrayBuffer: async () => {
+        throw new Error("fixture body unavailable");
+      },
+    })),
+    /body failed to load .*fixture body unavailable/,
+  );
+});
 
 async function waitFor(predicate, message) {
   for (let attempt = 0; attempt < 100; attempt++) {
@@ -46,7 +153,17 @@ function installRuntimeMocks(t, state) {
       },
     },
   };
-  globalThis.fetch = async () => ({ ok: true, status: 200 });
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith(rife.ORT_WASM_FILE)) {
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => String(testOrtWasm.byteLength) },
+        arrayBuffer: async () => testOrtWasm.buffer,
+      };
+    }
+    return { ok: true, status: 200 };
+  };
 
   t.after(() => {
     if (chromeDescriptor) Object.defineProperty(globalThis, "chrome", chromeDescriptor);
@@ -72,6 +189,16 @@ test("RIFE initialization rejects an already-lost ORT device", async (t) => {
   const state = {
     env: { wasm: {}, webgpu: { enableFp16: false, device: lostDevice } },
     create() {
+      assert.deepEqual(state.env.wasm.wasmPaths, {
+        mjs: `https://extension.test/vendor/ort/${rife.ORT_WASM_MODULE_FILE}`,
+        wasm: `https://extension.test/vendor/ort/${rife.ORT_WASM_FILE}`,
+      }, "the official JS bundle is pointed at the single-thread module pair");
+      assert.equal(state.env.wasm.numThreads, 1);
+      assert.equal(
+        state.env.wasm.wasmBinary?.buffer,
+        testOrtWasm.buffer,
+        "verified packaged bytes are supplied before the first session",
+      );
       state.env.webgpu.device = lostDevice;
       return session;
     },
@@ -82,6 +209,7 @@ test("RIFE initialization rejects an already-lost ORT device", async (t) => {
   assert.equal(await isolated.initRife(), false);
   assert.equal(isolated.isReady(), false);
   assert.equal(isolated.getOrtDevice(), null);
+  assert.equal(state.env.wasm.wasmBinary, undefined, "bootstrap byte reference is released");
   assert.equal(releases, 1, "the rejected committed session is released exactly once");
   await isolated.disposeRife();
 });

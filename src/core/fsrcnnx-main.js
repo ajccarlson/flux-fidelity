@@ -10,10 +10,10 @@ import {
   FSRCNNX_STANDARD_MODEL_NAMES,
 } from "./fsrcnnx-model-catalog.js";
 import {
-  createNeuralEngine,
   isValidNeuralModelKey,
   validateNeuralManifest,
 } from "./fsrcnnx-neural.js";
+import { createNeuralFrameBridge } from "./fsrcnnx-neural-frame-bridge.js";
 import { LUMA_EXTRACT_WGSL, RECOMBINE_WGSL } from "./fsrcnnx-color.js";
 import { probeVideoColorSupport, SRGB_COLOR_SPACE } from "./fsrcnnx-color-support.js";
 import { SsimDownscaler } from "./fsrcnnx-ssimds-runtime.js";
@@ -31,42 +31,19 @@ const TAG = "[FSRCNNX]";
 const log = (...a) => console.log(TAG, ...a);
 const warn = (...a) => console.warn(TAG, ...a);
 
-// Keep a single processed surface within an 8K-class pixel budget even on
-// adapters that advertise a larger texture limit.  The pipeline holds several
-// rgba16float intermediates (plus model feature maps), so accepting any size the
-// adapter can represent is not, by itself, a safe allocation policy.
-const MAX_PROCESSING_PIXELS = 7680 * 4320;
 const sizeWarningAt = new Map();
 function textureSizeAllowed(w, h, label = "texture") {
   const width = Number(w), height = Number(h);
   const limit = Math.max(1, Number(device?.limits?.maxTextureDimension2D) || 8192);
   const valid = Number.isSafeInteger(width) && Number.isSafeInteger(height) &&
-    width > 0 && height > 0 && width <= limit && height <= limit &&
-    width * height <= Math.min(MAX_PROCESSING_PIXELS, limit * limit);
+    width > 0 && height > 0 && width <= limit && height <= limit;
   if (!valid) {
     const now = performance.now();
     const key = `${label}:${width}x${height}`;
     if (now - (sizeWarningAt.get(key) || -Infinity) > 5000) {
       sizeWarningAt.set(key, now);
-      warn(`${label} ${width}x${height} exceeds the safe processing limit ` +
-        `(max dimension ${limit}, max pixels ${Math.min(MAX_PROCESSING_PIXELS, limit * limit)})`);
-    }
-  }
-  return valid;
-}
-
-function storageBufferSizeAllowed(bytes, label) {
-  const size = Number(bytes);
-  const maxBuffer = Number(device?.limits?.maxBufferSize) || 256 * 1024 * 1024;
-  const maxBinding = Number(device?.limits?.maxStorageBufferBindingSize) || maxBuffer;
-  const limit = Math.min(maxBuffer, maxBinding);
-  const valid = Number.isSafeInteger(size) && size > 0 && size <= limit;
-  if (!valid) {
-    const key = `${label}:${size}`;
-    const now = performance.now();
-    if (now - (sizeWarningAt.get(key) || -Infinity) > 5000) {
-      sizeWarningAt.set(key, now);
-      warn(`${label} requires ${size} bytes; adapter storage-buffer limit is ${limit}`);
+      warn(`${label} ${width}x${height} is invalid or exceeds the adapter texture limit ` +
+        `(max dimension ${limit})`);
     }
   }
   return valid;
@@ -122,6 +99,7 @@ let context = null, format = null, canvas = null, video = null, sampler = null;
 let presentedCanvasVideo = null, presentedSourceW = 0, presentedSourceH = 0;
 let primaryPresentationGeneration = 0;
 let presentedVideoSource = null, presentedRuntimeMode = "off", presentedRuntimeEngine = null;
+let presentedCanvas = null;
 // Last primary frame that reached queue.submit() and committed a visible canvas.
 // Requested filter settings are intentionally separate from these applied stages.
 let presentedPresentation = null;
@@ -131,7 +109,7 @@ let extractPipelineTex = null, recombinePipelineTex = null, recombine16PipelineT
 let chainInverted = false;   // interp drives upscales; our per-video-frame loop pauses
 let _texSource = null;       // one-shot pooled-frame override for renderUpscale
 let interpInvertPref = true; // DEFAULT ON since v0.48.6 (experiment #4 verdict); per-site saved pref overrides
-let interpAutoFallbackPref = true; // RIFE→blend performance fallback (persisted per site)
+let interpAutoFallbackPref = false; // RIFE→blend performance fallback (opt-in, persisted per site)
 let interpLadderPref = false; // blend ladder (persisted per site)
 let interpStaticPassthroughPref = true; // preserve source pixels in static regions
 let _gpuErrWinStart = 0, _gpuErrCount = 0, _invRestarts = 0, _invRestartLast = 0; // present-path breaker state
@@ -288,6 +266,7 @@ function resetPresentedRuntime() {
   presentedVideoSource = null;
   presentedRuntimeMode = "off";
   presentedRuntimeEngine = null;
+  presentedCanvas = null;
   presentedPresentation = null;
   return changed;
 }
@@ -296,6 +275,7 @@ function resetPresentedRuntime() {
 let optHoverReveal = false;   // fade overlay out while cursor is over the player
 let optAllVideos = false;     // upscale every qualifying video, not just the main one
 let optIdlePowerSaving = false; // release reusable GPU resources while the document is hidden
+let optAutoQualityFallback = false; // lower expensive renderers after sustained playback pressure
 let hoverHidden = false;      // current hover-reveal state for the primary overlay
 let primaryPresentationBoundary = videoPresentationState(null);
 
@@ -340,6 +320,7 @@ function currentSitePreferenceValues() {
     ssimds: ssimdsEnabled, sharpen: sharpenEnabled, sharpenStrength,
     hoverReveal: optHoverReveal, allVideos: optAllVideos,
     idlePowerSaving: optIdlePowerSaving,
+    autoQualityFallback: optAutoQualityFallback,
     images: optImages,
     interpolate: optInterpolate,
     interpEngine: pendingEngine,
@@ -358,7 +339,8 @@ function validateSitePreferencePatch(patch) {
   const invalid = new Set();
   const known = new Set(DEFAULT_SETTING_FIELDS);
   const booleanFields = new Set([
-    "ssimds", "sharpen", "hoverReveal", "allVideos", "idlePowerSaving", "images", "interpolate",
+    "ssimds", "sharpen", "hoverReveal", "allVideos", "idlePowerSaving",
+    "autoQualityFallback", "images", "interpolate",
     "interpStaticPassthrough", "interpAutoFallback", "interpLadder", "interpInvert",
   ]);
   const hasEngine = Object.prototype.hasOwnProperty.call(patch, "engine");
@@ -501,7 +483,7 @@ function presentationElementVisible(target) {
 function currentPresentedRuntime() {
   const current = presentedRuntimeMode !== "off" && !pageSuspended &&
     !!device && !lostDevices.has(device) && presentationElementVisible(video) &&
-    presentationElementVisible(canvas) &&
+    presentationElementVisible(presentedCanvas) &&
     primaryController?.active && primaryController.video === video &&
     presentedCanvasVideo === video &&
     presentedSourceW === video?.videoWidth && presentedSourceH === video?.videoHeight &&
@@ -599,7 +581,7 @@ const INTERPOLATION_MODEL_KEYS = Object.freeze([
 const LEGACY_INTERPOLATION_MODEL = "rife_orig";
 const INTERPOLATION_RES_MODES = Object.freeze(["auto", "full", "half", "quarter"]);
 const DEFAULT_INTERPOLATION_MODEL = "rife_v4.26";
-const DEFAULT_INTERPOLATION_RES_MODE = "auto";
+const DEFAULT_INTERPOLATION_RES_MODE = "full";
 const DEFAULT_INTERPOLATION_TARGET_FPS = "auto";
 const DEFAULT_INTERPOLATION_AV_OFFSET_MS = 0;
 
@@ -1144,6 +1126,362 @@ function ensureCanvas() {
   Object.assign(canvas.style, { position: "absolute", top: "0", left: "0", display: "none", pointerEvents: "none", zIndex: "10", transition: "opacity 0.18s ease" });
 }
 
+function createNeuralOutputCanvas() {
+  const output = document.createElement("canvas");
+  output.id = "fsrcnnx-neural-overlay";
+  output.setAttribute?.("data-fsrcnnx-overlay", "neural");
+  Object.assign(output.style, {
+    position: "absolute",
+    top: "0",
+    left: "0",
+    display: "none",
+    pointerEvents: "none",
+    zIndex: "10",
+    transition: "opacity 0.18s ease",
+  });
+  return output;
+}
+
+function emptyNeuralStats() {
+  return {
+    last: 0,
+    mu: 0,
+    n: 0,
+    skip: 0,
+    fails: 0,
+    lastTiles: 0,
+    tileRuns: 0,
+    maxTileW: 0,
+    maxTileH: 0,
+  };
+}
+
+// The ONNX runtime lives in an extension-owned iframe because Chromium applies
+// a host page's WebAssembly policy to content-script worlds. This adapter keeps
+// the renderer-facing lifecycle small while the bridge owns the authenticated
+// MessagePort, output presentation, and ImageBitmap handoff.
+function createEmbeddedNeuralEngine({ log: engineLog = log, warn: engineWarn = warn } = {}) {
+  let bridge = null;
+  let outputCanvas = null;
+  let active = null;
+  let initialized = false;
+  let lifecycleGeneration = 0;
+  let initTail = Promise.resolve();
+  let stopPromise = null;
+  let disposePromise = null;
+  let remoteStats = emptyNeuralStats();
+  let localSkips = 0;
+  let inputCanvas = null;
+  let inputContext = null;
+
+  const supersededError = () => {
+    const error = new Error("neural initialization cancelled by stop");
+    error.code = "NEURAL_SUPERSEDED";
+    return error;
+  };
+
+  const updateStats = (result) => {
+    const next = result?.stats?.engine;
+    if (!next || typeof next !== "object") return;
+    remoteStats = { ...remoteStats, ...next };
+  };
+
+  const captureSourceBitmap = async (source, width, height) => {
+    if (!inputCanvas) {
+      inputCanvas = typeof globalThis.OffscreenCanvas === "function"
+        ? new globalThis.OffscreenCanvas(width, height)
+        : document.createElement("canvas");
+      inputCanvas.width = width;
+      inputCanvas.height = height;
+      inputContext = inputCanvas.getContext("2d", {
+        alpha: false,
+        colorSpace: SRGB_COLOR_SPACE,
+        desynchronized: true,
+        willReadFrequently: true,
+      });
+      if (!inputContext) throw new Error("neural input capture is unavailable");
+    } else if (inputCanvas.width !== width || inputCanvas.height !== height) {
+      inputCanvas.width = width;
+      inputCanvas.height = height;
+    }
+    // Resizing a canvas resets mutable 2D state.
+    try { inputContext.imageSmoothingEnabled = false; } catch {}
+    inputContext.drawImage(source, 0, 0, width, height);
+    const bitmap = typeof inputCanvas.transferToImageBitmap === "function"
+      ? inputCanvas.transferToImageBitmap()
+      : await createImageBitmap(inputCanvas, 0, 0, width, height);
+    if (!bitmap || bitmap.width !== width || bitmap.height !== height) {
+      try { bitmap?.close?.(); } catch {}
+      throw new Error("neural input capture returned invalid dimensions");
+    }
+    return bitmap;
+  };
+
+  const releaseInputCanvasBacking = () => {
+    const oldCanvas = inputCanvas;
+    inputCanvas = null;
+    inputContext = null;
+    if (!oldCanvas) return;
+    try { oldCanvas.width = 0; } catch {}
+    try { oldCanvas.height = 0; } catch {}
+  };
+
+  const releaseOutputCanvasBacking = (target = outputCanvas) => {
+    if (!target) return;
+    try { target.width = 0; } catch {}
+    try { target.height = 0; } catch {}
+  };
+
+  const resetTransport = async () => {
+    const oldBridge = bridge;
+    const oldCanvas = outputCanvas;
+    bridge = null;
+    outputCanvas = null;
+    initialized = false;
+    active = null;
+    releaseOutputCanvasBacking(oldCanvas);
+    try { oldCanvas?.remove?.(); } catch {}
+    try { await oldBridge?.dispose?.(); } catch {}
+  };
+
+  const ensureTransport = async () => {
+    if (bridge && bridge.state === "ready" && outputCanvas) return bridge;
+    if (bridge || outputCanvas) await resetTransport();
+    const candidateCanvas = createNeuralOutputCanvas();
+    const candidate = createNeuralFrameBridge({
+      warn: engineWarn,
+      onEvent: (event) => {
+        if (event?.event !== "device-lost") return;
+        initialized = false;
+        updateStats(event);
+        handleNeuralFrameDeviceLoss(event.error);
+      },
+      onStateChange: ({ state, error }) => {
+        if (state !== "failed" || candidate !== bridge) return;
+        const wasActive = initialized && active?.key;
+        initialized = false;
+        active = null;
+        if (error) engineWarn("neural frame bridge failed:", error.message);
+        if (wasActive) handleNeuralFrameFailure(error);
+      },
+    });
+    bridge = candidate;
+    outputCanvas = candidateCanvas;
+    try {
+      await candidate.start();
+      await candidate.attachCanvas(candidateCanvas);
+      return candidate;
+    } catch (error) {
+      await resetTransport();
+      throw error;
+    }
+  };
+
+  const init = (modelKey) => {
+    const generation = ++lifecycleGeneration;
+    const precedingStop = stopPromise;
+    initialized = false;
+    const operation = initTail.catch(() => {}).then(async () => {
+      if (precedingStop) {
+        try { await precedingStop; } catch {}
+      }
+      if (generation !== lifecycleGeneration) throw supersededError();
+      const currentBridge = await ensureTransport();
+      if (generation !== lifecycleGeneration || currentBridge !== bridge) {
+        throw supersededError();
+      }
+      if (currentBridge.runPending || active) {
+        updateStats(await currentBridge.stop());
+      }
+      if (generation !== lifecycleGeneration || currentBridge !== bridge) {
+        throw supersededError();
+      }
+      const result = await currentBridge.init(modelKey);
+      updateStats(result);
+      if (generation !== lifecycleGeneration || currentBridge !== bridge) {
+        throw supersededError();
+      }
+      active = result?.model || null;
+      if (!active?.key) throw new Error("neural frame returned no active model");
+      initialized = true;
+      engineLog(`neural frame ready: ${active.label || active.key}`);
+      return active;
+    });
+    initTail = operation.then(() => undefined, () => undefined);
+    return operation;
+  };
+
+  const run = async (source, srcW, srcH, presentation) => {
+    if (!initialized || !bridge || bridge.state !== "ready") {
+      throw new Error("neural frame is not initialized");
+    }
+    const generation = lifecycleGeneration;
+    let bitmap;
+    try {
+      bitmap = await captureSourceBitmap(source, srcW, srcH);
+      if (generation !== lifecycleGeneration || !initialized || !bridge) {
+        const error = new Error("neural inference cancelled by stop");
+        error.code = "NEURAL_SUPERSEDED";
+        throw error;
+      }
+      const result = await bridge.run(bitmap, { srcW, srcH, presentation });
+      bitmap = null; // ownership transferred through the bridge
+      if (generation !== lifecycleGeneration || !initialized || !bridge) {
+        const error = new Error("neural inference cancelled by stop");
+        error.code = "NEURAL_SUPERSEDED";
+        throw error;
+      }
+      updateStats(result);
+      return result;
+    } finally {
+      try { bitmap?.close?.(); } catch {}
+    }
+  };
+
+  const stop = () => {
+    ++lifecycleGeneration;
+    initialized = false;
+    let cancellationFailure = null;
+    try { bridge?.cancel?.(); }
+    catch (error) { cancellationFailure = error; }
+    // Once cancellation has fenced publication, neither capture nor presentation
+    // may retain a full-frame page-side backing while the remote run unwinds.
+    releaseInputCanvasBacking();
+    releaseOutputCanvasBacking();
+    if (stopPromise) return stopPromise;
+    const precedingInit = initTail;
+    const operation = (async () => {
+      try { await precedingInit; } catch {}
+      const currentBridge = bridge;
+      active = null;
+      try {
+        if (cancellationFailure) throw cancellationFailure;
+        if (!currentBridge || currentBridge.state === "disposed") {
+          return { stopped: true };
+        }
+        if (currentBridge.state !== "ready") return { stopped: true };
+        const result = await currentBridge.stop();
+        updateStats(result);
+        return result;
+      } finally {
+        if (currentBridge === bridge) await resetTransport();
+      }
+    })().finally(() => {
+      if (stopPromise === operation) stopPromise = null;
+    });
+    stopPromise = operation;
+    return operation;
+  };
+
+  const dispose = () => {
+    if (disposePromise) return disposePromise;
+    ++lifecycleGeneration;
+    initialized = false;
+    try { bridge?.cancel?.(); } catch {}
+    releaseInputCanvasBacking();
+    releaseOutputCanvasBacking();
+    const operation = (async () => {
+      try { await initTail; } catch {}
+      if (stopPromise) {
+        try { await stopPromise; } catch {}
+      }
+      await resetTransport();
+      releaseInputCanvasBacking();
+    })().finally(() => {
+      if (disposePromise === operation) disposePromise = null;
+    });
+    disposePromise = operation;
+    return operation;
+  };
+
+  return Object.freeze({
+    init,
+    run,
+    stop,
+    quiesce: stop,
+    dispose,
+    ready: () => initialized && bridge?.state === "ready",
+    activeEntry: () => active,
+    canvas: () => outputCanvas,
+    stats: () => ({ ...remoteStats, skip: (remoteStats.skip || 0) + localSkips }),
+    bumpSkip: () => { localSkips++; },
+  });
+}
+
+function neuralOutputCanvas() {
+  return neuralEng?.canvas?.() || null;
+}
+
+function setPrimaryOverlayCanvas(target = canvas) {
+  if (canvas) {
+    canvas.setAttribute?.(
+      "data-fsrcnnx-overlay",
+      target === canvas ? "primary" : "standard",
+    );
+  }
+  const neuralCanvas = neuralOutputCanvas();
+  if (neuralCanvas) {
+    neuralCanvas.setAttribute?.(
+      "data-fsrcnnx-overlay",
+      target === neuralCanvas ? "primary" : "neural",
+    );
+  }
+}
+
+function hideNeuralOverlay({ restorePrimary = true } = {}) {
+  const neuralCanvas = neuralOutputCanvas();
+  if (neuralCanvas) {
+    neuralCanvas.style.display = "none";
+    neuralCanvas.style.opacity = "1";
+  }
+  if (presentedCanvas === neuralCanvas) presentedCanvas = null;
+  if (restorePrimary) setPrimaryOverlayCanvas(canvas);
+}
+
+function hidePrimaryOverlays() {
+  if (canvas) {
+    canvas.style.display = "none";
+    canvas.style.opacity = "1";
+  }
+  hideNeuralOverlay({ restorePrimary: true });
+}
+
+function activePrimaryOverlayCanvas() {
+  return presentedCanvas || canvas;
+}
+
+function stopNeuralEngine(context = "lifecycle") {
+  try {
+    return Promise.resolve(neuralEng?.stop?.()).catch((error) => {
+      warn(`neural ${context} stop failed:`, error?.message || error);
+      return null;
+    });
+  } catch (error) {
+    warn(`neural ${context} stop failed:`, error?.message || error);
+    return Promise.resolve(null);
+  }
+}
+
+function handleNeuralFrameDeviceLoss(error) {
+  const detail = boundedRuntimeDetail(error, "Neural GPU device was lost");
+  neuralLastFailure = { code: "neural-device-lost", detail, at: Date.now() };
+  if (!pageSuspended && mode === "upscale" && engine === "neural") {
+    activateNeuralFallback("neural-device-lost", error || detail);
+  } else {
+    notifyState();
+  }
+}
+
+function handleNeuralFrameFailure(error) {
+  const detail = boundedRuntimeDetail(error, "Neural extension frame failed");
+  neuralLastFailure = { code: "neural-runtime-failed", detail, at: Date.now() };
+  if (!pageSuspended && mode === "upscale" && engine === "neural") {
+    activateNeuralFallback("neural-runtime-failed", error || detail);
+  } else {
+    notifyState();
+  }
+}
+
 function applyOverlayReveal(targetCanvas, revealNative, chainOwnsPresentation = false) {
   if (!targetCanvas) return;
   targetCanvas.style.opacity = chainOwnsPresentation || (optHoverReveal && revealNative) ? "0" : "1";
@@ -1155,13 +1493,21 @@ function inShadowDom(node) {
   return !!root && root instanceof ShadowRoot;
 }
 
-function positionVideoCanvas(targetVideo, targetCanvas, owner, outW, outH) {
+function positionVideoCanvas(
+  targetVideo,
+  targetCanvas,
+  owner,
+  outW,
+  outH,
+  { validateDimensions = true, resize = true } = {},
+) {
   if (!targetCanvas || !targetVideo) return false;
   if (videoPresentationState(targetVideo, targetVideo.ownerDocument || document).nativeRequired) {
     targetCanvas.style.display = "none";
     return false;
   }
-  if (outW && outH && !textureSizeAllowed(outW, outH, "canvas output")) {
+  if (validateDimensions && outW && outH &&
+      !textureSizeAllowed(outW, outH, "canvas output")) {
     targetCanvas.style.display = "none"; // expose the original video instead of a stale frame
     return false;
   }
@@ -1205,7 +1551,8 @@ function positionVideoCanvas(targetVideo, targetCanvas, owner, outW, outH) {
     targetCanvas.style.width = `${v.width}px`;
     targetCanvas.style.height = `${v.height}px`;
   }
-  if (outW && outH && (targetCanvas.width !== outW || targetCanvas.height !== outH)) {
+  if (resize && outW && outH &&
+      (targetCanvas.width !== outW || targetCanvas.height !== outH)) {
     targetCanvas.width = outW; targetCanvas.height = outH;
   }
   return true;
@@ -1229,18 +1576,26 @@ function presentationStage(stage, includeStrength = false) {
   });
 }
 
-function showPresentedCanvas(runtimeMode, runtimeEngine = null, diagnostics = null) {
-  if (!canvas) return;
+function showPresentedCanvas(
+  runtimeMode,
+  runtimeEngine = null,
+  diagnostics = null,
+  targetCanvas = canvas,
+) {
+  if (!targetCanvas) return;
   if (videoPresentationState(video, video?.ownerDocument || document).nativeRequired) {
-    canvas.style.display = "none";
+    hidePrimaryOverlays();
     return false;
   }
   if (!videoPageVisible(video)) {
-    canvas.style.display = "none";
+    hidePrimaryOverlays();
     videoMonitor?.request?.();
     return false;
   }
-  canvas.style.display = "block";
+  if (targetCanvas === canvas) hideNeuralOverlay({ restorePrimary: false });
+  else if (canvas) canvas.style.display = "none";
+  setPrimaryOverlayCanvas(targetCanvas);
+  targetCanvas.style.display = "block";
   if (!renderTargetOwner && primaryController?.active && primaryController.video === video) {
     const previousMode = presentedRuntimeMode;
     const previousEngine = presentedRuntimeEngine;
@@ -1251,6 +1606,7 @@ function showPresentedCanvas(runtimeMode, runtimeEngine = null, diagnostics = nu
     presentedVideoSource = captureVideoSource(video);
     presentedRuntimeMode = runtimeMode === "upscale" ? "upscale" : "passthrough";
     presentedRuntimeEngine = presentedRuntimeMode === "upscale" ? (runtimeEngine || engine) : null;
+    presentedCanvas = targetCanvas;
     primaryPresentationGeneration++;
     presentedPresentation = Object.freeze({
       committed: true,
@@ -1259,7 +1615,8 @@ function showPresentedCanvas(runtimeMode, runtimeEngine = null, diagnostics = nu
       engine: presentedRuntimeEngine,
       source: presentationDimensions(diagnostics?.source?.width, diagnostics?.source?.height) ||
         presentationDimensions(video.videoWidth, video.videoHeight),
-      output: presentationDimensions(canvas.width, canvas.height),
+      output: presentationDimensions(diagnostics?.output?.width, diagnostics?.output?.height) ||
+        presentationDimensions(targetCanvas.width, targetCanvas.height),
       ssimds: presentationStage(diagnostics?.ssimds),
       sharpen: presentationStage(diagnostics?.sharpen, true),
       interpolation: Object.freeze({ inverted: diagnostics?.interpolation?.inverted === true }),
@@ -1759,10 +2116,7 @@ function handleCurrentDeviceLoss(lostDevice, info) {
   Promise.resolve(invalidateMainDeviceResources()).catch((error) => {
     warn("device-loss resource invalidation failed:", boundedRuntimeDetail(error));
   });
-  if (canvas) {
-    canvas.style.display = "none";
-    canvas.style.opacity = "1";
-  }
+  hidePrimaryOverlays();
   if (shouldRecover) scheduleDeviceRecovery(generation, lostDevice, 0, providerInvalidation);
 }
 
@@ -1787,8 +2141,9 @@ async function recoverDevice(generation, lostDevice, attempt, providerInvalidati
     if (pageSuspended || generation !== deviceRecoveryGeneration || !deviceRecoveryRequested()) return false;
 
     if (mode === "upscale" && engine === "neural") {
+      if (!(await initWebGPU()) || !device) throw new Error("WebGPU reinitialization failed");
       const neuralSelection = engineSelectionGeneration;
-      await ensureNeural(neuralSelection, { preserveModeOnAdoptionFailure: true });
+      await ensureNeural(neuralSelection);
       if (!neuralSelectionCurrent(neuralSelection)) return false;
     } else {
       if (!(await initWebGPU()) || !device) throw new Error("WebGPU reinitialization failed");
@@ -1840,7 +2195,7 @@ async function recoverDevice(generation, lostDevice, attempt, providerInvalidati
       try { interpolator?.stop?.(); } catch {}
       clearMultiTargets();
       resetPresentedRuntime();
-      if (canvas) canvas.style.display = "none";
+      hidePrimaryOverlays();
       notifyState();
     }
     return false;
@@ -2671,10 +3026,9 @@ function finalizeToCanvas(enc, srcTex) {
 
 
 // ---- neural engine (v0.49.0) ----------------------------------------------
-// ONNX SR models (SPAN/RealPLKSR/DAT2/ATD...) via a second ORT session on the
-// shared device. Output is full RGB at model scale in an rgba16float texture;
-// present reuses the existing tail (SSimDS overshoot doctrine, sharpen,
-// canvas) — recombine is bypassed since chroma is neural.
+// Bundled ONNX super-resolution runs in the extension-owned Neural frame.
+// It returns a full-RGB bitmap after optional SSimDownscaler and sharpening;
+// the page-side adapter presents that bitmap on its dedicated overlay canvas.
 function pauseInterpolationForNeural() {
   if (!optInterpolate) return;
   interpolationSelectionGeneration++;
@@ -2724,21 +3078,25 @@ function activateNeuralFallback(code, error) {
   neuralLastFailure = { code, detail, at: rendererFallback.at };
   resetScaleSelection();
   clearMultiTargets();
-  try { neuralEng?.stop?.(); } catch {}
+  void stopNeuralEngine("fallback");
+  hidePrimaryOverlays();
   resumeInterpolationAfterNeural();
   notifyState();
   return rendererFallback;
 }
 
 function performanceFallbackEligible() {
-  return mode === "upscale" && (engine === "fsrcnnx-hi" || engine === "artcnn") &&
+  return optAutoQualityFallback && mode === "upscale" &&
+    (engine === "fsrcnnx-hi" || engine === "artcnn" || engine === "neural") &&
     requestedEngine === engine && !rendererFallback;
 }
 
-function activatePerformanceFallback(signal, error = null) {
-  if (!performanceFallbackEligible()) return null;
+function activatePerformanceFallback(signal) {
+  if (!performanceFallbackEligible() ||
+      (signal?.code !== "sustained-frame-drops" &&
+       signal?.code !== "sustained-gpu-backlog")) return null;
   const from = engine;
-  const detail = signal?.detail || boundedRuntimeDetail(error, "Renderer could not sustain playback");
+  const detail = signal.detail || "Renderer could not sustain playback";
   engineSelectionGeneration++;
   engine = "fsrcnnx";
   chainDepth = 1;
@@ -2746,13 +3104,18 @@ function activatePerformanceFallback(signal, error = null) {
     category: "performance",
     from,
     to: "fsrcnnx",
-    code: signal?.code || "model-render-failed",
+    code: signal.code,
     detail,
     at: Date.now(),
     evidence: signal?.evidence || null,
   };
   resetScaleSelection();
   clearMultiTargets();
+  if (from === "neural") {
+    void stopNeuralEngine("performance fallback");
+    hidePrimaryOverlays();
+    resumeInterpolationAfterNeural();
+  }
   ensureFsrcnnxStages(1).catch((fallbackError) =>
     warn("standard FSRCNNX fallback preload failed:", fallbackError.message));
   notifyState();
@@ -2813,34 +3176,21 @@ function sampleGpuQueuePerformance() {
 
 async function ensureNeural(
   expectedSelection = engineSelectionGeneration,
-  { preserveModeOnAdoptionFailure = false, modelKey = neuralModelKey } = {},
+  { modelKey = neuralModelKey } = {},
 ) {
   if (!neuralSelectionCurrent(expectedSelection)) throw neuralSupersededError();
-  if (!neuralEng) neuralEng = createNeuralEngine({ log, warn });
+  if (!neuralEng) neuralEng = createEmbeddedNeuralEngine({ log, warn });
   // v1: neural + interpolation are mutually exclusive. This is a runtime pause,
   // not a settings change: leaving neural restores the user's prior preference.
   pauseInterpolationForNeural();
   // Capture the requested model at operation creation. A newer model choice
   // advances engineSelectionGeneration and cannot redirect this activation by
   // mutating the shared preference while initialization is in flight.
-  const entry = await neuralEng.init(modelKey || undefined);
+  const requestedModelKey = modelKey || neuralModelKey || _neuralList[0]?.key;
+  if (!requestedModelKey) throw new Error("no bundled neural model is available");
+  const entry = await neuralEng.init(requestedModelKey);
   if (!neuralSelectionCurrent(expectedSelection)) throw neuralSupersededError();
   neuralModelKey = entry.key;
-  const d = neuralEng.device();
-  if (d && d !== device) {
-    log("neural: adopting shared ORT device (upscaler + neural unified)");
-    const adopted = await adoptChainDevice(
-      d,
-      () => neuralSelectionCurrent(expectedSelection),
-      { preserveModeOnFailure: preserveModeOnAdoptionFailure },
-    );
-    if (!neuralSelectionCurrent(expectedSelection)) throw neuralSupersededError();
-    if (!adopted) {
-      const error = new Error("neural shared-device adoption failed");
-      error.code = "NEURAL_ADOPTION_FAILED";
-      throw error;
-    }
-  }
   if (!neuralSelectionCurrent(expectedSelection)) throw neuralSupersededError();
   neuralFail = 0;
   clearNeuralFallback();
@@ -2881,6 +3231,7 @@ export async function setNeuralModel(key, { persist = true } = {}) {
       warn("idle GPU retirement after neural model selection failed:", error.message));
   }
   if (activateNow) {
+    hidePrimaryOverlays();
     try { await ensureNeural(selectionGeneration, { modelKey: requestedModelKey }); }
     catch (e) {
       if (pageSuspended || mode !== "upscale" || e.code === "NEURAL_SUPERSEDED" ||
@@ -2888,10 +3239,7 @@ export async function setNeuralModel(key, { persist = true } = {}) {
         return { ok: true, model: neuralModelKey, pending: true };
       }
       if (e.code !== "NEURAL_SUPERSEDED") warn("neural model switch failed:", e.message);
-      activateNeuralFallback(
-        e.code === "NEURAL_ADOPTION_FAILED" ? "neural-adoption-failed" : "neural-init-failed",
-        e,
-      );
+      activateNeuralFallback("neural-init-failed", e);
       return { ok: false, reason: "neural activation failed", detail: boundedRuntimeDetail(e),
         model: neuralModelKey, pending: true };
     }
@@ -2899,98 +3247,88 @@ export async function setNeuralModel(key, { persist = true } = {}) {
   return { ok: true, model: neuralModelKey };
 }
 
-// Shared present tail for any finished rgba16float RGB texture: SSimDS when
-// the result overshoots the display box, then sharpen/blit to canvas.
-// Additive extraction — renderUpscale keeps its own battle-tested inline copy.
-function presentHiRGBTexture(tex, outW, outH) {
-  if (!device || !canvas || !context || !textureSizeAllowed(outW, outH, "neural output")) return false;
+// Shared present tail settings for the extension-frame renderer. Model output stays
+// at native scale unless SSimDownscaler is both enabled and useful.
+function neuralFramePresentation(srcW, srcH, scale) {
+  const modelWidth = srcW * scale;
+  const modelHeight = srcH * scale;
   const dpr = window.devicePixelRatio || 1;
-  const fs2 = document.fullscreenElement != null;
-  const dispW = Math.max(1, fs2 ? Math.round(window.screen.width * dpr)
-                                : Math.round(video.getBoundingClientRect().width * dpr));
-  const dispH = Math.max(1, Math.round(dispW * outH / outW));
-  const overshoot = textureSizeAllowed(dispW, dispH, "neural display output") &&
-    ssimdsEnabled && ssimds && outW > dispW * 1.05;
-  lastSSimDS = overshoot;
-  const enc = device.createCommandEncoder();
-  if (overshoot) {
-    ssimds.prepare(outW, outH, dispW, dispH, tex);
-    const dsOut = ssimds.run(enc, tex);
-    if (!positionCanvas(dispW, dispH)) return false;
-    finalizeToCanvas(enc, dsOut);
-  } else {
-    if (!positionCanvas(outW, outH)) return false;
-    finalizeToCanvas(enc, tex);
-  }
-  device.queue.submit([enc.finish()]);
-  const presentationWidth = overshoot ? dispW : outW;
-  const presentationHeight = overshoot ? dispH : outH;
-  showPresentedCanvas("upscale", "neural", {
-    source: { width: video.videoWidth, height: video.videoHeight },
-    ssimds: overshoot ? {
-      source: { width: outW, height: outH },
-      output: { width: dispW, height: dispH },
-    } : null,
-    sharpen: sharpenEnabled ? {
-      source: { width: presentationWidth, height: presentationHeight },
-      output: { width: presentationWidth, height: presentationHeight },
-      strength: sharpenStrength,
-    } : null,
-    interpolation: { inverted: false },
+  const fullscreen = document.fullscreenElement != null;
+  const displayWidth = Math.max(
+    1,
+    fullscreen
+      ? Math.round(window.screen.width * dpr)
+      : Math.round(video.getBoundingClientRect().width * dpr),
+  );
+  const displayHeight = Math.max(1, Math.round(displayWidth * modelHeight / modelWidth));
+  const downscale = ssimdsEnabled && modelWidth > displayWidth * 1.05;
+  return Object.freeze({
+    width: downscale ? displayWidth : modelWidth,
+    height: downscale ? displayHeight : modelHeight,
+    ssimdsEnabled,
+    sharpenEnabled,
+    sharpenStrength,
   });
-  return true;
 }
 
 function renderNeuralFrame() {
   if (!neuralEng || !neuralEng.ready()) { renderPassthrough(); return; }
-  if (neuralBusy) { neuralEng.bumpSkip(); return; } // queue-of-1: drop, keep last output
-  const nd = neuralEng.device();
-  if (nd && nd !== device) { // upscaler device predates/postdates the ORT device — unify first
-    if (!adopting) adoptChainDevice(nd).catch((e) => warn("neural device adopt failed:", e.message));
-    neuralEng.bumpSkip(); return;
-  }
+  if (neuralBusy) {
+    if (performanceFallbackEligible() && presentedRuntimeEngine === engine) {
+      playbackPerformance.observeRendererSkip();
+    }
+    neuralEng.bumpSkip();
+    return;
+  } // queue-of-1: drop, keep last output
   const srcW = video.videoWidth, srcH = video.videoHeight;
   if (!srcW || !srcH) return;
   const entry = neuralEng.activeEntry();
   const scale = Number(entry?.scale) || 1;
-  const padMultiple = Math.max(1, Math.trunc(Number(entry?.padMultiple) || 1));
-  const padW = Math.ceil(srcW / padMultiple) * padMultiple;
-  const padH = Math.ceil(srcH / padMultiple) * padMultiple;
-  if (!textureSizeAllowed(srcW, srcH, "neural input") ||
-      !textureSizeAllowed(padW, padH, "neural padded input") ||
-      !textureSizeAllowed(srcW * scale, srcH * scale, "neural output") ||
-      !textureSizeAllowed(padW * scale, padH * scale, "neural padded output") ||
-      !storageBufferSizeAllowed(padW * padH * 3 * 4, "neural input buffer") ||
-      !storageBufferSizeAllowed(padW * scale * padH * scale * 3 * 4, "neural output buffer")) {
-    renderPassthrough();
-    return;
-  }
-  const ext = safeImportExternal();
-  if (!ext) return;
-  const runDevice = device;
+  const presentation = neuralFramePresentation(srcW, srcH, scale);
   const runEngine = neuralEng;
   const runVideo = video;
   const runVideoSource = captureVideoSource(runVideo);
   const runController = primaryController;
   const runVideoGeneration = videoSelectionGeneration;
+  const runEngineGeneration = engineSelectionGeneration;
   neuralBusy = true;
-  runEngine.run(ext, srcW, srcH).then((res) => {
-    if (res && device === runDevice && neuralEng === runEngine &&
+  runEngine.run(runVideo, srcW, srcH, presentation).then((res) => {
+    if (res && neuralEng === runEngine &&
         video === runVideo && primaryController === runController &&
         sameVideoSource(captureVideoSource(runVideo), runVideoSource) &&
         runVideoGeneration === videoSelectionGeneration &&
+        runEngineGeneration === engineSelectionGeneration &&
         !adopting && mode === "upscale" && engine === "neural") {
-      presentHiRGBTexture(res.tex, res.outW, res.outH);
+      const targetCanvas = runEngine.canvas();
+      const output = res.presentation?.output;
+      const positioned = output && positionVideoCanvas(
+        runVideo,
+        targetCanvas,
+        runController,
+        output.width,
+        output.height,
+        { validateDimensions: false, resize: false },
+      );
+      if (positioned) {
+        lastSSimDS = !!res.presentation?.ssimds;
+        showPresentedCanvas("upscale", "neural", {
+          ...res.presentation,
+          interpolation: { inverted: false },
+        }, targetCanvas);
+      }
     }
     if (video === runVideo && sameVideoSource(captureVideoSource(runVideo), runVideoSource) &&
         runVideoGeneration === videoSelectionGeneration &&
+        runEngineGeneration === engineSelectionGeneration &&
         mode === "upscale" && engine === "neural") neuralFail = 0;
   }).catch((e) => {
     // stop(), a mode change, or an engine change deliberately invalidates the
     // run. Its rejection is lifecycle control, not an inference failure.
     if (video !== runVideo || !sameVideoSource(captureVideoSource(runVideo), runVideoSource) ||
         runVideoGeneration !== videoSelectionGeneration ||
-        mode !== "upscale" || engine !== "neural" || /cancelled by stop/i.test(e.message)) return;
+        runEngineGeneration !== engineSelectionGeneration ||
+        mode !== "upscale" || engine !== "neural" ||
+        /cancelled by stop|superseded|run-busy/i.test(e.message)) return;
     neuralFail++;
     warn(`neural inference failed (${neuralFail}/3):`, e.message);
     if (neuralFail >= 3) {
@@ -3079,7 +3417,7 @@ function renderPassthrough() {
     });
   }
   if (!textureSizeAllowed(video.videoWidth, video.videoHeight, "passthrough output")) {
-    if (canvas) canvas.style.display = "none";
+    hidePrimaryOverlays();
     return;
   }
   if (!positionCanvas(video.videoWidth, video.videoHeight)) return;
@@ -3155,13 +3493,13 @@ function handlePrimarySourceBoundary(owner, event = null) {
   // media resource boundary. The serialized selector then establishes a fresh
   // generation for whichever playable candidate the page exposes now.
   cancelMainLoop();
-  try { neuralEng?.stop?.(); } catch {}
+  void stopNeuralEngine("source boundary");
   try { interpolator?.stop?.(); } catch {}
   chainTap(false);
   chainInverted = false;
   _texSource = null;
   invalidateVideoColorSupport(owner.video);
-  if (canvas) { canvas.style.display = "none"; canvas.style.opacity = "1"; }
+  hidePrimaryOverlays();
   detach();
   notifyState();
   queueVideoSelection(findVideo(), { force: true, sourceBoundary: event?.type || true });
@@ -3180,7 +3518,7 @@ async function deactivateRendering({ persist = true, protectedFailure = false } 
   // upscaling or standalone interpolation.
   reconcileDeviceRecoveryDemand();
   cancelMainLoop();
-  try { neuralEng?.stop?.(); } catch {}
+  void stopNeuralEngine("renderer deactivation");
   try { interpolator?.stop?.(); } catch {}
   chainTap(false);
   chainInverted = false;
@@ -3188,7 +3526,7 @@ async function deactivateRendering({ persist = true, protectedFailure = false } 
   activeModel = null;
   clearMultiTargets();
   detach();
-  if (canvas) { canvas.style.display = "none"; canvas.style.opacity = "1"; }
+  hidePrimaryOverlays();
   if (persist) saveSitePrefs(["mode"]);
   if (protectedFailure) notifyProtected(); else notifyState();
 
@@ -3210,7 +3548,7 @@ async function deactivateRendering({ persist = true, protectedFailure = false } 
 function suspendSelectedVideo(reason) {
   videoSelectionGeneration++;
   cancelMainLoop();
-  try { neuralEng?.stop?.(); } catch {}
+  void stopNeuralEngine("protected source");
   try { interpolator?.stop?.(); } catch {}
   clearMultiTargets();
   chainTap(false);
@@ -3219,7 +3557,7 @@ function suspendSelectedVideo(reason) {
   activeModel = null;
   resetScaleSelection();
   detach();
-  if (canvas) { canvas.style.display = "none"; canvas.style.opacity = "1"; }
+  hidePrimaryOverlays();
   protectedSource = true;
   protectedReason = reason;
   notifyProtected();
@@ -3271,7 +3609,7 @@ function loop(owner, frameNow = null, frameMetadata = null) {
     // CHAIN TAP: if the interpolation chain is consuming upscaled frames, copy the
     // finished frame (still valid pre-present within this task) into a persistent
     // texture the interpolator (same device) samples from. Only when tapped.
-    if (chainTapOn) {
+    if (chainTapOn && !(mode === "upscale" && engine === "neural")) {
       try {
         const curTex = context.getCurrentTexture();
         ensureChainTapTexture(curTex.width, curTex.height);
@@ -3283,7 +3621,7 @@ function loop(owner, frameNow = null, frameMetadata = null) {
     }
     // hover-reveal: fade overlay out while cursor is over the player. While the
     // interpolation chain is tapped, the interp overlay IS the output — hide ours.
-    applyOverlayReveal(canvas, hoverHidden, chainTapOn);
+    applyOverlayReveal(activePrimaryOverlayCanvas(), hoverHidden, chainTapOn);
     // multi-video: reconcile the set of secondary videos periodically (cheap,
     // every ~30 frames) since feed videos appear/disappear as you scroll.
     if (optAllVideos && frameCount % 30 === 0) syncMultiTargets();
@@ -3306,14 +3644,8 @@ function loop(owner, frameNow = null, frameMetadata = null) {
     }
   } catch (e) {
     warn("render error:", e.message, "\n", e.stack);
-    if (!activatePerformanceFallback({
-      code: "model-render-failed",
-      detail: boundedRuntimeDetail(e, "Selected model failed while rendering"),
-      evidence: { errorName: e?.name || null, errorCode: e?.code || null },
-    }, e)) {
-      void deactivateRendering({ persist: true })
-        .catch((error) => warn("renderer teardown failed:", error.message));
-    }
+    void deactivateRendering({ persist: true })
+      .catch((error) => warn("renderer teardown failed:", error.message));
   }
   scheduleMainLoop();
 }
@@ -3327,21 +3659,24 @@ function attach() {
     onLayout: (current) => {
       if (current === primaryController && current.video === video) {
         if (!videoPageVisible(current.video)) {
-          if (canvas) canvas.style.display = "none";
+          hidePrimaryOverlays();
           interpolator?.refreshLayout?.();
           videoMonitor?.request?.();
           return;
         }
+        const targetCanvas = activePrimaryOverlayCanvas();
+        const neuralTarget = targetCanvas === neuralOutputCanvas();
         const positioned = positionVideoCanvas(
           current.video,
-          canvas,
+          targetCanvas,
           current,
-          canvas?.width,
-          canvas?.height,
+          targetCanvas?.width,
+          targetCanvas?.height,
+          neuralTarget ? { validateDimensions: false, resize: false } : undefined,
         );
         if (positioned && presentedPresentation?.committed) {
-          canvas.style.display = "block";
-          applyOverlayReveal(canvas, hoverHidden, chainTapOn);
+          targetCanvas.style.display = "block";
+          applyOverlayReveal(targetCanvas, hoverHidden, chainTapOn);
         }
         interpolator?.refreshLayout?.();
       }
@@ -3349,21 +3684,30 @@ function attach() {
     onHoverChange: (hidden, current) => {
       if (current === primaryController) {
         hoverHidden = !!hidden;
-        applyOverlayReveal(canvas, hoverHidden, chainTapOn);
+        applyOverlayReveal(activePrimaryOverlayCanvas(), hoverHidden, chainTapOn);
       }
     },
     onPresentationChange: (state, current) => {
-      if (current !== primaryController || current.video !== video || !canvas) return;
+      const targetCanvas = activePrimaryOverlayCanvas();
+      if (current !== primaryController || current.video !== video || !targetCanvas) return;
       primaryPresentationBoundary = state;
       if (state.nativeRequired) {
-        canvas.style.display = "none";
+        hidePrimaryOverlays();
         notifyState();
         return;
       }
-      const positioned = positionVideoCanvas(video, canvas, current, canvas.width, canvas.height);
+      const neuralTarget = targetCanvas === neuralOutputCanvas();
+      const positioned = positionVideoCanvas(
+        video,
+        targetCanvas,
+        current,
+        targetCanvas.width,
+        targetCanvas.height,
+        neuralTarget ? { validateDimensions: false, resize: false } : undefined,
+      );
       if (positioned && presentedPresentation?.committed) {
-        canvas.style.display = "block";
-        applyOverlayReveal(canvas, hoverHidden, chainTapOn);
+        targetCanvas.style.display = "block";
+        applyOverlayReveal(targetCanvas, hoverHidden, chainTapOn);
       }
       notifyState();
     },
@@ -3595,7 +3939,7 @@ async function applyVideoSelection(
   if (changed) {
     resetPlaybackPerformanceFallback();
     cancelMainLoop();
-    try { neuralEng?.stop?.(); } catch {}
+    void stopNeuralEngine("video selection");
     try { interpolator?.stop?.(); } catch {}
     detach();
     clearMultiTargets();
@@ -3618,7 +3962,7 @@ async function applyVideoSelection(
     protectedSource = false;
     protectedReason = null;
     selectedColorSupport = uncheckedColorSupport("The selected video source has not been checked yet.");
-    if (canvas) { canvas.style.display = "none"; canvas.style.opacity = "1"; }
+    hidePrimaryOverlays();
   }
 
   let processable = !!candidate;
@@ -3659,10 +4003,7 @@ async function applyVideoSelection(
           if (!videoSelectionCurrent(candidate, generation, expectedModeGeneration, source)) return false;
           if (neuralSelection === engineSelectionGeneration && engine === "neural") {
             warn("neural activation failed; using FSRCNNX:", error.message);
-            activateNeuralFallback(
-              error.code === "NEURAL_ADOPTION_FAILED" ? "neural-adoption-failed" : "neural-init-failed",
-              error,
-            );
+            activateNeuralFallback("neural-init-failed", error);
             await loadModels();
           }
         }
@@ -3709,7 +4050,7 @@ export async function suspendDocument() {
   imagesSelectionGeneration++;
   imageUpscalerInitGeneration++;
   cancelMainLoop();
-  try { neuralEng?.stop?.(); } catch {}
+  void stopNeuralEngine("document suspension");
   try { interpolator?.stop?.(); } catch {}
   try { imageUpscaler?.stop?.(); } catch {}
   clearMultiTargets();
@@ -3721,7 +4062,7 @@ export async function suspendDocument() {
   videoMonitor?.stop?.();
   videoMonitor = null;
   detach();
-  if (canvas) { canvas.style.display = "none"; canvas.style.opacity = "1"; }
+  hidePrimaryOverlays();
   notifyState();
   if (optIdlePowerSaving) await retireGpuResources("document-hidden");
   return { ok: true, suspended: true, changed: true };
@@ -3917,15 +4258,13 @@ export function setEngine(e, { persist = true } = {}) {
   const activateNeural = engine === "neural" && mode === "upscale" && !pageSuspended &&
     primaryController?.active && primaryController.video === video;
   if (activateNeural) {
+    hidePrimaryOverlays();
     ensureNeural(selectionGeneration).catch((er) => {
       if (selectionGeneration !== engineSelectionGeneration || engine !== "neural") return;
       if (pageSuspended || mode !== "upscale" ||
           /initialization cancelled|activation superseded/i.test(er.message)) return;
       warn("neural init failed:", er.message);
-      activateNeuralFallback(
-        er.code === "NEURAL_ADOPTION_FAILED" ? "neural-adoption-failed" : "neural-init-failed",
-        er,
-      );
+      activateNeuralFallback("neural-init-failed", er);
     });
   } else if (engine === "neural") {
     // Neural selection owns interpolation even while upscaling is currently
@@ -3935,7 +4274,8 @@ export function setEngine(e, { persist = true } = {}) {
     void retireGpuResourcesIfIdle("all-features-off").catch((error) =>
       warn("idle GPU retirement after neural selection failed:", error.message));
   } else if (wasNeural || interpPausedByNeural) {
-    try { neuralEng?.stop?.(); } catch {}
+    void stopNeuralEngine("engine switch");
+    hidePrimaryOverlays();
     resumeInterpolationAfterNeural();
   }
   chainDepth = engine === "artcnn" || engine === "fsrcnnx" || engine === "fsrcnnx-hi"
@@ -3972,7 +4312,7 @@ export function setHoverReveal(on, { persist = true } = {}) {
   if (persist) cancelPreferenceRestore();
   optHoverReveal = !!on;
   hoverHidden = !!primaryController?.revealActive;
-  applyOverlayReveal(canvas, hoverHidden, chainTapOn);
+  applyOverlayReveal(activePrimaryOverlayCanvas(), hoverHidden, chainTapOn);
   for (const target of multiTargets.values()) {
     target.hoverHidden = !!target.controller?.revealActive;
     applyOverlayReveal(target.canvas, target.hoverHidden);
@@ -3994,6 +4334,28 @@ export async function setIdlePowerSaving(on, { persist = true } = {}) {
     };
   }
   return { ok: true, idlePowerSaving: optIdlePowerSaving, resourcesReleased: false };
+}
+export function setAutoQualityFallback(on, { persist = true } = {}) {
+  if (persist) cancelPreferenceRestore();
+  optAutoQualityFallback = !!on;
+  const hadPerformanceFallback = rendererFallback?.category === "performance";
+  let restoreResult = null;
+  if (!optAutoQualityFallback && hadPerformanceFallback) {
+    // Re-enter the durable requested engine through its regular lifecycle path.
+    // This safely restarts Neural or preloads a shader model without replacing
+    // the user's selection.
+    restoreResult = setEngine(requestedEngine, { persist: false });
+  } else {
+    resetPlaybackPerformanceMonitoring();
+  }
+  if (persist) saveSitePrefs(["autoQualityFallback"]);
+  notifyState();
+  return {
+    ok: restoreResult?.ok !== false,
+    autoQualityFallback: optAutoQualityFallback,
+    restored: hadPerformanceFallback && restoreResult?.ok === true,
+    ...(restoreResult?.pending === true ? { pending: true } : {}),
+  };
 }
 export function setAllVideos(on, { persist = true } = {}) {
   if (persist) cancelPreferenceRestore();
@@ -4378,7 +4740,6 @@ function findAllVideos() {
 }
 
 const MAX_SECONDARY_TARGETS = 2;
-const MAX_SECONDARY_SOURCE_PIXELS = 1920 * 1080 * 2;
 
 // Reconcile multiTargets with the current set of on-screen videos.
 function syncMultiTargets() {
@@ -4392,12 +4753,9 @@ function syncMultiTargets() {
       return rr.width * rr.height - lr.width * lr.height;
     });
   const present = new Set();
-  let admittedPixels = 0;
   for (const candidate of candidates) {
-    const pixels = Math.max(1, candidate.videoWidth * candidate.videoHeight);
-    if (present.size >= MAX_SECONDARY_TARGETS || admittedPixels + pixels > MAX_SECONDARY_SOURCE_PIXELS) continue;
+    if (present.size >= MAX_SECONDARY_TARGETS) break;
     present.add(candidate);
-    admittedPixels += pixels;
   }
   // remove targets whose video is gone/offscreen
   for (const [vid, t] of multiTargets) {
@@ -4576,6 +4934,9 @@ export async function restoreSitePrefs() {
   if (typeof p.hoverReveal === "boolean") optHoverReveal = p.hoverReveal;
   if (typeof p.allVideos === "boolean") optAllVideos = p.allVideos;
   if (typeof p.idlePowerSaving === "boolean") optIdlePowerSaving = p.idlePowerSaving;
+  if (typeof p.autoQualityFallback === "boolean") {
+    optAutoQualityFallback = p.autoQualityFallback;
+  }
   chainDepth = engine === "artcnn" || engine === "fsrcnnx" || engine === "fsrcnnx-hi"
     ? policyToDepth(upscalePolicy) : 1;
   resetScaleSelection();
@@ -4724,6 +5085,9 @@ async function applyExternalSitePreferences(patch) {
   if (has("idlePowerSaving")) {
     await setIdlePowerSaving(boolean("idlePowerSaving", false), { persist: false });
   }
+  if (has("autoQualityFallback")) {
+    setAutoQualityFallback(boolean("autoQualityFallback", false), { persist: false });
+  }
   if (applyToken !== preferenceRestoreGeneration) return { ok: false, reason: "superseded" };
   if (has("interpResMode")) {
     const next = normalizeInterpolationResMode(deleted("interpResMode") ? DEFAULT_INTERPOLATION_RES_MODE : patch.interpResMode);
@@ -4746,7 +5110,7 @@ async function applyExternalSitePreferences(patch) {
     setInterpolateDiag(boolean("interpStaticPassthrough", true), { persist: false });
   }
   if (has("interpAutoFallback")) {
-    setInterpolateAutoFallback(boolean("interpAutoFallback", true), { persist: false });
+    setInterpolateAutoFallback(boolean("interpAutoFallback", false), { persist: false });
   }
   if (has("interpLadder")) setInterpolateLadder(boolean("interpLadder", false), { persist: false });
 
@@ -4885,6 +5249,7 @@ export function getStatus() {
            host: siteHost(),
            hoverReveal: optHoverReveal, allVideos: optAllVideos,
            idlePowerSaving: optIdlePowerSaving,
+           autoQualityFallback: optAutoQualityFallback,
            images: optImages, imageCount: imageUpscaledCount,
            interpolate: optInterpolate, interpPausedByNeural,
            interpQuarantined: interpolationQuarantineMatches(video),
@@ -4931,7 +5296,10 @@ export function getStatus() {
              framesPresented: primaryPresentationGeneration,
              presentation,
              fallback: rendererFallback,
-             performance: playbackPerformance.snapshot(),
+             performance: {
+               enabled: optAutoQualityFallback,
+               ...playbackPerformance.snapshot(),
+             },
              nativePresentation: primaryPresentationBoundary,
            },
            imagesRuntime: {

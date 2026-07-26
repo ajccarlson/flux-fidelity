@@ -37,6 +37,10 @@ test("privacy disclosure is packaged and describes local handling, retention, an
     /\*\*Site access:\*\*/,
     /\*\*Active tab:\*\*/,
     /\*\*Storage:\*\*/,
+    /stable extension URLs/i,
+    /detect that the extension is installed/i,
+    /per-session dynamic URLs/i,
+    /short-lived, one-time authorization/i,
   ]) assert.match(privacy, required);
 });
 
@@ -66,7 +70,9 @@ test("project-authored packaged runtime has no external endpoint or hidden netwo
   ]);
   for (const file of fetchFiles) {
     const source = readFileSync(resolve(root, file), "utf8");
-    assert.match(source, /chrome\.runtime\.getURL|validation\/reference-fixtures\.json/,
+    assert.match(
+      source,
+      /chrome\.runtime\.getURL|resolvePackagedAssetUrl|validation\/reference-fixtures\.json/,
       `${file} fetches without a bundled-resource root`);
   }
 });

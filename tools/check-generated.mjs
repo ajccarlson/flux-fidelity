@@ -20,7 +20,7 @@ try {
   const fsrcnnxOut = resolve(temp, "fsrcnnx");
   await runScript("tools/transpile.js", [
     "shaders/upstream/FSRCNNX_x2_16-0-4-1.glsl",
-    "shaders/FSRCNNX_x2_56-16-4-1.glsl",
+    "shaders/upstream/FSRCNNX_x2_56-16-4-1.glsl",
     "--out", fsrcnnxOut,
   ], "fsrcnnx");
 
