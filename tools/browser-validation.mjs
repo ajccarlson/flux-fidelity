@@ -2405,9 +2405,6 @@ async function runRealVideoIntegration(
       status.interpolationRuntime?.presentation?.committed === true &&
       status.interpolationRuntime.presentation.generation >= interpolationGeneration + 3 &&
       status.interpStats?.framesPresented >= interpolationGeneration + 3, signal);
-    const interpolationPage = await fixtureSnapshot(fixturePage.client);
-    requireCondition(!!visibleOverlay(interpolationPage, "interpolation"),
-      "blend interpolation did not commit a visible interpolation overlay");
     const interpolationPixels = await waitForRenderedOverlayPixels(
       fixturePage.client, "interpolation", "blend interpolation later composited frame", signal,
     );
@@ -2422,9 +2419,6 @@ async function runRealVideoIntegration(
       status.interpolate === true && status.interpolationRuntime?.phase === "active" &&
       status.interpolationRuntime?.takeoverActive === true &&
       status.interpolationRuntime?.presentation?.committed === true, signal);
-    const standalonePage = await fixtureSnapshot(fixturePage.client);
-    requireCondition(!!visibleOverlay(standalonePage, "interpolation"),
-      "standalone interpolation did not retain its direct overlay");
     await waitForRenderedOverlayPixels(
       fixturePage.client, "interpolation", "standalone interpolation compositor", signal,
     );
