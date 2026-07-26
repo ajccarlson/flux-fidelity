@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   browserVersion,
   fixtureDisplayDimensions,
+  isUnsupportedNeuralF16Fallback,
 } from "../tools/browser-validation.mjs";
 
 const root = resolve(import.meta.dirname, "..");
@@ -28,6 +29,10 @@ test("browser validator covers the packaged extension and real-video runtime", (
   assert.match(validator, /requirePixelProgression/);
   assert.match(validator, /changePopupControl\(popupPage\.client, "engine", "neural"\)/);
   assert.match(validator, /Neural ONNX presentation without fallback/);
+  assert.match(
+    validator,
+    /const integration = await runRealVideoIntegration\([\s\S]*?\{ allowNeuralF16Unavailable: options\.allowNeuralF16Unavailable \},\s*\);/,
+  );
   assert.match(validator, /status\.renderer\?\.fallback == null/);
   assert.match(validator, /status\.neuralRuntime\?\.phase === "active"/);
   assert.match(validator, /status\.neural\?\.n >= neuralRuns \+ 2/);
@@ -61,6 +66,39 @@ test("browser validator accepts configured paths on Windows and POSIX", () => {
   assert.match(validator, /--disable-backgrounding-occluded-windows/);
   assert.doesNotMatch(validator, /msEdgeDisableEnhancedSecurityMode/);
   assert.doesNotMatch(validator, /state\.readyState === "complete" && state\.operationText\) break/);
+});
+
+test("CI may accept only the explicit shader-f16 hardware fallback", () => {
+  const status = {
+    renderer: {
+      fallback: {
+        from: "neural",
+        to: "fsrcnnx",
+        code: "neural-init-failed",
+        detail: "Program Transpose requires f16 but the device does not support it.",
+      },
+    },
+    neuralRuntime: {
+      requested: true,
+      phase: "fallback",
+      lastFailure: {
+        code: "neural-init-failed",
+        detail: "Program Transpose requires f16 but the device does not support it.",
+      },
+    },
+  };
+  assert.equal(isUnsupportedNeuralF16Fallback(status), true);
+
+  for (const mutate of [
+    (value) => { value.renderer.fallback.to = "off"; },
+    (value) => { value.renderer.fallback.code = "neural-run-failed"; },
+    (value) => { value.neuralRuntime.phase = "failed"; },
+    (value) => { value.neuralRuntime.lastFailure.detail = "model output is malformed"; },
+  ]) {
+    const changed = structuredClone(status);
+    mutate(changed);
+    assert.equal(isUnsupportedNeuralF16Fallback(changed), false);
+  }
 });
 
 test("fixture display scaling maps requested physical pixels through the live DPR", () => {
@@ -158,6 +196,7 @@ test("CI validates the staged package under Xvfb without disabling the sandbox",
   assert.doesNotMatch(workflow, /FSRCNNX_BROWSER: google-chrome/);
   assert.match(workflow, /npm run package:internal/);
   assert.match(workflow, /--extension-root dist\/fsrcnnx-ext/);
+  assert.match(workflow, /--allow-neural-f16-unavailable/);
   assert.match(workflow, /xvfb-run/);
   assert.doesNotMatch(workflow, /--no-sandbox/);
 });

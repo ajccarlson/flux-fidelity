@@ -68,6 +68,7 @@ const FIXTURE_ROUTES = Object.freeze(new Map([
 
 function parseArguments(argv) {
   let extensionRoot = PROJECT_ROOT;
+  let allowNeuralF16Unavailable = false;
   for (let index = 0; index < argv.length; index++) {
     const argument = argv[index];
     if (argument === "--extension-root") {
@@ -76,9 +77,13 @@ function parseArguments(argv) {
       extensionRoot = resolve(PROJECT_ROOT, value);
       continue;
     }
+    if (argument === "--allow-neural-f16-unavailable") {
+      allowNeuralF16Unavailable = true;
+      continue;
+    }
     throw new Error(`unknown browser-validation argument: ${argument}`);
   }
-  return Object.freeze({ extensionRoot });
+  return Object.freeze({ extensionRoot, allowNeuralF16Unavailable });
 }
 
 function abortReason(signal) {
@@ -1832,6 +1837,22 @@ async function waitForBadge(client, tabId, expected, signal) {
     (snapshot) => snapshot.badge === expected, { timeoutMs: CDP_TIMEOUT_MS, signal });
 }
 
+export function isUnsupportedNeuralF16Fallback(status) {
+  const fallback = status?.renderer?.fallback;
+  const runtime = status?.neuralRuntime;
+  const unsupportedF16 = (detail) =>
+    typeof detail === "string" &&
+    /\brequires f16 but the device does not support it\b/i.test(detail);
+  return fallback?.from === "neural" &&
+    fallback?.to === "fsrcnnx" &&
+    fallback?.code === "neural-init-failed" &&
+    unsupportedF16(fallback?.detail) &&
+    runtime?.requested === true &&
+    runtime?.phase === "fallback" &&
+    runtime?.lastFailure?.code === "neural-init-failed" &&
+    unsupportedF16(runtime?.lastFailure?.detail);
+}
+
 async function runRealVideoIntegration(
   httpBase,
   controlClient,
@@ -1839,6 +1860,7 @@ async function runRealVideoIntegration(
   extensionId,
   expectedName,
   signal,
+  { allowNeuralF16Unavailable = false } = {},
 ) {
   const fixtureUrl = new URL("video.html", fixtureBase).href;
   const popupUrl = `chrome-extension://${extensionId}/popup.html`;
@@ -2011,54 +2033,59 @@ async function runRealVideoIntegration(
         ["fallback", "failed"].includes(status.neuralRuntime?.phase),
       signal,
     );
-    requireCondition(
-      neuralIsReady(neural.status),
-      `Neural ONNX activation failed: ${JSON.stringify({
+    const neuralFailure = `Neural ONNX activation failed: ${JSON.stringify({
         fallback: neural.status.renderer?.fallback || null,
         runtime: neural.status.neuralRuntime || null,
-      })}`,
-    );
-    const neuralFirstPage = await fixtureSnapshot(fixturePage.client);
-    const neuralFirstOverlay = visibleOverlay(neuralFirstPage, "primary");
-    requireCondition(
-      neural.status.presentation.source.width === neuralFirstPage.video.width &&
-        neural.status.presentation.source.height === neuralFirstPage.video.height,
-      "Neural presentation source dimensions do not match the decoded video",
-    );
-    requireCondition(
-      neuralFirstOverlay?.width === neural.status.presentation.output.width &&
-        neuralFirstOverlay?.height === neural.status.presentation.output.height,
-      "Neural canvas backing dimensions do not match the manifest-derived output",
-    );
-    const neuralFirstPixels = await waitForRenderedOverlayPixels(
-      fixturePage.client,
-      "primary",
-      "Neural ONNX first composited frame",
-      signal,
-    );
-    const neuralGeneration = neural.status.presentation.generation;
-    const neuralRuns = neural.status.neural.n;
-    await waitForStatus(
-      popupPage.client,
-      fixtureTab.id,
-      "Neural ONNX frame progression",
-      (status) => status.engine === "neural" && status.activeEngine === "neural" &&
-        status.renderer?.effectiveEngine === "neural" &&
-        status.renderer?.activeEngine === "neural" &&
-        status.renderer?.fallback == null && status.neuralRuntime?.phase === "active" &&
-        status.presentation?.committed === true &&
-        status.presentation.generation >= neuralGeneration + 2 &&
-        status.neural?.n >= neuralRuns + 2,
-      signal,
-    );
-    const neuralPixels = await waitForRenderedOverlayPixels(
-      fixturePage.client,
-      "primary",
-      "Neural ONNX later composited frame",
-      signal,
-    );
-    requirePixelProgression(neuralFirstPixels, neuralPixels, "Neural ONNX compositor");
-    checkpoint("Neural ONNX presentation without fallback");
+      })}`;
+    if (!neuralIsReady(neural.status)) {
+      requireCondition(
+        allowNeuralF16Unavailable && isUnsupportedNeuralF16Fallback(neural.status),
+        neuralFailure,
+      );
+      checkpoint("Neural ONNX hardware fallback (shader-f16 unavailable)");
+    } else {
+      const neuralFirstPage = await fixtureSnapshot(fixturePage.client);
+      const neuralFirstOverlay = visibleOverlay(neuralFirstPage, "primary");
+      requireCondition(
+        neural.status.presentation.source.width === neuralFirstPage.video.width &&
+          neural.status.presentation.source.height === neuralFirstPage.video.height,
+        "Neural presentation source dimensions do not match the decoded video",
+      );
+      requireCondition(
+        neuralFirstOverlay?.width === neural.status.presentation.output.width &&
+          neuralFirstOverlay?.height === neural.status.presentation.output.height,
+        "Neural canvas backing dimensions do not match the manifest-derived output",
+      );
+      const neuralFirstPixels = await waitForRenderedOverlayPixels(
+        fixturePage.client,
+        "primary",
+        "Neural ONNX first composited frame",
+        signal,
+      );
+      const neuralGeneration = neural.status.presentation.generation;
+      const neuralRuns = neural.status.neural.n;
+      await waitForStatus(
+        popupPage.client,
+        fixtureTab.id,
+        "Neural ONNX frame progression",
+        (status) => status.engine === "neural" && status.activeEngine === "neural" &&
+          status.renderer?.effectiveEngine === "neural" &&
+          status.renderer?.activeEngine === "neural" &&
+          status.renderer?.fallback == null && status.neuralRuntime?.phase === "active" &&
+          status.presentation?.committed === true &&
+          status.presentation.generation >= neuralGeneration + 2 &&
+          status.neural?.n >= neuralRuns + 2,
+        signal,
+      );
+      const neuralPixels = await waitForRenderedOverlayPixels(
+        fixturePage.client,
+        "primary",
+        "Neural ONNX later composited frame",
+        signal,
+      );
+      requirePixelProgression(neuralFirstPixels, neuralPixels, "Neural ONNX compositor");
+      checkpoint("Neural ONNX presentation without fallback");
+    }
 
     await changePopupControl(popupPage.client, "engine", "fsrcnnx");
     await waitForStatus(
@@ -2400,6 +2427,7 @@ async function main(signal, options) {
       discovery.extensionId,
       manifest.name,
       signal,
+      { allowNeuralF16Unavailable: options.allowNeuralF16Unavailable },
     );
     const webGpu = state.results.find((result) => result.id === "webgpu");
     console.log(
