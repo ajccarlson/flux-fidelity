@@ -2,6 +2,28 @@
 
 FSRCNNX-EXT includes or derives from the components below. Exact artifact hashes and unresolved release gates are recorded in [MODEL_PROVENANCE.md](docs/compliance/MODEL_PROVENANCE.md) and the machine-readable [`release-clearance.json`](https://github.com/ajccarlson/fsrcnnx-ext/blob/main/docs/compliance/release-clearance.json). `npm run release:check` remains the authoritative release and distribution gate.
 
+## License not specified by upstream
+
+### CDA-VSR
+
+The bundled `model/neural/cda-vsr-initializer.onnx` and
+`model/neural/cda-vsr-recurrent.onnx` are mixed-FP16 conversions of the
+CDA-VSR architecture and `best.pth` checkpoint from pinned upstream commit
+[`5707d997`](https://github.com/sspBIT/CDA-VSR/tree/5707d997759996f19521c3beaddfb3d1ea965d44).
+
+Upstream does not specify a license for its CDA-specific source or pretrained
+checkpoint. The pinned README lists a `LICENSE.txt` that is absent from the
+repository, and its license section only acknowledges BasicSR and TMP. The
+repository's `NOTICE` is attributed to `xtudbxk`; it does not establish terms for
+the CDA additions or checkpoint.
+
+The shipping graphs identify their exact parent exports and describe the
+upstream license as `not-specified`. Their hashes and conversion evidence are
+recorded in [Model provenance](docs/compliance/MODEL_PROVENANCE.md). Inclusion
+is an explicit repository-owner accepted-risk decision and does not claim legal
+clearance or grant recipients rights beyond those supplied by the applicable
+copyright holders.
+
 ## MIT-licensed components
 
 ### ONNX Runtime Web 1.27.0

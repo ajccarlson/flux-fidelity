@@ -98,4 +98,4 @@ jobs:
       - name: Build packaged extension
         run: npm run package:internal
       - name: Validate packaged extension
-        run: timeout --signal=TERM --kill-after=15s 8m xvfb-run -a npm run validate:browser -- --extension-root dist/fsrcnnx-ext --allow-neural-f16-unavailable
+        run: timeout --signal=TERM --kill-after=15s 8m xvfb-run -a npm run validate:browser -- --extension-root dist/fsrcnnx-ext --neural-model-key cda-vsr-4x --require-temporal-neural-runs --allow-neural-f16-unavailable

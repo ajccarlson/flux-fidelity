@@ -123,6 +123,7 @@ test("SSim work estimation keeps total work diagnostic and bounds only individua
   assert.equal(normal.allowed, true);
   assert.equal(normal.path, "direct");
   assert.equal(normal.stages.length, 0);
+  assert.equal(normal.meanTapsPerPixel, normal.tapsX + normal.tapsY);
 
   // Aggregate work is deliberately not an eligibility gate. This otherwise
   // device-valid 8K -> 4K plan remains on the unchanged direct SSimDS path.
@@ -226,7 +227,11 @@ test("SSim extreme ratios run bounded two-moment stages and clean resources atom
   const directOutput = scaler.run(encoder, inputA);
   assert.equal(directOutput, scaler.textures.out);
   assert.notEqual(directOutput, inputA);
-  assert.equal(events.passes.length, 5);
+  assert.equal(events.passes.length, 6);
+  assert.doesNotMatch(scaler.pipelines.verticalMean.code, /s = s \* s;/);
+  assert.match(scaler.pipelines.verticalL2.code, /s = s \* s;/);
+  assert.equal(scaler.pipelines.horizontal, events.passes[1].pipeline);
+  assert.equal(events.passes[1].pipeline, events.passes[3].pipeline);
   events.passes.length = 0;
 
   const firstGenerationStart = events.textures.length;

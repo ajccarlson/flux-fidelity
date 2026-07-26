@@ -27,11 +27,12 @@
 //   target     = display size (canvas)
 //
 // Pass chain (all render-to-texture, separable):
-//   P0 mean : hiTex --(Mitchell-Netravali downscale)--> meanTex   (display res, rgba16f)
-//   P1 L2v  : hiTex --(vertical MN on tex*tex)--> l2vTex          (hiW x dispH, rgba16f)
-//   P2 L2h  : l2vTex --(horizontal MN)--> l2Tex                   (display res, rgba16f) = E[x^2]
-//   P3 MR   : meanTex + l2Tex --(locality kernel, variance ratio)--> mrTex (rgba16f)
-//   P4 final: meanTex + mrTex --(locality kernel, reconstruct)--> output RGB
+//   P0 mean-v: hiTex --(vertical MN)--> momentVTex                 (hiW x dispH, rgba16f)
+//   P1 mean-h: momentVTex --(horizontal MN)--> meanTex             (display res, rgba16f)
+//   P2 L2-v  : hiTex --(vertical MN on tex*tex)--> momentVTex      (reuses P0 storage)
+//   P3 L2-h  : momentVTex --(horizontal MN)--> l2Tex               (display res, rgba16f)
+//   P4 MR    : meanTex + l2Tex --(locality kernel, variance ratio)--> mrTex
+//   P5 final : meanTex + mrTex --(locality kernel, reconstruct)--> output RGB
 //
 // Kernels:
 //   MN(0,0.5)            : Mitchell-Netravali (used for moment downscales), taps=2
@@ -110,8 +111,9 @@ export function buildMeanShader(ratioX, ratioY) {
 }`;
 }
 
-// P1+P2 combined as one separable build: vertical then horizontal MN on tex*tex.
-// We emit two shaders sharing the kernel. axis 1 = vertical (P1), axis 0 = horiz.
+// Separable moment pass builder. The direct path uses the non-squaring form for
+// E[x], then reuses the vertical texture and horizontal pipeline for E[x^2].
+// axis 1 = vertical, axis 0 = horizontal.
 export function buildL2Shader(axis, ratio, squareInput = axis === 1) {
   if (axis !== 0 && axis !== 1) throw new RangeError("axis must be 0 or 1");
   if (typeof squareInput !== "boolean") {

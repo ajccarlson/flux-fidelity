@@ -208,6 +208,31 @@ test("the exported CDA two-graph ABI is manifest-compatible and enumerates both 
   ]);
 });
 
+test("the shipping catalog exposes the reviewed CDA pair and license description", async (t) => {
+  const previous = globalThis.__neuralTemporalTestDeps;
+  t.after(() => { globalThis.__neuralTemporalTestDeps = previous; });
+  const {
+    neuralModelFiles,
+    validateNeuralManifest,
+  } = await loadNeuralEngine(noOpDeps());
+  const catalog = JSON.parse(await readFile(
+    new URL("../model/neural/manifest.json", import.meta.url),
+    "utf8",
+  ));
+  const entries = validateNeuralManifest(catalog);
+  assert.equal(entries[0].key, "realesrganv2_animevideo_xsx2");
+  const cda = entries.find(({ key }) => key === "cda-vsr-4x");
+  assert.ok(cda);
+  assert.equal(cda.license, "Not specified by upstream");
+  assert.equal(cda.fp16, false);
+  assert.equal(cda.contract.mode, "temporal");
+  assert.equal(cda.contract.tiling.kind, "temporal-state-atlas-v1");
+  assert.deepEqual(neuralModelFiles(cda), [
+    "cda-vsr-initializer.onnx",
+    "cda-vsr-recurrent.onnx",
+  ]);
+});
+
 test("the mixed CDA ABI keeps RGB and priors FP32 while accepting FP16 recurrent state", async (t) => {
   const previous = globalThis.__neuralTemporalTestDeps;
   t.after(() => { globalThis.__neuralTemporalTestDeps = previous; });

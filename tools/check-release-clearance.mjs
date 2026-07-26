@@ -13,6 +13,7 @@ export const REQUIRED_RELEASE_GATE_IDS = Object.freeze([
   "unidentified-rife-model",
   "unproven-rife-fp16-conversion",
   "neural-model-provenance",
+  "cda-vsr-license-review",
   "unknown-high-x2-shader-origin",
   "missing-x3-x4-shader-sources",
   "unreproducible-span-smoke-model",
@@ -22,6 +23,7 @@ export const REQUIRED_RELEASE_GATE_IDS = Object.freeze([
 ]);
 const HIGH_X2_GATE_ID = "unknown-high-x2-shader-origin";
 const LGPL_GATE_ID = "lgpl-compliance-review";
+const CDA_VSR_GATE_ID = "cda-vsr-license-review";
 const ACCEPTED_HISTORY_RISK_GATE_IDS = new Set([
   "unidentified-rife-model",
   "missing-x3-x4-shader-sources",
@@ -29,6 +31,7 @@ const ACCEPTED_HISTORY_RISK_GATE_IDS = new Set([
   "unresolved-deband-port-origin",
 ]);
 const ACCEPTED_REVIEW_RISK_GATE_IDS = new Set([
+  CDA_VSR_GATE_ID,
   LGPL_GATE_ID,
   "onnx-runtime-third-party-review",
 ]);
@@ -61,6 +64,35 @@ const NEURAL_MODEL_PROVENANCE_MARKERS = Object.freeze([
   "f674a410b528aec55bb9f9f594cb1aaea580237adb29abd9dc32296d34b690a0",
   "f07aaffda04c7e69f11e6bfaf8023a6435471459",
   "4a699ec4863d96a91fc265948a0c90033f7e8735d515524dcf3444736406e0c2",
+]);
+const CDA_VSR_ARTIFACTS = Object.freeze(new Map([
+  [
+    "model/neural/cda-vsr-initializer.onnx",
+    "7773490658a7cad663e9b4f7e9cc8269b3d0c7a9a8e5840ec3151e895c1161f1",
+  ],
+  [
+    "model/neural/cda-vsr-recurrent.onnx",
+    "442be6f8d356889070ed70acdb49f9d2d77f24b6947e51e823404ca5a6d66a05",
+  ],
+]));
+const CDA_VSR_EVIDENCE = Object.freeze([
+  PROVENANCE_FILE,
+  "THIRD_PARTY_NOTICES.md",
+  "tools/cda-vsr/README.md",
+  "tools/cda-vsr/promote_bundled.py",
+  "https://github.com/sspBIT/CDA-VSR/tree/5707d997759996f19521c3beaddfb3d1ea965d44",
+  "https://github.com/sspBIT/CDA-VSR/blob/5707d997759996f19521c3beaddfb3d1ea965d44/README.md",
+  "https://github.com/sspBIT/CDA-VSR/blob/5707d997759996f19521c3beaddfb3d1ea965d44/NOTICE",
+]);
+const CDA_VSR_PROVENANCE_MARKERS = Object.freeze([
+  "5707d997759996f19521c3beaddfb3d1ea965d44",
+  "0defb80e5fcbaa2abd0eb9cbc4f4f2050a68e94fa6f743aa48a785cc734fd87b",
+  "afc8745b890289ae421c500279d9ccf2a27c92cf3e71133b20840c7816e86d3e",
+  "7d688658a2acdf249d5224dac7c6d4cdad8764ecc02e34084bc0306cabf3ac0d",
+  "c1c69f1163f2d83bfa8af40ed69edc9cfc962d50e86c79c31f2019cee7c7af24",
+  "7773490658a7cad663e9b4f7e9cc8269b3d0c7a9a8e5840ec3151e895c1161f1",
+  "442be6f8d356889070ed70acdb49f9d2d77f24b6947e51e823404ca5a6d66a05",
+  "License not specified by upstream",
 ]);
 const HIGH_X2_ARTIFACTS = Object.freeze(new Map([
   [
@@ -432,6 +464,63 @@ export function inspectReleaseClearance({
     for (const marker of NEURAL_MODEL_PROVENANCE_MARKERS) {
       if (provenance && !provenance.includes(marker)) {
         errors.push(`release clearance: ${NEURAL_MODEL_GATE_ID} provenance is missing ${marker}`);
+      }
+    }
+  }
+
+  if (requiredIds.has(CDA_VSR_GATE_ID)) {
+    const cdaGate = ledger.gates.find((gate) => gate?.id === CDA_VSR_GATE_ID);
+    if (cdaGate?.status !== "accepted-risk") {
+      errors.push(
+        `release clearance: ${CDA_VSR_GATE_ID} must remain an explicit ` +
+        "repository-owner accepted risk while upstream licensing is unspecified",
+      );
+    }
+
+    const artifacts = Array.isArray(cdaGate?.artifacts) ? cdaGate.artifacts : [];
+    if (artifacts.length !== CDA_VSR_ARTIFACTS.size) {
+      errors.push(
+        `release clearance: ${CDA_VSR_GATE_ID} must inventory exactly ` +
+        `${CDA_VSR_ARTIFACTS.size} artifacts`,
+      );
+    }
+    for (const [path, sha256] of CDA_VSR_ARTIFACTS) {
+      const artifact = artifacts.find((entry) => entry?.path === path);
+      if (!artifact) {
+        errors.push(`release clearance: ${CDA_VSR_GATE_ID} is missing ${path}`);
+        continue;
+      }
+      if (artifact.disposition !== "present") {
+        errors.push(
+          `release clearance: ${CDA_VSR_GATE_ID} artifact ${path} must be explicitly present`,
+        );
+      }
+      if (artifact.sha256 !== sha256) {
+        errors.push(
+          `release clearance: ${CDA_VSR_GATE_ID} artifact ${path} ` +
+          `must retain SHA-256 ${sha256}`,
+        );
+      }
+    }
+
+    const evidence = new Set(Array.isArray(cdaGate?.evidence) ? cdaGate.evidence : []);
+    for (const reference of CDA_VSR_EVIDENCE) {
+      if (!evidence.has(reference)) {
+        errors.push(
+          `release clearance: ${CDA_VSR_GATE_ID} is missing evidence ${reference}`,
+        );
+      }
+    }
+
+    let provenance = "";
+    try {
+      provenance = readFileSync(resolve(rootDir, PROVENANCE_FILE), "utf8");
+    } catch {
+      // The generic evidence check reports the missing file.
+    }
+    for (const marker of CDA_VSR_PROVENANCE_MARKERS) {
+      if (provenance && !provenance.includes(marker)) {
+        errors.push(`release clearance: ${CDA_VSR_GATE_ID} provenance is missing ${marker}`);
       }
     }
   }

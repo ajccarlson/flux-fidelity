@@ -1,6 +1,6 @@
 import { GENERATED_MODEL_ASSET_PATHS } from "../src/core/fsrcnnx-model-catalog.js";
 
-export const EXPECTED_PACKAGE_FILE_COUNT = 86;
+export const EXPECTED_PACKAGE_FILE_COUNT = 88;
 
 // These files let recipients inspect, rebuild, and substitute the LGPL-covered
 // shader portions and retain exact licenses for bundled third-party components.
@@ -25,6 +25,8 @@ export const REQUIRED_COMPLIANCE_FILES = Object.freeze([
 // validation instead of degrading only the affected model at runtime.
 export const REQUIRED_RUNTIME_MODEL_FILES = Object.freeze([
   ...GENERATED_MODEL_ASSET_PATHS,
+  "model/neural/cda-vsr-initializer.onnx",
+  "model/neural/cda-vsr-recurrent.onnx",
   "model/neural/realesrganv2_animevideo_xsx2.fp16.onnx",
   "model/rife_v4.26.onnx",
   "model/rife_v4.26_fp16.onnx",
@@ -61,6 +63,8 @@ export const PACKAGE_FILES = Object.freeze([
   "model/FSRCNNX_x2_16-0-4-1.wgsl",
   "model/FSRCNNX_x2_56-16-4-1.passes.json",
   "model/FSRCNNX_x2_56-16-4-1.wgsl",
+  "model/neural/cda-vsr-initializer.onnx",
+  "model/neural/cda-vsr-recurrent.onnx",
   "model/neural/manifest.json",
   "model/neural/realesrganv2_animevideo_xsx2.fp16.onnx",
   "model/rife_v4.26.onnx",

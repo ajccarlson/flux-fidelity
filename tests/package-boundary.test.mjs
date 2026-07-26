@@ -41,9 +41,9 @@ function manifestGlob(pattern) {
   return new RegExp(`^${escaped}$`);
 }
 
-test("the package boundary is an exact, sorted 86-file allowlist", () => {
+test("the package boundary is an exact, sorted 88-file allowlist", () => {
   assert.equal(PACKAGE_FILES.length, EXPECTED_PACKAGE_FILE_COUNT);
-  assert.equal(EXPECTED_PACKAGE_FILE_COUNT, 86);
+  assert.equal(EXPECTED_PACKAGE_FILE_COUNT, 88);
   assert.equal(new Set(PACKAGE_FILES).size, PACKAGE_FILES.length);
   assert.deepEqual(PACKAGE_FILES, [...PACKAGE_FILES].sort());
   assert.equal(PACKAGE_FILES.includes("fsrcnnx-development-only.js"), false);
@@ -94,7 +94,7 @@ test("package creation never discovers an extra runtime-looking local file", () 
 
     const result = buildPackage({ rootDir: fixture, distDir: join(fixture, "output") });
 
-    assert.equal(result.fileCount, 86);
+    assert.equal(result.fileCount, 88);
     assert.equal(basename(result.archive), "fsrcnnx-ext-1.2.3.zip");
     assert.equal(
       readFileSync(result.checksums, "utf8"),
@@ -131,7 +131,7 @@ test("package creation rejects invalid or divergent release versions", () => {
   }
 });
 
-test("every runtime-selected FSRCNNX, ArtCNN, and RIFE asset is required exactly", () => {
+test("every runtime-selected model asset is required exactly", () => {
   assert.deepEqual(REQUIRED_RUNTIME_MODEL_FILES, [...REQUIRED_RUNTIME_MODEL_FILES].sort());
   assert.equal(new Set(REQUIRED_RUNTIME_MODEL_FILES).size, REQUIRED_RUNTIME_MODEL_FILES.length);
 

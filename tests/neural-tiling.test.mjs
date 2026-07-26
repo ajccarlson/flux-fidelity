@@ -524,6 +524,7 @@ test("Neural has no policy ceiling and validates only its extension-frame device
     new URL("../src/frame/neural-frame-runtime.js", import.meta.url),
     "utf8",
   );
+  const planStart = source.indexOf("function neuralPresentationPlan(");
   const presentStart = source.indexOf("function neuralFramePresentation(");
   const presentEnd = source.indexOf("function renderNeuralFrame()", presentStart);
   const present = source.slice(presentStart, presentEnd);
@@ -533,9 +534,11 @@ test("Neural has no policy ceiling and validates only its extension-frame device
   const positionEnd = source.indexOf("function runtimeGpuResourcesRequested()", positionStart);
   const position = source.slice(positionStart, positionEnd);
 
-  assert.ok(presentStart >= 0 && presentEnd > presentStart && renderEnd > presentEnd);
-  assert.match(present, /const modelWidth = srcW \* scale/);
-  assert.match(present, /const downscale = ssimdsEnabled/);
+  assert.ok(planStart >= 0 && presentStart >= 0 && presentEnd > presentStart && renderEnd > presentEnd);
+  const plan = source.slice(planStart, source.indexOf("// ---- validated setting contracts", planStart));
+  assert.match(plan, /const modelWidth = srcW \* modelScale/);
+  assert.match(plan, /policy === "force2" \? 2/);
+  assert.match(present, /neuralPresentationPlan\(/);
   assert.doesNotMatch(present, /textureSizeAllowed|MAX_(?:INPUT|PROCESSING)|pixel ceiling/i);
   assert.match(
     position,

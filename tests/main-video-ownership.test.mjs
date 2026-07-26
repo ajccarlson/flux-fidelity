@@ -1557,6 +1557,7 @@ test("interpolation dimensions require a successful frame from the current prima
   assert.equal(boundary.chainTargetDims(), null, "a default or hidden canvas is not a presentation");
   boundary.presentPrimary("upscale", "fsrcnnx", {
     source: { width: 640, height: 360 },
+    native: { width: 2560, height: 1440 },
     ssimds: {
       source: { width: 2560, height: 1440 },
       output: { width: 1280, height: 720 },
@@ -1575,6 +1576,7 @@ test("interpolation dimensions require a successful frame from the current prima
     mode: "upscale",
     engine: "fsrcnnx",
     source: { width: 640, height: 360 },
+    native: { width: 2560, height: 1440 },
     output: { width: 1280, height: 720 },
     ssimds: {
       source: { width: 2560, height: 1440 },
