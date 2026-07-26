@@ -16,6 +16,17 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
+function successfulNeuralRun() {
+  return {
+    presentation: {
+      source: { width: 640, height: 360 },
+      output: { width: 1280, height: 720 },
+      ssimds: null,
+      sharpen: null,
+    },
+  };
+}
+
 function section(source, startMarker, endMarker) {
   const start = source.indexOf(startMarker);
   const end = source.indexOf(endMarker, start);
@@ -1292,14 +1303,7 @@ test("a media seek resets the next non-busy neural run exactly once", async (t) 
     "a dropped busy frame must not consume the pending seek reset",
   );
 
-  run.resolve({
-    presentation: {
-      source: { width: 640, height: 360 },
-      output: { width: 1280, height: 720 },
-      ssimds: null,
-      sharpen: null,
-    },
-  });
+  run.resolve(successfulNeuralRun());
   await new Promise((resolve) => setImmediate(resolve));
 
   renderer.render({ mediaTime: 4, presentedFrames: 12 });
@@ -1316,6 +1320,76 @@ test("a media seek resets the next non-busy neural run exactly once", async (t) 
     mediaTime: 4.04,
     presentedFrames: 13,
   });
+});
+
+test("a seek reset survives failed capture and failed child inference", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+
+  for (const phase of ["capture", "child-run"]) {
+    await t.test(phase, async () => {
+      const failed = deferred();
+      const deps = { run: failed, runArguments: [], events: [] };
+      const renderer = await loadNeuralPresentation(deps);
+
+      renderer.seek();
+      renderer.render({ mediaTime: 7, presentedFrames: 20 });
+      assert.equal(deps.runArguments[0][4].resetReason, "seek");
+
+      failed.reject(new Error(`injected ${phase} failure`));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      const retry = deferred();
+      deps.run = retry;
+      renderer.render({ mediaTime: 7.04, presentedFrames: 21 });
+      assert.deepEqual(deps.runArguments[1][4], {
+        mediaTime: 7.04,
+        presentedFrames: 21,
+        reset: true,
+        resetReason: "seek",
+      });
+      retry.resolve(successfulNeuralRun());
+      await new Promise((resolve) => setImmediate(resolve));
+    });
+  }
+});
+
+test("a second seek during a successful reset run remains pending", async (t) => {
+  const previous = globalThis.__videoOwnershipDeps;
+  t.after(() => { globalThis.__videoOwnershipDeps = previous; });
+  const first = deferred();
+  const deps = { run: first, runArguments: [], events: [] };
+  const renderer = await loadNeuralPresentation(deps);
+
+  renderer.seek();
+  renderer.render({ mediaTime: 2, presentedFrames: 30 });
+  assert.equal(deps.runArguments[0][4].resetReason, "seek");
+  renderer.seek();
+
+  first.resolve(successfulNeuralRun());
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const second = deferred();
+  deps.run = second;
+  renderer.render({ mediaTime: 8, presentedFrames: 31 });
+  assert.deepEqual(deps.runArguments[1][4], {
+    mediaTime: 8,
+    presentedFrames: 31,
+    reset: true,
+    resetReason: "seek",
+  });
+  second.resolve(successfulNeuralRun());
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const third = deferred();
+  deps.run = third;
+  renderer.render({ mediaTime: 8.04, presentedFrames: 32 });
+  assert.deepEqual(deps.runArguments[2][4], {
+    mediaTime: 8.04,
+    presentedFrames: 32,
+  });
+  third.resolve(successfulNeuralRun());
+  await new Promise((resolve) => setImmediate(resolve));
 });
 
 test("renderer runtime notifications observe rejected extension-message promises", async (t) => {
