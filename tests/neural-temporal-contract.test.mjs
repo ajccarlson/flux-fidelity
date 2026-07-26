@@ -323,6 +323,20 @@ test("v2 graph/session validation checks every declared name, dtype, and channel
     ),
     /channel dimension must be 2/,
   );
+  assert.throws(
+    () => validateNeuralSessionContract(
+      {
+        ...valid,
+        inputMetadata: valid.inputMetadata.map((metadata) =>
+          metadata.name === "frame"
+            ? { ...metadata, shape: [1, 3, 16, 16] }
+            : metadata),
+      },
+      entry,
+      "recurrent",
+    ),
+    /spatial dimensions must be dynamic/,
+  );
 });
 
 function fakeDevice() {

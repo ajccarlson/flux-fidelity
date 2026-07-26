@@ -384,19 +384,26 @@ def make_dynamic_motion_warp(torch):
         padding_mode="zeros",
         align_corners=True,
     ):
-        shape = torch._shape_as_tensor(value)
         height, width = value.shape[-2:]
         grid_y, grid_x = torch.meshgrid(
-            torch.arange(height, device=value.device),
-            torch.arange(width, device=value.device),
+            torch.arange(
+                height,
+                dtype=value.dtype,
+                device=value.device,
+            ),
+            torch.arange(
+                width,
+                dtype=value.dtype,
+                device=value.device,
+            ),
             indexing="ij",
         )
-        grid = torch.stack((grid_x, grid_y), dim=2).type_as(value)
+        grid = torch.stack((grid_x, grid_y), dim=2)
         flow = motion.permute(0, 2, 3, 1)
         grid_flow = grid + flow
         grid_flow = grid_flow[:, :height, :width, :]
-        width_denominator = torch.clamp(shape[3] - 1, min=1).type_as(value)
-        height_denominator = torch.clamp(shape[2] - 1, min=1).type_as(value)
+        width_denominator = grid_x[0, -1].clamp_min(1.0)
+        height_denominator = grid_y[-1, 0].clamp_min(1.0)
         grid_flow_x = (
             2.0 * grid_flow[:, :, :, 0] / width_denominator - 1.0
         )
@@ -484,7 +491,6 @@ def make_lowered_dcn_class(torch):
             # slice. GridSample then performs the same zero-padded bilinear
             # sample, after which the modulation mask and original 1x1
             # convolution are applied.
-            shape = torch._shape_as_tensor(source)
             height, width = source.shape[-2:]
             rows = torch.arange(
                 height, dtype=source.dtype, device=source.device
@@ -495,12 +501,8 @@ def make_lowered_dcn_class(torch):
             grid_y, grid_x = torch.meshgrid(rows, columns, indexing="ij")
             channels_per_group = self.in_channels // self.deform_groups
             sampled_groups = []
-            width_denominator = torch.clamp(shape[3] - 1, min=1).type_as(
-                source
-            )
-            height_denominator = torch.clamp(shape[2] - 1, min=1).type_as(
-                source
-            )
+            width_denominator = grid_x[0, -1].clamp_min(1.0)
+            height_denominator = grid_y[-1, 0].clamp_min(1.0)
             for group_index in range(self.deform_groups):
                 channel_start = group_index * channels_per_group
                 channel_end = channel_start + channels_per_group
@@ -605,6 +607,10 @@ def instantiate_lowered_source_model(source_path: Path, torch):
     try:
         with _temporary_modules(_make_upstream_stubs(torch)):
             spec.loader.exec_module(module)
+            if not callable(getattr(module, "mv_warp_avg_patch", None)):
+                raise ToolError(
+                    "source contract mismatch: mv_warp_avg_patch was not found"
+                )
             # The released helper uses Python max(w - 1, 1), which legacy
             # torch.onnx tracing captures as a constant. This equivalent
             # tensor-shape implementation keeps spatial dimensions symbolic.
@@ -694,6 +700,17 @@ def load_checkpoint(model, checkpoint_path: Path, torch) -> dict[str, object]:
 
 
 def make_graph_wrappers(model, torch):
+    def fixed_public_axes(value, channels):
+        # The runtime ABI fixes batch=1 and channels while leaving only H/W
+        # symbolic. An explicit reshape keeps ONNX shape inference from
+        # propagating anonymous symbols from upstream view operations.
+        return value.reshape(
+            1,
+            channels,
+            value.shape[-2],
+            value.shape[-1],
+        )
+
     class InitializerGraph(torch.nn.Module):
         def __init__(self, network):
             super().__init__()
@@ -711,7 +728,11 @@ def make_graph_wrappers(model, torch):
                 hidden_key=None,
                 return_hs=True,
             )
-            return output[:, 0], hidden[0], hidden[1]
+            return (
+                fixed_public_axes(output[:, 0], 3),
+                fixed_public_axes(hidden[0], 64),
+                fixed_public_axes(hidden[1], 64),
+            )
 
     class RecurrentGraph(torch.nn.Module):
         def __init__(self, network):
@@ -726,9 +747,26 @@ def make_graph_wrappers(model, torch):
                 hidden_key=(state_low, state_high, frame),
                 return_hs=True,
             )
-            return output[:, 0], hidden[0], hidden[1]
+            return (
+                fixed_public_axes(output[:, 0], 3),
+                fixed_public_axes(hidden[0], 64),
+                fixed_public_axes(hidden[1], 64),
+            )
 
     return InitializerGraph(model).eval(), RecurrentGraph(model).eval()
+
+
+def dynamic_axes_for(input_names: list[str]) -> dict[str, dict[int, str]]:
+    spatial = {2: DYNAMIC_HEIGHT, 3: DYNAMIC_WIDTH}
+    return {
+        **{name: dict(spatial) for name in input_names},
+        "output": {
+            2: DYNAMIC_OUTPUT_HEIGHT,
+            3: DYNAMIC_OUTPUT_WIDTH,
+        },
+        "next_state_low": dict(spatial),
+        "next_state_high": dict(spatial),
+    }
 
 
 def _metadata(
@@ -738,21 +776,27 @@ def _metadata(
     checkpoint_sha256: str,
     height: int,
     width: int,
+    dynamic: bool,
 ) -> dict[str, str]:
-    return {
+    metadata = {
         "fsrcnnx.architecture": "CDA-VSR",
+        "fsrcnnx.capture_height": str(height),
+        "fsrcnnx.capture_width": str(width),
         "fsrcnnx.checkpoint_sha256": checkpoint_sha256,
         "fsrcnnx.deform_groups": str(DEFORM_GROUPS),
         "fsrcnnx.deform_lowering": DEFORM_LOWERING,
-        "fsrcnnx.fixed_height": str(height),
-        "fsrcnnx.fixed_width": str(width),
         "fsrcnnx.graph_role": role,
         "fsrcnnx.offset_order": OFFSET_ORDER,
         "fsrcnnx.prior_contract": PRIOR_CONTRACT,
         "fsrcnnx.scale": "4",
         "fsrcnnx.shipping_catalog": "false",
         "fsrcnnx.source_sha256": source_sha256,
+        "fsrcnnx.spatial_shape": "dynamic" if dynamic else "fixed",
     }
+    if not dynamic:
+        metadata["fsrcnnx.fixed_height"] = str(height)
+        metadata["fsrcnnx.fixed_width"] = str(width)
+    return metadata
 
 
 def _set_metadata(onnx_model, metadata: Mapping[str, str]) -> None:
@@ -783,6 +827,7 @@ def validate_graph(
     role: str,
     height: int,
     width: int,
+    dynamic: bool,
 ) -> dict[str, object]:
     onnx.checker.check_model(onnx_model, full_check=True)
     custom_domains = sorted(
@@ -826,17 +871,25 @@ def validate_graph(
                 f"{role} tensor {value.name!r} must use float32 public I/O"
             )
 
+    spatial = (
+        [DYNAMIC_HEIGHT, DYNAMIC_WIDTH] if dynamic else [height, width]
+    )
+    output_spatial = (
+        [DYNAMIC_OUTPUT_HEIGHT, DYNAMIC_OUTPUT_WIDTH]
+        if dynamic
+        else [height * 4, width * 4]
+    )
     expected_input_shapes = {
-        "frame": [1, 3, height, width],
-        "motion": [1, 2, height, width],
-        "residual": [1, 1, height, width],
-        "state_low": [1, 64, height, width],
-        "state_high": [1, 64, height, width],
+        "frame": [1, 3, *spatial],
+        "motion": [1, 2, *spatial],
+        "residual": [1, 1, *spatial],
+        "state_low": [1, 64, *spatial],
+        "state_high": [1, 64, *spatial],
     }
     expected_output_shapes = {
-        "output": [1, 3, height * 4, width * 4],
-        "next_state_low": [1, 64, height, width],
-        "next_state_high": [1, 64, height, width],
+        "output": [1, 3, *output_spatial],
+        "next_state_low": [1, 64, *spatial],
+        "next_state_high": [1, 64, *spatial],
     }
     for value in onnx_model.graph.input:
         shape = _value_shape(value)
@@ -875,6 +928,8 @@ def validate_graph(
     if any(initializer.external_data for initializer in onnx_model.graph.initializer):
         raise ToolError("external ONNX tensor data is not supported")
     return {
+        "spatial_shape": "dynamic" if dynamic else "fixed",
+        "capture_fixture": {"height": height, "width": width},
         "inputs": {
             value.name: _value_shape(value) for value in onnx_model.graph.input
         },
@@ -898,6 +953,7 @@ def _atomic_export(
     checkpoint_sha256: str,
     height: int,
     width: int,
+    dynamic: bool,
     torch,
     onnx,
 ) -> dict[str, object]:
@@ -916,6 +972,9 @@ def _atomic_export(
                 output_names=["output", "next_state_low", "next_state_high"],
                 opset_version=OPSET,
                 do_constant_folding=True,
+                dynamic_axes=(
+                    dynamic_axes_for(input_names) if dynamic else None
+                ),
                 dynamo=False,
             )
         exported = onnx.load(export_tmp)
@@ -927,6 +986,7 @@ def _atomic_export(
                 checkpoint_sha256=checkpoint_sha256,
                 height=height,
                 width=width,
+                dynamic=dynamic,
             ),
         )
         graph_info = validate_graph(
@@ -935,6 +995,7 @@ def _atomic_export(
             role=role,
             height=height,
             width=width,
+            dynamic=dynamic,
         )
         onnx.save(exported, final_tmp)
         os.replace(final_tmp, destination)
@@ -965,6 +1026,7 @@ def export_graphs(
     checkpoint_sha256: str,
     height: int,
     width: int,
+    dynamic: bool,
     torch,
     onnx,
 ) -> dict[str, dict[str, object]]:
@@ -989,6 +1051,7 @@ def export_graphs(
         checkpoint_sha256=checkpoint_sha256,
         height=height,
         width=width,
+        dynamic=dynamic,
         torch=torch,
         onnx=onnx,
     )
@@ -1002,6 +1065,7 @@ def export_graphs(
         checkpoint_sha256=checkpoint_sha256,
         height=height,
         width=width,
+        dynamic=dynamic,
         torch=torch,
         onnx=onnx,
     )
@@ -1015,6 +1079,7 @@ def validate_saved_graphs(
     checkpoint_sha256: str,
     height: int,
     width: int,
+    dynamic: bool,
     onnx,
 ) -> dict[str, dict[str, object]]:
     result = {}
@@ -1029,6 +1094,7 @@ def validate_saved_graphs(
             role=role,
             height=height,
             width=width,
+            dynamic=dynamic,
         )
         metadata = {item.key: item.value for item in model.metadata_props}
         expected = _metadata(
@@ -1037,6 +1103,7 @@ def validate_saved_graphs(
             checkpoint_sha256=checkpoint_sha256,
             height=height,
             width=width,
+            dynamic=dynamic,
         )
         mismatches = {
             key: {"expected": value, "actual": metadata.get(key)}
@@ -1072,7 +1139,7 @@ def _array_metrics(expected, actual, numpy) -> dict[str, float]:
     }
 
 
-def run_graph_parity(
+def _run_graph_parity_shape(
     model,
     output_dir: Path,
     *,
@@ -1176,6 +1243,8 @@ def run_graph_parity(
             f"worst mean {worst_mean:.8g} (limit {max_mean:.8g})"
         )
     return {
+        "height": height,
+        "width": width,
         "frames": frames,
         "seed": 20260726,
         "max_abs_limit": max_abs,
@@ -1183,6 +1252,56 @@ def run_graph_parity(
         "worst_max_abs": worst_max,
         "worst_mean_abs": worst_mean,
         "records": records,
+    }
+
+
+def run_graph_parity(
+    model,
+    output_dir: Path,
+    *,
+    height: int,
+    width: int,
+    frames: int,
+    max_abs: float,
+    max_mean: float,
+    dynamic: bool,
+    numpy,
+    onnxruntime,
+    torch,
+) -> dict[str, object]:
+    """Run sequence parity and, for dynamic graphs, a second H/W probe."""
+
+    shapes = [(height, width)]
+    if dynamic:
+        shapes.append((height + 3, width + 5))
+    results = [
+        _run_graph_parity_shape(
+            model,
+            output_dir,
+            height=probe_height,
+            width=probe_width,
+            frames=frames,
+            max_abs=max_abs,
+            max_mean=max_mean,
+            numpy=numpy,
+            onnxruntime=onnxruntime,
+            torch=torch,
+        )
+        for probe_height, probe_width in shapes
+    ]
+    return {
+        "spatial_shape": "dynamic" if dynamic else "fixed",
+        "tested_shapes": [
+            {"height": item["height"], "width": item["width"]}
+            for item in results
+        ],
+        "frames_per_shape": frames,
+        "seed": 20260726,
+        "max_abs_limit": max_abs,
+        "max_mean_limit": max_mean,
+        "worst_max_abs": max(item["worst_max_abs"] for item in results),
+        "worst_mean_abs": max(item["worst_mean_abs"] for item in results),
+        "shape_results": results,
     }
 
 

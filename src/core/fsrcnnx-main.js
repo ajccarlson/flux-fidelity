@@ -1193,20 +1193,10 @@ function createEmbeddedNeuralEngine({ log: engineLog = log, warn: engineWarn = w
   };
 
   const captureSourceFrame = async (source, width, height) => {
-    // VideoFrame remains decoder-backed and transferable, avoiding a
-    // page-side staging canvas before the extension frame materializes it.
-    const VideoFrameCtor = globalThis.VideoFrame;
-    if (typeof VideoFrameCtor === "function") {
-      let frame = null;
-      try {
-        frame = new VideoFrameCtor(source);
-        if (frameHasDimensions(frame, width, height)) return frame;
-      } catch {}
-      try { frame?.close?.(); } catch {}
-    }
-
-    // ImageBitmap is also transferable and avoids allocating a page-side
-    // staging canvas on browsers that cannot construct VideoFrame here.
+    // A direct ImageBitmap is transferable and avoids allocating a page-side
+    // staging canvas. Transferred VideoFrame objects are not used here: current
+    // Edge can accept them across the OOPIF boundary but then stall when the
+    // child tries to materialize their pixels.
     if (typeof createImageBitmap === "function") {
       let bitmap = null;
       try {

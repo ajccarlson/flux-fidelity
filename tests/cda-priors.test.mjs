@@ -213,3 +213,48 @@ test("CDA generator zero-initializes history, then runs search entirely on GPU",
   generator.dispose();
   assert.throws(() => generator.generate(current, 64, 24), /disposed/);
 });
+
+test("CDA pipeline construction publishes atomically and retries after failure", (t) => {
+  const previousBufferUsage = globalThis.GPUBufferUsage;
+  const previousTextureUsage = globalThis.GPUTextureUsage;
+  globalThis.GPUBufferUsage = {
+    COPY_SRC: 1,
+    COPY_DST: 2,
+    UNIFORM: 4,
+    STORAGE: 8,
+  };
+  globalThis.GPUTextureUsage = {
+    TEXTURE_BINDING: 1,
+    STORAGE_BINDING: 2,
+  };
+  t.after(() => {
+    globalThis.GPUBufferUsage = previousBufferUsage;
+    globalThis.GPUTextureUsage = previousTextureUsage;
+  });
+
+  const gpu = fakeGpuDevice();
+  const createPipeline = gpu.device.createComputePipeline;
+  let remainingFailure = 1;
+  gpu.device.createComputePipeline = (descriptor) => {
+    if (descriptor.label === "cda-prior-dense" && remainingFailure-- > 0) {
+      throw new Error("injected dense pipeline failure");
+    }
+    return createPipeline(descriptor);
+  };
+  const generator = new CdaPriorGenerator(gpu.device);
+  const current = { createView: () => ({ current: true }) };
+  assert.throws(
+    () => generator.generate(current, 16, 16),
+    /injected dense pipeline failure/,
+  );
+  assert.equal(generator.searchPipeline, null);
+  assert.equal(generator.densePipeline, null);
+  assert.equal(generator.snapshotPipeline, null);
+
+  const result = generator.generate(current, 16, 16);
+  assert.equal(result.valid, false);
+  assert.ok(generator.searchPipeline);
+  assert.ok(generator.densePipeline);
+  assert.ok(generator.snapshotPipeline);
+  generator.dispose();
+});

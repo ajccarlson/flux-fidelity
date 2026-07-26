@@ -1,4 +1,5 @@
 import hashlib
+import importlib.util
 import json
 import subprocess
 import sys
@@ -13,7 +14,9 @@ sys.path.insert(0, str(TOOL_DIR))
 from cda_adapter import (  # noqa: E402
     ToolError,
     audit_source_contract,
+    dynamic_axes_for,
     inspect_inputs,
+    make_dynamic_motion_warp,
     require_expected_hash,
     resolve_source,
     runtime_contract_template,
@@ -114,6 +117,17 @@ class AdapterStaticTests(unittest.TestCase):
             recurrent["outputs"]["next_state_low"]["state"],
         )
 
+    def test_dynamic_axes_leave_only_spatial_dimensions_symbolic(self):
+        axes = dynamic_axes_for(["frame", "motion"])
+        self.assertEqual(axes["frame"], {2: "height", 3: "width"})
+        self.assertEqual(axes["motion"], {2: "height", 3: "width"})
+        self.assertEqual(
+            axes["output"],
+            {2: "output_height_x4", 3: "output_width_x4"},
+        )
+        self.assertNotIn(0, axes["next_state_low"])
+        self.assertNotIn(1, axes["next_state_low"])
+
     def test_inspect_cli_needs_no_ml_dependencies(self):
         temporary, root, _source, checkpoint = self.make_inputs()
         with temporary:
@@ -136,6 +150,22 @@ class AdapterStaticTests(unittest.TestCase):
             result = json.loads(process.stdout)
             self.assertEqual(result["contract"]["architecture"], "CDAVSR")
 
+    def test_export_help_makes_fixed_shape_an_explicit_fixture(self):
+        process = subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                str(TOOL_DIR / "cda_tool.py"),
+                "export",
+                "--help",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertIn("--fixed-shape", process.stdout)
+
     def test_missing_dependencies_fail_cleanly(self):
         # The test environment may eventually gain these dependencies, so only
         # assert formatting when the local environment actually lacks them.
@@ -155,6 +185,64 @@ class AdapterStaticTests(unittest.TestCase):
         if "missing conversion dependencies" in process.stderr:
             self.assertEqual(process.returncode, 2)
             self.assertIn("requirements.txt", process.stderr)
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("torch"),
+        "optional tensor test requires the pinned conversion environment",
+    )
+    def test_exportable_motion_warp_matches_released_helper(self):
+        import torch
+
+        def released_motion_warp(
+            value,
+            motion,
+            interpolation="nearest",
+            padding_mode="zeros",
+            align_corners=True,
+        ):
+            _, _, height, width = value.size()
+            grid_y, grid_x = torch.meshgrid(
+                torch.arange(0, height),
+                torch.arange(0, width),
+                indexing="ij",
+            )
+            grid = torch.stack((grid_x, grid_y), 2).type_as(value)
+            grid_flow = grid + motion.permute(0, 2, 3, 1)
+            grid_flow = grid_flow[:, :height, :width, :]
+            grid_flow_x = (
+                2.0 * grid_flow[:, :, :, 0] / max(width - 1, 1) - 1.0
+            )
+            grid_flow_y = (
+                2.0 * grid_flow[:, :, :, 1] / max(height - 1, 1) - 1.0
+            )
+            return torch.nn.functional.grid_sample(
+                value.float(),
+                torch.stack((grid_flow_x, grid_flow_y), dim=3),
+                mode=interpolation,
+                padding_mode=padding_mode,
+                align_corners=align_corners,
+            )
+
+        torch.manual_seed(20260726)
+        exportable = make_dynamic_motion_warp(torch)
+        for height, width in ((1, 1), (3, 5), (8, 8)):
+            value = torch.randn(1, 7, height, width)
+            motion = torch.randn(1, 2, height, width)
+            expected = released_motion_warp(
+                value,
+                motion,
+                interpolation="nearest",
+                padding_mode="border",
+                align_corners=True,
+            )
+            actual = exportable(
+                value,
+                motion,
+                interpolation="nearest",
+                padding_mode="border",
+                align_corners=True,
+            )
+            torch.testing.assert_close(actual, expected, rtol=0.0, atol=0.0)
 
 
 if __name__ == "__main__":

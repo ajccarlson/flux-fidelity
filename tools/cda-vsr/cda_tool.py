@@ -108,10 +108,20 @@ def parser() -> argparse.ArgumentParser:
 
     export_parser = commands.add_parser(
         "export",
-        help="export fixed-shape initializer and recurrent ONNX graphs",
+        help="export initializer and recurrent ONNX graphs",
     )
     add_inputs(export_parser, expected_hashes=True)
     add_shape(export_parser)
+    export_parser.add_argument(
+        "--fixed-shape",
+        action="store_false",
+        dest="dynamic",
+        default=True,
+        help=(
+            "export a capture-size-only feasibility fixture instead of the "
+            "default symbolic-height/width graphs"
+        ),
+    )
     add_parity_limits(export_parser)
     export_parser.add_argument(
         "--out-dir",
@@ -130,6 +140,13 @@ def parser() -> argparse.ArgumentParser:
     )
     add_inputs(parity_parser, expected_hashes=True)
     add_shape(parity_parser)
+    parity_parser.add_argument(
+        "--fixed-shape",
+        action="store_false",
+        dest="dynamic",
+        default=True,
+        help="validate graphs intentionally exported for one capture size",
+    )
     add_parity_limits(parity_parser)
     parity_parser.add_argument(
         "--onnx-dir",
@@ -238,6 +255,7 @@ def parity_result(
         frames=args.frames,
         max_abs=args.max_abs,
         max_mean=args.max_mean,
+        dynamic=args.dynamic,
         numpy=numpy,
         onnxruntime=onnxruntime,
         torch=torch,
@@ -256,6 +274,7 @@ def command_export(args) -> dict[str, object]:
         checkpoint_sha256=inspection["checkpoint"]["sha256"],
         height=args.height,
         width=args.width,
+        dynamic=args.dynamic,
         torch=torch,
         onnx=onnx,
     )
@@ -269,8 +288,21 @@ def command_export(args) -> dict[str, object]:
             onnxruntime=onnxruntime,
             torch=torch,
         )
+    runtime_contract = {
+        "prior_provider": PRIOR_CONTRACT,
+        "motion_component_order": ["x", "y"],
+        "motion_units": "low-resolution-pixels",
+        "catalog_compatible_at_graph_shape_level": bool(args.dynamic),
+        "shipping_catalog": False,
+    }
+    if args.dynamic:
+        runtime_contract["manifest_v2_template"] = runtime_contract_template()
+    else:
+        runtime_contract["catalog_blocker"] = (
+            "fixed-shape feasibility fixtures cannot be catalog entries"
+        )
     receipt = {
-        "format": 1,
+        "format": 2,
         "tool": "FSRCNNX-EXT CDA-VSR conversion toolkit",
         "opset": OPSET,
         "distribution": {
@@ -279,22 +311,31 @@ def command_export(args) -> dict[str, object]:
             "generated_assets": "experimental-local-only",
             "shipping_catalog": False,
         },
-        "fixed_input": {"height": args.height, "width": args.width},
+        "spatial_shape": {
+            "mode": "dynamic" if args.dynamic else "fixed",
+            "capture_fixture": {
+                "height": args.height,
+                "width": args.width,
+            },
+            "source_resolution_ceiling": (
+                None
+                if args.dynamic
+                else {"height": args.height, "width": args.width}
+            ),
+            "runtime_compatible": bool(args.dynamic),
+        },
         "inputs": inspection,
         "checkpoint_adapter": checkpoint_info,
         "dependencies": dependency_versions(),
-        "runtime_contract": {
-            "prior_provider": PRIOR_CONTRACT,
-            "motion_component_order": ["x", "y"],
-            "motion_units": "low-resolution-pixels",
-            "manifest_v2_template": runtime_contract_template(),
-            "shipping_catalog": False,
-        },
+        "runtime_contract": runtime_contract,
         "parity_policy": {
             "frames": args.frames,
             "max_abs": args.max_abs,
             "max_mean": args.max_mean,
             "skipped": bool(args.skip_parity),
+            "dynamic_shape_runtime_validated": bool(
+                args.dynamic and not args.skip_parity
+            ),
         },
         "graphs": graphs,
         "parity": parity,
@@ -314,6 +355,7 @@ def command_parity(args) -> dict[str, object]:
         checkpoint_sha256=inspection["checkpoint"]["sha256"],
         height=args.height,
         width=args.width,
+        dynamic=args.dynamic,
         onnx=onnx,
     )
     parity = parity_result(
@@ -342,8 +384,20 @@ def command_verify(args) -> dict[str, object]:
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
         source_sha256 = receipt["inputs"]["source"]["sha256"]
         checkpoint_sha256 = receipt["inputs"]["checkpoint"]["sha256"]
-        height = int(receipt["fixed_input"]["height"])
-        width = int(receipt["fixed_input"]["width"])
+        spatial = receipt.get("spatial_shape")
+        if spatial is None:
+            fixed_input = receipt["fixed_input"]
+            height = int(fixed_input["height"])
+            width = int(fixed_input["width"])
+            dynamic = False
+        else:
+            mode = spatial["mode"]
+            if mode not in ("dynamic", "fixed"):
+                raise ValueError(f"unsupported spatial mode {mode!r}")
+            fixture = spatial["capture_fixture"]
+            height = int(fixture["height"])
+            width = int(fixture["width"])
+            dynamic = mode == "dynamic"
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
         raise ToolError(f"invalid export receipt: {error}") from error
     graphs = validate_saved_graphs(
@@ -352,6 +406,7 @@ def command_verify(args) -> dict[str, object]:
         checkpoint_sha256=checkpoint_sha256,
         height=height,
         width=width,
+        dynamic=dynamic,
         onnx=onnx,
     )
     for role, info in graphs.items():

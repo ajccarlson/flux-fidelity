@@ -581,11 +581,10 @@ function validateV2TensorMetadata(metadata, kind, descriptor) {
   if (shape[1] !== channels) {
     throw new Error(`neural ${kind} '${name}' channel dimension must be ${channels}`);
   }
-  for (const dimension of shape.slice(2)) {
-    if (!isDynamicDimension(dimension) &&
-        (!Number.isSafeInteger(dimension) || dimension < 1)) {
-      throw new Error(`neural ${kind} '${name}' has invalid spatial dimensions`);
-    }
+  if (!isDynamicDimension(shape[2]) || !isDynamicDimension(shape[3])) {
+    throw new Error(
+      `neural ${kind} '${name}' spatial dimensions must be dynamic`,
+    );
   }
 }
 

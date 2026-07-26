@@ -332,7 +332,7 @@ export class CdaPriorGenerator {
   }
 
   _ensurePipelines() {
-    if (this.searchPipeline) return;
+    if (this.searchPipeline && this.densePipeline && this.snapshotPipeline) return;
     const create = (label, code) => this.device.createComputePipeline({
       label,
       layout: "auto",
@@ -341,9 +341,12 @@ export class CdaPriorGenerator {
         entryPoint: "main",
       },
     });
-    this.searchPipeline = create("cda-prior-search", this.shaders.search);
-    this.densePipeline = create("cda-prior-dense", this.shaders.dense);
-    this.snapshotPipeline = create("cda-prior-snapshot", this.shaders.snapshot);
+    const searchPipeline = create("cda-prior-search", this.shaders.search);
+    const densePipeline = create("cda-prior-dense", this.shaders.dense);
+    const snapshotPipeline = create("cda-prior-snapshot", this.shaders.snapshot);
+    this.searchPipeline = searchPipeline;
+    this.densePipeline = densePipeline;
+    this.snapshotPipeline = snapshotPipeline;
   }
 
   _validatePlan(plan) {

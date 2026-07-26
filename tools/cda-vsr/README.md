@@ -1,7 +1,7 @@
 # CDA-VSR conversion experiment
 
 This offline toolkit adapts a user-supplied CDA-VSR source file and checkpoint
-into two fixed-shape ONNX graphs:
+into two dynamic-spatial ONNX graphs:
 
 - `cda-vsr-initializer.onnx`: RGB frame to 4× output plus two feature states.
 - `cda-vsr-recurrent.onnx`: RGB, motion, residual, and prior states to 4× output
@@ -26,8 +26,7 @@ python tools/cda-vsr/cda_tool.py inspect \
   --checkpoint ../CDA-VSR/pretrained_models/best.pth
 ```
 
-With CPython 3.11 or newer, create an isolated environment and export a small
-parity fixture:
+With CPython 3.11 or newer, create an isolated environment and export:
 
 ```sh
 python -m venv .venv
@@ -43,13 +42,16 @@ python -m venv .venv
 On Windows, use `.venv\Scripts\python.exe`. Dependencies are version-pinned but
 their wheels are not hash-locked.
 
+Dynamic height and width are the default. `--height` and `--width` select the
+capture and first parity fixture, not a resolution ceiling. Export validates a
+second odd, non-square size to catch accidental shape specialization. Use
+`--fixed-shape` only for a capture-size feasibility fixture; its receipt marks
+it incompatible with a model-catalog entry.
+
 `export` executes the hash-pinned architecture file, loads the checkpoint in
-PyTorch's tensor-only mode, replaces only the released kernel=1 MMCV
-deformable convolution, checks both ONNX graphs, runs recurrent CPU parity, and
-writes `cda-vsr-export.json`, a machine-readable report containing input and
-output hashes, fixed tensor shapes, opset, parity tolerances/results, and the
-future decoded-prior contract `decoded-cda-v1`. No MMCV installation is needed
-for conversion.
+PyTorch's tensor-only mode, lowers the released kernel=1 MMCV operation to
+standard ONNX, validates both graphs, runs recurrent CPU parity, and writes the
+hashes and results to `cda-vsr-export.json`. No MMCV installation is needed.
 
 The lowering divides the 128 input channels into four deform groups. Each
 group is sampled with standard ONNX `GridSample` using MMCV's interleaved
@@ -105,21 +107,28 @@ when available, CDA's processed motion/residual arrays:
   --output-dir tmp/cda-vsr/evaluation
 ```
 
+The offline matcher mirrors the current `decoded-cda-v1` provider defaults
+(16-pixel blocks, 8-pixel search radius, and 4-pixel sampling stride), sampled
+SAD edge penalty, tie order, float16 history snapshot, and dense residual
+sampling. WGSL reduction arithmetic and browser video-to-texture conversion can
+still differ at numerical ties. Use `--block-size`, `--search-radius`, and
+`--sample-stride` to evaluate non-default provider settings.
+
 True motion and residual must be supplied together. Their exact upstream
 residual convention is undocumented, so that comparison requires CDA-VSR's
-processed data. With ground truth and true priors, the report also evaluates
-the provisional gate that decoded priors retain at least 60% of the true-prior
-PSNR benefit. This CPU block matcher is a deterministic reference, not the
-future WebGPU implementation.
+processed data. With ground truth and true priors, the report also tests the
+provisional gate that decoded priors retain at least 60% of the true-prior PSNR
+benefit.
 
 ## Current boundary
 
-These are fixed-shape, FP32 feasibility graphs—not extension assets. The tool
-does not yet implement temporal tiling, safe FP16 conversion, or browser
-runtime inference. Its offline evaluator generates motion/residual proxies, but
-does not represent a production estimator. The regular parity check proves the
-exported graphs match the lowered PyTorch network; `dcn-parity` separately
-tests that lowering against MMCV.
+These are FP32 feasibility graphs—not extension assets. They have no artificial
+source-resolution ceiling, although device memory, WebGPU limits, and latency
+still impose practical bounds. Browser-provider testing at representative
+video sizes, safe FP16 conversion, and performance work remain. Temporal
+tiling is a possible later memory strategy, not a requirement for variable
+source sizes. Regular parity proves that the graphs match the lowered PyTorch
+network; `dcn-parity` separately tests the lowering against MMCV.
 
 No checkpoint redistribution license has been established. The report marks
 the generated files experimental/local-only, and the tool never adds them to
