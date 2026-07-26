@@ -9,6 +9,7 @@ import {
   fixtureDisplayDimensions,
   isUnsupportedNeuralF16Fallback,
   isUnsupportedNeuralF16Warning,
+  parseArguments,
 } from "../tools/browser-validation.mjs";
 
 const root = resolve(import.meta.dirname, "..");
@@ -32,8 +33,15 @@ test("browser validator covers the packaged extension and real-video runtime", (
   assert.match(validator, /Neural ONNX presentation without fallback/);
   assert.match(
     validator,
-    /const integration = await runRealVideoIntegration\([\s\S]*?\{ allowNeuralF16Unavailable: options\.allowNeuralF16Unavailable \},\s*\);/,
+    /neuralModelKey: options\.neuralModelKey/,
   );
+  assert.match(validator, /FSRCNNX_SETNEURALMODEL/);
+  assert.match(
+    validator,
+    /status\.neuralRuntime\.activeModel === neuralModelKey/,
+  );
+  assert.match(validator, /status\.neural\?\.temporalResetRuns >= 1/);
+  assert.match(validator, /status\.neural\?\.temporalRecurrentRuns >= 2/);
   assert.match(validator, /status\.renderer\?\.fallback == null/);
   assert.match(validator, /status\.neuralRuntime\?\.phase === "active"/);
   assert.match(validator, /status\.neural\?\.n >= neuralRuns \+ 2/);
@@ -57,6 +65,28 @@ test("browser validator covers the packaged extension and real-video runtime", (
   assert.doesNotMatch(validator, /extensionIdFromPath/);
   assert.match(validator, /127\.0\.0\.1/);
   assert.doesNotMatch(validator, /--no-sandbox/);
+});
+
+test("browser validator can pin one neural model for external-artifact probes", () => {
+  const options = parseArguments([
+    "--extension-root",
+    "dist/fsrcnnx-ext",
+    "--neural-model-key",
+    "cda-vsr-4x-local-probe",
+    "--require-temporal-neural-runs",
+  ]);
+  assert.equal(options.extensionRoot, resolve(root, "dist/fsrcnnx-ext"));
+  assert.equal(options.neuralModelKey, "cda-vsr-4x-local-probe");
+  assert.equal(options.requireTemporalNeuralRuns, true);
+  assert.equal(options.allowNeuralF16Unavailable, false);
+  assert.throws(
+    () => parseArguments(["--neural-model-key", "../outside"]),
+    /not a valid neural model key/,
+  );
+  assert.throws(
+    () => parseArguments(["--require-temporal-neural-runs"]),
+    /requires --neural-model-key/,
+  );
 });
 
 test("browser validator accepts configured paths on Windows and POSIX", () => {

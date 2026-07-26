@@ -10,8 +10,11 @@ import sys
 from pathlib import Path
 
 from cda_adapter import (
+    FP32_PRECISION,
     GRAPH_FILENAMES,
+    MIXED_FP16_PRECISION,
     OPSET,
+    PRECISION_PROFILES,
     PRIOR_CONTRACT,
     RECEIPT_FILENAME,
     ToolError,
@@ -23,6 +26,8 @@ from cda_adapter import (
     instantiate_lowered_source_model,
     load_checkpoint,
     make_graph_wrappers,
+    normalize_precision,
+    precision_contract,
     require_conversion_dependencies,
     require_evaluation_dependencies,
     require_expected_hash,
@@ -44,7 +49,7 @@ from cda_priors import (
 
 TOOL_DIR = Path(__file__).resolve().parent
 DEFAULT_OUTPUT = TOOL_DIR / ".work" / "export"
-EXPORT_RECEIPT_FORMAT = 2
+EXPORT_RECEIPT_FORMAT = 3
 EXPORT_TOOL_NAME = "FSRCNNX-EXT CDA-VSR conversion toolkit"
 PARITY_SEED = 20260726
 STALE_RECEIPT_FILENAME = f".{RECEIPT_FILENAME}.previous"
@@ -61,6 +66,17 @@ TOOL_IDENTITY_FILES = (
     "cda_tool.py",
     "requirements.txt",
 )
+DEFAULT_PARITY_FRAMES = 25
+DEFAULT_PARITY_LIMITS = {
+    FP32_PRECISION: {
+        "output": {"max_abs": 2e-4, "max_mean": 2e-5},
+        "state": {"max_abs": 2e-4, "max_mean": 2e-5},
+    },
+    MIXED_FP16_PRECISION: {
+        "output": {"max_abs": 5e-3, "max_mean": 5e-4},
+        "state": {"max_abs": 2e-2, "max_mean": 2e-3},
+    },
+}
 
 
 def positive_integer(value: str) -> int:
@@ -130,9 +146,68 @@ def add_shape(parser: argparse.ArgumentParser) -> None:
 
 
 def add_parity_limits(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--frames", type=temporal_frame_count, default=3)
-    parser.add_argument("--max-abs", type=positive_float, default=2e-4)
-    parser.add_argument("--max-mean", type=positive_float, default=2e-5)
+    parser.add_argument(
+        "--frames",
+        type=temporal_frame_count,
+        default=DEFAULT_PARITY_FRAMES,
+        help="frames per sequence (default: full 25-frame trained horizon)",
+    )
+    parser.add_argument(
+        "--max-abs",
+        type=positive_float,
+        help="override maximum absolute error for output and recurrent state",
+    )
+    parser.add_argument(
+        "--max-mean",
+        type=positive_float,
+        help="override mean absolute error for output and recurrent state",
+    )
+    for tensor_class in ("output", "state"):
+        shown = tensor_class.replace("_", "-")
+        parser.add_argument(
+            f"--max-{shown}-abs",
+            type=positive_float,
+            help=f"override maximum absolute error for {tensor_class}",
+        )
+        parser.add_argument(
+            f"--max-{shown}-mean",
+            type=positive_float,
+            help=f"override mean absolute error for {tensor_class}",
+        )
+
+
+def add_precision(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--precision",
+        choices=PRECISION_PROFILES,
+        default=FP32_PRECISION,
+        help=(
+            "export precision profile; mixed-fp16 keeps public RGB/priors and "
+            "sampling coordinates in FP32"
+        ),
+    )
+
+
+def parity_limits(args) -> dict[str, dict[str, float]]:
+    precision = normalize_precision(args.precision)
+    limits = {
+        tensor_class: dict(values)
+        for tensor_class, values in DEFAULT_PARITY_LIMITS[precision].items()
+    }
+    if args.max_abs is not None:
+        for values in limits.values():
+            values["max_abs"] = args.max_abs
+    if args.max_mean is not None:
+        for values in limits.values():
+            values["max_mean"] = args.max_mean
+    for tensor_class in limits:
+        for metric in ("abs", "mean"):
+            value = getattr(args, f"max_{tensor_class}_{metric}")
+            if value is not None:
+                limits[tensor_class][
+                    "max_abs" if metric == "abs" else "max_mean"
+                ] = value
+    return limits
 
 
 def parser() -> argparse.ArgumentParser:
@@ -156,6 +231,7 @@ def parser() -> argparse.ArgumentParser:
     )
     add_inputs(export_parser, expected_hashes=True)
     add_shape(export_parser)
+    add_precision(export_parser)
     export_parser.add_argument(
         "--fixed-shape",
         action="store_false",
@@ -184,6 +260,7 @@ def parser() -> argparse.ArgumentParser:
     )
     add_inputs(parity_parser, expected_hashes=True)
     add_shape(parity_parser)
+    add_precision(parity_parser)
     parity_parser.add_argument(
         "--fixed-shape",
         action="store_false",
@@ -341,6 +418,157 @@ def _reject_json_constant(value: str):
     raise ValueError(f"non-finite JSON number {value!r} is not permitted")
 
 
+def _validate_tensor_limits(value, label: str) -> dict[str, dict[str, float]]:
+    limits = _receipt_mapping(value, label)
+    if set(limits) != {"output", "state"}:
+        raise ValueError(f"{label} must contain exactly output and state")
+    validated = {}
+    for tensor_class in ("output", "state"):
+        at = f"{label}.{tensor_class}"
+        item = _receipt_mapping(limits[tensor_class], at)
+        if set(item) != {"max_abs", "max_mean"}:
+            raise ValueError(f"{at} must contain max_abs and max_mean")
+        validated[tensor_class] = {
+            "max_abs": _receipt_number(
+                item["max_abs"],
+                f"{at}.max_abs",
+                positive=True,
+            ),
+            "max_mean": _receipt_number(
+                item["max_mean"],
+                f"{at}.max_mean",
+                positive=True,
+            ),
+        }
+    return validated
+
+
+def _validate_parity_sequence(
+    result,
+    *,
+    at: str,
+    expected_shape: dict[str, int],
+    frames: int,
+    motion_fixture: str,
+    tensor_limits: dict[str, dict[str, float]],
+    max_abs: float,
+    max_mean: float,
+) -> tuple[float, float, float]:
+    result = _receipt_mapping(result, at)
+    if (
+        result["height"] != expected_shape["height"]
+        or result["width"] != expected_shape["width"]
+        or result["frames"] != frames
+        or result["seed"] != PARITY_SEED
+        or result["motion_fixture"] != motion_fixture
+    ):
+        raise ValueError(f"{at} fixture identity is inconsistent")
+    _same_number(result["max_abs_limit"], max_abs, f"{at}.max_abs_limit")
+    _same_number(result["max_mean_limit"], max_mean, f"{at}.max_mean_limit")
+    if _validate_tensor_limits(
+        result["tensor_limits"],
+        f"{at}.tensor_limits",
+    ) != tensor_limits:
+        raise ValueError(f"{at}.tensor_limits is inconsistent")
+
+    records = result["records"]
+    if not isinstance(records, list) or len(records) != frames:
+        raise ValueError(f"{at}.records must contain one entry per frame")
+    tensor_names = {"output", "next_state_low", "next_state_high"}
+    measured = {"output": [], "state": []}
+    for frame_index, record in enumerate(records):
+        record_at = f"{at}.records[{frame_index}]"
+        record = _receipt_mapping(record, record_at)
+        expected_role = "initializer" if frame_index == 0 else "recurrent"
+        if (
+            record["frame"] != frame_index
+            or record["role"] != expected_role
+        ):
+            raise ValueError(f"{record_at} frame role is inconsistent")
+        tensors = _receipt_mapping(record["tensors"], f"{record_at}.tensors")
+        if set(tensors) != tensor_names:
+            raise ValueError(f"{record_at}.tensors has an invalid ABI")
+        for tensor_name, metrics in tensors.items():
+            metric_at = f"{record_at}.tensors.{tensor_name}"
+            metrics = _receipt_mapping(metrics, metric_at)
+            mean_abs = _receipt_number(
+                metrics["mean_abs"],
+                f"{metric_at}.mean_abs",
+            )
+            max_tensor_abs = _receipt_number(
+                metrics["max_abs"],
+                f"{metric_at}.max_abs",
+            )
+            p99_9_abs = _receipt_number(
+                metrics["p99_9_abs"],
+                f"{metric_at}.p99_9_abs",
+            )
+            if (
+                mean_abs < 0
+                or p99_9_abs < 0
+                or max_tensor_abs < 0
+                or p99_9_abs > max_tensor_abs
+                or mean_abs > max_tensor_abs
+            ):
+                raise ValueError(f"{metric_at} contains impossible errors")
+            tensor_class = "output" if tensor_name == "output" else "state"
+            measured[tensor_class].append(
+                (max_tensor_abs, mean_abs, p99_9_abs)
+            )
+
+    expected_worst = {}
+    for tensor_class, values in measured.items():
+        worst_class_max = max(value[0] for value in values)
+        worst_class_mean = max(value[1] for value in values)
+        worst_class_p99_9 = max(value[2] for value in values)
+        limit = tensor_limits[tensor_class]
+        if (
+            worst_class_max > limit["max_abs"]
+            or worst_class_mean > limit["max_mean"]
+        ):
+            raise ValueError(
+                f"{at} {tensor_class} exceeds its recorded parity limits"
+            )
+        expected_worst[tensor_class] = {
+            "worst_max_abs": worst_class_max,
+            "worst_mean_abs": worst_class_mean,
+            "worst_p99_9_abs": worst_class_p99_9,
+        }
+    recorded_worst = _receipt_mapping(
+        result["worst_by_tensor_class"],
+        f"{at}.worst_by_tensor_class",
+    )
+    if set(recorded_worst) != set(expected_worst):
+        raise ValueError(f"{at}.worst_by_tensor_class has an invalid schema")
+    for tensor_class, expected in expected_worst.items():
+        item = _receipt_mapping(
+            recorded_worst[tensor_class],
+            f"{at}.worst_by_tensor_class.{tensor_class}",
+        )
+        for metric, expected_value in expected.items():
+            _same_number(
+                item[metric],
+                expected_value,
+                f"{at}.worst_by_tensor_class.{tensor_class}.{metric}",
+            )
+
+    worst_max = max(value["worst_max_abs"] for value in expected_worst.values())
+    worst_mean = max(
+        value["worst_mean_abs"] for value in expected_worst.values()
+    )
+    worst_p99_9 = max(
+        value["worst_p99_9_abs"] for value in expected_worst.values()
+    )
+    _same_number(result["worst_max_abs"], worst_max, f"{at}.worst_max_abs")
+    _same_number(result["worst_mean_abs"], worst_mean, f"{at}.worst_mean_abs")
+    _same_number(
+        result["worst_p99_9_abs"],
+        worst_p99_9,
+        f"{at}.worst_p99_9_abs",
+    )
+    return worst_max, worst_mean, worst_p99_9
+
+
 def _validate_parity_evidence(
     receipt: dict[str, object],
     *,
@@ -354,16 +582,23 @@ def _validate_parity_evidence(
         "parity_policy.frames",
         minimum=2,
     )
-    max_abs = _receipt_number(
-        policy["max_abs"],
-        "parity_policy.max_abs",
-        positive=True,
+    tensor_limits = _validate_tensor_limits(
+        policy["tensor_limits"],
+        "parity_policy.tensor_limits",
     )
-    max_mean = _receipt_number(
-        policy["max_mean"],
-        "parity_policy.max_mean",
-        positive=True,
-    )
+    max_abs = max(limit["max_abs"] for limit in tensor_limits.values())
+    max_mean = max(limit["max_mean"] for limit in tensor_limits.values())
+    _same_number(policy["max_abs"], max_abs, "parity_policy.max_abs")
+    _same_number(policy["max_mean"], max_mean, "parity_policy.max_mean")
+    if policy["reference_precision"] != FP32_PRECISION:
+        raise ValueError("parity_policy.reference_precision must be float32")
+    if policy["state_chains"] != "independent":
+        raise ValueError("parity_policy.state_chains must be independent")
+    if policy["motion_fixtures"] != [
+        "decoded-integer",
+        "fractional-stress",
+    ]:
+        raise ValueError("parity_policy.motion_fixtures is inconsistent")
     skipped = policy["skipped"]
     if not isinstance(skipped, bool):
         raise ValueError("parity_policy.skipped must be boolean")
@@ -385,6 +620,12 @@ def _validate_parity_evidence(
     expected_mode = "dynamic" if dynamic else "fixed"
     if parity["spatial_shape"] != expected_mode:
         raise ValueError("parity.spatial_shape is inconsistent")
+    if (
+        parity["reference_precision"] != FP32_PRECISION
+        or parity["state_chains"] != "independent"
+        or parity["primary_motion_fixture"] != "decoded-integer"
+    ):
+        raise ValueError("parity reference/state/motion policy is inconsistent")
     expected_shapes = [{"height": height, "width": width}]
     if dynamic:
         probe_height, probe_width = dynamic_probe_shape(height, width)
@@ -400,79 +641,65 @@ def _validate_parity_evidence(
         raise ValueError(f"parity.seed must be {PARITY_SEED}")
     _same_number(parity["max_abs_limit"], max_abs, "parity.max_abs_limit")
     _same_number(parity["max_mean_limit"], max_mean, "parity.max_mean_limit")
+    if _validate_tensor_limits(
+        parity["tensor_limits"],
+        "parity.tensor_limits",
+    ) != tensor_limits:
+        raise ValueError("parity.tensor_limits is inconsistent")
 
     shape_results = parity["shape_results"]
     if not isinstance(shape_results, list) or len(shape_results) != len(
         expected_shapes
     ):
         raise ValueError("parity.shape_results does not match tested_shapes")
-    aggregate_max = []
-    aggregate_mean = []
-    tensor_names = {"output", "next_state_low", "next_state_high"}
+    aggregate = []
     for shape_index, (result, expected_shape) in enumerate(
         zip(shape_results, expected_shapes, strict=True)
     ):
-        at = f"parity.shape_results[{shape_index}]"
-        result = _receipt_mapping(result, at)
-        if (
-            result["height"] != expected_shape["height"]
-            or result["width"] != expected_shape["width"]
-            or result["frames"] != frames
-            or result["seed"] != PARITY_SEED
-        ):
-            raise ValueError(f"{at} fixture identity is inconsistent")
-        _same_number(result["max_abs_limit"], max_abs, f"{at}.max_abs_limit")
-        _same_number(result["max_mean_limit"], max_mean, f"{at}.max_mean_limit")
-        records = result["records"]
-        if not isinstance(records, list) or len(records) != frames:
-            raise ValueError(f"{at}.records must contain one entry per frame")
-        record_max = []
-        record_mean = []
-        for frame_index, record in enumerate(records):
-            record_at = f"{at}.records[{frame_index}]"
-            record = _receipt_mapping(record, record_at)
-            expected_role = "initializer" if frame_index == 0 else "recurrent"
-            if (
-                record["frame"] != frame_index
-                or record["role"] != expected_role
-            ):
-                raise ValueError(f"{record_at} frame role is inconsistent")
-            tensors = _receipt_mapping(record["tensors"], f"{record_at}.tensors")
-            if set(tensors) != tensor_names:
-                raise ValueError(f"{record_at}.tensors has an invalid ABI")
-            for tensor_name, metrics in tensors.items():
-                metric_at = f"{record_at}.tensors.{tensor_name}"
-                metrics = _receipt_mapping(metrics, metric_at)
-                mean_abs = _receipt_number(
-                    metrics["mean_abs"],
-                    f"{metric_at}.mean_abs",
-                )
-                max_tensor_abs = _receipt_number(
-                    metrics["max_abs"],
-                    f"{metric_at}.max_abs",
-                )
-                if mean_abs < 0 or max_tensor_abs < 0 or mean_abs > max_tensor_abs:
-                    raise ValueError(f"{metric_at} contains impossible errors")
-                record_mean.append(mean_abs)
-                record_max.append(max_tensor_abs)
-        worst_max = max(record_max)
-        worst_mean = max(record_mean)
-        _same_number(result["worst_max_abs"], worst_max, f"{at}.worst_max_abs")
-        _same_number(result["worst_mean_abs"], worst_mean, f"{at}.worst_mean_abs")
-        if worst_max > max_abs or worst_mean > max_mean:
-            raise ValueError(f"{at} exceeds its recorded parity limits")
-        aggregate_max.append(worst_max)
-        aggregate_mean.append(worst_mean)
-
-    worst_max = max(aggregate_max)
-    worst_mean = max(aggregate_mean)
-    _same_number(parity["worst_max_abs"], worst_max, "parity.worst_max_abs")
-    _same_number(parity["worst_mean_abs"], worst_mean, "parity.worst_mean_abs")
+        aggregate.append(
+            _validate_parity_sequence(
+                result,
+                at=f"parity.shape_results[{shape_index}]",
+                expected_shape=expected_shape,
+                frames=frames,
+                motion_fixture="decoded-integer",
+                tensor_limits=tensor_limits,
+                max_abs=max_abs,
+                max_mean=max_mean,
+            )
+        )
+    aggregate.append(
+        _validate_parity_sequence(
+            parity["fractional_motion_stress"],
+            at="parity.fractional_motion_stress",
+            expected_shape={"height": height, "width": width},
+            frames=frames,
+            motion_fixture="fractional-stress",
+            tensor_limits=tensor_limits,
+            max_abs=max_abs,
+            max_mean=max_mean,
+        )
+    )
+    _same_number(
+        parity["worst_max_abs"],
+        max(value[0] for value in aggregate),
+        "parity.worst_max_abs",
+    )
+    _same_number(
+        parity["worst_mean_abs"],
+        max(value[1] for value in aggregate),
+        "parity.worst_mean_abs",
+    )
+    _same_number(
+        parity["worst_p99_9_abs"],
+        max(value[2] for value in aggregate),
+        "parity.worst_p99_9_abs",
+    )
 
 
 def validate_receipt_contract(
     receipt,
-) -> tuple[str, str, int, int, bool]:
+) -> tuple[str, str, int, int, bool, str]:
     """Validate receipt policy and self-consistency without loading ONNX."""
 
     try:
@@ -486,6 +713,16 @@ def validate_receipt_contract(
             raise ValueError("tool identity is not recognized")
         if receipt["opset"] != OPSET:
             raise ValueError(f"opset must be {OPSET}")
+        recorded_precision = _receipt_mapping(
+            receipt["precision"],
+            "precision",
+        )
+        try:
+            precision = normalize_precision(recorded_precision.get("profile"))
+        except ToolError as error:
+            raise ValueError(str(error)) from error
+        if recorded_precision != precision_contract(precision):
+            raise ValueError("precision is not the exact expected profile")
 
         distribution = _receipt_mapping(
             receipt["distribution"],
@@ -582,16 +819,30 @@ def validate_receipt_contract(
         if graph_shape_compatible is not dynamic:
             raise ValueError("spatial_shape.graph_shape_compatible is inconsistent")
 
+        graphs = _receipt_mapping(receipt["graphs"], "graphs")
+        if set(graphs) != set(GRAPH_FILENAMES):
+            raise ValueError(
+                "graphs must contain exactly initializer and recurrent"
+            )
+
         contract = _receipt_mapping(receipt["runtime_contract"], "runtime_contract")
         expected_runtime = {
             "prior_provider": PRIOR_CONTRACT,
             "motion_component_order": ["x", "y"],
             "motion_units": "low-resolution-pixels",
+            "precision_profile": precision,
             "catalog_compatible_at_graph_shape_level": dynamic,
             "shipping_catalog": False,
         }
+        try:
+            manifest_template = runtime_contract_template(
+                precision,
+                graph_facts=graphs,
+            )
+        except ToolError as error:
+            raise ValueError(str(error)) from error
         if dynamic:
-            expected_runtime["manifest_v2_template"] = runtime_contract_template()
+            expected_runtime["manifest_v2_template"] = manifest_template
         else:
             expected_runtime["catalog_blocker"] = (
                 "fixed-shape feasibility fixtures cannot be catalog entries"
@@ -599,15 +850,27 @@ def validate_receipt_contract(
         if contract != expected_runtime:
             raise ValueError("runtime_contract is not the exact expected contract")
 
-        graphs = _receipt_mapping(receipt["graphs"], "graphs")
-        if set(graphs) != set(GRAPH_FILENAMES):
-            raise ValueError("graphs must contain exactly initializer and recurrent")
         for role, filename in GRAPH_FILENAMES.items():
             recorded = _receipt_mapping(graphs[role], f"graphs.{role}")
             if recorded.get("file") != filename:
                 raise ValueError(f"graphs.{role}.file must be {filename!r}")
             _receipt_integer(recorded["bytes"], f"graphs.{role}.bytes")
             _receipt_sha256(recorded["sha256"], f"graphs.{role}.sha256")
+            if recorded.get("precision_profile") != precision:
+                raise ValueError(
+                    f"graphs.{role}.precision_profile is inconsistent"
+                )
+            expected_inputs = (
+                {"frame": precision_contract(precision)["public_inputs"]["frame"]}
+                if role == "initializer"
+                else precision_contract(precision)["public_inputs"]
+            )
+            expected_outputs = precision_contract(precision)["public_outputs"]
+            if recorded.get("public_dtypes") != {
+                "inputs": expected_inputs,
+                "outputs": expected_outputs,
+            }:
+                raise ValueError(f"graphs.{role}.public_dtypes is inconsistent")
 
         _validate_parity_evidence(
             receipt,
@@ -617,7 +880,14 @@ def validate_receipt_contract(
         )
     except (KeyError, TypeError, ValueError) as error:
         raise ToolError(f"invalid export receipt: {error}") from error
-    return source_sha256, checkpoint_sha256, height, width, dynamic
+    return (
+        source_sha256,
+        checkpoint_sha256,
+        height,
+        width,
+        dynamic,
+        precision,
+    )
 
 
 def invalidate_export_receipt(output_dir: Path) -> Path | None:
@@ -677,8 +947,7 @@ def parity_result(
         height=args.height,
         width=args.width,
         frames=args.frames,
-        max_abs=args.max_abs,
-        max_mean=args.max_mean,
+        tensor_limits=parity_limits(args),
         dynamic=args.dynamic,
         numpy=numpy,
         onnxruntime=onnxruntime,
@@ -700,6 +969,7 @@ def command_export(args) -> dict[str, object]:
         height=args.height,
         width=args.width,
         dynamic=args.dynamic,
+        precision=args.precision,
         torch=torch,
         onnx=onnx,
     )
@@ -717,11 +987,15 @@ def command_export(args) -> dict[str, object]:
         "prior_provider": PRIOR_CONTRACT,
         "motion_component_order": ["x", "y"],
         "motion_units": "low-resolution-pixels",
+        "precision_profile": args.precision,
         "catalog_compatible_at_graph_shape_level": bool(args.dynamic),
         "shipping_catalog": False,
     }
     if args.dynamic:
-        runtime_contract["manifest_v2_template"] = runtime_contract_template()
+        runtime_contract["manifest_v2_template"] = runtime_contract_template(
+            args.precision,
+            graph_facts=graphs,
+        )
     else:
         runtime_contract["catalog_blocker"] = (
             "fixed-shape feasibility fixtures cannot be catalog entries"
@@ -730,6 +1004,7 @@ def command_export(args) -> dict[str, object]:
         "format": EXPORT_RECEIPT_FORMAT,
         "tool": EXPORT_TOOL_NAME,
         "opset": OPSET,
+        "precision": precision_contract(args.precision),
         "distribution": {
             "architecture_license_status": "not-established",
             "checkpoint_redistribution_clearance": False,
@@ -765,8 +1040,21 @@ def command_export(args) -> dict[str, object]:
         "runtime_contract": runtime_contract,
         "parity_policy": {
             "frames": args.frames,
-            "max_abs": args.max_abs,
-            "max_mean": args.max_mean,
+            "max_abs": max(
+                limit["max_abs"]
+                for limit in parity_limits(args).values()
+            ),
+            "max_mean": max(
+                limit["max_mean"]
+                for limit in parity_limits(args).values()
+            ),
+            "tensor_limits": parity_limits(args),
+            "reference_precision": FP32_PRECISION,
+            "state_chains": "independent",
+            "motion_fixtures": [
+                "decoded-integer",
+                "fractional-stress",
+            ],
             "skipped": bool(args.skip_parity),
             "dynamic_shape_runtime_validated": bool(
                 args.dynamic and not args.skip_parity
@@ -796,6 +1084,7 @@ def command_parity(args) -> dict[str, object]:
         height=args.height,
         width=args.width,
         dynamic=args.dynamic,
+        precision=args.precision,
         onnx=onnx,
     )
     parity = parity_result(
@@ -832,6 +1121,7 @@ def command_verify(args) -> dict[str, object]:
         height,
         width,
         dynamic,
+        precision,
     ) = validate_receipt_contract(receipt)
     _numpy, onnx, _onnxruntime, _torch = require_conversion_dependencies()
     graphs = validate_saved_graphs(
@@ -841,6 +1131,7 @@ def command_verify(args) -> dict[str, object]:
         height=height,
         width=width,
         dynamic=dynamic,
+        precision=precision,
         onnx=onnx,
     )
     for role, info in graphs.items():

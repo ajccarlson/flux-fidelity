@@ -40,9 +40,9 @@ Run the standard offline repository check:
 npm run check
 ```
 
-This includes dependency-free CDA-VSR contract tests, not the optional ML
-conversion environment or user-supplied CDA artifacts documented under
-`tools/cda-vsr/`.
+This includes dependency-free CDA-VSR contract tests. The optional
+[`tools/cda-vsr/`](tools/cda-vsr/) workflow converts user-supplied artifacts and
+probes tiled temporal execution without adding those artifacts to the package.
 
 Run browser and GPU smoke checks against the checkout in a temporary Chromium profile:
 

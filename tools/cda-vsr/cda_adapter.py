@@ -9,6 +9,7 @@ conversion environment is installed.
 from __future__ import annotations
 
 import ast
+import copy
 import contextlib
 import hashlib
 import importlib
@@ -21,6 +22,7 @@ import sys
 import types
 from collections.abc import Mapping
 from pathlib import Path
+from types import MethodType
 
 
 SHA256_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
@@ -39,10 +41,226 @@ DYNAMIC_HEIGHT = "height"
 DYNAMIC_WIDTH = "width"
 DYNAMIC_OUTPUT_HEIGHT = "output_height_x4"
 DYNAMIC_OUTPUT_WIDTH = "output_width_x4"
+FP32_PRECISION = "float32"
+MIXED_FP16_PRECISION = "mixed-fp16"
+PRECISION_PROFILES = (FP32_PRECISION, MIXED_FP16_PRECISION)
+TEMPORAL_TILING_KIND = "temporal-state-atlas-v1"
+TEMPORAL_TILING_SCALE = 4
+TEMPORAL_TILING_HALO = 64
+TEMPORAL_TILING_SEARCH_RADIUS = 8
+TEMPORAL_TILING_FIXED_RECURRENT_RADIUS = 35
+TEMPORAL_TILING_MINIMUM_HALO = 64
+TEMPORAL_TILING_ALIGNMENT = 8
+TEMPORAL_TILING_PREFERRED_INPUT_EXTENT = 512
+TEMPORAL_TILING_INPUT_ALIGNMENT = 8
+TEMPORAL_TILING_WORKGROUP_SIZE = 8
+TEMPORAL_STATE_COUNT = 2
+TEMPORAL_STATE_CHANNELS = 64
+TEMPORAL_STATE_ARRAY_LAYERS = 16
+EXPECTED_GRAPH_LOGICAL_BYTES = {
+    FP32_PRECISION: {
+        "initializer": 256,
+        "recurrent": 776,
+    },
+    MIXED_FP16_PRECISION: {
+        "initializer": 192,
+        "recurrent": 512,
+    },
+}
+EXPECTED_TEMPORAL_LOGICAL_BYTES = {
+    precision: max(by_role.values())
+    for precision, by_role in EXPECTED_GRAPH_LOGICAL_BYTES.items()
+}
+
+
+def normalize_precision(precision: str) -> str:
+    if precision not in PRECISION_PROFILES:
+        raise ToolError(
+            f"unsupported precision profile {precision!r}; expected one of "
+            + ", ".join(PRECISION_PROFILES)
+        )
+    return precision
+
+
+def precision_contract(precision: str = FP32_PRECISION) -> dict[str, object]:
+    """Return the exact numerical boundary used by one export profile."""
+
+    precision = normalize_precision(precision)
+    mixed = precision == MIXED_FP16_PRECISION
+    compute_dtype = "float16" if mixed else "float32"
+    return {
+        "profile": precision,
+        "weight_dtype": compute_dtype,
+        "feature_dtype": compute_dtype,
+        "state_dtype": compute_dtype,
+        "coordinate_dtype": "float32",
+        "grid_sample_dtype": "float32",
+        "public_inputs": {
+            "frame": "float32",
+            "motion": "float32",
+            "residual": "float32",
+            "state_low": compute_dtype,
+            "state_high": compute_dtype,
+        },
+        "public_outputs": {
+            "output": "float32",
+            "next_state_low": compute_dtype,
+            "next_state_high": compute_dtype,
+        },
+    }
 
 
 class ToolError(RuntimeError):
     """An expected, user-actionable toolkit failure."""
+
+
+def logical_memory_contract(
+    role: str,
+    precision: str = FP32_PRECISION,
+) -> dict[str, object]:
+    """Return the exact graph evidence the structural audit must prove."""
+
+    precision = normalize_precision(precision)
+    if role not in GRAPH_FILENAMES:
+        raise ToolError(f"unsupported graph role {role!r}")
+    compute_dtype = str(precision_contract(precision)["feature_dtype"])
+    compute_bytes = 2 if compute_dtype == "float16" else 4
+    max_conv_channels = 194 if role == "recurrent" else 64
+    max_conv = {
+        "channels": max_conv_channels,
+        "dtype": compute_dtype,
+        "spatial_scale": 1,
+        "bytes_per_source_pixel": max_conv_channels * compute_bytes,
+    }
+    predictor = dict(max_conv) if role == "recurrent" else None
+    grid_channels = [32, 32, 32, 32, 128] if role == "recurrent" else []
+    max_grid_bytes = 128 * 4 if grid_channels else 0
+    public_output = {
+        "channels": 3,
+        "dtype": "float32",
+        "spatial_scale": TEMPORAL_TILING_SCALE,
+        "bytes_per_source_pixel": (
+            3 * TEMPORAL_TILING_SCALE * TEMPORAL_TILING_SCALE * 4
+        ),
+    }
+    candidates = {
+        "conv-input": int(max_conv["bytes_per_source_pixel"]),
+        "grid-sample-source": max_grid_bytes,
+        "public-output": int(public_output["bytes_per_source_pixel"]),
+    }
+    winner = max(candidates, key=candidates.get)
+    return {
+        "largest_bytes_per_source_pixel": candidates[winner],
+        "largest_tensor_kind": winner,
+        "max_conv_input": max_conv,
+        "deform_align_predictor_input": predictor,
+        "grid_sample_sources": {
+            "channels": grid_channels,
+            "dtype": "float32" if grid_channels else None,
+            "spatial_scale": 1,
+            "largest_bytes_per_source_pixel": max_grid_bytes,
+        },
+        "public_output": public_output,
+    }
+
+
+def temporal_tiling_contract(
+    precision: str = FP32_PRECISION,
+    *,
+    graph_facts: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    """Return the exact state-atlas profile proven by the exported graphs."""
+
+    precision = normalize_precision(precision)
+    expected_by_role = EXPECTED_GRAPH_LOGICAL_BYTES[precision]
+    largest = EXPECTED_TEMPORAL_LOGICAL_BYTES[precision]
+    if graph_facts is not None:
+        if not isinstance(graph_facts, Mapping):
+            raise ToolError("graph facts must be a mapping")
+        if set(graph_facts) != set(GRAPH_FILENAMES):
+            raise ToolError(
+                "graph facts must contain exactly initializer and recurrent"
+            )
+        recorded_by_role = {}
+        for role in GRAPH_FILENAMES:
+            graph = graph_facts[role]
+            if not isinstance(graph, Mapping):
+                raise ToolError(f"{role} graph facts must be a mapping")
+            memory = graph.get("logical_memory")
+            if not isinstance(memory, Mapping):
+                raise ToolError(
+                    f"{role} graph lacks structural logical-memory evidence"
+                )
+            expected_memory = logical_memory_contract(role, precision)
+            if dict(memory) != expected_memory:
+                raise ToolError(
+                    f"{role} logical-memory evidence does not match its "
+                    f"structural {precision} contract"
+                )
+            value = memory.get("largest_bytes_per_source_pixel")
+            if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+                raise ToolError(
+                    f"{role} logical-memory maximum must be a positive integer"
+                )
+            expected = expected_by_role[role]
+            if value != expected:
+                raise ToolError(
+                    f"{role} graph proves {value} logical bytes per source "
+                    f"pixel; expected {expected} for {precision}"
+                )
+            recorded_by_role[role] = value
+        largest = max(recorded_by_role.values())
+        if largest != EXPECTED_TEMPORAL_LOGICAL_BYTES[precision]:
+            raise ToolError(
+                f"graph-set logical-memory maximum is {largest}; expected "
+                f"{EXPECTED_TEMPORAL_LOGICAL_BYTES[precision]} for {precision}"
+            )
+
+    state_dtype = str(precision_contract(precision)["state_dtype"])
+    texture_format = (
+        "rgba16float" if state_dtype == "float16" else "rgba32float"
+    )
+    recurrent_radius = (
+        TEMPORAL_TILING_SEARCH_RADIUS
+        + TEMPORAL_TILING_FIXED_RECURRENT_RADIUS
+    )
+    aligned_recurrent_radius = (
+        (
+            recurrent_radius
+            + TEMPORAL_TILING_ALIGNMENT
+            - 1
+        )
+        // TEMPORAL_TILING_ALIGNMENT
+    ) * TEMPORAL_TILING_ALIGNMENT
+    derived_halo = max(
+        TEMPORAL_TILING_MINIMUM_HALO,
+        aligned_recurrent_radius,
+    )
+    if derived_halo != TEMPORAL_TILING_HALO:
+        raise ToolError(
+            "temporal tiling halo constants do not match their derivation"
+        )
+    return {
+        "kind": TEMPORAL_TILING_KIND,
+        "scale": TEMPORAL_TILING_SCALE,
+        "halo": derived_halo,
+        "haloDerivation": {
+            "motionSearchRadius": TEMPORAL_TILING_SEARCH_RADIUS,
+            "fixedRecurrentRadius": TEMPORAL_TILING_FIXED_RECURRENT_RADIUS,
+            "minimum": TEMPORAL_TILING_MINIMUM_HALO,
+            "alignment": TEMPORAL_TILING_ALIGNMENT,
+        },
+        "largestLogicalBytesPerSourcePixel": largest,
+        "preferredInputExtent": TEMPORAL_TILING_PREFERRED_INPUT_EXTENT,
+        "inputAlignment": TEMPORAL_TILING_INPUT_ALIGNMENT,
+        "workgroupSize": TEMPORAL_TILING_WORKGROUP_SIZE,
+        "stateAtlas": {
+            "stateCount": TEMPORAL_STATE_COUNT,
+            "channelsPerState": TEMPORAL_STATE_CHANNELS,
+            "arrayLayersPerState": TEMPORAL_STATE_ARRAY_LAYERS,
+            "textureFormat": texture_format,
+        },
+    }
 
 
 def sha256_file(path: Path) -> str:
@@ -249,20 +467,26 @@ def inspect_inputs(source: Path, checkpoint: Path) -> dict[str, object]:
     }
 
 
-def runtime_contract_template() -> dict[str, object]:
+def runtime_contract_template(
+    precision: str = FP32_PRECISION,
+    *,
+    graph_facts: Mapping[str, object] | None = None,
+) -> dict[str, object]:
     """Return the extension's v2 temporal ABI for the two emitted graphs."""
 
+    profile = precision_contract(precision)
+    state_dtype = profile["state_dtype"]
     rgb = {"role": "rgb", "dtype": "float32", "channels": 3}
     state_low_out = {
         "role": "state-out",
         "state": "low",
-        "dtype": "float32",
+        "dtype": state_dtype,
         "channels": 64,
     }
     state_high_out = {
         "role": "state-out",
         "state": "high",
-        "dtype": "float32",
+        "dtype": state_dtype,
         "channels": 64,
     }
     return {
@@ -270,6 +494,10 @@ def runtime_contract_template() -> dict[str, object]:
         "mode": "temporal",
         "resetGraph": "initialize",
         "recurrentGraph": "recurrent",
+        "tiling": temporal_tiling_contract(
+            precision,
+            graph_facts=graph_facts,
+        ),
         "graphs": {
             "initialize": {
                 "file": GRAPH_FILENAMES["initializer"],
@@ -300,14 +528,14 @@ def runtime_contract_template() -> dict[str, object]:
                         "role": "state-in",
                         "state": "low",
                         "reset": "required",
-                        "dtype": "float32",
+                        "dtype": state_dtype,
                         "channels": 64,
                     },
                     "state_high": {
                         "role": "state-in",
                         "state": "high",
                         "reset": "required",
-                        "dtype": "float32",
+                        "dtype": state_dtype,
                         "channels": 64,
                     },
                 },
@@ -385,21 +613,25 @@ def make_dynamic_motion_warp(torch):
         align_corners=True,
     ):
         height, width = value.shape[-2:]
+        # Keep coordinate construction and sampling in FP32 even when the
+        # surrounding feature network is FP16. In particular, do not quantize
+        # fractional motion before nearest sampling: a value crossing a
+        # half-pixel boundary selects a different source pixel.
         grid_y, grid_x = torch.meshgrid(
             torch.arange(
                 height,
-                dtype=value.dtype,
+                dtype=torch.float32,
                 device=value.device,
             ),
             torch.arange(
                 width,
-                dtype=value.dtype,
+                dtype=torch.float32,
                 device=value.device,
             ),
             indexing="ij",
         )
         grid = torch.stack((grid_x, grid_y), dim=2)
-        flow = motion.permute(0, 2, 3, 1)
+        flow = motion.float().permute(0, 2, 3, 1)
         grid_flow = grid + flow
         grid_flow = grid_flow[:, :height, :width, :]
         width_denominator = grid_x[0, -1].clamp_min(1.0)
@@ -411,13 +643,14 @@ def make_dynamic_motion_warp(torch):
             2.0 * grid_flow[:, :, :, 1] / height_denominator - 1.0
         )
         sample_grid = torch.stack((grid_flow_x, grid_flow_y), dim=3)
-        return torch.nn.functional.grid_sample(
+        sampled = torch.nn.functional.grid_sample(
             value.float(),
             sample_grid,
             mode=interpolation,
             padding_mode=padding_mode,
             align_corners=align_corners,
         )
+        return sampled.to(dtype=value.dtype)
 
     return dynamic_motion_warp
 
@@ -493,10 +726,10 @@ def make_lowered_dcn_class(torch):
             # convolution are applied.
             height, width = source.shape[-2:]
             rows = torch.arange(
-                height, dtype=source.dtype, device=source.device
+                height, dtype=torch.float32, device=source.device
             )
             columns = torch.arange(
-                width, dtype=source.dtype, device=source.device
+                width, dtype=torch.float32, device=source.device
             )
             grid_y, grid_x = torch.meshgrid(rows, columns, indexing="ij")
             channels_per_group = self.in_channels // self.deform_groups
@@ -506,18 +739,18 @@ def make_lowered_dcn_class(torch):
             for group_index in range(self.deform_groups):
                 channel_start = group_index * channels_per_group
                 channel_end = channel_start + channels_per_group
-                offset_y = offset[:, group_index * 2]
-                offset_x = offset[:, group_index * 2 + 1]
+                offset_y = offset[:, group_index * 2].float()
+                offset_x = offset[:, group_index * 2 + 1].float()
                 sample_x = 2.0 * (grid_x + offset_x) / width_denominator - 1.0
                 sample_y = 2.0 * (grid_y + offset_y) / height_denominator - 1.0
                 sample_grid = torch.stack((sample_x, sample_y), dim=-1)
                 sampled = torch.nn.functional.grid_sample(
-                    source[:, channel_start:channel_end],
+                    source[:, channel_start:channel_end].float(),
                     sample_grid,
                     mode="bilinear",
                     padding_mode="zeros",
                     align_corners=True,
-                )
+                ).to(dtype=source.dtype)
                 sampled_groups.append(
                     sampled * mask[:, group_index : group_index + 1]
                 )
@@ -699,7 +932,60 @@ def load_checkpoint(model, checkpoint_path: Path, torch) -> dict[str, object]:
     }
 
 
-def make_graph_wrappers(model, torch):
+def make_mixed_deformable_alignment_forward(torch):
+    """Keep public motion exact while the offset predictor remains FP16."""
+
+    def forward(module, source, extra_features, flow):
+        predictor_flow = flow.to(dtype=extra_features.dtype)
+        predictor_input = torch.cat(
+            [extra_features, predictor_flow],
+            dim=1,
+        )
+        predicted = module.conv_offset(predictor_input)
+        offset_y, offset_x, mask = torch.chunk(predicted, 3, dim=1)
+
+        # Learned offset residuals are FP16 features, but the final coordinate
+        # sum uses the original FP32 motion. This prevents a fractional motion
+        # value from changing a nearest-neighbour sample solely due to FP16
+        # rounding.
+        offset = module.max_residue_magnitude * torch.tanh(
+            torch.cat((offset_y, offset_x), dim=1)
+        )
+        offset = offset.float() + flow.float().flip(1).repeat(
+            1,
+            offset.size(1) // 2,
+            1,
+            1,
+        )
+        return module.dcn(source, offset, torch.sigmoid(mask))
+
+    return forward
+
+
+def prepare_model_for_precision(model, torch, precision: str):
+    """Return an export model without mutating the canonical FP32 reference."""
+
+    precision = normalize_precision(precision)
+    if precision == FP32_PRECISION:
+        return model
+    network = copy.deepcopy(model)
+    network.deform_align.forward = MethodType(
+        make_mixed_deformable_alignment_forward(torch),
+        network.deform_align,
+    )
+    return network.half().eval()
+
+
+def make_graph_wrappers(
+    model,
+    torch,
+    *,
+    precision: str = FP32_PRECISION,
+):
+    precision = normalize_precision(precision)
+    network = prepare_model_for_precision(model, torch, precision)
+    mixed = precision == MIXED_FP16_PRECISION
+
     def fixed_public_axes(value, channels):
         # The runtime ABI fixes batch=1 and channels while leaving only H/W
         # symbolic. An explicit reshape keeps ONNX shape inference from
@@ -717,10 +1003,11 @@ def make_graph_wrappers(model, torch):
             self.network = network
 
         def forward(self, frame):
-            sequence = frame.unsqueeze(1)
+            compute_frame = frame.half() if mixed else frame
+            sequence = compute_frame.unsqueeze(1)
             batch, _, _, height, width = sequence.shape
             motion = frame.new_zeros((batch, 1, 2, height, width))
-            residual = frame.new_zeros((batch, 1, 1, height, width))
+            residual = compute_frame.new_zeros((batch, 1, 1, height, width))
             output, hidden = self.network(
                 sequence,
                 motion,
@@ -729,7 +1016,10 @@ def make_graph_wrappers(model, torch):
                 return_hs=True,
             )
             return (
-                fixed_public_axes(output[:, 0], 3),
+                fixed_public_axes(
+                    output[:, 0].float() if mixed else output[:, 0],
+                    3,
+                ),
                 fixed_public_axes(hidden[0], 64),
                 fixed_public_axes(hidden[1], 64),
             )
@@ -740,20 +1030,25 @@ def make_graph_wrappers(model, torch):
             self.network = network
 
         def forward(self, frame, motion, residual, state_low, state_high):
+            compute_frame = frame.half() if mixed else frame
+            compute_residual = residual.half() if mixed else residual
             output, hidden = self.network(
-                frame.unsqueeze(1),
+                compute_frame.unsqueeze(1),
                 motion.unsqueeze(1),
-                residual.unsqueeze(1),
-                hidden_key=(state_low, state_high, frame),
+                compute_residual.unsqueeze(1),
+                hidden_key=(state_low, state_high, compute_frame),
                 return_hs=True,
             )
             return (
-                fixed_public_axes(output[:, 0], 3),
+                fixed_public_axes(
+                    output[:, 0].float() if mixed else output[:, 0],
+                    3,
+                ),
                 fixed_public_axes(hidden[0], 64),
                 fixed_public_axes(hidden[1], 64),
             )
 
-    return InitializerGraph(model).eval(), RecurrentGraph(model).eval()
+    return InitializerGraph(network).eval(), RecurrentGraph(network).eval()
 
 
 def dynamic_axes_for(input_names: list[str]) -> dict[str, dict[int, str]]:
@@ -777,7 +1072,9 @@ def _metadata(
     height: int,
     width: int,
     dynamic: bool,
+    precision: str,
 ) -> dict[str, str]:
+    profile = precision_contract(precision)
     metadata = {
         "fsrcnnx.architecture": "CDA-VSR",
         "fsrcnnx.capture_height": str(height),
@@ -788,10 +1085,15 @@ def _metadata(
         "fsrcnnx.graph_role": role,
         "fsrcnnx.offset_order": OFFSET_ORDER,
         "fsrcnnx.prior_contract": PRIOR_CONTRACT,
+        "fsrcnnx.precision_profile": str(profile["profile"]),
         "fsrcnnx.scale": "4",
         "fsrcnnx.shipping_catalog": "false",
         "fsrcnnx.source_sha256": source_sha256,
         "fsrcnnx.spatial_shape": "dynamic" if dynamic else "fixed",
+        "fsrcnnx.state_dtype": str(profile["state_dtype"]),
+        "fsrcnnx.weight_dtype": str(profile["weight_dtype"]),
+        "fsrcnnx.coordinate_dtype": str(profile["coordinate_dtype"]),
+        "fsrcnnx.grid_sample_dtype": str(profile["grid_sample_dtype"]),
     }
     if not dynamic:
         metadata["fsrcnnx.fixed_height"] = str(height)
@@ -820,6 +1122,397 @@ def _value_shape(value_info) -> list[int | str]:
     return result
 
 
+def _dtype_name(onnx, element_type: int) -> str:
+    name = onnx.TensorProto.DataType.Name(element_type).lower()
+    return "float32" if name == "float" else name
+
+
+def _onnx_type_for_dtype(onnx, dtype: str) -> int:
+    if dtype == "float32":
+        return onnx.TensorProto.FLOAT
+    if dtype == "float16":
+        return onnx.TensorProto.FLOAT16
+    raise ToolError(f"unsupported ONNX floating dtype {dtype!r}")
+
+
+def _inferred_tensor_facts(
+    onnx_model,
+    onnx,
+) -> tuple[dict[str, int], dict[str, list[int | str]]]:
+    try:
+        inferred = onnx.shape_inference.infer_shapes(
+            onnx_model,
+            strict_mode=True,
+            data_prop=True,
+        )
+    except Exception as error:
+        raise ToolError(
+            "strict ONNX shape/type inference failed: "
+            f"{type(error).__name__}: {error}"
+        ) from error
+    values = [
+        *inferred.graph.input,
+        *inferred.graph.output,
+        *inferred.graph.value_info,
+    ]
+    types_by_name = {
+        value.name: value.type.tensor_type.elem_type
+        for value in values
+        if value.type.HasField("tensor_type")
+    }
+    shapes_by_name = {
+        value.name: _value_shape(value)
+        for value in values
+        if value.type.HasField("tensor_type")
+    }
+    types_by_name.update(
+        {
+            initializer.name: initializer.data_type
+            for initializer in inferred.graph.initializer
+        }
+    )
+    shapes_by_name.update(
+        {
+            initializer.name: list(initializer.dims)
+            for initializer in inferred.graph.initializer
+        }
+    )
+    return types_by_name, shapes_by_name
+
+
+def _cast_target(node) -> int | None:
+    for attribute in node.attribute:
+        if attribute.name == "to":
+            return int(attribute.i)
+    return None
+
+
+def _verify_weight_rounding(
+    onnx_model,
+    onnx,
+    *,
+    precision: str,
+    canonical_parameters: Mapping[str, object] | None,
+) -> None:
+    if canonical_parameters is None:
+        return
+    profile = precision_contract(precision)
+    target_dtype = profile["weight_dtype"]
+    expected_by_name = {
+        f"network.{name}": parameter.detach().cpu()
+        for name, parameter in canonical_parameters.items()
+    }
+    verified = 0
+    for initializer in onnx_model.graph.initializer:
+        actual_type = _dtype_name(onnx, initializer.data_type)
+        if actual_type not in ("float16", "float32"):
+            continue
+        expected_tensor = expected_by_name.get(initializer.name)
+        if expected_tensor is None:
+            raise ToolError(
+                f"floating initializer {initializer.name!r} does not map to "
+                "the canonical checkpoint"
+            )
+        expected = expected_tensor.numpy()
+        if target_dtype == "float16":
+            expected = expected.astype("float16")
+        else:
+            expected = expected.astype("float32")
+        actual = onnx.numpy_helper.to_array(initializer)
+        if actual.shape != expected.shape or actual.dtype != expected.dtype:
+            raise ToolError(
+                f"initializer {initializer.name!r} dtype/shape differs from "
+                "the canonical checkpoint conversion"
+            )
+        if actual.tobytes(order="C") != expected.tobytes(order="C"):
+            raise ToolError(
+                f"initializer {initializer.name!r} is not the exact "
+                f"{target_dtype} conversion of the canonical checkpoint tensor"
+            )
+        verified += 1
+    if verified == 0:
+        raise ToolError("no floating checkpoint initializers were verified")
+
+
+def _floating_element_bytes(onnx, element_type: int, label: str) -> int:
+    if element_type == onnx.TensorProto.FLOAT:
+        return 4
+    if element_type == onnx.TensorProto.FLOAT16:
+        return 2
+    raise ToolError(
+        f"{label} has non-floating dtype {_dtype_name(onnx, element_type)!r}"
+    )
+
+
+def _integer_attribute(node, name: str, default: int) -> int:
+    for attribute in node.attribute:
+        if attribute.name == name:
+            return int(attribute.i)
+    return default
+
+
+def _logical_memory_evidence(
+    onnx_model,
+    onnx,
+    *,
+    role: str,
+    precision: str,
+    inferred_types: Mapping[str, int],
+    inferred_shapes: Mapping[str, list[int | str]],
+) -> dict[str, object]:
+    """Derive full-resolution logical tensor pressure from graph structure."""
+
+    frame_shape = inferred_shapes.get("frame")
+    if frame_shape is None or len(frame_shape) != 4:
+        raise ToolError(f"{role} source-frame shape was not strictly inferred")
+    source_spatial = frame_shape[2:]
+    initializers = {
+        initializer.name: initializer
+        for initializer in onnx_model.graph.initializer
+    }
+    producers = {
+        output: node
+        for node in onnx_model.graph.node
+        for output in node.output
+        if output
+    }
+
+    conv_candidates = []
+    predictor_candidates = []
+    source_resolution_conv_bytes = []
+    for node in onnx_model.graph.node:
+        if node.op_type != "Conv" or len(node.input) < 2:
+            continue
+        weight = initializers.get(node.input[1])
+        if weight is None or len(weight.dims) != 4:
+            raise ToolError(
+                f"{role} Conv {node.name!r} lacks a rank-four initializer"
+            )
+        group = _integer_attribute(node, "group", 1)
+        if group <= 0:
+            raise ToolError(f"{role} Conv {node.name!r} has invalid groups")
+        channels = int(weight.dims[1]) * group
+        element_type = inferred_types.get(node.input[0])
+        if element_type is None:
+            raise ToolError(
+                f"{role} Conv {node.name!r} input dtype was not inferred"
+            )
+        dtype = _dtype_name(onnx, element_type)
+        bytes_per_source_pixel = channels * _floating_element_bytes(
+            onnx,
+            element_type,
+            f"{role} Conv {node.name!r} input",
+        )
+        candidate = {
+            "channels": channels,
+            "dtype": dtype,
+            "spatial_scale": 1,
+            "bytes_per_source_pixel": bytes_per_source_pixel,
+        }
+        conv_candidates.append(candidate)
+        input_shape = inferred_shapes.get(node.input[0])
+        if (
+            input_shape is not None
+            and len(input_shape) == 4
+            and input_shape[2:] == source_spatial
+        ):
+            source_resolution_conv_bytes.append(bytes_per_source_pixel)
+        if channels == 194:
+            producer = producers.get(node.input[0])
+            if (
+                producer is None
+                or producer.op_type != "Concat"
+                or _integer_attribute(producer, "axis", 0) != 1
+                or len(producer.input) != 3
+                or not any(
+                    (
+                        inferred_shapes.get(input_name) is not None
+                        and len(inferred_shapes[input_name]) == 4
+                        and inferred_shapes[input_name][1] == 2
+                        and inferred_shapes[input_name][2:] == source_spatial
+                    )
+                    for input_name in producer.input
+                )
+            ):
+                raise ToolError(
+                    f"{role} 194-channel predictor input is not produced by "
+                    "the expected source-resolution three-way channel Concat"
+                )
+            predictor_candidates.append(candidate)
+            source_resolution_conv_bytes.append(bytes_per_source_pixel)
+    if not conv_candidates:
+        raise ToolError(f"{role} graph has no structurally auditable Conv input")
+    if role == "recurrent" and len(predictor_candidates) != 1:
+        raise ToolError(
+            "recurrent graph must contain exactly one structurally proven "
+            "194-channel deform-alignment predictor input"
+        )
+    if role == "initializer" and predictor_candidates:
+        raise ToolError(
+            "initializer graph unexpectedly contains a deform-alignment "
+            "predictor input"
+        )
+    max_conv = max(
+        conv_candidates,
+        key=lambda item: (
+            item["bytes_per_source_pixel"],
+            item["channels"],
+            item["dtype"],
+        ),
+    )
+    if (
+        int(max_conv["bytes_per_source_pixel"])
+        not in source_resolution_conv_bytes
+    ):
+        raise ToolError(
+            f"{role} largest Conv input was not proven at source resolution"
+        )
+
+    grid_sources = []
+    for node in onnx_model.graph.node:
+        if node.op_type != "GridSample":
+            continue
+        source_name = node.input[0]
+        shape = inferred_shapes.get(source_name)
+        if (
+            shape is None
+            or len(shape) != 4
+            or not isinstance(shape[1], int)
+            or isinstance(shape[1], bool)
+            or shape[1] <= 0
+            or shape[2:] != source_spatial
+        ):
+            raise ToolError(
+                f"{role} GridSample {node.name!r} source shape was not "
+                "strictly inferred at source resolution"
+            )
+        element_type = inferred_types.get(source_name)
+        if element_type is None:
+            raise ToolError(
+                f"{role} GridSample {node.name!r} source dtype was not inferred"
+            )
+        channels = int(shape[1])
+        dtype = _dtype_name(onnx, element_type)
+        grid_sources.append(
+            {
+                "channels": channels,
+                "dtype": dtype,
+                "spatial_scale": 1,
+                "bytes_per_source_pixel": (
+                    channels
+                    * _floating_element_bytes(
+                        onnx,
+                        element_type,
+                        f"{role} GridSample {node.name!r} source",
+                    )
+                ),
+            }
+        )
+    source_channels = sorted(item["channels"] for item in grid_sources)
+    expected_grid_channels = (
+        [32, 32, 32, 32, 128] if role == "recurrent" else []
+    )
+    if source_channels != expected_grid_channels:
+        raise ToolError(
+            f"{role} GridSample source channels are {source_channels}; "
+            f"expected {expected_grid_channels}"
+        )
+    if any(item["dtype"] != "float32" for item in grid_sources):
+        raise ToolError(f"{role} GridSample sources must all be float32")
+    max_grid_bytes = max(
+        (item["bytes_per_source_pixel"] for item in grid_sources),
+        default=0,
+    )
+
+    output = next(
+        (
+            value
+            for value in onnx_model.graph.output
+            if value.name == "output"
+        ),
+        None,
+    )
+    if output is None:
+        raise ToolError(f"{role} graph lacks its public RGB output")
+    output_type = output.type.tensor_type.elem_type
+    output_shape = _value_shape(output)
+    if len(output_shape) != 4 or output_shape[1] != 3:
+        raise ToolError(f"{role} public RGB output shape is not auditable")
+    public_output = {
+        "channels": 3,
+        "dtype": _dtype_name(onnx, output_type),
+        "spatial_scale": TEMPORAL_TILING_SCALE,
+        "bytes_per_source_pixel": (
+            3
+            * TEMPORAL_TILING_SCALE
+            * TEMPORAL_TILING_SCALE
+            * _floating_element_bytes(
+                onnx,
+                output_type,
+                f"{role} public RGB output",
+            )
+        ),
+    }
+
+    winner_kind, largest = max(
+        (
+            ("conv-input", int(max_conv["bytes_per_source_pixel"])),
+            ("grid-sample-source", max_grid_bytes),
+            (
+                "public-output",
+                int(public_output["bytes_per_source_pixel"]),
+            ),
+        ),
+        key=lambda item: item[1],
+    )
+    expected = EXPECTED_GRAPH_LOGICAL_BYTES[precision][role]
+    if largest != expected:
+        raise ToolError(
+            f"{role} graph structurally proves {largest} logical bytes per "
+            f"source pixel; expected {expected} for {precision}"
+        )
+    if role == "recurrent":
+        expected_winner = (
+            "grid-sample-source"
+            if precision == MIXED_FP16_PRECISION
+            else "conv-input"
+        )
+        if winner_kind != expected_winner:
+            raise ToolError(
+                f"{role} graph logical-memory winner is {winner_kind!r}; "
+                f"expected {expected_winner!r}"
+            )
+
+    evidence = {
+        "largest_bytes_per_source_pixel": largest,
+        "largest_tensor_kind": winner_kind,
+        "max_conv_input": dict(max_conv),
+        "deform_align_predictor_input": (
+            dict(predictor_candidates[0])
+            if predictor_candidates
+            else None
+        ),
+        "grid_sample_sources": {
+            "channels": source_channels,
+            "dtype": "float32" if grid_sources else None,
+            "spatial_scale": 1,
+            "largest_bytes_per_source_pixel": max_grid_bytes,
+        },
+        "public_output": public_output,
+    }
+    expected_evidence = logical_memory_contract(role, precision)
+    if evidence != expected_evidence:
+        details = json.dumps(
+            {"expected": expected_evidence, "actual": evidence},
+            sort_keys=True,
+        )
+        raise ToolError(
+            f"{role} graph logical-memory evidence differs from the exact "
+            f"{precision} structural contract: {details}"
+        )
+    return evidence
+
+
 def validate_graph(
     onnx_model,
     onnx,
@@ -828,7 +1521,10 @@ def validate_graph(
     height: int,
     width: int,
     dynamic: bool,
+    precision: str = FP32_PRECISION,
+    canonical_parameters: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
+    profile = precision_contract(precision)
     onnx.checker.check_model(onnx_model, full_check=True)
     custom_domains = sorted(
         {
@@ -865,11 +1561,28 @@ def validate_graph(
         raise ToolError(
             f"{role} ABI mismatch: inputs {input_names}, outputs {output_names}"
         )
-    for value in [*onnx_model.graph.input, *onnx_model.graph.output]:
-        if value.type.tensor_type.elem_type != onnx.TensorProto.FLOAT:
-            raise ToolError(
-                f"{role} tensor {value.name!r} must use float32 public I/O"
-            )
+    expected_element_types = {
+        name: _onnx_type_for_dtype(onnx, str(dtype))
+        for name, dtype in {
+            **profile["public_inputs"],
+            **profile["public_outputs"],
+        }.items()
+    }
+    public_types = {"inputs": {}, "outputs": {}}
+    for kind, values in (
+        ("inputs", onnx_model.graph.input),
+        ("outputs", onnx_model.graph.output),
+    ):
+        for value in values:
+            actual_type = value.type.tensor_type.elem_type
+            expected_type = expected_element_types[value.name]
+            if actual_type != expected_type:
+                raise ToolError(
+                    f"{role} tensor {value.name!r} has dtype "
+                    f"{_dtype_name(onnx, actual_type)!r}; expected "
+                    f"{_dtype_name(onnx, expected_type)!r}"
+                )
+            public_types[kind][value.name] = _dtype_name(onnx, actual_type)
 
     spatial = (
         [DYNAMIC_HEIGHT, DYNAMIC_WIDTH] if dynamic else [height, width]
@@ -927,7 +1640,121 @@ def validate_graph(
         )
     if any(initializer.external_data for initializer in onnx_model.graph.initializer):
         raise ToolError("external ONNX tensor data is not supported")
+
+    inferred_types, inferred_shapes = _inferred_tensor_facts(
+        onnx_model,
+        onnx,
+    )
+    initializer_dtypes: dict[str, int] = {}
+    for initializer in onnx_model.graph.initializer:
+        dtype = _dtype_name(onnx, initializer.data_type)
+        initializer_dtypes[dtype] = initializer_dtypes.get(dtype, 0) + 1
+    expected_compute_type = (
+        onnx.TensorProto.FLOAT16
+        if precision == MIXED_FP16_PRECISION
+        else onnx.TensorProto.FLOAT
+    )
+    floating_initializers = {
+        dtype: initializer_dtypes.get(dtype, 0)
+        for dtype in ("float16", "float32")
+    }
+    unexpected_weight_type = (
+        floating_initializers["float32"]
+        if precision == MIXED_FP16_PRECISION
+        else floating_initializers["float16"]
+    )
+    if unexpected_weight_type:
+        raise ToolError(
+            f"{role} graph contains {unexpected_weight_type} floating "
+            "initializers outside its precision profile"
+        )
+    if initializer_dtypes.get(_dtype_name(onnx, expected_compute_type), 0) == 0:
+        raise ToolError(f"{role} graph has no floating checkpoint initializers")
+
+    for node in onnx_model.graph.node:
+        if node.op_type != "Conv":
+            continue
+        for tensor_name in (node.input[0], node.input[1], node.output[0]):
+            if inferred_types.get(tensor_name) != expected_compute_type:
+                raise ToolError(
+                    f"{role} Conv {node.name!r} tensor {tensor_name!r} is not "
+                    f"{_dtype_name(onnx, expected_compute_type)}"
+                )
+
+    consumers: dict[str, list[object]] = {}
+    for node in onnx_model.graph.node:
+        for tensor_name in node.input:
+            consumers.setdefault(tensor_name, []).append(node)
+    for node in onnx_model.graph.node:
+        if node.op_type == "GridSample":
+            grid_types = [
+                inferred_types.get(node.input[0]),
+                inferred_types.get(node.input[1]),
+                inferred_types.get(node.output[0]),
+            ]
+            if grid_types != [onnx.TensorProto.FLOAT] * 3:
+                shown = [
+                    _dtype_name(onnx, value) if value is not None else "unknown"
+                    for value in grid_types
+                ]
+                raise ToolError(
+                    f"{role} GridSample {node.name!r} must remain entirely "
+                    f"float32; found {shown}"
+                )
+            if precision == MIXED_FP16_PRECISION:
+                output_consumers = consumers.get(node.output[0], [])
+                if (
+                    len(output_consumers) != 1
+                    or output_consumers[0].op_type != "Cast"
+                    or _cast_target(output_consumers[0])
+                    != onnx.TensorProto.FLOAT16
+                ):
+                    raise ToolError(
+                        f"{role} GridSample {node.name!r} must cross one "
+                        "explicit float32-to-float16 boundary"
+                    )
+        elif (
+            precision == MIXED_FP16_PRECISION
+            and node.op_type == "Range"
+            and inferred_types.get(node.output[0]) != onnx.TensorProto.FLOAT
+        ):
+            raise ToolError(
+                f"{role} coordinate Range {node.name!r} must remain float32"
+            )
+
+    cast_targets: dict[str, int] = {}
+    for node in onnx_model.graph.node:
+        if node.op_type != "Cast":
+            continue
+        target = _cast_target(node)
+        if target is None:
+            raise ToolError(f"{role} Cast {node.name!r} has no target dtype")
+        name = _dtype_name(onnx, target)
+        cast_targets[name] = cast_targets.get(name, 0) + 1
+    if precision == MIXED_FP16_PRECISION:
+        minimum_casts = {"float16": 1, "float32": 1}
+        for dtype, minimum in minimum_casts.items():
+            if cast_targets.get(dtype, 0) < minimum:
+                raise ToolError(
+                    f"{role} mixed graph lacks an explicit cast to {dtype}"
+                )
+
+    _verify_weight_rounding(
+        onnx_model,
+        onnx,
+        precision=precision,
+        canonical_parameters=canonical_parameters,
+    )
+    logical_memory = _logical_memory_evidence(
+        onnx_model,
+        onnx,
+        role=role,
+        precision=precision,
+        inferred_types=inferred_types,
+        inferred_shapes=inferred_shapes,
+    )
     return {
+        "precision_profile": precision,
         "spatial_shape": "dynamic" if dynamic else "fixed",
         "capture_fixture": {"height": height, "width": width},
         "inputs": {
@@ -938,6 +1765,28 @@ def validate_graph(
         },
         "operators": operators,
         "grid_sample_nodes": grid_samples,
+        "public_dtypes": public_types,
+        "initializer_dtypes": dict(sorted(initializer_dtypes.items())),
+        "cast_targets": dict(sorted(cast_targets.items())),
+        "precision_islands": {
+            "coordinate_dtype": "float32",
+            "grid_sample_dtype": "float32",
+            "grid_sample_nodes": grid_samples,
+        },
+        "weight_derivation": {
+            "source_dtype": "float32",
+            "target_dtype": str(profile["weight_dtype"]),
+            "method": (
+                "ieee-754-binary16-round-to-nearest"
+                if precision == MIXED_FP16_PRECISION
+                else "identity"
+            ),
+            "initializer_count": initializer_dtypes.get(
+                str(profile["weight_dtype"]),
+                0,
+            ),
+        },
+        "logical_memory": logical_memory,
         "nodes": len(onnx_model.graph.node),
     }
 
@@ -954,6 +1803,8 @@ def _atomic_export(
     height: int,
     width: int,
     dynamic: bool,
+    precision: str,
+    canonical_parameters: Mapping[str, object],
     torch,
     onnx,
 ) -> dict[str, object]:
@@ -987,6 +1838,7 @@ def _atomic_export(
                 height=height,
                 width=width,
                 dynamic=dynamic,
+                precision=precision,
             ),
         )
         graph_info = validate_graph(
@@ -996,6 +1848,8 @@ def _atomic_export(
             height=height,
             width=width,
             dynamic=dynamic,
+            precision=precision,
+            canonical_parameters=canonical_parameters,
         )
         onnx.save(exported, final_tmp)
         os.replace(final_tmp, destination)
@@ -1027,17 +1881,29 @@ def export_graphs(
     height: int,
     width: int,
     dynamic: bool,
+    precision: str = FP32_PRECISION,
     torch,
     onnx,
 ) -> dict[str, dict[str, object]]:
+    precision = normalize_precision(precision)
     output_dir.mkdir(parents=True, exist_ok=True)
-    initializer, recurrent = make_graph_wrappers(model, torch)
+    initializer, recurrent = make_graph_wrappers(
+        model,
+        torch,
+        precision=precision,
+    )
+    canonical_parameters = dict(model.named_parameters())
     torch.manual_seed(20260726)
     frame = torch.zeros((1, 3, height, width), dtype=torch.float32)
     motion = torch.zeros((1, 2, height, width), dtype=torch.float32)
     residual = torch.zeros((1, 1, height, width), dtype=torch.float32)
-    state_low = torch.zeros((1, 64, height, width), dtype=torch.float32)
-    state_high = torch.zeros((1, 64, height, width), dtype=torch.float32)
+    state_dtype = (
+        torch.float16
+        if precision == MIXED_FP16_PRECISION
+        else torch.float32
+    )
+    state_low = torch.zeros((1, 64, height, width), dtype=state_dtype)
+    state_high = torch.zeros((1, 64, height, width), dtype=state_dtype)
     initializer_path = output_dir / GRAPH_FILENAMES["initializer"]
     recurrent_path = output_dir / GRAPH_FILENAMES["recurrent"]
 
@@ -1052,6 +1918,8 @@ def export_graphs(
         height=height,
         width=width,
         dynamic=dynamic,
+        precision=precision,
+        canonical_parameters=canonical_parameters,
         torch=torch,
         onnx=onnx,
     )
@@ -1066,6 +1934,8 @@ def export_graphs(
         height=height,
         width=width,
         dynamic=dynamic,
+        precision=precision,
+        canonical_parameters=canonical_parameters,
         torch=torch,
         onnx=onnx,
     )
@@ -1080,6 +1950,7 @@ def validate_saved_graphs(
     height: int,
     width: int,
     dynamic: bool,
+    precision: str = FP32_PRECISION,
     onnx,
 ) -> dict[str, dict[str, object]]:
     result = {}
@@ -1095,6 +1966,7 @@ def validate_saved_graphs(
             height=height,
             width=width,
             dynamic=dynamic,
+            precision=precision,
         )
         metadata = {item.key: item.value for item in model.metadata_props}
         if dynamic and any(
@@ -1111,6 +1983,7 @@ def validate_saved_graphs(
             height=height,
             width=width,
             dynamic=dynamic,
+            precision=precision,
         )
         mismatches = {
             key: {"expected": value, "actual": metadata.get(key)}
@@ -1144,6 +2017,9 @@ def _array_metrics(expected, actual, numpy) -> dict[str, float]:
     difference = numpy.abs(expected.astype(numpy.float64) - actual)
     return {
         "mean_abs": float(difference.mean()),
+        "p99_9_abs": float(
+            numpy.quantile(difference, 0.999, method="higher")
+        ),
         "max_abs": float(difference.max(initial=0.0)),
     }
 
@@ -1155,15 +2031,23 @@ def _run_graph_parity_shape(
     height: int,
     width: int,
     frames: int,
-    max_abs: float,
-    max_mean: float,
+    tensor_limits: Mapping[str, Mapping[str, float]],
+    motion_fixture: str,
     numpy,
     onnxruntime,
     torch,
 ) -> dict[str, object]:
     if frames < 2:
         raise ToolError("graph parity requires at least two frames")
-    initializer, recurrent = make_graph_wrappers(model, torch)
+    if motion_fixture not in ("decoded-integer", "fractional-stress"):
+        raise ToolError(f"unsupported parity motion fixture {motion_fixture!r}")
+    # The source side is intentionally always the canonical FP32 network. The
+    # ONNX side evolves the exported graph's (possibly FP16) states independently.
+    initializer, recurrent = make_graph_wrappers(
+        model,
+        torch,
+        precision=FP32_PRECISION,
+    )
     initializer_session = onnxruntime.InferenceSession(
         str(output_dir / GRAPH_FILENAMES["initializer"]),
         providers=["CPUExecutionProvider"],
@@ -1177,9 +2061,20 @@ def _run_graph_parity_shape(
     sequence = random.random(
         (frames, 1, 3, height, width), dtype=numpy.float32
     )
-    motions = random.uniform(
-        -2.0, 2.0, size=(frames, 1, 2, height, width)
-    ).astype(numpy.float32)
+    motion_shape = (frames, 1, 2, height, width)
+    if motion_fixture == "decoded-integer":
+        motions = random.integers(
+            -2,
+            3,
+            size=motion_shape,
+            dtype=numpy.int16,
+        ).astype(numpy.float32)
+    else:
+        motions = random.uniform(
+            -2.0,
+            2.0,
+            size=motion_shape,
+        ).astype(numpy.float32)
     residuals = random.random(
         (frames, 1, 1, height, width), dtype=numpy.float32
     )
@@ -1235,31 +2130,61 @@ def _run_graph_parity_shape(
         source_low, source_high = source_outputs[1], source_outputs[2]
         ort_low, ort_high = ort_values[1], ort_values[2]
 
+    tensor_classes = {
+        "output": ("output",),
+        "state": ("next_state_low", "next_state_high"),
+    }
+    worst_by_class = {}
+    for tensor_class, tensor_names in tensor_classes.items():
+        class_metrics = [
+            record["tensors"][name]
+            for record in records
+            for name in tensor_names
+        ]
+        worst_max = max(item["max_abs"] for item in class_metrics)
+        worst_mean = max(item["mean_abs"] for item in class_metrics)
+        worst_p99_9 = max(item["p99_9_abs"] for item in class_metrics)
+        limit = tensor_limits[tensor_class]
+        if worst_max > limit["max_abs"] or worst_mean > limit["max_mean"]:
+            raise ToolError(
+                "canonical FP32/ONNX parity failed for "
+                f"{tensor_class} on {motion_fixture}: "
+                f"worst max {worst_max:.8g} "
+                f"(limit {limit['max_abs']:.8g}), "
+                f"worst mean {worst_mean:.8g} "
+                f"(limit {limit['max_mean']:.8g})"
+            )
+        worst_by_class[tensor_class] = {
+            "worst_max_abs": worst_max,
+            "worst_mean_abs": worst_mean,
+            "worst_p99_9_abs": worst_p99_9,
+        }
+    max_abs = max(limit["max_abs"] for limit in tensor_limits.values())
+    max_mean = max(limit["max_mean"] for limit in tensor_limits.values())
     worst_max = max(
-        metrics["max_abs"]
-        for record in records
-        for metrics in record["tensors"].values()
+        item["worst_max_abs"] for item in worst_by_class.values()
     )
     worst_mean = max(
-        metrics["mean_abs"]
-        for record in records
-        for metrics in record["tensors"].values()
+        item["worst_mean_abs"] for item in worst_by_class.values()
     )
-    if worst_max > max_abs or worst_mean > max_mean:
-        raise ToolError(
-            "PyTorch/ONNX parity failed: "
-            f"worst max {worst_max:.8g} (limit {max_abs:.8g}), "
-            f"worst mean {worst_mean:.8g} (limit {max_mean:.8g})"
-        )
+    worst_p99_9 = max(
+        item["worst_p99_9_abs"] for item in worst_by_class.values()
+    )
     return {
         "height": height,
         "width": width,
         "frames": frames,
         "seed": 20260726,
+        "motion_fixture": motion_fixture,
         "max_abs_limit": max_abs,
         "max_mean_limit": max_mean,
+        "tensor_limits": {
+            name: dict(values) for name, values in tensor_limits.items()
+        },
+        "worst_by_tensor_class": worst_by_class,
         "worst_max_abs": worst_max,
         "worst_mean_abs": worst_mean,
+        "worst_p99_9_abs": worst_p99_9,
         "records": records,
     }
 
@@ -1281,8 +2206,7 @@ def run_graph_parity(
     height: int,
     width: int,
     frames: int,
-    max_abs: float,
-    max_mean: float,
+    tensor_limits: Mapping[str, Mapping[str, float]],
     dynamic: bool,
     numpy,
     onnxruntime,
@@ -1300,16 +2224,34 @@ def run_graph_parity(
             height=probe_height,
             width=probe_width,
             frames=frames,
-            max_abs=max_abs,
-            max_mean=max_mean,
+            tensor_limits=tensor_limits,
+            motion_fixture="decoded-integer",
             numpy=numpy,
             onnxruntime=onnxruntime,
             torch=torch,
         )
         for probe_height, probe_width in shapes
     ]
+    fractional_stress = _run_graph_parity_shape(
+        model,
+        output_dir,
+        height=height,
+        width=width,
+        frames=frames,
+        tensor_limits=tensor_limits,
+        motion_fixture="fractional-stress",
+        numpy=numpy,
+        onnxruntime=onnxruntime,
+        torch=torch,
+    )
+    all_results = [*results, fractional_stress]
+    max_abs = max(limit["max_abs"] for limit in tensor_limits.values())
+    max_mean = max(limit["max_mean"] for limit in tensor_limits.values())
     return {
         "spatial_shape": "dynamic" if dynamic else "fixed",
+        "reference_precision": FP32_PRECISION,
+        "state_chains": "independent",
+        "primary_motion_fixture": "decoded-integer",
         "tested_shapes": [
             {"height": item["height"], "width": item["width"]}
             for item in results
@@ -1318,9 +2260,20 @@ def run_graph_parity(
         "seed": 20260726,
         "max_abs_limit": max_abs,
         "max_mean_limit": max_mean,
-        "worst_max_abs": max(item["worst_max_abs"] for item in results),
-        "worst_mean_abs": max(item["worst_mean_abs"] for item in results),
+        "tensor_limits": {
+            name: dict(values) for name, values in tensor_limits.items()
+        },
+        "worst_max_abs": max(
+            item["worst_max_abs"] for item in all_results
+        ),
+        "worst_mean_abs": max(
+            item["worst_mean_abs"] for item in all_results
+        ),
+        "worst_p99_9_abs": max(
+            item["worst_p99_9_abs"] for item in all_results
+        ),
         "shape_results": results,
+        "fractional_motion_stress": fractional_stress,
     }
 
 

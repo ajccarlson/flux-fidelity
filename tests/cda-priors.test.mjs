@@ -3,11 +3,28 @@ import test from "node:test";
 
 import {
   CdaPriorGenerator,
+  CdaSceneCutDetector,
   CdaTemporalTracker,
   buildCdaPriorShaders,
+  normalizeCdaSceneCutOptions,
   normalizeCdaPriorOptions,
   planCdaPriorBuffers,
 } from "../src/core/fsrcnnx-cda-priors.js";
+
+function rgbaFrame(width, height, pixel) {
+  const data = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const [red, green, blue] = pixel(x, y);
+      const offset = (y * width + x) * 4;
+      data[offset] = red;
+      data[offset + 1] = green;
+      data[offset + 2] = blue;
+      data[offset + 3] = 255;
+    }
+  }
+  return data;
+}
 
 test("CDA prior planning has no policy resolution ceiling and emits exact NCHW sizes", () => {
   assert.deepEqual(normalizeCdaPriorOptions(), {
@@ -31,6 +48,124 @@ test("CDA prior planning has no policy resolution ceiling and emits exact NCHW s
   assert.equal(large.height, 7_000);
   assert.throws(() => normalizeCdaPriorOptions({ sampleStride: 8, blockSize: 4 }),
     /cannot exceed/);
+});
+
+test("CDA scene-cut signatures are bounded, conservative, and resettable", () => {
+  assert.deepEqual(normalizeCdaSceneCutOptions(), {
+    sampleColumns: 64,
+    sampleRows: 36,
+    sampleDelta: 0.14,
+    strongHistogramDistance: 0.42,
+    histogramDistance: 0.28,
+    meanDistance: 0.18,
+    changedRatio: 0.65,
+    strongChangedRatio: 0.45,
+  });
+  assert.throws(
+    () => normalizeCdaSceneCutOptions({ sampleColumns: 2 }),
+    /sampleColumns/,
+  );
+
+  const width = 128;
+  const height = 72;
+  const black = rgbaFrame(width, height, () => [0, 0, 0]);
+  const white = rgbaFrame(width, height, () => [255, 255, 255]);
+  const detector = new CdaSceneCutDetector();
+  const first = detector.prepare(black, width, height);
+  assert.equal(first.sceneCut, false);
+  assert.equal(first.sampleCount, 64 * 36);
+  detector.commit(first);
+  const identical = detector.prepare(black, width, height);
+  assert.equal(identical.sceneCut, false);
+  detector.commit(identical);
+  const cut = detector.prepare(white, width, height);
+  assert.equal(cut.sceneCut, true);
+  assert.equal(cut.histogramDistance, 1);
+  assert.ok(cut.meanDistance > 0.45);
+  assert.equal(cut.changedRatio, 1);
+  detector.commit(cut);
+  assert.throws(() => detector.commit(cut), /already consumed/);
+  const reset = detector.prepare(black, width, height, { reset: true });
+  assert.equal(reset.sceneCut, false);
+  detector.commit(reset);
+  assert.throws(
+    () => detector.prepare(new Uint8Array(3), 1, 1),
+    /expected 4/,
+  );
+});
+
+test("CDA scene-cut signatures reject compression noise and camera-like translation", () => {
+  const width = 128;
+  const height = 72;
+  const base = rgbaFrame(width, height, (x, y) => {
+    const value = (x + y) % 2 ? 224 : 32;
+    return [value, value, value];
+  });
+  const noisy = rgbaFrame(width, height, (x, y) => {
+    const value = (x + y) % 2 ? 228 : 28;
+    return [value, value, value];
+  });
+  const shifted = rgbaFrame(width, height, (x, y) => {
+    const value = (x + y + 1) % 2 ? 224 : 32;
+    return [value, value, value];
+  });
+  const detector = new CdaSceneCutDetector();
+  const baseline = detector.prepare(base, width, height);
+  detector.commit(baseline);
+  const compression = detector.prepare(noisy, width, height);
+  assert.equal(compression.sceneCut, false);
+  detector.discard(compression);
+  const translation = detector.prepare(shifted, width, height);
+  assert.equal(translation.sceneCut, false);
+  assert.ok(translation.meanDistance > 0.35);
+  assert.ok(translation.changedRatio > 0.9);
+  assert.ok(translation.histogramDistance < 0.02);
+  detector.discard(translation);
+});
+
+test("CDA scene-cut signatures ignore a small overlay", () => {
+  const width = 128;
+  const height = 72;
+  const black = rgbaFrame(width, height, () => [0, 0, 0]);
+  const withOverlay = rgbaFrame(width, height, (x, y) => {
+    const overlay = x >= 52 && x < 76 && y >= 28 && y < 44;
+    return overlay ? [255, 255, 255] : [0, 0, 0];
+  });
+  const detector = new CdaSceneCutDetector();
+  const baseline = detector.prepare(black, width, height);
+  detector.commit(baseline);
+  const overlay = detector.prepare(withOverlay, width, height);
+  assert.equal(overlay.sceneCut, false);
+  assert.ok(overlay.changedRatio > 0.9);
+  assert.ok(overlay.histogramDistance < 0.07);
+  detector.discard(overlay);
+});
+
+test("CDA scene-cut signatures establish fresh baselines after resize and reset", () => {
+  const detector = new CdaSceneCutDetector();
+  const darkLarge = rgbaFrame(128, 72, () => [0, 0, 0]);
+  const lightSmall = rgbaFrame(96, 54, () => [255, 255, 255]);
+  const darkSmall = rgbaFrame(96, 54, () => [0, 0, 0]);
+
+  const baseline = detector.prepare(darkLarge, 128, 72);
+  detector.commit(baseline);
+  const resized = detector.prepare(lightSmall, 96, 54);
+  assert.equal(resized.sceneCut, false);
+  assert.equal(resized.histogramDistance, 0);
+  detector.commit(resized);
+
+  const changed = detector.prepare(darkSmall, 96, 54);
+  assert.equal(changed.sceneCut, true);
+  detector.discard(changed);
+  const explicitReset = detector.prepare(darkSmall, 96, 54, { reset: true });
+  assert.equal(explicitReset.sceneCut, false);
+  assert.equal(explicitReset.reset, true);
+  detector.commit(explicitReset);
+
+  detector.reset();
+  const coldStart = detector.prepare(lightSmall, 96, 54);
+  assert.equal(coldStart.sceneCut, false);
+  detector.commit(coldStart);
 });
 
 test("CDA history resets on actual temporal boundaries and its trained horizon", () => {
@@ -65,7 +200,17 @@ test("CDA history resets on actual temporal boundaries and its trained horizon",
     sourceKey: "video-b",
     width: 640,
     forceReset: true,
-  }).reason, "explicit");
+    forceResetReason: "seek",
+  }).reason, "seek");
+  tracker.rebase("scene-cut");
+  assert.deepEqual(frame(0.8, 13, {
+    sourceKey: "video-b",
+    width: 640,
+  }), {
+    reset: false,
+    reason: null,
+    frameIndex: 1,
+  });
 });
 
 test("CDA default history starts initializer windows at frames 0, 25, and 50", () => {

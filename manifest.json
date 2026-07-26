@@ -60,6 +60,8 @@
         "src/core/fsrcnnx-grab.js",
         "src/core/fsrcnnx-rife-gpu.js",
         "src/core/fsrcnnx-neural.js",
+        "src/core/fsrcnnx-neural-temporal-atlas.js",
+        "src/core/fsrcnnx-neural-temporal-tiling.js",
         "model/neural/*"
       ],
       "matches": [
