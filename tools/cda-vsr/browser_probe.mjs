@@ -31,6 +31,18 @@ const PARITY_SEED = 20260726;
 const MINIMUM_PARITY_FRAMES = 25;
 const FP32_PRECISION = "float32";
 const MIXED_FP16_PRECISION = "mixed-fp16";
+const NATIVE_OUTPUT_SCALE = 4;
+const DERIVED_OUTPUT_SCALE = 2;
+const DERIVED_X2_CONTRACT = Object.freeze({
+  kind: "aligned-subpixel-average-v1",
+  source_scale: 4,
+  output_scale: 2,
+  source_head_channels: 48,
+  derived_head_channels: 12,
+  phase_reduction: "mean-aligned-2x2",
+  residual_base: "bilinear-align-corners-false-x2",
+  shipping_catalog: false,
+});
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const GRAPH_FILES = Object.freeze({
   initializer: "cda-vsr-initializer.onnx",
@@ -59,7 +71,7 @@ const REFERENCE_SOURCE_SHA256 =
 const REFERENCE_CHECKPOINT_SHA256 =
   "afc8745b890289ae421c500279d9ccf2a27c92cf3e71133b20840c7816e86d3e";
 
-export const CDA_BROWSER_PROBE_MODEL_KEY = "cda-vsr-4x-local-probe";
+export const CDA_BROWSER_PROBE_MODEL_KEY = "cda-vsr-local-probe";
 
 function receiptError(detail) {
   throw new Error(`invalid CDA-VSR export receipt: ${detail}`);
@@ -160,11 +172,11 @@ function precisionContract(profile) {
   };
 }
 
-function temporalTilingProfile(precision) {
+function temporalTilingProfile(precision, outputScale = NATIVE_OUTPUT_SCALE) {
   const mixed = precision === MIXED_FP16_PRECISION;
   return {
     kind: "temporal-state-atlas-v1",
-    scale: 4,
+    scale: outputScale,
     halo: 64,
     haloDerivation: {
       motionSearchRadius: 8,
@@ -185,7 +197,11 @@ function temporalTilingProfile(precision) {
   };
 }
 
-function graphLogicalMemoryProfile(role, precision) {
+function graphLogicalMemoryProfile(
+  role,
+  precision,
+  outputScale = NATIVE_OUTPUT_SCALE,
+) {
   const mixed = precision === MIXED_FP16_PRECISION;
   const computeDtype = mixed ? "float16" : "float32";
   const computeBytes = mixed ? 2 : 4;
@@ -195,7 +211,7 @@ function graphLogicalMemoryProfile(role, precision) {
     ? [32, 32, 32, 32, 128]
     : [];
   const gridBytes = gridChannels.length ? 512 : 0;
-  const publicBytes = 3 * 4 * 4 * 4;
+  const publicBytes = 3 * outputScale * outputScale * 4;
   const candidates = [
     ["conv-input", convBytes],
     ["grid-sample-source", gridBytes],
@@ -224,7 +240,7 @@ function graphLogicalMemoryProfile(role, precision) {
     public_output: {
       channels: 3,
       dtype: "float32",
-      spatial_scale: 4,
+      spatial_scale: outputScale,
       bytes_per_source_pixel: publicBytes,
     },
   };
@@ -581,12 +597,13 @@ function validateParityEvidenceV3(receipt, captureFixture, precision) {
 
 function makeProbeEntry(contract) {
   const stagedContract = structuredClone(contract);
+  const outputScale = stagedContract.tiling?.scale ?? NATIVE_OUTPUT_SCALE;
   stagedContract.graphs.initialize.file = STAGED_PROBE_GRAPH_FILES.initializer;
   stagedContract.graphs.recurrent.file = STAGED_PROBE_GRAPH_FILES.recurrent;
   return {
     key: CDA_BROWSER_PROBE_MODEL_KEY,
-    label: "CDA-VSR 4x (local browser probe)",
-    scale: 4,
+    label: `CDA-VSR ${outputScale}x (local browser probe)`,
+    scale: outputScale,
     fp16: false,
     arch: "CDA-VSR local export",
     contract: stagedContract,
@@ -652,15 +669,15 @@ function validateManifestPrecision(contract, precision) {
   }
 }
 
-function validateTemporalTilingProfile(contract, precision) {
+function validateTemporalTilingProfile(contract, precision, outputScale) {
   requireExactValue(
     contract.tiling,
-    temporalTilingProfile(precision),
+    temporalTilingProfile(precision, outputScale),
     "runtime_contract.manifest_v2_template.tiling",
   );
 }
 
-function expectedGraphShapes(role) {
+function expectedGraphShapes(role, outputScale = NATIVE_OUTPUT_SCALE) {
   const spatial = ["height", "width"];
   const inputs = role === "initializer"
     ? { frame: [1, 3, ...spatial] }
@@ -674,7 +691,12 @@ function expectedGraphShapes(role) {
   return {
     inputs,
     outputs: {
-      output: [1, 3, "output_height_x4", "output_width_x4"],
+      output: [
+        1,
+        3,
+        `output_height_x${outputScale}`,
+        `output_width_x${outputScale}`,
+      ],
       next_state_low: [1, 64, ...spatial],
       next_state_high: [1, 64, ...spatial],
     },
@@ -686,6 +708,7 @@ function validateGraphEvidenceV3(
   role,
   precision,
   captureFixture,
+  outputScale,
 ) {
   const at = `graphs.${role}`;
   const profile = precisionContract(precision);
@@ -693,7 +716,7 @@ function validateGraphEvidenceV3(
     receiptError(`${at}.precision_profile must be ${precision}`);
   }
   requireExactValue(graph.capture_fixture, captureFixture, `${at}.capture_fixture`);
-  const shapes = expectedGraphShapes(role);
+  const shapes = expectedGraphShapes(role, outputScale);
   requireExactValue(graph.inputs, shapes.inputs, `${at}.inputs`);
   requireExactValue(graph.outputs, shapes.outputs, `${at}.outputs`);
 
@@ -724,7 +747,7 @@ function validateGraphEvidenceV3(
   );
   requireExactValue(
     graph.logical_memory,
-    graphLogicalMemoryProfile(role, precision),
+    graphLogicalMemoryProfile(role, precision, outputScale),
     `${at}.logical_memory`,
   );
 
@@ -765,6 +788,15 @@ function validateGraphEvidenceV3(
     },
     `${at}.weight_derivation`,
   );
+  if (outputScale === DERIVED_OUTPUT_SCALE) {
+    requireExactValue(
+      graph.output_derivation,
+      DERIVED_X2_CONTRACT,
+      `${at}.output_derivation`,
+    );
+  } else if (graph.output_derivation != null) {
+    receiptError(`${at}.output_derivation is not valid for native 4x output`);
+  }
 
   const castTargets = requireRecord(graph.cast_targets, `${at}.cast_targets`);
   for (const [dtype, count] of Object.entries(castTargets)) {
@@ -796,6 +828,16 @@ export function validateCdaExportReceipt(receipt) {
     receiptError(`opset must be ${RECEIPT_OPSET}`);
   }
   const precision = legacy ? FP32_PRECISION : validatePrecision(receipt).profile;
+  let outputScale = NATIVE_OUTPUT_SCALE;
+  if (receipt.output_derivation != null) {
+    if (legacy) receiptError("format 2 receipts cannot derive a 2x output head");
+    requireExactValue(
+      receipt.output_derivation,
+      DERIVED_X2_CONTRACT,
+      "output_derivation",
+    );
+    outputScale = DERIVED_OUTPUT_SCALE;
+  }
   if (legacy && receipt.precision != null) {
     const legacyPrecision = requireRecord(receipt.precision, "precision");
     if (legacyPrecision.profile !== FP32_PRECISION) {
@@ -867,7 +909,7 @@ export function validateCdaExportReceipt(receipt) {
     runtime.manifest_v2_template,
     "runtime_contract.manifest_v2_template",
   );
-  if (!legacy) validateTemporalTilingProfile(contract, precision);
+  if (!legacy) validateTemporalTilingProfile(contract, precision, outputScale);
   let normalizedEntry;
   try {
     [normalizedEntry] = validateNeuralManifest([makeProbeEntry(contract)]);
@@ -901,7 +943,13 @@ export function validateCdaExportReceipt(receipt) {
       receiptError(`manifest graph ${contractGraphName} does not match graphs.${role}`);
     }
     if (!legacy) {
-      validateGraphEvidenceV3(graph, role, precision, captureFixture);
+      validateGraphEvidenceV3(
+        graph,
+        role,
+        precision,
+        captureFixture,
+        outputScale,
+      );
     } else if (graph.precision_profile != null &&
                graph.precision_profile !== FP32_PRECISION) {
       receiptError(`graphs.${role}.precision_profile must be float32 for format 2`);

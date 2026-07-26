@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   browserVersion,
   fixtureDisplayDimensions,
+  isRecoveredInterpolationWatchdogWarning,
   isUnsupportedNeuralF16Fallback,
   isUnsupportedNeuralF16Warning,
   parseArguments,
@@ -144,6 +145,29 @@ test("CI may accept only the explicit shader-f16 hardware fallback", () => {
     ...warning,
     text: "[FSRCNNX] another warning: Program Transpose requires f16 but the device does not support it.",
   }), false);
+});
+
+test("software-GPU validation may accept only a recovered interpolation watchdog", () => {
+  const warning = {
+    kind: "console",
+    type: "warning",
+    text: "[FSRCNNX] interp WATCHDOG: present stalled 1020ms (q=9, headDue=0ms, headTs=0.38s) — re-anchoring to recover",
+  };
+  assert.equal(isRecoveredInterpolationWatchdogWarning(warning), true);
+  assert.equal(isRecoveredInterpolationWatchdogWarning({ ...warning, type: "error" }), false);
+  assert.equal(isRecoveredInterpolationWatchdogWarning({
+    ...warning,
+    text: warning.text.replace("re-anchoring to recover", "giving up"),
+  }), false);
+  assert.equal(isRecoveredInterpolationWatchdogWarning({
+    ...warning,
+    text: "[FSRCNNX] interp WATCHDOG: arbitrary warning",
+  }), false);
+  assert.match(validator, /usingSoftwareGpu: process\.platform === "linux"/);
+  assert.match(
+    validator,
+    /usingSoftwareGpu && isRecoveredInterpolationWatchdogWarning\(event\)/,
+  );
 });
 
 test("fixture display scaling maps requested physical pixels through the live DPR", () => {

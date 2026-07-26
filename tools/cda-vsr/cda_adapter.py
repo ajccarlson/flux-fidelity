@@ -39,13 +39,12 @@ OFFSET_ORDER = "deform-group-interleaved-yx"
 PRIOR_CONTRACT = "decoded-cda-v1"
 DYNAMIC_HEIGHT = "height"
 DYNAMIC_WIDTH = "width"
-DYNAMIC_OUTPUT_HEIGHT = "output_height_x4"
-DYNAMIC_OUTPUT_WIDTH = "output_width_x4"
+NATIVE_OUTPUT_SCALE = 4
+DERIVED_OUTPUT_SCALE = 2
 FP32_PRECISION = "float32"
 MIXED_FP16_PRECISION = "mixed-fp16"
 PRECISION_PROFILES = (FP32_PRECISION, MIXED_FP16_PRECISION)
 TEMPORAL_TILING_KIND = "temporal-state-atlas-v1"
-TEMPORAL_TILING_SCALE = 4
 TEMPORAL_TILING_HALO = 64
 TEMPORAL_TILING_SEARCH_RADIUS = 8
 TEMPORAL_TILING_FIXED_RECURRENT_RADIUS = 35
@@ -57,20 +56,40 @@ TEMPORAL_TILING_WORKGROUP_SIZE = 8
 TEMPORAL_STATE_COUNT = 2
 TEMPORAL_STATE_CHANNELS = 64
 TEMPORAL_STATE_ARRAY_LAYERS = 16
-EXPECTED_GRAPH_LOGICAL_BYTES = {
-    FP32_PRECISION: {
-        "initializer": 256,
-        "recurrent": 776,
-    },
-    MIXED_FP16_PRECISION: {
-        "initializer": 192,
-        "recurrent": 512,
-    },
-}
-EXPECTED_TEMPORAL_LOGICAL_BYTES = {
-    precision: max(by_role.values())
-    for precision, by_role in EXPECTED_GRAPH_LOGICAL_BYTES.items()
-}
+def normalize_output_scale(output_scale: int) -> int:
+    if output_scale not in (DERIVED_OUTPUT_SCALE, NATIVE_OUTPUT_SCALE):
+        raise ToolError(
+            f"unsupported CDA output scale {output_scale!r}; expected 2 or 4"
+        )
+    return output_scale
+
+
+def dynamic_output_dimensions(output_scale: int) -> tuple[str, str]:
+    output_scale = normalize_output_scale(output_scale)
+    return (
+        f"output_height_x{output_scale}",
+        f"output_width_x{output_scale}",
+    )
+
+
+def expected_graph_logical_bytes(
+    role: str,
+    precision: str,
+    output_scale: int,
+) -> int:
+    precision = normalize_precision(precision)
+    output_scale = normalize_output_scale(output_scale)
+    if role not in GRAPH_FILENAMES:
+        raise ToolError(f"unsupported graph role {role!r}")
+    compute_bytes = 2 if precision == MIXED_FP16_PRECISION else 4
+    max_conv_channels = 194 if role == "recurrent" else 64
+    grid_sample_bytes = 128 * 4 if role == "recurrent" else 0
+    public_output_bytes = 3 * output_scale * output_scale * 4
+    return max(
+        max_conv_channels * compute_bytes,
+        grid_sample_bytes,
+        public_output_bytes,
+    )
 
 
 def normalize_precision(precision: str) -> str:
@@ -117,10 +136,12 @@ class ToolError(RuntimeError):
 def logical_memory_contract(
     role: str,
     precision: str = FP32_PRECISION,
+    output_scale: int = NATIVE_OUTPUT_SCALE,
 ) -> dict[str, object]:
     """Return the exact graph evidence the structural audit must prove."""
 
     precision = normalize_precision(precision)
+    output_scale = normalize_output_scale(output_scale)
     if role not in GRAPH_FILENAMES:
         raise ToolError(f"unsupported graph role {role!r}")
     compute_dtype = str(precision_contract(precision)["feature_dtype"])
@@ -138,9 +159,9 @@ def logical_memory_contract(
     public_output = {
         "channels": 3,
         "dtype": "float32",
-        "spatial_scale": TEMPORAL_TILING_SCALE,
+        "spatial_scale": output_scale,
         "bytes_per_source_pixel": (
-            3 * TEMPORAL_TILING_SCALE * TEMPORAL_TILING_SCALE * 4
+            3 * output_scale * output_scale * 4
         ),
     }
     candidates = {
@@ -168,12 +189,18 @@ def temporal_tiling_contract(
     precision: str = FP32_PRECISION,
     *,
     graph_facts: Mapping[str, object] | None = None,
+    output_scale: int = NATIVE_OUTPUT_SCALE,
 ) -> dict[str, object]:
     """Return the exact state-atlas profile proven by the exported graphs."""
 
     precision = normalize_precision(precision)
-    expected_by_role = EXPECTED_GRAPH_LOGICAL_BYTES[precision]
-    largest = EXPECTED_TEMPORAL_LOGICAL_BYTES[precision]
+    output_scale = normalize_output_scale(output_scale)
+    expected_by_role = {
+        role: expected_graph_logical_bytes(role, precision, output_scale)
+        for role in GRAPH_FILENAMES
+    }
+    expected_largest = max(expected_by_role.values())
+    largest = expected_largest
     if graph_facts is not None:
         if not isinstance(graph_facts, Mapping):
             raise ToolError("graph facts must be a mapping")
@@ -191,7 +218,11 @@ def temporal_tiling_contract(
                 raise ToolError(
                     f"{role} graph lacks structural logical-memory evidence"
                 )
-            expected_memory = logical_memory_contract(role, precision)
+            expected_memory = logical_memory_contract(
+                role,
+                precision,
+                output_scale,
+            )
             if dict(memory) != expected_memory:
                 raise ToolError(
                     f"{role} logical-memory evidence does not match its "
@@ -210,10 +241,10 @@ def temporal_tiling_contract(
                 )
             recorded_by_role[role] = value
         largest = max(recorded_by_role.values())
-        if largest != EXPECTED_TEMPORAL_LOGICAL_BYTES[precision]:
+        if largest != expected_largest:
             raise ToolError(
                 f"graph-set logical-memory maximum is {largest}; expected "
-                f"{EXPECTED_TEMPORAL_LOGICAL_BYTES[precision]} for {precision}"
+                f"{expected_largest} for {precision} at {output_scale}x"
             )
 
     state_dtype = str(precision_contract(precision)["state_dtype"])
@@ -242,7 +273,7 @@ def temporal_tiling_contract(
         )
     return {
         "kind": TEMPORAL_TILING_KIND,
-        "scale": TEMPORAL_TILING_SCALE,
+        "scale": output_scale,
         "halo": derived_halo,
         "haloDerivation": {
             "motionSearchRadius": TEMPORAL_TILING_SEARCH_RADIUS,
@@ -471,6 +502,7 @@ def runtime_contract_template(
     precision: str = FP32_PRECISION,
     *,
     graph_facts: Mapping[str, object] | None = None,
+    output_scale: int = NATIVE_OUTPUT_SCALE,
 ) -> dict[str, object]:
     """Return the extension's v2 temporal ABI for the two emitted graphs."""
 
@@ -497,6 +529,7 @@ def runtime_contract_template(
         "tiling": temporal_tiling_contract(
             precision,
             graph_facts=graph_facts,
+            output_scale=output_scale,
         ),
         "graphs": {
             "initialize": {
@@ -932,6 +965,218 @@ def load_checkpoint(model, checkpoint_path: Path, torch) -> dict[str, object]:
     }
 
 
+def derived_x2_contract() -> dict[str, object]:
+    """Describe the deterministic, local-only 4x-to-2x head transform."""
+
+    return {
+        "kind": "aligned-subpixel-average-v1",
+        "source_scale": NATIVE_OUTPUT_SCALE,
+        "output_scale": DERIVED_OUTPUT_SCALE,
+        "source_head_channels": 48,
+        "derived_head_channels": 12,
+        "phase_reduction": "mean-aligned-2x2",
+        "residual_base": "bilinear-align-corners-false-x2",
+        "shipping_catalog": False,
+    }
+
+
+def derived_x2_phase_groups(
+    output_channels: int = 3,
+) -> tuple[tuple[int, ...], ...]:
+    """Map PixelShuffle(2) phases to aligned PixelShuffle(4) phase groups."""
+
+    if (
+        not isinstance(output_channels, int)
+        or isinstance(output_channels, bool)
+        or output_channels <= 0
+    ):
+        raise ToolError("output_channels must be a positive integer")
+    groups = []
+    for channel in range(output_channels):
+        for row_x2 in range(DERIVED_OUTPUT_SCALE):
+            for column_x2 in range(DERIVED_OUTPUT_SCALE):
+                groups.append(
+                    tuple(
+                        channel * NATIVE_OUTPUT_SCALE * NATIVE_OUTPUT_SCALE
+                        + (2 * row_x2 + row_offset) * NATIVE_OUTPUT_SCALE
+                        + (2 * column_x2 + column_offset)
+                        for row_offset in range(2)
+                        for column_offset in range(2)
+                    )
+                )
+    return tuple(groups)
+
+
+def derive_x2_subpixel_parameters(weight, bias, torch):
+    """Average aligned 4x subpixel phases into an exact 2x output head."""
+
+    expected_weight_shape = (48, 64, 3, 3)
+    if tuple(weight.shape) != expected_weight_shape:
+        raise ToolError(
+            "CDA output-head weight has shape "
+            f"{tuple(weight.shape)}, expected {expected_weight_shape}"
+        )
+    if bias is None or tuple(bias.shape) != (48,):
+        actual = None if bias is None else tuple(bias.shape)
+        raise ToolError(
+            f"CDA output-head bias has shape {actual}, expected (48,)"
+        )
+    groups = derived_x2_phase_groups()
+    derived_weight = torch.stack(
+        [weight[list(group)].mean(dim=0) for group in groups],
+        dim=0,
+    )
+    derived_bias = torch.stack(
+        [bias[list(group)].mean(dim=0) for group in groups],
+        dim=0,
+    )
+    return derived_weight, derived_bias
+
+
+def make_derived_x2_forward(torch, motion_warp):
+    """Return CDA's audited forward path with only its output scale changed."""
+
+    def forward(module, x, mv, res, hidden_key=None, return_hs=False):
+        batch, frames, channels, height, width = x.size()
+        features = module.conv_first(x.view(-1, channels, height, width))
+        features = module.feature_extraction(features)
+        features = features.view(batch, frames, -1, height, width)
+
+        reconstruction_features = []
+        for frame_index in range(frames):
+            current_feature = features[:, frame_index]
+            current_frame = x[:, frame_index]
+            if frame_index == 0 and hidden_key is None:
+                reconstructed = module.reconstruction_I(current_feature)
+            else:
+                current_motion = mv[:, frame_index]
+                current_residual = res[:, frame_index]
+                feature_low, feature_high = hidden_key[0], hidden_key[1]
+                feature_pair = torch.cat([feature_low, feature_high], dim=1)
+                warped_pair = motion_warp(
+                    feature_pair,
+                    current_motion,
+                    interpolation="nearest",
+                    padding_mode="border",
+                    align_corners=True,
+                )
+                condition = torch.cat([warped_pair, current_feature], dim=1)
+                aligned_pair = module.deform_align(
+                    feature_pair,
+                    condition,
+                    current_motion,
+                )
+                aligned_weight = module.conv_weight_l(current_residual)
+                warped_pair = aligned_pair * aligned_weight + aligned_pair
+                aligned_feature = module.convs(
+                    torch.cat([warped_pair, current_feature], dim=1)
+                )
+                reconstructed = module.reconstruction_P(aligned_feature)
+
+            reconstruction_features.append(reconstructed)
+            reconstructed_high = module.conv_h(reconstructed)
+            hidden_key = (
+                current_feature,
+                reconstructed_high,
+                current_frame,
+            )
+
+        reconstruction_features = torch.stack(
+            reconstruction_features,
+            dim=1,
+        )
+        output = reconstruction_features.view(
+            batch * frames,
+            -1,
+            height,
+            width,
+        )
+        output = module.pixel_shuffle(module.upconv1(output)).view(
+            batch,
+            frames,
+            channels,
+            DERIVED_OUTPUT_SCALE * height,
+            DERIVED_OUTPUT_SCALE * width,
+        )
+        if module.hr_in:
+            raise ToolError("the derived 2x path does not support hr_in=True")
+        base = torch.nn.functional.interpolate(
+            x.view(-1, channels, height, width),
+            scale_factor=DERIVED_OUTPUT_SCALE,
+            mode="bilinear",
+            align_corners=False,
+        ).view(
+            batch,
+            frames,
+            channels,
+            DERIVED_OUTPUT_SCALE * height,
+            DERIVED_OUTPUT_SCALE * width,
+        )
+        output = output + base
+        if return_hs:
+            return output, hidden_key
+        return output
+
+    return forward
+
+
+def derive_x2_output_model(model, torch):
+    """Create a 2x CDA model after strict loading of the native checkpoint."""
+
+    if getattr(model, "hr_in", None) is not False:
+        raise ToolError("the derived 2x path requires the audited hr_in=False model")
+    source_head = getattr(model, "upconv1", None)
+    pixel_shuffle = getattr(model, "pixel_shuffle", None)
+    if source_head is None or pixel_shuffle is None:
+        raise ToolError("CDA model lacks its audited output head")
+    if getattr(pixel_shuffle, "upscale_factor", None) != NATIVE_OUTPUT_SCALE:
+        raise ToolError("CDA model output head is not PixelShuffle(4)")
+    if (
+        tuple(source_head.kernel_size) != (3, 3)
+        or tuple(source_head.stride) != (1, 1)
+        or tuple(source_head.padding) != (1, 1)
+        or tuple(source_head.dilation) != (1, 1)
+        or source_head.groups != 1
+    ):
+        raise ToolError("CDA output convolution does not match the audited head")
+    motion_warp = getattr(model.forward, "__globals__", {}).get(
+        "mv_warp_avg_patch"
+    )
+    if not callable(motion_warp):
+        raise ToolError("CDA model forward path lacks mv_warp_avg_patch")
+
+    network = copy.deepcopy(model)
+    derived_weight, derived_bias = derive_x2_subpixel_parameters(
+        network.upconv1.weight,
+        network.upconv1.bias,
+        torch,
+    )
+    target_head = torch.nn.Conv2d(
+        network.upconv1.in_channels,
+        3 * DERIVED_OUTPUT_SCALE * DERIVED_OUTPUT_SCALE,
+        kernel_size=network.upconv1.kernel_size,
+        stride=network.upconv1.stride,
+        padding=network.upconv1.padding,
+        dilation=network.upconv1.dilation,
+        groups=network.upconv1.groups,
+        bias=True,
+        padding_mode=network.upconv1.padding_mode,
+        device=network.upconv1.weight.device,
+        dtype=network.upconv1.weight.dtype,
+    )
+    with torch.no_grad():
+        target_head.weight.copy_(derived_weight)
+        target_head.bias.copy_(derived_bias)
+    network.upconv1 = target_head
+    network.pixel_shuffle = torch.nn.PixelShuffle(DERIVED_OUTPUT_SCALE)
+    network.forward = MethodType(
+        make_derived_x2_forward(torch, motion_warp),
+        network,
+    )
+    network._fsrcnnx_output_scale = DERIVED_OUTPUT_SCALE
+    return network.eval()
+
+
 def make_mixed_deformable_alignment_forward(torch):
     """Keep public motion exact while the offset predictor remains FP16."""
 
@@ -1051,13 +1296,17 @@ def make_graph_wrappers(
     return InitializerGraph(network).eval(), RecurrentGraph(network).eval()
 
 
-def dynamic_axes_for(input_names: list[str]) -> dict[str, dict[int, str]]:
+def dynamic_axes_for(
+    input_names: list[str],
+    output_scale: int = NATIVE_OUTPUT_SCALE,
+) -> dict[str, dict[int, str]]:
+    output_height, output_width = dynamic_output_dimensions(output_scale)
     spatial = {2: DYNAMIC_HEIGHT, 3: DYNAMIC_WIDTH}
     return {
         **{name: dict(spatial) for name in input_names},
         "output": {
-            2: DYNAMIC_OUTPUT_HEIGHT,
-            3: DYNAMIC_OUTPUT_WIDTH,
+            2: output_height,
+            3: output_width,
         },
         "next_state_low": dict(spatial),
         "next_state_high": dict(spatial),
@@ -1073,8 +1322,10 @@ def _metadata(
     width: int,
     dynamic: bool,
     precision: str,
+    output_scale: int = NATIVE_OUTPUT_SCALE,
 ) -> dict[str, str]:
     profile = precision_contract(precision)
+    output_scale = normalize_output_scale(output_scale)
     metadata = {
         "fsrcnnx.architecture": "CDA-VSR",
         "fsrcnnx.capture_height": str(height),
@@ -1086,7 +1337,7 @@ def _metadata(
         "fsrcnnx.offset_order": OFFSET_ORDER,
         "fsrcnnx.prior_contract": PRIOR_CONTRACT,
         "fsrcnnx.precision_profile": str(profile["profile"]),
-        "fsrcnnx.scale": "4",
+        "fsrcnnx.scale": str(output_scale),
         "fsrcnnx.shipping_catalog": "false",
         "fsrcnnx.source_sha256": source_sha256,
         "fsrcnnx.spatial_shape": "dynamic" if dynamic else "fixed",
@@ -1257,6 +1508,7 @@ def _logical_memory_evidence(
     *,
     role: str,
     precision: str,
+    output_scale: int,
     inferred_types: Mapping[str, int],
     inferred_shapes: Mapping[str, list[int | str]],
 ) -> dict[str, object]:
@@ -1441,11 +1693,11 @@ def _logical_memory_evidence(
     public_output = {
         "channels": 3,
         "dtype": _dtype_name(onnx, output_type),
-        "spatial_scale": TEMPORAL_TILING_SCALE,
+        "spatial_scale": output_scale,
         "bytes_per_source_pixel": (
             3
-            * TEMPORAL_TILING_SCALE
-            * TEMPORAL_TILING_SCALE
+            * output_scale
+            * output_scale
             * _floating_element_bytes(
                 onnx,
                 output_type,
@@ -1465,7 +1717,7 @@ def _logical_memory_evidence(
         ),
         key=lambda item: item[1],
     )
-    expected = EXPECTED_GRAPH_LOGICAL_BYTES[precision][role]
+    expected = expected_graph_logical_bytes(role, precision, output_scale)
     if largest != expected:
         raise ToolError(
             f"{role} graph structurally proves {largest} logical bytes per "
@@ -1500,7 +1752,7 @@ def _logical_memory_evidence(
         },
         "public_output": public_output,
     }
-    expected_evidence = logical_memory_contract(role, precision)
+    expected_evidence = logical_memory_contract(role, precision, output_scale)
     if evidence != expected_evidence:
         details = json.dumps(
             {"expected": expected_evidence, "actual": evidence},
@@ -1522,8 +1774,10 @@ def validate_graph(
     width: int,
     dynamic: bool,
     precision: str = FP32_PRECISION,
+    output_scale: int = NATIVE_OUTPUT_SCALE,
     canonical_parameters: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
+    output_scale = normalize_output_scale(output_scale)
     profile = precision_contract(precision)
     onnx.checker.check_model(onnx_model, full_check=True)
     custom_domains = sorted(
@@ -1587,10 +1841,11 @@ def validate_graph(
     spatial = (
         [DYNAMIC_HEIGHT, DYNAMIC_WIDTH] if dynamic else [height, width]
     )
+    output_height, output_width = dynamic_output_dimensions(output_scale)
     output_spatial = (
-        [DYNAMIC_OUTPUT_HEIGHT, DYNAMIC_OUTPUT_WIDTH]
+        [output_height, output_width]
         if dynamic
-        else [height * 4, width * 4]
+        else [height * output_scale, width * output_scale]
     )
     expected_input_shapes = {
         "frame": [1, 3, *spatial],
@@ -1750,10 +2005,11 @@ def validate_graph(
         onnx,
         role=role,
         precision=precision,
+        output_scale=output_scale,
         inferred_types=inferred_types,
         inferred_shapes=inferred_shapes,
     )
-    return {
+    result = {
         "precision_profile": precision,
         "spatial_shape": "dynamic" if dynamic else "fixed",
         "capture_fixture": {"height": height, "width": width},
@@ -1789,6 +2045,9 @@ def validate_graph(
         "logical_memory": logical_memory,
         "nodes": len(onnx_model.graph.node),
     }
+    if output_scale == DERIVED_OUTPUT_SCALE:
+        result["output_derivation"] = derived_x2_contract()
+    return result
 
 
 def _atomic_export(
@@ -1804,6 +2063,7 @@ def _atomic_export(
     width: int,
     dynamic: bool,
     precision: str,
+    output_scale: int,
     canonical_parameters: Mapping[str, object],
     torch,
     onnx,
@@ -1824,7 +2084,9 @@ def _atomic_export(
                 opset_version=OPSET,
                 do_constant_folding=True,
                 dynamic_axes=(
-                    dynamic_axes_for(input_names) if dynamic else None
+                    dynamic_axes_for(input_names, output_scale)
+                    if dynamic
+                    else None
                 ),
                 dynamo=False,
             )
@@ -1839,6 +2101,7 @@ def _atomic_export(
                 width=width,
                 dynamic=dynamic,
                 precision=precision,
+                output_scale=output_scale,
             ),
         )
         graph_info = validate_graph(
@@ -1849,6 +2112,7 @@ def _atomic_export(
             width=width,
             dynamic=dynamic,
             precision=precision,
+            output_scale=output_scale,
             canonical_parameters=canonical_parameters,
         )
         onnx.save(exported, final_tmp)
@@ -1882,10 +2146,12 @@ def export_graphs(
     width: int,
     dynamic: bool,
     precision: str = FP32_PRECISION,
+    output_scale: int = NATIVE_OUTPUT_SCALE,
     torch,
     onnx,
 ) -> dict[str, dict[str, object]]:
     precision = normalize_precision(precision)
+    output_scale = normalize_output_scale(output_scale)
     output_dir.mkdir(parents=True, exist_ok=True)
     initializer, recurrent = make_graph_wrappers(
         model,
@@ -1919,6 +2185,7 @@ def export_graphs(
         width=width,
         dynamic=dynamic,
         precision=precision,
+        output_scale=output_scale,
         canonical_parameters=canonical_parameters,
         torch=torch,
         onnx=onnx,
@@ -1935,6 +2202,7 @@ def export_graphs(
         width=width,
         dynamic=dynamic,
         precision=precision,
+        output_scale=output_scale,
         canonical_parameters=canonical_parameters,
         torch=torch,
         onnx=onnx,
@@ -1951,8 +2219,10 @@ def validate_saved_graphs(
     width: int,
     dynamic: bool,
     precision: str = FP32_PRECISION,
+    output_scale: int = NATIVE_OUTPUT_SCALE,
     onnx,
 ) -> dict[str, dict[str, object]]:
+    output_scale = normalize_output_scale(output_scale)
     result = {}
     for role, filename in GRAPH_FILENAMES.items():
         path = output_dir / filename
@@ -1967,6 +2237,7 @@ def validate_saved_graphs(
             width=width,
             dynamic=dynamic,
             precision=precision,
+            output_scale=output_scale,
         )
         metadata = {item.key: item.value for item in model.metadata_props}
         if dynamic and any(
@@ -1984,6 +2255,7 @@ def validate_saved_graphs(
             width=width,
             dynamic=dynamic,
             precision=precision,
+            output_scale=output_scale,
         )
         mismatches = {
             key: {"expected": value, "actual": metadata.get(key)}
