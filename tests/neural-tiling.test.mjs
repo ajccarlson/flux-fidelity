@@ -522,7 +522,10 @@ test("Neural has no policy ceiling and validates only its extension-frame device
     /textureSizeAllowed\(outW, outH, "canvas output"\)/,
   );
   assert.doesNotMatch(position, /enforceProcessingBudget/);
-  assert.match(render, /runEngine\.run\(runVideo, srcW, srcH, presentation\)/);
+  assert.match(
+    render,
+    /runEngine\.run\(runVideo, srcW, srcH, presentation, temporal\)/,
+  );
   assert.match(render, /\{ validateDimensions: false, resize: false \}/);
   assert.doesNotMatch(render, /textureSizeAllowed|storageBufferSizeAllowed/);
   assert.match(frameRuntime, /validateDeviceDimensions\(srcW, srcH, "source", runDevice\)/);

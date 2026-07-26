@@ -200,6 +200,16 @@ class FakeBitmap {
   close() { this.closeCalls++; }
 }
 
+class FakeVideoFrame {
+  constructor(name, displayWidth = 1, displayHeight = 1) {
+    this.name = name;
+    this.displayWidth = displayWidth;
+    this.displayHeight = displayHeight;
+    this.closeCalls = 0;
+  }
+  close() { this.closeCalls++; }
+}
+
 async function flushMicrotasks(turns = 3) {
   for (let index = 0; index < turns; index++) await Promise.resolve();
 }
@@ -329,6 +339,7 @@ class Harness {
       MutationObserver: this.MutationObserver,
       HTMLCanvasElement: FakeCanvas,
       ImageBitmap: FakeBitmap,
+      VideoFrame: FakeVideoFrame,
       crypto: { getRandomValues: (bytes) => bytes.fill(7) },
       setTimeout,
       clearTimeout,
@@ -569,6 +580,12 @@ test("bridge correlates requests, forwards diagnostics, and transfers each owner
       sharpenEnabled: true,
       sharpenStrength: 1.25,
     },
+    temporal: {
+      mediaTime: 12.5,
+      presentedFrames: 301,
+      reset: true,
+      resetReason: "source-change",
+    },
   });
   await Promise.resolve();
   assert.equal(bridge.runPending, true);
@@ -584,6 +601,12 @@ test("bridge correlates requests, forwards diagnostics, and transfers each owner
     ssimdsEnabled: true,
     sharpenEnabled: true,
     sharpenStrength: 1.25,
+  });
+  assert.deepEqual(runRequest.payload.temporal, {
+    mediaTime: 12.5,
+    presentedFrames: 301,
+    reset: true,
+    resetReason: "source-change",
   });
   const runPost = harness.childPort.peer.posts.find(
     ({ data }) => data.id === runRequest.id,
@@ -645,6 +668,37 @@ test("bridge correlates requests, forwards diagnostics, and transfers each owner
   assert.equal(bridge.frameElement, null);
   assert.equal(bridge.hostElement, null);
   assert.equal(hostIsGone(harness), true);
+});
+
+test("bridge accepts and explicitly transfers a VideoFrame input", async () => {
+  const harness = new Harness();
+  const bridge = await connect(harness);
+  const canvas = new FakeCanvas();
+  await bridge.attachCanvas(canvas);
+  harness.heldMethods.add("run");
+
+  const frame = new FakeVideoFrame("decoded-frame", 320, 180);
+  const running = bridge.run(frame, {
+    srcW: 320,
+    srcH: 180,
+    presentation: { width: 640, height: 360 },
+  });
+  await flushMicrotasks();
+  const request = harness.requests.find(({ method }) => method === "run");
+  const post = harness.childPort.peer.posts.find(({ data }) => data.id === request.id);
+  assert.strictEqual(request.payload.bitmap, frame);
+  assert.deepEqual(post.transfer, [frame]);
+
+  const output = new FakeBitmap("video-frame-output", 640, 360);
+  harness.respond(request.id, {
+    presentation: { output: { width: 640, height: 360 } },
+    bitmap: output,
+  }, [output]);
+  await running;
+
+  assert.deepEqual(canvas.bitmapTransfers, [output]);
+  assert.equal(output.closeCalls, 1);
+  await bridge.dispose();
 });
 
 test("stop cancels an in-flight run before serialized cleanup and drops stale output", async () => {
@@ -851,6 +905,28 @@ test("bridge rejects invalid presentation tails before transferring a bitmap", a
       bridge.run(bitmap, { srcW: 640, srcH: 360, presentation }),
       TypeError,
     );
+  }
+  assert.equal(harness.requests.some(({ method }) => method === "run"), false);
+  await bridge.dispose();
+});
+
+test("bridge rejects unbounded temporal metadata before transferring a frame", async () => {
+  const harness = new Harness();
+  const bridge = await connect(harness);
+  const cases = [
+    { mediaTime: -1 },
+    { presentedFrames: 1.5 },
+    { reset: "true" },
+    { resetReason: "Source changed!" },
+    { unsupported: true },
+  ];
+  for (const temporal of cases) {
+    const frame = new FakeVideoFrame("invalid-temporal");
+    await assert.rejects(
+      bridge.run(frame, { srcW: 640, srcH: 360, temporal }),
+      TypeError,
+    );
+    assert.equal(frame.closeCalls, 0, "validation must happen before ownership transfer");
   }
   assert.equal(harness.requests.some(({ method }) => method === "run"), false);
   await bridge.dispose();

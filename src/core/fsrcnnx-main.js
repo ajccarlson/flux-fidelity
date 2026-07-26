@@ -1159,7 +1159,7 @@ function emptyNeuralStats() {
 // The ONNX runtime lives in an extension-owned iframe because Chromium applies
 // a host page's WebAssembly policy to content-script worlds. This adapter keeps
 // the renderer-facing lifecycle small while the bridge owns the authenticated
-// MessagePort, output presentation, and ImageBitmap handoff.
+// MessagePort, output presentation, and transferable media-frame handoff.
 function createEmbeddedNeuralEngine({ log: engineLog = log, warn: engineWarn = warn } = {}) {
   let bridge = null;
   let outputCanvas = null;
@@ -1186,7 +1186,38 @@ function createEmbeddedNeuralEngine({ log: engineLog = log, warn: engineWarn = w
     remoteStats = { ...remoteStats, ...next };
   };
 
-  const captureSourceBitmap = async (source, width, height) => {
+  const frameHasDimensions = (frame, width, height) => {
+    const frameWidth = Number(frame?.displayWidth ?? frame?.width);
+    const frameHeight = Number(frame?.displayHeight ?? frame?.height);
+    return frameWidth === width && frameHeight === height;
+  };
+
+  const captureSourceFrame = async (source, width, height) => {
+    // VideoFrame remains decoder-backed and transferable, allowing the
+    // extension frame to import it directly with copyExternalImageToTexture.
+    const VideoFrameCtor = globalThis.VideoFrame;
+    if (typeof VideoFrameCtor === "function") {
+      let frame = null;
+      try {
+        frame = new VideoFrameCtor(source);
+        if (frameHasDimensions(frame, width, height)) return frame;
+      } catch {}
+      try { frame?.close?.(); } catch {}
+    }
+
+    // ImageBitmap is also transferable and avoids allocating a page-side
+    // staging canvas on browsers that cannot construct VideoFrame here.
+    if (typeof createImageBitmap === "function") {
+      let bitmap = null;
+      try {
+        bitmap = await createImageBitmap(source, 0, 0, width, height);
+        if (frameHasDimensions(bitmap, width, height)) return bitmap;
+      } catch {}
+      try { bitmap?.close?.(); } catch {}
+    }
+
+    // Compatibility path for browsers that cannot snapshot the source into a
+    // directly transferable external image.
     if (!inputCanvas) {
       inputCanvas = typeof globalThis.OffscreenCanvas === "function"
         ? new globalThis.OffscreenCanvas(width, height)
@@ -1210,7 +1241,7 @@ function createEmbeddedNeuralEngine({ log: engineLog = log, warn: engineWarn = w
     const bitmap = typeof inputCanvas.transferToImageBitmap === "function"
       ? inputCanvas.transferToImageBitmap()
       : await createImageBitmap(inputCanvas, 0, 0, width, height);
-    if (!bitmap || bitmap.width !== width || bitmap.height !== height) {
+    if (!frameHasDimensions(bitmap, width, height)) {
       try { bitmap?.close?.(); } catch {}
       throw new Error("neural input capture returned invalid dimensions");
     }
@@ -1311,21 +1342,26 @@ function createEmbeddedNeuralEngine({ log: engineLog = log, warn: engineWarn = w
     return operation;
   };
 
-  const run = async (source, srcW, srcH, presentation) => {
+  const run = async (source, srcW, srcH, presentation, temporal) => {
     if (!initialized || !bridge || bridge.state !== "ready") {
       throw new Error("neural frame is not initialized");
     }
     const generation = lifecycleGeneration;
-    let bitmap;
+    let inputFrame;
     try {
-      bitmap = await captureSourceBitmap(source, srcW, srcH);
+      inputFrame = await captureSourceFrame(source, srcW, srcH);
       if (generation !== lifecycleGeneration || !initialized || !bridge) {
         const error = new Error("neural inference cancelled by stop");
         error.code = "NEURAL_SUPERSEDED";
         throw error;
       }
-      const result = await bridge.run(bitmap, { srcW, srcH, presentation });
-      bitmap = null; // ownership transferred through the bridge
+      const result = await bridge.run(inputFrame, {
+        srcW,
+        srcH,
+        presentation,
+        temporal,
+      });
+      inputFrame = null; // ownership transferred through the bridge
       if (generation !== lifecycleGeneration || !initialized || !bridge) {
         const error = new Error("neural inference cancelled by stop");
         error.code = "NEURAL_SUPERSEDED";
@@ -1334,7 +1370,7 @@ function createEmbeddedNeuralEngine({ log: engineLog = log, warn: engineWarn = w
       updateStats(result);
       return result;
     } finally {
-      try { bitmap?.close?.(); } catch {}
+      try { inputFrame?.close?.(); } catch {}
     }
   };
 
@@ -3272,6 +3308,7 @@ function neuralFramePresentation(srcW, srcH, scale) {
 }
 
 function renderNeuralFrame() {
+  const frameMetadata = arguments[0] ?? null;
   if (!neuralEng || !neuralEng.ready()) { renderPassthrough(); return; }
   if (neuralBusy) {
     if (performanceFallbackEligible() && presentedRuntimeEngine === engine) {
@@ -3291,8 +3328,19 @@ function renderNeuralFrame() {
   const runController = primaryController;
   const runVideoGeneration = videoSelectionGeneration;
   const runEngineGeneration = engineSelectionGeneration;
+  const frameTemporal = {};
+  if (Number.isFinite(frameMetadata?.mediaTime) && frameMetadata.mediaTime >= 0) {
+    frameTemporal.mediaTime = frameMetadata.mediaTime;
+  }
+  if (Number.isSafeInteger(frameMetadata?.presentedFrames) &&
+      frameMetadata.presentedFrames >= 0) {
+    frameTemporal.presentedFrames = frameMetadata.presentedFrames;
+  }
+  const temporal = Object.keys(frameTemporal).length
+    ? Object.freeze(frameTemporal)
+    : undefined;
   neuralBusy = true;
-  runEngine.run(runVideo, srcW, srcH, presentation).then((res) => {
+  runEngine.run(runVideo, srcW, srcH, presentation, temporal).then((res) => {
     if (res && neuralEng === runEngine &&
         video === runVideo && primaryController === runController &&
         sameVideoSource(captureVideoSource(runVideo), runVideoSource) &&
@@ -3602,7 +3650,7 @@ function loop(owner, frameNow = null, frameMetadata = null) {
       scheduleMainLoop();
       return;
     }
-    if (mode === "upscale" && engine === "neural") renderNeuralFrame();
+    if (mode === "upscale" && engine === "neural") renderNeuralFrame(frameMetadata);
     else if (mode === "upscale") renderUpscale();
     else renderPassthrough();
     if (mode === "off" || owner !== primaryController || owner.video !== video) return;

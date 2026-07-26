@@ -8,6 +8,7 @@ export const NEURAL_FRAME_CHANNEL = "fsrcnnx-neural-frame-v1";
 const NONCE_PATTERN = /^[A-Za-z0-9_-]{16,128}$/;
 const ERROR_CODE_PATTERN = /^[a-z0-9][a-z0-9-]{0,47}$/;
 const MODEL_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const RESET_REASON_PATTERN = /^[a-z][a-z0-9-]{0,47}$/;
 const MAX_REQUEST_ID_LENGTH = 96;
 const MAX_ERROR_MESSAGE_LENGTH = 320;
 const MAX_SEEN_REQUEST_IDS = 256;
@@ -167,17 +168,58 @@ function defaultImageBitmapCheck(value) {
   return typeof Constructor === "function" && value instanceof Constructor;
 }
 
+function defaultVideoFrameCheck(value) {
+  const Constructor = globalThis.VideoFrame;
+  return typeof Constructor === "function" && value instanceof Constructor;
+}
+
 async function loadRuntimeDependencies() {
-  const [neural, ssimds, sharpen] = await Promise.all([
+  const [neural, ssimds, sharpen, cdaPriors] = await Promise.all([
     import("../core/fsrcnnx-neural.js"),
     import("../core/fsrcnnx-ssimds-runtime.js"),
     import("../core/fsrcnnx-sharpen.js"),
+    import("../core/fsrcnnx-cda-priors.js"),
   ]);
   return {
     createNeuralEngine: neural.createNeuralEngine,
     SsimDownscaler: ssimds.SsimDownscaler,
     buildSharpenShader: sharpen.buildSharpenShader,
+    createCdaPriorGenerator: cdaPriors.createCdaPriorGenerator,
+    CdaTemporalTracker: cdaPriors.CdaTemporalTracker,
   };
+}
+
+function contractUsesProvider(contract, provider) {
+  if (contract?.version !== 2 || !contract.graphs ||
+      typeof contract.graphs !== "object") return false;
+  return Object.values(contract.graphs).some((graph) =>
+    Object.values(graph?.inputs || {}).some(
+      (descriptor) => descriptor?.provider === provider,
+    ));
+}
+
+function cdaAuxiliaryBindings(priors) {
+  const provider = priors?.provider;
+  if (provider !== "decoded-cda-v1") {
+    throw new NeuralFrameError(
+      "inference-failed",
+      "The decoded CDA prior provider returned an incompatible result",
+    );
+  }
+  return Object.freeze({
+    motion: Object.freeze({
+      gpuBuffer: priors.motion,
+      dataType: "float32",
+      dims: priors.motionDims,
+      provider,
+    }),
+    residual: Object.freeze({
+      gpuBuffer: priors.residual,
+      dataType: "float32",
+      dims: priors.residualDims,
+      provider,
+    }),
+  });
 }
 
 function sanitizeModel(entry) {
@@ -265,6 +307,58 @@ function validatePresentation(value) {
   });
 }
 
+function validateTemporal(value) {
+  if (value === undefined) value = {};
+  if (!isObject(value)) {
+    throw new NeuralFrameError("invalid-request", "temporal metadata must be an object");
+  }
+  assertAllowedKeys(
+    value,
+    new Set(["mediaTime", "presentedFrames", "reset", "resetReason"]),
+    "temporal metadata",
+  );
+  const temporal = {};
+  if (value.mediaTime !== undefined) {
+    if (!Number.isFinite(value.mediaTime) ||
+        value.mediaTime < 0 || value.mediaTime > Number.MAX_SAFE_INTEGER) {
+      throw new NeuralFrameError(
+        "invalid-request",
+        "temporal.mediaTime must be a finite non-negative number",
+      );
+    }
+    temporal.mediaTime = value.mediaTime;
+  }
+  if (value.presentedFrames !== undefined) {
+    if (!Number.isSafeInteger(value.presentedFrames) || value.presentedFrames < 0) {
+      throw new NeuralFrameError(
+        "invalid-request",
+        "temporal.presentedFrames must be a non-negative safe integer",
+      );
+    }
+    temporal.presentedFrames = value.presentedFrames;
+  }
+  if (value.reset !== undefined) {
+    if (typeof value.reset !== "boolean") {
+      throw new NeuralFrameError(
+        "invalid-request",
+        "temporal.reset must be a boolean",
+      );
+    }
+    temporal.reset = value.reset;
+  }
+  if (value.resetReason !== undefined) {
+    if (typeof value.resetReason !== "string" ||
+        !RESET_REASON_PATTERN.test(value.resetReason)) {
+      throw new NeuralFrameError(
+        "invalid-request",
+        "temporal.resetReason must be a bounded lowercase identifier",
+      );
+    }
+    temporal.resetReason = value.resetReason;
+  }
+  return Object.freeze(temporal);
+}
+
 export function createNeuralFrameSession({
   loadDependencies = loadRuntimeDependencies,
   gpu = globalThis.navigator?.gpu,
@@ -276,6 +370,7 @@ export function createNeuralFrameSession({
   createUploadCanvas = createLocalUploadCanvas,
   createImageBitmapImpl = globalThis.createImageBitmap,
   isImageBitmap = defaultImageBitmapCheck,
+  isVideoFrame = defaultVideoFrameCheck,
   now = () => globalThis.performance.now(),
   log = (...args) => console.log(...args),
   warn = (...args) => console.warn(...args),
@@ -305,6 +400,8 @@ export function createNeuralFrameSession({
   let sourceTexture = null;
   let sourceTextureWidth = 0;
   let sourceTextureHeight = 0;
+  let cdaPriorGenerator = null;
+  let cdaTemporalTracker = null;
   let uploadCanvas = null;
   let uploadContext = null;
   let readbackTexture = null;
@@ -325,6 +422,11 @@ export function createNeuralFrameSession({
     ssimdsRuns: 0,
     ssimdsBypasses: 0,
     sharpenRuns: 0,
+    externalCopies: 0,
+    stagedUploads: 0,
+    externalCopyFailures: 0,
+    cdaPriorRuns: 0,
+    cdaPriorResets: 0,
     lastRunMs: 0,
     meanRunMs: 0,
   };
@@ -421,9 +523,12 @@ export function createNeuralFrameSession({
     const oldSource = sourceTexture;
     const oldReadbackTexture = readbackTexture;
     const oldReadbackBuffer = readbackBuffer;
+    const oldCdaPriorGenerator = cdaPriorGenerator;
     sourceTexture = null;
     sourceTextureWidth = 0;
     sourceTextureHeight = 0;
+    cdaPriorGenerator = null;
+    cdaTemporalTracker = null;
     uploadCanvas = null;
     uploadContext = null;
     readbackTexture = null;
@@ -435,6 +540,7 @@ export function createNeuralFrameSession({
     safeDestroy(oldSource);
     safeDestroy(oldReadbackTexture);
     safeDestroy(oldReadbackBuffer);
+    try { oldCdaPriorGenerator?.dispose?.(); } catch {}
     try { ssimds?.destroy?.(); } catch {}
     ssimds = null;
     sampler = null;
@@ -720,7 +826,7 @@ export function createNeuralFrameSession({
     return candidate;
   }
 
-  function stageSourceBitmap(bitmap, width, height) {
+  function stageSourceFrame(frame, width, height) {
     if (!uploadCanvas || !uploadContext) {
       uploadCanvas = createUploadCanvas(width, height);
       uploadContext = uploadCanvas?.getContext?.("2d", {
@@ -740,10 +846,9 @@ export function createNeuralFrameSession({
     if (uploadCanvas.width !== width) uploadCanvas.width = width;
     if (uploadCanvas.height !== height) uploadCanvas.height = height;
     uploadContext.globalCompositeOperation = "copy";
-    uploadContext.drawImage(bitmap, 0, 0, width, height);
-    // A transferred ImageBitmap can remain valid for 2D drawing while Chromium
-    // imports it as an all-zero WebGPU external image across renderer processes.
-    // Materialize child-owned pixels so the GPU upload has deterministic content.
+    uploadContext.drawImage(frame, 0, 0, width, height);
+    // This compatibility path materializes child-owned pixels when Chromium
+    // cannot import a transferred ImageBitmap or VideoFrame into WebGPU.
     try {
       return uploadContext.getImageData(0, 0, width, height, {
         colorSpace: SRGB_COLOR_SPACE,
@@ -751,6 +856,45 @@ export function createNeuralFrameSession({
     } catch {
       return uploadContext.getImageData(0, 0, width, height).data;
     }
+  }
+
+  function uploadSourceFrame(
+    ownerDevice,
+    frame,
+    source,
+    width,
+    height,
+    { directExternalCopy = false } = {},
+  ) {
+    const queue = ownerDevice?.queue;
+    // A transferred ImageBitmap can be accepted here yet import as all-zero
+    // pixels across Chromium's OOPIF boundary. Decoder-backed VideoFrame is the
+    // only direct path; ImageBitmap retains the child-owned staging path.
+    if (directExternalCopy &&
+        typeof queue?.copyExternalImageToTexture === "function") {
+      try {
+        queue.copyExternalImageToTexture(
+          { source: frame },
+          { texture: source, colorSpace: SRGB_COLOR_SPACE },
+          { width, height },
+        );
+        stats.externalCopies++;
+        return;
+      } catch {
+        // A transferred external image can be unsupported for a particular
+        // Chromium/GPU combination even when the queue method exists. Preserve
+        // the deterministic child-owned pixel upload as a compatibility path.
+        stats.externalCopyFailures++;
+      }
+    }
+    const uploadPixels = stageSourceFrame(frame, width, height);
+    queue.writeTexture(
+      { texture: source },
+      uploadPixels,
+      { bytesPerRow: width * 4, rowsPerImage: height },
+      { width, height },
+    );
+    stats.stagedUploads++;
   }
 
   function ensureSharpenPipeline(ownerDevice, format, strength) {
@@ -916,6 +1060,27 @@ export function createNeuralFrameSession({
       await releaseFrameResources();
       if (initGeneration !== lifecycleGeneration) throw cancelledError();
     }
+    const nextContract = engine.activeContract?.() ?? null;
+    const needsDecodedCdaPriors = contractUsesProvider(
+      nextContract,
+      "decoded-cda-v1",
+    );
+    if (needsDecodedCdaPriors) {
+      if (typeof loaded.createCdaPriorGenerator !== "function" ||
+          typeof loaded.CdaTemporalTracker !== "function") {
+        throw new NeuralFrameError(
+          "runtime-unavailable",
+          "Decoded CDA prior support is unavailable",
+        );
+      }
+      try { cdaPriorGenerator?.dispose?.(); } catch {}
+      cdaPriorGenerator = loaded.createCdaPriorGenerator(nextDevice);
+      cdaTemporalTracker = new loaded.CdaTemporalTracker();
+    } else {
+      try { cdaPriorGenerator?.dispose?.(); } catch {}
+      cdaPriorGenerator = null;
+      cdaTemporalTracker = null;
+    }
     device = nextDevice;
     initialized = true;
     observeDevice(nextDevice);
@@ -936,24 +1101,29 @@ export function createNeuralFrameSession({
     }
     assertAllowedKeys(
       payload,
-      new Set(["bitmap", "srcW", "srcH", "presentation"]),
+      new Set(["bitmap", "srcW", "srcH", "presentation", "temporal"]),
       "run payload",
     );
-    const bitmap = payload.bitmap;
-    if (!isImageBitmap(bitmap)) {
+    const inputFrame = payload.bitmap;
+    const videoFrame = isVideoFrame(inputFrame);
+    const imageBitmap = isImageBitmap(inputFrame);
+    if (!videoFrame && !imageBitmap) {
       throw new NeuralFrameError(
         "invalid-bitmap",
-        "run requires a transferred ImageBitmap",
+        "run requires a transferred ImageBitmap or VideoFrame",
       );
     }
     {
       const srcW = positiveInteger(payload.srcW, "run.srcW");
       const srcH = positiveInteger(payload.srcH, "run.srcH");
       const presentation = validatePresentation(payload.presentation);
-      if (bitmap.width !== srcW || bitmap.height !== srcH) {
+      const temporal = validateTemporal(payload.temporal);
+      const frameWidth = videoFrame ? inputFrame.displayWidth : inputFrame.width;
+      const frameHeight = videoFrame ? inputFrame.displayHeight : inputFrame.height;
+      if (frameWidth !== srcW || frameHeight !== srcH) {
         throw new NeuralFrameError(
           "invalid-bitmap",
-          `ImageBitmap dimensions ${bitmap.width}x${bitmap.height} do not match ${srcW}x${srcH}`,
+          `Input frame dimensions ${frameWidth}x${frameHeight} do not match ${srcW}x${srcH}`,
         );
       }
 
@@ -970,15 +1140,57 @@ export function createNeuralFrameSession({
         );
       }
       const source = ensureSourceTexture(runDevice, srcW, srcH);
-      const uploadPixels = stageSourceBitmap(bitmap, srcW, srcH);
       const started = now();
-      runDevice.queue.writeTexture(
-        { texture: source },
-        uploadPixels,
-        { bytesPerRow: srcW * 4, rowsPerImage: srcH },
-        { width: srcW, height: srcH },
+      uploadSourceFrame(runDevice, inputFrame, source, srcW, srcH, {
+        directExternalCopy: videoFrame,
+      });
+      let effectiveTemporal = temporal;
+      let engineOptions = { temporal };
+      if (cdaPriorGenerator) {
+        let boundary;
+        if (Number.isFinite(temporal.mediaTime) &&
+            Number.isSafeInteger(temporal.presentedFrames)) {
+          boundary = cdaTemporalTracker.observe({
+            mediaTime: temporal.mediaTime,
+            presentedFrames: temporal.presentedFrames,
+            width: srcW,
+            height: srcH,
+            forceReset: temporal.reset === true,
+          });
+        } else {
+          cdaTemporalTracker.reset(temporal.resetReason || "metadata-unavailable");
+          boundary = Object.freeze({
+            reset: true,
+            reason: temporal.resetReason || "metadata-unavailable",
+            frameIndex: 0,
+          });
+        }
+        const priors = cdaPriorGenerator.generate(source, srcW, srcH, {
+          reset: boundary.reset,
+        });
+        const reset = boundary.reset || !priors.valid;
+        const resetReason = reset
+          ? (boundary.reason || temporal.resetReason || "prior-initialization")
+          : undefined;
+        effectiveTemporal = Object.freeze({
+          ...temporal,
+          reset,
+          ...(resetReason ? { resetReason } : {}),
+        });
+        engineOptions = Object.freeze({
+          temporal: effectiveTemporal,
+          reset,
+          auxiliary: cdaAuxiliaryBindings(priors),
+        });
+        stats.cdaPriorRuns++;
+        if (reset) stats.cdaPriorResets++;
+      }
+      const rendered = await engine.run(
+        { tex: source },
+        srcW,
+        srcH,
+        engineOptions,
       );
-      const rendered = await engine.run({ tex: source }, srcW, srcH);
       if (disposed || runLifecycleGeneration !== lifecycleGeneration) {
         throw cancelledError();
       }
@@ -1138,6 +1350,7 @@ export function createNeuralFrameSession({
           srcH,
           modelWidth,
           modelHeight,
+          temporal: effectiveTemporal,
           presentation: diagnostics,
           stats: snapshotStats(),
           bitmap: outputBitmap,

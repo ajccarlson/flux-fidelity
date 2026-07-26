@@ -26,6 +26,7 @@
     "check:browser-fixtures": "node tools/check-browser-fixtures.mjs",
     "check:release-record": "node tools/check-release-clearance.mjs --record-only",
     "check:rife-reproduction": "sh tools/model-reproduction/check-rife-fp16.sh",
+    "check:cda-feasibility": "python -B -m unittest discover -s tools/cda-vsr -p \"test_*.py\"",
     "validate:browser": "node tools/browser-validation.mjs",
     "fetch:shader-sources": "node tools/fetch-shader-sources.mjs",
     "reference:generate": "node tools/generate-reference-fixtures.mjs",
