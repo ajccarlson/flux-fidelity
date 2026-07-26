@@ -93,10 +93,10 @@ function writeLedger(rootDir, ledger) {
   writeComplianceFile(rootDir, "release-clearance.json", JSON.stringify(ledger));
 }
 
-test("current release-clearance record is structurally valid and explicitly blocked", () => {
+test("current release-clearance record is structurally valid and nonblocking", () => {
   const result = inspectReleaseClearance({ rootDir: root });
   assert.deepEqual(result.errors, []);
-  assert.ok(result.blocked.length > 0);
+  assert.deepEqual(result.blocked, []);
 
   const fp16Gate = result.ledger.gates.find((gate) => gate.id === "unproven-rife-fp16-conversion");
   const fp16Artifact = fp16Gate.artifacts.find(
@@ -106,9 +106,15 @@ test("current release-clearance record is structurally valid and explicitly bloc
   assert.match(readFileSync(join(root, provenanceFile), "utf8"),
     new RegExp(fp16Artifact.sha256));
 
-  for (const id of ["unidentified-rife-model", "unreproducible-span-smoke-model"]) {
+  for (const id of [
+    "unidentified-rife-model",
+    "missing-x3-x4-shader-sources",
+    "unreproducible-span-smoke-model",
+    "unresolved-deband-port-origin",
+  ]) {
     const gate = result.ledger.gates.find((entry) => entry.id === id);
-    assert.equal(gate.status, "blocked", `${id} must continue to block private-history publication`);
+    assert.equal(gate.status, "accepted-risk", `${id} must be explicitly accepted`);
+    assert.equal(gate.riskAcceptance.historyRetentionAccepted, true);
     assert.ok(gate.artifacts.every((artifact) => artifact.disposition === "removed"));
   }
 
@@ -315,7 +321,7 @@ test("nonblocking gates require meaningful evidence references", () => {
   }
 });
 
-test("accepted-risk is limited to documented present-artifact review gates", () => {
+test("accepted-risk distinguishes present review gates from removed history gates", () => {
   const fixture = mkdtempSync(join(tmpdir(), "fsrcnnx-release-clearance-risk-"));
   try {
     writeFileSync(join(fixture, "artifact.bin"), "fixture");
@@ -349,7 +355,24 @@ test("accepted-risk is limited to documented present-artifact review gates", () 
       requiredGateIds: ["lgpl-compliance-review"],
     });
     assert.ok(removed.errors.some((error) =>
-      error.includes("accepted-risk cannot cover a removed historical artifact")));
+      error.includes("review accepted-risk cannot cover a removed historical artifact")));
+
+    rmSync(join(fixture, "artifact.bin"));
+    gate.id = "unidentified-rife-model";
+    gate.artifacts[0].sha256 = createHash("sha256").update("fixture").digest("hex");
+    gate.riskAcceptance = {
+      acceptedBy: "repository owner",
+      acceptedOn: "2026-07-25",
+      historyRetentionAccepted: true,
+      rationale: "The removed artifact in retained history is nonblocking.",
+    };
+    writeLedger(fixture, { schemaVersion: 1, scope: "test", gates: [gate] });
+    const historical = inspectReleaseClearance({
+      rootDir: fixture,
+      requiredGateIds: ["unidentified-rife-model"],
+    });
+    assert.deepEqual(historical.errors, []);
+    assert.deepEqual(historical.blocked, []);
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }
