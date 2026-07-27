@@ -19,6 +19,7 @@ docs/internal/
 notes/
 scratch/
 .agents/
+.claude/
 .codex/
 AGENTS.md
 CLAUDE.md
