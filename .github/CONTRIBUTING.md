@@ -1,6 +1,6 @@
 # Contributing
 
-FSRCNNX-EXT is pre-release software. Keep changes focused and open pull
+Flux Fidelity is pre-release software. Keep changes focused and open pull
 requests against `develop`; `main` is reserved for stable integration.
 
 ## Before opening a pull request
@@ -9,7 +9,7 @@ requests against `develop`; `main` is reserved for stable integration.
 2. Run `npm run check`.
 3. For runtime, shader, model, or packaging changes, run
    `npm run package:internal`, then
-   `npm run validate:browser -- --extension-root dist/fsrcnnx-ext`.
+   `npm run validate:browser -- --extension-root dist/flux-fidelity`.
 4. Explain user-visible behavior and validation results in the pull request.
 
 Changes to models, shaders, generated files, or vendored code must record the

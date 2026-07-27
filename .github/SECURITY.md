@@ -1,6 +1,6 @@
 # Security policy
 
-FSRCNNX-EXT is pre-release software. Security fixes target the latest commit on
+Flux Fidelity is pre-release software. Security fixes target the latest commit on
 `main`; no released version is currently supported.
 
 ## Report a vulnerability

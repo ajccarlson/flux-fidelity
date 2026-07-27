@@ -265,7 +265,7 @@
         },
         {
           "path": "docs/compliance/LGPL_REBUILDING.md",
-          "sha256": "1e7843deaf5da74a884a78b98205f99d034cf12cdfece0b8bec1b72cf36843bd"
+          "sha256": "9eb695edb7c0decd208bdb2e2df37e60731564927a0fdeaa000cfea574058f52"
         },
         {
           "path": "LICENSE",
@@ -281,7 +281,7 @@
         },
         {
           "path": "NOTICE",
-          "sha256": "42dfd832a3c91892045eb6a2c5f76df4aa185c794145f0c3726fa20054c5daaa"
+          "sha256": "ccf9619391a28857fbac0e0c0ea35da1c4499bac91da1d8114ca20a39a1c6507"
         }
       ],
       "evidence": [

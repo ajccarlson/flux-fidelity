@@ -1,5 +1,5 @@
 {
-  "name": "fsrcnnx-ext",
+  "name": "flux-fidelity",
   "version": "0.50.0",
   "private": true,
   "type": "module",
@@ -36,7 +36,7 @@
     "package:stage": "node tools/build-package.mjs",
     "package:internal": "npm run check && npm run package:stage",
     "package": "npm run release:check",
-    "release:check": "npm run check && node tools/check-release-clearance.mjs && npm run package:stage && npm run validate:browser -- --extension-root dist/fsrcnnx-ext --neural-model-key cda-vsr-4x --require-temporal-neural-runs",
+    "release:check": "npm run check && node tools/check-release-clearance.mjs && npm run package:stage && npm run validate:browser -- --extension-root dist/flux-fidelity --neural-model-key cda-vsr-4x --require-temporal-neural-runs",
     "test": "node --test tests/*.test.mjs"
   }
 }

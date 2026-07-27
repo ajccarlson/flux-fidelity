@@ -11,14 +11,14 @@ const LEGACY_ICON_SOURCES = Object.freeze(["icon.svg", "icon-generator.py"]);
 // current rendering without relying on an external SVG renderer, native graphics
 // libraries, or unpinned development packages.
 export const ICON_ASSET_CONTRACT = Object.freeze([
-  Object.freeze({ path: "icons/icon-16.png", size: 16, sha256: "6bad5618b39be4f1f2e9bd4ac885883dec6daa1867ee711c3918cbb4bdc8f229" }),
-  Object.freeze({ path: "icons/icon-32.png", size: 32, sha256: "5382c1ef63657e13c39f65e624f8cd43a4dd05e8816b0b8ddb40f957b8cbae6d" }),
-  Object.freeze({ path: "icons/icon-48.png", size: 48, sha256: "c13b88fade0561479b6ec1ceb25a00df4098eb984004b31e0d219448bd2a6b97" }),
-  Object.freeze({ path: "icons/icon-128.png", size: 128, sha256: "c0557108bc16182e53b5cf0849af20bec30485d2c204442812f239c05737d237" }),
-  Object.freeze({ path: "icons/icon-off-16.png", size: 16, sha256: "9fc9e822a9ef0abced19f3a7207b24af69a17d93eff053f122dc8122af57a2f3" }),
-  Object.freeze({ path: "icons/icon-off-32.png", size: 32, sha256: "176297a941ee8864bf6772e88b8d2ea1371349b3bf80adfa027e91c54fabb134" }),
-  Object.freeze({ path: "icons/icon-off-48.png", size: 48, sha256: "9a22b404eac37c6ad4a456f2825198f3045ed9c30bb04256248c089ea4cbbafd" }),
-  Object.freeze({ path: "icons/icon-off-128.png", size: 128, sha256: "4e6f23fa3ee73f80d13390243a582dd899a5f0f58ada114fcf45c9f984180c37" }),
+  Object.freeze({ path: "icons/icon-16.png", size: 16, sha256: "b49d5afbe24df36213aca04d29c4a69b5dfe2d6d98ddf24842481d0152b4525c" }),
+  Object.freeze({ path: "icons/icon-32.png", size: 32, sha256: "ea468bd1927deaf064cf9030ea8d9297aaf4c14e55f5eeb29811b83f7d8ad556" }),
+  Object.freeze({ path: "icons/icon-48.png", size: 48, sha256: "5d08ffcf98394ad200d97152f042b919687425a8336f59af9cdfd57a5dc5d78f" }),
+  Object.freeze({ path: "icons/icon-128.png", size: 128, sha256: "b3d7766c1d94e839b67bd39707ab4a01b74129512f9fc83a2bce7d5ee8c6f240" }),
+  Object.freeze({ path: "icons/icon-off-16.png", size: 16, sha256: "1ae0feb993f80eee8c66a1a310ac5b417ac408a291e9e350f6d9c8463965040f" }),
+  Object.freeze({ path: "icons/icon-off-32.png", size: 32, sha256: "511c29a3f053b199c315ccaeed08d76ad525d3573a33e1c90d32a4aee8736904" }),
+  Object.freeze({ path: "icons/icon-off-48.png", size: 48, sha256: "726d18ab2c1b9eee5938cf513366dddfca4ac84b38aeb6e1f6dd0b720b3b4808" }),
+  Object.freeze({ path: "icons/icon-off-128.png", size: 128, sha256: "13b94b3cbf4db6078bbf8c17b749a70ff5fe16abbb40f0e0bebaf40d6328a2be" }),
 ]);
 
 function inspectPngHeader(data, spec, errors) {

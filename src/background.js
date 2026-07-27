@@ -31,10 +31,10 @@ const neuralCapabilities = new Map();
 
 function titleFor(mode) {
   switch (mode) {
-    case "upscale": return "Video Upscaler — upscaling active";
-    case "passthrough": return "Video Upscaler — passthrough";
-    case "protected": return "Video Upscaler — source can't be processed";
-    default: return "Video Upscaler";
+    case "upscale": return "FluFi — upscaling active";
+    case "passthrough": return "FluFi — passthrough";
+    case "protected": return "FluFi — source can't be processed";
+    default: return "FluFi";
   }
 }
 
