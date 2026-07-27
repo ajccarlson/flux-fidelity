@@ -1,6 +1,6 @@
 # Third-party notices
 
-Flux Fidelity includes or derives from the components below. Exact artifact hashes and unresolved release gates are recorded in [MODEL_PROVENANCE.md](docs/compliance/MODEL_PROVENANCE.md) and the machine-readable [`release-clearance.json`](https://github.com/ajccarlson/fsrcnnx-ext/blob/main/docs/compliance/release-clearance.json). `npm run release:check` remains the authoritative release and distribution gate.
+Flux Fidelity includes or derives from the components below. Exact artifact hashes and unresolved release gates are recorded in [MODEL_PROVENANCE.md](docs/compliance/MODEL_PROVENANCE.md) and the machine-readable [`release-clearance.json`](https://github.com/ajccarlson/flux-fidelity/blob/main/docs/compliance/release-clearance.json). `npm run release:check` remains the authoritative release and distribution gate.
 
 ## License not specified by upstream
 

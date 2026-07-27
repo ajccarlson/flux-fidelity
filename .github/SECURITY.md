@@ -6,7 +6,7 @@ Flux Fidelity is pre-release software. Security fixes target the latest commit o
 ## Report a vulnerability
 
 Do not open a public issue. Use GitHub's
-[private vulnerability reporting](https://github.com/ajccarlson/fsrcnnx-ext/security/advisories/new)
+[private vulnerability reporting](https://github.com/ajccarlson/flux-fidelity/security/advisories/new)
 and include the affected commit, browser and operating system, reproduction
 steps, and expected impact.
 

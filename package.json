@@ -10,12 +10,12 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ajccarlson/fsrcnnx-ext.git"
+    "url": "git+https://github.com/ajccarlson/flux-fidelity.git"
   },
   "bugs": {
-    "url": "https://github.com/ajccarlson/fsrcnnx-ext/issues"
+    "url": "https://github.com/ajccarlson/flux-fidelity/issues"
   },
-  "homepage": "https://github.com/ajccarlson/fsrcnnx-ext#readme",
+  "homepage": "https://github.com/ajccarlson/flux-fidelity#readme",
   "scripts": {
     "check": "npm run check:syntax && npm run check:package && npm run check:models && npm run check:generated && npm run check:references && npm run check:browser-fixtures && npm run check:release-record && npm run check:cda-feasibility && npm test",
     "check:syntax": "node --experimental-vm-modules --no-warnings tools/check-syntax.mjs",
