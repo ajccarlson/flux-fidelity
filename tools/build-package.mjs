@@ -67,8 +67,8 @@ export function buildPackage({ rootDir = root, distDir = resolve(rootDir, "dist"
   if (manifest.version !== version) {
     throw new Error(`Manifest version ${manifest.version || "missing"} differs from package ${version}`);
   }
-  const stage = resolve(distDir, "fsrcnnx-ext");
-  const archive = resolve(distDir, `fsrcnnx-ext-${version}.zip`);
+  const stage = resolve(distDir, "flux-fidelity");
+  const archive = resolve(distDir, `flux-fidelity-${version}.zip`);
   const checksums = resolve(distDir, "SHA256SUMS");
 
   rmSync(stage, { recursive: true, force: true });

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "minimum_chrome_version": "113",
-  "name": "FSRCNNX-EXT — WebGPU Video Enhancer",
+  "name": "Flux Fidelity — WebGPU Video Enhancer",
   "version": "0.50.0",
   "description": "Real-time WebGPU video upscaling, filtering, and optional frame interpolation for readable HTML5 video.",
   "permissions": [
@@ -10,7 +10,7 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "FSRCNNX",
+    "default_title": "FluFi",
     "default_icon": {
       "16": "icons/icon-16.png",
       "32": "icons/icon-32.png",

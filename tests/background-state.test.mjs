@@ -323,7 +323,7 @@ test("navigation, tab removal, and tab replacement fully reset ownership", async
   let mark = state.calls.length;
   state.listeners.updated(12, { status: "loading" });
   assert.equal(callsSince(state, mark, "setBadgeText")[0].details.text, "");
-  assert.equal(callsSince(state, mark, "setTitle")[0].details.title, "Video Upscaler");
+  assert.equal(callsSince(state, mark, "setTitle")[0].details.title, "FluFi");
   assert.equal(callsSince(state, mark, "setIcon")[0].details.path[16], "icons/icon-off-16.png");
   mark = state.calls.length;
   message({ type: "FSRCNNX_STATE", mode: "upscale" }, sender(12, "doc-a"));

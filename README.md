@@ -1,6 +1,6 @@
-# FSRCNNX-EXT
+# Flux Fidelity
 
-FSRCNNX-EXT is a pre-release Chromium extension for local WebGPU video enhancement. It supports FSRCNNX, ArtCNN, and bundled Real-ESRGAN or temporal CDA-VSR ONNX upscaling; optional SSimDownscaler and sharpening; and RIFE or blend frame interpolation.
+Flux Fidelity is a pre-release Chromium extension for local WebGPU video enhancement. It supports FSRCNNX, ArtCNN, and bundled Real-ESRGAN or temporal CDA-VSR ONNX upscaling; optional SSimDownscaler and sharpening; and RIFE or blend frame interpolation.
 
 ## Requirements
 
@@ -56,7 +56,7 @@ Set `FSRCNNX_BROWSER` if no browser is found automatically. The manually loaded 
 `npm run package:internal` creates a deterministic validation archive and staged extension under `dist/`. Validate that exact staged package with:
 
 ```sh
-npm run validate:browser -- --extension-root dist/fsrcnnx-ext
+npm run validate:browser -- --extension-root dist/flux-fidelity
 ```
 
 `npm run package` enforces the release-clearance ledger, creates the

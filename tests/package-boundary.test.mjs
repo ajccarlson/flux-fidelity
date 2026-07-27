@@ -95,10 +95,10 @@ test("package creation never discovers an extra runtime-looking local file", () 
     const result = buildPackage({ rootDir: fixture, distDir: join(fixture, "output") });
 
     assert.equal(result.fileCount, 88);
-    assert.equal(basename(result.archive), "fsrcnnx-ext-1.2.3.zip");
+    assert.equal(basename(result.archive), "flux-fidelity-1.2.3.zip");
     assert.equal(
       readFileSync(result.checksums, "utf8"),
-      `${result.digest}  fsrcnnx-ext-1.2.3.zip\n`,
+      `${result.digest}  flux-fidelity-1.2.3.zip\n`,
     );
     assert.deepEqual(walk(result.stage), PACKAGE_FILES);
     assert.equal(existsSync(join(result.stage, "fsrcnnx-development-only.js")), false);
