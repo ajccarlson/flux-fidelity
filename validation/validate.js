@@ -468,6 +468,9 @@ async function validateOnnxModels(runId, resultMap) {
       gpuInput: true,
       gpuOutput: true,
       modelUrl: resolvePackagedAssetUrl("model/rife_v4.26.onnx"),
+      // WebGPU session creation + inference runs on SwiftShader in CI, which
+      // intermittently needs well over the default budget.
+      timeoutMs: 120_000,
     },
   ];
   const outcomes = new Map();
@@ -498,7 +501,7 @@ async function validateOnnxModels(runId, resultMap) {
           check.kind === "neural"
             ? executeNeuralValidationOrtCheck(ort, check)
             : executeValidationOrtCheck(ort, check),
-          VALIDATION_TIMEOUT_MS,
+          check.timeoutMs ?? VALIDATION_TIMEOUT_MS,
           `${check.label} ORT validation`,
         );
         const stats = check.kind === "neural" ? result.stats : result;
