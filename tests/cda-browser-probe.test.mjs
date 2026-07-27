@@ -900,7 +900,7 @@ test("CDA browser probe stages and removes only a disposable extension copy", as
     projectRoot: root,
     temporaryParent: parent,
     buildPackageImpl: async ({ distDir }) => {
-      const stage = join(distDir, "fsrcnnx-ext");
+      const stage = join(distDir, "flux-fidelity");
       const neuralDirectory = join(stage, "model/neural");
       await mkdir(neuralDirectory, { recursive: true });
       await writeFile(join(neuralDirectory, "manifest.json"), JSON.stringify([{

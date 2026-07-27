@@ -37,6 +37,6 @@ You may instead replace the generated FSRCNNX `.wgsl` and `.passes.json` files o
 1. Extract the extension package to a writable directory containing `manifest.json`.
 2. Regenerate or replace the LGPL-covered files as described above.
 3. Open `chrome://extensions` (or the Chromium equivalent), enable **Developer mode**, choose **Load unpacked**, and select that directory.
-4. Disable any other installed copy of FSRCNNX-EXT, then use **Reload** on the unpacked copy after subsequent changes.
+4. Disable any other installed copy of Flux Fidelity, then use **Reload** on the unpacked copy after subsequent changes.
 
 This installs the recipient-modified files directly; no signing, store upload, or project-controlled service is required.
