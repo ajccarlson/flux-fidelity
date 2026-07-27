@@ -4,7 +4,16 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    target-branch: "develop"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    target-branch: "develop"
+  # The model-reproduction and neural-export requirements are intentionally
+  # excluded: their pins back deterministic, hash-validated model artifacts.
+  - package-ecosystem: "pip"
+    directory: "/tools/cda-vsr"
+    schedule:
+      interval: "weekly"
+    target-branch: "develop"
