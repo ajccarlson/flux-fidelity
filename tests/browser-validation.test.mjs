@@ -255,7 +255,7 @@ test("browser validation is release-blocking without slowing internal packaging"
 test("CI validates the staged package under Xvfb without disabling the sandbox", () => {
   assert.equal(
     (workflow.match(
-      /actions\/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405/g,
+      /actions\/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97/g,
     ) || []).length,
     2,
   );
