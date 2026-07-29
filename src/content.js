@@ -171,7 +171,7 @@ const COMMANDS = Object.freeze({
   FSRCNNX_SETSSIMDS: booleanPayload((module, msg) => module.setSSimDS(msg.on)),
   FSRCNNX_SETPOLICY: enumPayload(
     "policy",
-    ["display", "auto", "force2", "force3", "force4", "force8"],
+    ["display", "auto", "force2", "force3", "force4", "force8", "native"],
     (module, msg) => module.setPolicy(msg.policy),
   ),
 });
