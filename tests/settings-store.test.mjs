@@ -25,9 +25,14 @@ function schemaKey(scope) {
   return `fsrcnnx_setting:${encodeURIComponent(scope)}:$schema`;
 }
 
-function record(value, { source = "seed", time = 1, counter = 0 } = {}) {
+function record(value, {
+  source = "seed",
+  time = 1,
+  counter = 0,
+  schemaVersion = SETTINGS_SCHEMA_VERSION,
+} = {}) {
   const result = {
-    schemaVersion: SETTINGS_SCHEMA_VERSION,
+    schemaVersion,
     source,
     stamp: { time, counter },
   };
@@ -316,6 +321,70 @@ test("legacy layouts remain zero-write read-through until the first explicit v2 
   second.close();
 });
 
+test("older record envelopes migrate without resetting stored settings", async () => {
+  const scope = "https://schema-upgrade.example";
+  const priorVersion = SETTINGS_SCHEMA_VERSION - 1;
+  assert.ok(priorVersion >= 1, "the regression requires a predecessor schema");
+  const storage = new MemoryStorage({
+    [schemaKey(scope)]: { schemaVersion: priorVersion },
+    [fieldKey(scope, "mode")]: record("upscale", {
+      source: "prior-version",
+      time: 50,
+      schemaVersion: priorVersion,
+    }),
+  });
+  const store = createSettingsStore({
+    storage,
+    onChanged: storage.onChanged,
+    scope,
+    fields: ["mode", "policy"],
+    sourceId: "schema-upgrade",
+    now: clock(100),
+  });
+
+  assert.deepEqual(await store.ready, { mode: "upscale" });
+  assert.equal(store.health().state, "ready");
+  assert.equal(storage.setCalls.length, 0, "loading an older envelope remains read-only");
+
+  await store.write({ policy: "auto" });
+  assert.equal(storage.data[fieldKey(scope, "mode")].value, "upscale");
+  assert.equal(storage.data[fieldKey(scope, "policy")].schemaVersion, SETTINGS_SCHEMA_VERSION);
+  assert.equal(storage.data[schemaKey(scope)].schemaVersion, SETTINGS_SCHEMA_VERSION);
+  await store.close();
+});
+
+test("structurally compatible newer envelopes survive downgrade reads and writes", async () => {
+  const scope = "https://schema-downgrade.example";
+  const newerVersion = SETTINGS_SCHEMA_VERSION + 1;
+  const newerMode = record("upscale", {
+    source: "newer-version",
+    time: 50,
+    schemaVersion: newerVersion,
+  });
+  const storage = new MemoryStorage({
+    [schemaKey(scope)]: { schemaVersion: newerVersion },
+    [fieldKey(scope, "mode")]: newerMode,
+  });
+  const store = createSettingsStore({
+    storage,
+    onChanged: storage.onChanged,
+    scope,
+    fields: ["mode", "policy"],
+    sourceId: "schema-downgrade",
+    now: clock(100),
+  });
+
+  assert.deepEqual(await store.ready, { mode: "upscale" });
+  assert.equal(store.health().state, "ready");
+  await store.write({ policy: "auto" });
+  assert.deepEqual(storage.data[fieldKey(scope, "mode")], newerMode,
+    "a current-version write never rewrites an untouched newer record");
+  assert.equal(storage.data[schemaKey(scope)].schemaVersion, newerVersion,
+    "a downgrade never replaces a newer compatible schema marker");
+  assert.equal(storage.data[fieldKey(scope, "policy")].schemaVersion, SETTINGS_SCHEMA_VERSION);
+  await store.close();
+});
+
 test("retired deband fields are inert and cannot poison the active settings schema", async () => {
   const scope = "https://retired.example";
   const host = "retired.example";
@@ -350,7 +419,6 @@ test("retired deband fields are inert and cannot poison the active settings sche
 });
 
 test("a corrupt explicit v2 field blocks legacy fallback and reports bounded health", async () => {
-  assert.equal(SETTINGS_SCHEMA_VERSION, 2);
   const scope = "https://corrupt.example";
   const host = "corrupt.example";
   const storage = new MemoryStorage({
@@ -367,7 +435,7 @@ test("a corrupt explicit v2 field blocks legacy fallback and reports bounded hea
   assert.equal(store.health().state, "error");
   assert.equal(store.health().errorOperation, "validation");
   assert.equal(store.health().scope, scope);
-  assert.match(store.health().error, /Corrupt v2 settings record: mode/);
+  assert.match(store.health().error, /Invalid settings record: mode/);
   assert.ok(store.health().error.length <= 240);
 
   await store.write({ mode: "off" });
