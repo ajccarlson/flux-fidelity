@@ -158,6 +158,7 @@ export class Interpolator {
     this._audioPreparation = null;
     this._audioCaptureSession = null;
     this._audioRoute = null;
+    this._audioDelayPendingDetail = null;
     this._audioTimer = null;
     this._audioBlocks = new Set();
     this._productionWasEligible = true;
@@ -794,7 +795,41 @@ export class Interpolator {
           throw new Error("AudioContext output device did not match the media element");
         }
       }
-      if (context.state !== "running") await context.resume?.();
+      if (context.state !== "running") {
+        await new Promise((resolve, reject) => {
+          let settled = false;
+          const finish = (callback, value) => {
+            if (settled) return;
+            settled = true;
+            try { context.removeEventListener?.("statechange", onStateChange); } catch {}
+            callback(value);
+          };
+          const onStateChange = () => {
+            if (context.state === "running") finish(resolve);
+            else if (context.state === "closed") {
+              finish(reject, new Error("AudioContext closed while resuming"));
+            }
+          };
+          try { context.addEventListener?.("statechange", onStateChange); } catch {}
+          let resumeResult;
+          try { resumeResult = context.resume?.(); }
+          catch (error) {
+            finish(reject, error);
+            return;
+          }
+          if (context.state === "running") {
+            finish(resolve);
+            if (resumeResult && typeof resumeResult.catch === "function") {
+              resumeResult.catch(() => {});
+            }
+            return;
+          }
+          Promise.resolve(resumeResult).then(() => {
+            if (context.state === "running") finish(resolve);
+            else finish(reject, new Error("AudioContext remained suspended"));
+          }, (error) => finish(reject, error));
+        });
+      }
       if (context.state !== "running") throw new Error("AudioContext remained suspended");
     })();
     preparation.setupPromise = setup;
@@ -1279,7 +1314,25 @@ export class Interpolator {
     }
   }
 
+  _deferAudioDelay(detail) {
+    this._audioDelayPendingDetail = detail;
+    return null;
+  }
+
+  _audioDelayClockDetail(stage, context, target) {
+    const clock = Number(context?.currentTime);
+    const readyAt = Number(target);
+    const state = typeof context?.state === "string" ? context.state : "missing";
+    const clockText = Number.isFinite(clock) ? clock.toFixed(3) : "unavailable";
+    const targetText = Number.isFinite(readyAt) ? readyAt.toFixed(3) : "unavailable";
+    const remaining = Number.isFinite(clock) && Number.isFinite(readyAt)
+      ? Math.max(0, readyAt - clock).toFixed(3)
+      : "unavailable";
+    return `${stage}; context=${state}; clock=${clockText}s; target=${targetText}s; remaining=${remaining}s`;
+  }
+
   _stageAudioDelay(video, generation) {
+    this._audioDelayPendingDetail = "evaluating";
     const muteAccess = this._mediaMuteAccess(video);
     if (!muteAccess) {
       this._setAudioBlocked("audio-terminal", true);
@@ -1289,7 +1342,7 @@ export class Interpolator {
         "audio takeover",
         { terminal: true },
       );
-      return null;
+      return this._deferAudioDelay("media-mute-access-unavailable");
     }
     let muted = false;
     let volume = 1;
@@ -1300,11 +1353,13 @@ export class Interpolator {
     const explicitlySilent = muted || (Number.isFinite(volume) && volume <= 0);
     if (explicitlySilent) {
       this._audioPreparation?.stagedTransaction?.rollback?.();
-      return this._stageSilentAudio(video, generation, "element-silent", null, muteAccess);
+      const transaction = this._stageSilentAudio(video, generation, "element-silent", null, muteAccess);
+      if (transaction) this._audioDelayPendingDetail = null;
+      return transaction || this._deferAudioDelay("silent-route-unavailable");
     }
 
     const session = this._ensureAudioCaptureSession(video, generation);
-    if (!session) return null;
+    if (!session) return this._deferAudioDelay("capture-session-unavailable");
     if (session.captureRecord?.exhausted && session.captureRecord.hadAudio) {
       this._setAudioBlocked("audio-terminal", true);
       this._handlePipelineFailure(
@@ -1313,26 +1368,38 @@ export class Interpolator {
         "audio takeover",
         { terminal: true },
       );
-      return null;
+      return this._deferAudioDelay("capture-session-exhausted");
     }
     if (session.audioTracks.length === 0) {
       this._audioPreparation?.stagedTransaction?.rollback?.();
-      return this._stageSilentAudio(video, generation, "no-audio-track", session, muteAccess);
+      const transaction = this._stageSilentAudio(video, generation, "no-audio-track", session, muteAccess);
+      if (transaction) this._audioDelayPendingDetail = null;
+      return transaction || this._deferAudioDelay("no-audio-route-unavailable");
     }
     if (!this._capturedAudioTracksHealthy(session)) {
       this._audioPreparation?.stagedTransaction?.rollback?.();
       this._setAudioBlocked(session.blockReason, true);
-      return null;
+      return this._deferAudioDelay("capture-tracks-unhealthy");
     }
     this._setAudioBlocked(session.blockReason, false);
 
     const preparation = this._prepareAudioDelay(video, generation);
-    if (!preparation || preparation.status !== "ready") return null;
+    if (!preparation) return this._deferAudioDelay("preparation-missing");
+    if (preparation.status !== "ready") {
+      const contextState = typeof preparation.context?.state === "string"
+        ? preparation.context.state
+        : "missing";
+      return this._deferAudioDelay(`preparation-${preparation.status || "unknown"}; context=${contextState}`);
+    }
     const { context } = preparation;
-    if (!context || context.state !== "running" || !this._audioSinkMatches(preparation, video)) {
+    let preparationDetail = null;
+    if (!context) preparationDetail = "preparation-context-missing";
+    else if (context.state !== "running") preparationDetail = `preparation-context-${context.state || "unknown"}`;
+    else if (!this._audioSinkMatches(preparation, video)) preparationDetail = "preparation-sink-mismatch";
+    if (preparationDetail) {
       preparation.status = "idle";
       this._resumeAudioPreparation(preparation);
-      return null;
+      return this._deferAudioDelay(preparationDetail);
     }
 
     let transaction = preparation.stagedTransaction;
@@ -1346,9 +1413,12 @@ export class Interpolator {
         transaction.rollback();
         transaction = null;
       } else if ((context.currentTime || 0) >= route.primeReadyAt) {
+        this._audioDelayPendingDetail = null;
         return transaction;
       } else {
-        return null;
+        return this._deferAudioDelay(
+          this._audioDelayClockDetail("route-priming", context, route.primeReadyAt),
+        );
       }
     }
 
@@ -1426,7 +1496,7 @@ export class Interpolator {
     } catch (error) {
       this._disposeAudioRoute(route, { restoreMute: false });
       this._failAudioPreparation(preparation, error);
-      return null;
+      return this._deferAudioDelay("route-staging-failed");
     }
 
     const owner = this;
@@ -1444,7 +1514,9 @@ export class Interpolator {
       },
     };
     preparation.stagedTransaction = transaction;
-    return null;
+    return this._deferAudioDelay(
+      this._audioDelayClockDetail("route-staged", context, route.primeReadyAt),
+    );
   }
 
   _stageSilentAudio(video, generation, reason, session, muteAccess) {
@@ -1991,7 +2063,13 @@ export class Interpolator {
       return { mount, audioTransaction: null };
     }
     const audioTransaction = this._stageAudioDelay(this.video, generation);
-    if (!audioTransaction) return this._rejectTakeoverGate("audio-delay-not-ready", diagnose);
+    if (!audioTransaction) {
+      return this._rejectTakeoverGate(
+        "audio-delay-not-ready",
+        diagnose,
+        this._audioDelayPendingDetail || "unknown",
+      );
+    }
     if (!audioTransaction.bypass && !audioTransaction.silent &&
         audioTransaction.context.state !== "running") {
       audioTransaction.rollback();
@@ -2430,6 +2508,7 @@ export class Interpolator {
     this._pipelineFailureStopQueued = false;
     this._pipelineFailureStreaks = Object.create(null);
     this._takeoverGateWarnAt.clear();
+    this._audioDelayPendingDetail = null;
     this._interpMode = this._forceBlend ? "blend" : "rife";
     this._fallbackArmed = true; this._srcFrameBase = null;
     this._tweenFailStreak = 0; this._prevTs = null;
@@ -3146,6 +3225,7 @@ export class Interpolator {
     this._pipelineReady = false;
     this._pipelineFailureStreaks = Object.create(null);
     this._takeoverGateWarnAt.clear();
+    this._audioDelayPendingDetail = null;
     this._lastEnqTs = null; this._targetInterval = 0;
     if (this.overlay) { this.overlay.remove(); this.overlay = null; }
     this.processor = null;
