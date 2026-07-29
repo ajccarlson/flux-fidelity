@@ -1208,6 +1208,176 @@ function makeAudioHarness({
   };
 }
 
+function makeTakeoverGateProbe() {
+  const warnings = [];
+  const interpolator = new Interpolator({
+    findVideo: () => null,
+    log: () => {},
+    warn: (message) => warnings.push(message),
+  });
+  const mount = {};
+  interpolator.running = true;
+  interpolator._state = "running";
+  interpolator._stopped = false;
+  interpolator.video = {
+    currentSrc: "https://example.test/video.mp4",
+    src: "",
+    srcObject: null,
+    sinkId: "",
+  };
+  interpolator.overlay = {};
+  interpolator._sourceCanPresent = () => true;
+  interpolator._overlayMountTarget = () => mount;
+  interpolator._relinquishPresentation = () => {};
+  interpolator._handleAudioCaptureChange = () => {};
+  interpolator._handlePipelineFailure = () => {};
+  interpolator._setAudioGain = () => {};
+  interpolator._stageAudioDelay = () => ({
+    bypass: true,
+    silent: false,
+    rollback() {},
+  });
+  return { generation: interpolator._lifecycleGen, interpolator, warnings };
+}
+
+function installActiveAudioRoute(interpolator) {
+  const session = {};
+  const route = {
+    silent: false,
+    muteOwned: true,
+    muteAccess: { read: () => true },
+    snapshot: {},
+    preparation: {},
+    context: { state: "running" },
+    session,
+  };
+  interpolator._takeoverActive = true;
+  interpolator._audioRoute = route;
+  interpolator._audioCaptureSession = session;
+  interpolator._audioSourceMatches = () => true;
+  interpolator._audioSinkMatches = () => true;
+  interpolator._capturedAudioTracksHealthy = () => true;
+  interpolator._syncOwnedAudioTracks = () => true;
+  return route;
+}
+
+test("due-frame takeover diagnostics identify every rejection gate", () => {
+  const cases = [
+    ["lifecycle-generation-stale", ({ generation }) => generation + 1],
+    ["source-video-missing", ({ interpolator }) => { interpolator.video = null; }],
+    ["presentation-overlay-missing", ({ interpolator }) => { interpolator.overlay = null; }],
+    ["audio-boundary-pending", ({ interpolator }) => { interpolator._audioBoundaryPending = true; }],
+    ["source-not-presentable", ({ interpolator }) => { interpolator._sourceCanPresent = () => false; }],
+    ["overlay-mount-unavailable", ({ interpolator }) => { interpolator._overlayMountTarget = () => null; }],
+    ["silent-audio-route-invalid", ({ interpolator }) => {
+      const route = installActiveAudioRoute(interpolator);
+      route.silent = true;
+      interpolator._silentAudioRouteValid = () => false;
+    }],
+    ["audio-source-changed", ({ interpolator }) => {
+      installActiveAudioRoute(interpolator);
+      interpolator._audioSourceMatches = () => false;
+    }],
+    ["audio-sink-mismatch", ({ interpolator }) => {
+      installActiveAudioRoute(interpolator);
+      interpolator._audioSinkMatches = () => false;
+    }],
+    ["audio-context-not-running", ({ interpolator }) => {
+      const route = installActiveAudioRoute(interpolator);
+      route.context.state = "suspended";
+    }],
+    ["audio-capture-session-mismatch", ({ interpolator }) => {
+      installActiveAudioRoute(interpolator);
+      interpolator._audioCaptureSession = {};
+    }],
+    ["audio-capture-session-tracks-unhealthy", ({ interpolator }) => {
+      const route = installActiveAudioRoute(interpolator);
+      interpolator._capturedAudioTracksHealthy = (owner) => owner !== route.session;
+    }],
+    ["audio-route-tracks-unhealthy", ({ interpolator }) => {
+      const route = installActiveAudioRoute(interpolator);
+      interpolator._capturedAudioTracksHealthy = (owner) => owner === route.session;
+    }],
+    ["audio-route-track-sync-failed", ({ interpolator }) => {
+      installActiveAudioRoute(interpolator);
+      interpolator._syncOwnedAudioTracks = () => false;
+    }],
+    ["media-mute-ownership-lost", ({ interpolator }) => {
+      const route = installActiveAudioRoute(interpolator);
+      route.muteAccess.read = () => false;
+    }],
+    ["audio-delay-not-ready", ({ interpolator }) => { interpolator._stageAudioDelay = () => null; }],
+    ["staged-audio-context-not-running", ({ interpolator }) => {
+      interpolator._stageAudioDelay = () => ({
+        bypass: false,
+        silent: false,
+        context: { state: "suspended" },
+        rollback() {},
+      });
+    }],
+    ["inverted-chain-resume-rejected", ({ interpolator }) => {
+      interpolator._chainInverted = true;
+      interpolator._chainPresentationSuspended = true;
+      interpolator.chain = { setInverted: () => false };
+    }],
+    ["inverted-chain-resume-threw", ({ interpolator }) => {
+      interpolator._chainInverted = true;
+      interpolator._chainPresentationSuspended = true;
+      interpolator.chain = { setInverted: () => { throw new Error("resume failed"); } };
+    }],
+  ];
+
+  for (const [gate, configure] of cases) {
+    const probe = makeTakeoverGateProbe();
+    const configuredGeneration = configure(probe);
+    const generation = configuredGeneration ?? probe.generation;
+    assert.equal(
+      probe.interpolator._stageTakeover(generation, { diagnose: true }),
+      null,
+      `${gate} rejects takeover`,
+    );
+    assert.equal(probe.warnings.length, 1, `${gate} emits one diagnostic`);
+    assert.match(
+      probe.warnings[0],
+      new RegExp(`^interp: takeover gated at ${gate}(?: \\(.*\\))? — due frame dropped$`),
+      `${gate} is named in its diagnostic`,
+    );
+  }
+});
+
+test("takeover gate warnings are opt-in and rate-limited independently", () => {
+  const originalNow = Date.now;
+  let now = 10_000;
+  Date.now = () => now;
+  try {
+    const { generation, interpolator, warnings } = makeTakeoverGateProbe();
+    interpolator._sourceCanPresent = () => false;
+
+    assert.equal(interpolator._stageTakeover(generation), null);
+    assert.deepEqual(warnings, [], "ordinary staging remains silent");
+
+    assert.equal(interpolator._stageTakeover(generation, { diagnose: true }), null);
+    assert.equal(interpolator._stageTakeover(generation, { diagnose: true }), null);
+    assert.equal(warnings.length, 1, "the same gate is suppressed within its interval");
+
+    interpolator._sourceCanPresent = () => true;
+    interpolator._audioBoundaryPending = true;
+    assert.equal(interpolator._stageTakeover(generation, { diagnose: true }), null);
+    assert.equal(warnings.length, 2, "a different gate has an independent limiter");
+
+    interpolator._audioBoundaryPending = false;
+    interpolator._sourceCanPresent = () => false;
+    now += 4_999;
+    assert.equal(interpolator._stageTakeover(generation, { diagnose: true }), null);
+    assert.equal(warnings.length, 2);
+    now += 1;
+    assert.equal(interpolator._stageTakeover(generation, { diagnose: true }), null);
+    assert.equal(warnings.length, 3, "the gate reports again once the interval elapses");
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
 test("audio preparation is asynchronous and AudioContext time alone opens the priming gate", async () => {
   const harness = makeAudioHarness({ volume: 0.35 });
   try {
@@ -1663,6 +1833,7 @@ test("early activation invalidation rolls back the staged route without claiming
 test("a takeover-staging exception releases the shifted presentation item exactly once", async () => {
   let nextFrame = null;
   let closes = 0;
+  let stageOptions = null;
   const restore = installGlobals({
     requestAnimationFrame(callback) { nextFrame = callback; return 1; },
     cancelAnimationFrame() {},
@@ -1680,7 +1851,10 @@ test("a takeover-staging exception releases the shifted presentation item exactl
       ts: 0,
       enq: performance.now(),
     }];
-    interpolator._stageTakeover = () => { throw new Error("host getter failed"); };
+    interpolator._stageTakeover = (_generation, options) => {
+      stageOptions = options;
+      throw new Error("host getter failed");
+    };
 
     interpolator._present(interpolator._lifecycleGen);
     nextFrame(performance.now());
@@ -1688,6 +1862,7 @@ test("a takeover-staging exception releases the shifted presentation item exactl
 
     assert.equal(closes, 1);
     assert.equal(interpolator.running, false);
+    assert.deepEqual(stageOptions, { diagnose: true }, "only the due-frame drain opts into diagnostics");
   } finally {
     restore();
   }
