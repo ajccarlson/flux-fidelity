@@ -1411,6 +1411,77 @@ test("audio preparation is asynchronous and AudioContext time alone opens the pr
   }
 });
 
+test("audio preparation accepts a running context when the resume promise remains pending", async () => {
+  const resumeGate = deferred();
+  const harness = makeAudioHarness({
+    contextState: "suspended",
+    resume(context) {
+      context.state = "running";
+      return resumeGate.promise;
+    },
+  });
+  try {
+    assert.equal(harness.interpolator._stageTakeover(harness.generation), null);
+    assert.equal(harness.calls.resume.length, 1);
+    await settleAudioPreparation();
+    assert.equal(harness.interpolator._audioPreparation.status, "ready");
+
+    assert.equal(harness.interpolator._stageTakeover(harness.generation), null);
+    const transaction = harness.interpolator._audioPreparation.stagedTransaction;
+    transaction.context.currentTime = transaction.route.primeReadyAt;
+    const staged = harness.interpolator._stageTakeover(harness.generation);
+    assert.equal(staged.audioTransaction, transaction);
+    assert.equal(harness.interpolator.running, true);
+  } finally {
+    resumeGate.resolve();
+    harness.cleanup();
+  }
+});
+
+test("audio-delay diagnostics distinguish preparation from a frozen priming clock", async () => {
+  const originalNow = Date.now;
+  let now = 10_000;
+  Date.now = () => now;
+  const harness = makeAudioHarness({ volume: 0.35 });
+  const warnings = [];
+  harness.interpolator.warn = (message) => warnings.push(message);
+  try {
+    assert.equal(
+      harness.interpolator._stageTakeover(harness.generation, { diagnose: true }),
+      null,
+    );
+    assert.match(warnings.at(-1),
+      /audio-delay-not-ready \(preparation-pending; context=running\)/);
+
+    await settleAudioPreparation();
+    now += 5_000;
+    assert.equal(
+      harness.interpolator._stageTakeover(harness.generation, { diagnose: true }),
+      null,
+    );
+    const transaction = harness.interpolator._audioPreparation.stagedTransaction;
+    assert.match(warnings.at(-1),
+      /audio-delay-not-ready \(route-staged; context=running; clock=0\.000s; target=0\.125s; remaining=0\.125s\)/);
+
+    now += 5_000;
+    assert.equal(
+      harness.interpolator._stageTakeover(harness.generation, { diagnose: true }),
+      null,
+    );
+    assert.match(warnings.at(-1),
+      /audio-delay-not-ready \(route-priming; context=running; clock=0\.000s; target=0\.125s; remaining=0\.125s\)/);
+
+    transaction.context.currentTime = transaction.route.primeReadyAt;
+    now += 5_000;
+    const staged = harness.interpolator._stageTakeover(harness.generation, { diagnose: true });
+    assert.equal(staged.audioTransaction, transaction);
+    assert.equal(harness.interpolator._audioDelayPendingDetail, null);
+  } finally {
+    Date.now = originalNow;
+    harness.cleanup();
+  }
+});
+
 test("one persistent URL capture survives seek, context, sink, source, and interpolation restages", async () => {
   const harness = makeAudioHarness();
   const { interpolator, video } = harness;
