@@ -14,6 +14,8 @@
 import { SRGB_COLOR_SPACE } from "./fsrcnnx-color-support.js";
 import { videoPresentationState } from "./fsrcnnx-video-controller.js";
 
+const TAKEOVER_GATE_WARN_INTERVAL_MS = 5000;
+
 function interpolationDimensions(width, height) {
   return Number.isSafeInteger(width) && width > 0 && Number.isSafeInteger(height) && height > 0
     ? Object.freeze({ width, height })
@@ -124,6 +126,7 @@ export class Interpolator {
     this._pipelineFailureStopQueued = false;
     this._pipelineFailureStreaks = Object.create(null);
     this._pipelineFailureLimit = 5;
+    this._takeoverGateWarnAt = new Map();
     this._deviceLossUnsubscribe = null;
     this._cpuGrabInit = null;
     this._cpuGrabRecovery = null;
@@ -587,7 +590,7 @@ export class Interpolator {
               // overlay commit, so preparation failure always remains reversible.
               let takeover;
               try {
-                takeover = this._stageTakeover(generation);
+                takeover = this._stageTakeover(generation, { diagnose: true });
               } catch (error) {
                 releaseItem();
                 this._handlePipelineFailure(generation, error, "display takeover", { terminal: true });
@@ -1891,24 +1894,44 @@ export class Interpolator {
     return presentable;
   }
 
-  _stageTakeover(generation) {
-    if (!this._isCurrent(generation) || !this.video || !this.overlay) return null;
-    if (this._audioBoundaryPending) return null;
+  _warnTakeoverGate(gate, detail = "") {
+    const now = Date.now();
+    const lastWarnAt = this._takeoverGateWarnAt.get(gate);
+    if (lastWarnAt != null && now - lastWarnAt < TAKEOVER_GATE_WARN_INTERVAL_MS) return;
+    this._takeoverGateWarnAt.set(gate, now);
+    const suffix = detail ? ` (${detail})` : "";
+    try { this.warn(`interp: takeover gated at ${gate}${suffix} — due frame dropped`); } catch {}
+  }
+
+  _rejectTakeoverGate(gate, diagnose, detail = "") {
+    if (diagnose) this._warnTakeoverGate(gate, detail);
+    return null;
+  }
+
+  _stageTakeover(generation, { diagnose = false } = {}) {
+    if (!this._isCurrent(generation)) {
+      return this._rejectTakeoverGate("lifecycle-generation-stale", diagnose);
+    }
+    if (!this.video) return this._rejectTakeoverGate("source-video-missing", diagnose);
+    if (!this.overlay) return this._rejectTakeoverGate("presentation-overlay-missing", diagnose);
+    if (this._audioBoundaryPending) {
+      return this._rejectTakeoverGate("audio-boundary-pending", diagnose);
+    }
     if (!this._sourceCanPresent()) {
       this._relinquishPresentation();
-      return null;
+      return this._rejectTakeoverGate("source-not-presentable", diagnose);
     }
     const mount = this._overlayMountTarget();
     if (!mount) {
       this._relinquishPresentation();
-      return null;
+      return this._rejectTakeoverGate("overlay-mount-unavailable", diagnose);
     }
     if (this._takeoverActive) {
       if (this._audioRoute) {
         if (this._audioRoute.silent) {
           if (!this._silentAudioRouteValid(this._audioRoute)) {
             this._relinquishPresentation();
-            return null;
+            return this._rejectTakeoverGate("silent-audio-route-invalid", diagnose);
           }
         } else {
           const route = this._audioRoute;
@@ -1916,29 +1939,41 @@ export class Interpolator {
           try { ownsMute = route.muteOwned && route.muteAccess.read() === true; } catch {}
           if (!this._audioSourceMatches(route.snapshot, this.video)) {
             this._relinquishPresentation({ preserveAudioContext: true, retireCapture: true });
-            return null;
+            return this._rejectTakeoverGate("audio-source-changed", diagnose);
           }
           const sinkMatches = this._audioSinkMatches(route.preparation, this.video);
           if (!sinkMatches) {
             this._relinquishPresentation({ preserveAudioContext: false });
-            return null;
+            return this._rejectTakeoverGate("audio-sink-mismatch", diagnose);
           }
           if (route.context.state !== "running") {
             if (route.context.state === "closed") {
               this._failAudioPreparation(route.preparation, new Error("AudioContext closed during takeover"));
             }
             this._relinquishPresentation({ preserveAudioContext: route.context.state !== "closed" });
-            return null;
+            return this._rejectTakeoverGate(
+              "audio-context-not-running",
+              diagnose,
+              `state=${route.context.state}`,
+            );
           }
-          if (route.session !== this._audioCaptureSession ||
-              !this._capturedAudioTracksHealthy(route.session) ||
-              !this._capturedAudioTracksHealthy(route) || !this._syncOwnedAudioTracks(route)) {
+          let captureGate = null;
+          if (route.session !== this._audioCaptureSession) {
+            captureGate = "audio-capture-session-mismatch";
+          } else if (!this._capturedAudioTracksHealthy(route.session)) {
+            captureGate = "audio-capture-session-tracks-unhealthy";
+          } else if (!this._capturedAudioTracksHealthy(route)) {
+            captureGate = "audio-route-tracks-unhealthy";
+          } else if (!this._syncOwnedAudioTracks(route)) {
+            captureGate = "audio-route-track-sync-failed";
+          }
+          if (captureGate) {
             if (route.session === this._audioCaptureSession) {
               this._handleAudioCaptureChange(route.session);
             } else {
               this._relinquishPresentation({ preserveAudioContext: true });
             }
-            return null;
+            return this._rejectTakeoverGate(captureGate, diagnose);
           }
           if (!ownsMute) {
             this._setAudioGain(route, 0);
@@ -1949,29 +1984,33 @@ export class Interpolator {
               "audio takeover",
               { terminal: true },
             );
-            return null;
+            return this._rejectTakeoverGate("media-mute-ownership-lost", diagnose);
           }
         }
       }
       return { mount, audioTransaction: null };
     }
     const audioTransaction = this._stageAudioDelay(this.video, generation);
-    if (!audioTransaction) return null;
+    if (!audioTransaction) return this._rejectTakeoverGate("audio-delay-not-ready", diagnose);
     if (!audioTransaction.bypass && !audioTransaction.silent &&
         audioTransaction.context.state !== "running") {
       audioTransaction.rollback();
-      return null;
+      return this._rejectTakeoverGate(
+        "staged-audio-context-not-running",
+        diagnose,
+        `state=${audioTransaction.context.state}`,
+      );
     }
     if (this._chainInverted && this._chainPresentationSuspended) {
       try {
         if (this.chain?.setInverted?.(true) === false) {
           audioTransaction.rollback?.();
-          return null;
+          return this._rejectTakeoverGate("inverted-chain-resume-rejected", diagnose);
         }
         this._chainPresentationSuspended = false;
       } catch {
         audioTransaction.rollback?.();
-        return null;
+        return this._rejectTakeoverGate("inverted-chain-resume-threw", diagnose);
       }
     }
     return { mount, audioTransaction };
@@ -2390,6 +2429,7 @@ export class Interpolator {
     this._productionWasEligible = true;
     this._pipelineFailureStopQueued = false;
     this._pipelineFailureStreaks = Object.create(null);
+    this._takeoverGateWarnAt.clear();
     this._interpMode = this._forceBlend ? "blend" : "rife";
     this._fallbackArmed = true; this._srcFrameBase = null;
     this._tweenFailStreak = 0; this._prevTs = null;
@@ -3105,6 +3145,7 @@ export class Interpolator {
     this._octx = null;            // stale 2D ref would block WebGPU-present on restart
     this._pipelineReady = false;
     this._pipelineFailureStreaks = Object.create(null);
+    this._takeoverGateWarnAt.clear();
     this._lastEnqTs = null; this._targetInterval = 0;
     if (this.overlay) { this.overlay.remove(); this.overlay = null; }
     this.processor = null;
