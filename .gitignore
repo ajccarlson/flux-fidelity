@@ -18,11 +18,13 @@ secrets*
 docs/internal/
 notes/
 scratch/
+.local-planning/
 .agents/
 .claude/
 .codex/
 AGENTS.md
 CLAUDE.md
+CLAUDE.local.md
 GEMINI.md
 *.docx
 
