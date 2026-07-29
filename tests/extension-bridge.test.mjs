@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import vm from "node:vm";
 
+import { POLICY_OPTIONS } from "../src/popup.js";
+
 const contentUrl = new URL("../src/content.js", import.meta.url);
 
 function deferred() {
@@ -123,6 +125,10 @@ const booleanCommand = (type, method) => ({
   invalid: [0, 1, "true", null, undefined],
 });
 
+const popupPolicyValues = [...new Set(
+  Object.values(POLICY_OPTIONS).flatMap((options) => options.map(([value]) => value)),
+)];
+
 const COMMAND_CASES = [
   {
     type: "FSRCNNX_SETMODE", method: "setMode", field: "mode",
@@ -178,7 +184,7 @@ const COMMAND_CASES = [
   booleanCommand("FSRCNNX_SETSSIMDS", "setSSimDS"),
   {
     type: "FSRCNNX_SETPOLICY", method: "setPolicy", field: "policy",
-    valid: ["display", "auto", "force2", "force3", "force4", "force8"],
+    valid: popupPolicyValues,
     invalid: ["", "force1", "FORCE2", null],
   },
 ];
