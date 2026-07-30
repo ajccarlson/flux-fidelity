@@ -317,6 +317,9 @@ const siteSettingsStore = createSettingsStore({
 let externalPreferenceTail = Promise.resolve();
 let preferenceValidationFailure = null;
 let preferenceApplicationFailure = null;
+// Last reported application failure, retained for status after the blocking flag
+// above is cleared so the condition stays visible without blocking commands.
+let preferenceApplicationLastError = null;
 const invalidPreferenceFields = new Set();
 
 async function loadSitePrefs() {
@@ -420,7 +423,18 @@ export async function syncSitePrefs() {
     queueExternalPreferenceApplication(authoritativeSitePreferencePatch(), { authoritative: true });
     await drainExternalPreferenceApplications();
   }
-  if (preferenceApplicationFailure) throw new Error(preferenceApplicationFailure);
+  if (preferenceApplicationFailure) {
+    // Clear the blocking flag as we report it. Every mutating popup command awaits
+    // this function, so a flag that survived a failed authoritative replay blocked
+    // all of them permanently with no reset short of wiping extension storage.
+    // Retaining the message separately keeps the condition visible in status while
+    // letting the next command retry from a clean slate; a persistent underlying
+    // fault simply fails again with a fresh error.
+    const detail = preferenceApplicationFailure;
+    preferenceApplicationFailure = null;
+    preferenceApplicationLastError = detail;
+    throw new Error(detail);
+  }
   return { ok: true, persistence: persistenceStatus() };
 }
 
@@ -454,7 +468,7 @@ function queueExternalPreferenceApplication(patch, { authoritative = false } = {
         // An unrelated incremental success cannot prove that a previously
         // failed field converged. Only a complete replay, including deletions,
         // is authoritative enough to clear the failure.
-        if (authoritative) preferenceApplicationFailure = null;
+        if (authoritative) { preferenceApplicationFailure = null; preferenceApplicationLastError = null; }
         return result;
       } catch (error) {
         preferenceApplicationFailure = boundedRuntimeDetail(error, "Preference application failed");
@@ -5535,7 +5549,7 @@ export function getStatus() {
 
 function persistenceStatus() {
   const storeHealth = siteSettingsStore.health();
-  const applicationError = preferenceApplicationFailure || null;
+  const applicationError = preferenceApplicationFailure || preferenceApplicationLastError || null;
   const validationError = preferenceValidationFailure || null;
   return {
     scope: storeHealth.scope || siteScope(),
@@ -5944,11 +5958,16 @@ export function getInterpolateStats() {
   return interpolator ? interpolator.getStats() : { running: false };
 }
 
+// The preference genuinely is stored, so ok:true is accurate — but the caller
+// also needs to know *why* it has not taken effect. Without that, the popup
+// reported a runtime rejection as "Setting saved; activation is pending", which
+// reads as a normal wait rather than a refusal.
 function acceptedPendingInterpolationSetting(context, state, reason, error = null) {
   void requestInterpolationRetry(context);
   return {
     ok: true,
     pending: true,
+    pendingKind: error ? "runtime-error" : "runtime-rejected",
     ...state,
     reason,
     ...(error ? { detail: error?.message || String(error) } : {}),

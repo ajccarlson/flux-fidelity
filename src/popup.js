@@ -214,10 +214,18 @@ export function describeCommandFailure(result) {
     "status-failed": "The page status could not be read.",
     "command-failed": "The page could not apply that setting.",
   };
+  const generic = messages["command-failed"];
+  // content.js always sets error:"command-failed" and puts the specific cause in
+  // `reason`. Checking `error` first therefore matched the generic entry every
+  // time and discarded the real reason for every content-level failure, so the
+  // user only ever saw "The page could not apply that setting." Prefer a specific
+  // reason over the catch-all; named codes still win.
+  if (messages[code] && messages[code] !== generic) return messages[code];
+  const specific = [result?.message, result?.reason]
+    .find((value) => typeof value === "string" && value.trim() && value !== code);
+  if (specific) return `${generic} ${specific.trim()}`;
   if (messages[code]) return messages[code];
-  if (typeof result?.message === "string" && result.message) return result.message;
-  if (typeof result?.reason === "string" && result.reason) return result.reason;
-  return messages["command-failed"];
+  return generic;
 }
 
 function setBooleanStatus(element, value, yes = "yes", no = "no") {
@@ -949,7 +957,18 @@ export function createPopupController({
       if (current) {
         if (commandSucceeded(result)) {
           const pending = result.pending === true || result.running === false || result.paused;
-          feedback(pending ? "Setting saved; activation is pending." : "Setting applied.", "success", "operation");
+          // A stored preference the runtime actively refused is not the same as
+          // one that is merely waiting for a runtime, and reporting both as
+          // "activation is pending" hid every rejection behind a normal wait.
+          const refused = result.pendingKind === "runtime-rejected" ||
+            result.pendingKind === "runtime-error";
+          const message = !pending
+            ? "Setting applied."
+            : refused
+              ? `Setting saved, but the video runtime did not accept it${
+                result.reason ? ` (${result.reason})` : ""}.`
+              : "Setting saved; activation is pending.";
+          feedback(message, refused ? "notice" : "success", "operation");
         } else {
           feedback(describeCommandFailure(result), result?.pending ? "notice" : "error", "operation");
         }
