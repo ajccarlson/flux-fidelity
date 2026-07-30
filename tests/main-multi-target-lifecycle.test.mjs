@@ -155,7 +155,6 @@ async function loadMultiTargetLifecycle(deps) {
       target.artStages = resources.artStages || {};
       target.lumaTexture = resources.lumaTexture || null;
       target.hiRGB = resources.hiRGB || null;
-      target.dispRGB = resources.dispRGB || null;
       target.sharpenPipeline = resources.sharpenPipeline || null;
       target.activeModel = resources.activeModel || null;
       target.chainedFsrcnnx = resources.chainedFsrcnnx || null;
@@ -222,7 +221,6 @@ async function loadIntegratedRetirement(deps) {
     let chainTapTex = null, chainTapFrame = 0, chainTapFailed = false;
     let lumaTexture = null, lumaW = 0, lumaH = 0;
     let hiRGB = null, hiRGBW = 0, hiRGBH = 0;
-    let dispRGB = null, dispRGBW = 0, dispRGBH = 0;
     let ssimds = null, context = null, format = null;
     let extractPipeline = null, recombinePipeline = null, recombine16Pipeline = null, blitPipeline = null;
     let extractPipelineTex = null, recombinePipelineTex = null, recombine16PipelineTex = null;
@@ -506,7 +504,6 @@ test("MultiTarget destruction unpublishes immediately and retires physical resou
     artStages: { current: [resource("art-model")] },
     lumaTexture: resource("luma", new Error("texture cleanup failed")),
     hiRGB: resource("hi"),
-    dispRGB: resource("display"),
     sharpenPipeline: { id: "pipeline" },
   });
   lifecycle.register(video, target);
@@ -533,7 +530,6 @@ test("MultiTarget destruction unpublishes immediately and retires physical resou
     "art-model:destroy",
     "luma:destroy",
     "hi:destroy",
-    "display:destroy",
     "ssim:destroy",
     "context:unconfigure",
   ]) assert.equal(count(events, expected), 1, `${expected} should run exactly once`);

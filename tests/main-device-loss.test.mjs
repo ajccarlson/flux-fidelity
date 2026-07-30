@@ -111,7 +111,6 @@ async function loadCoordinator(deps) {
     let chainTapTex = deps.resources.shift(), chainTapFrame = 3, chainTapFailed = false;
     let lumaTexture = deps.resources.shift(), lumaW = 2, lumaH = 2;
     let hiRGB = deps.resources.shift(), hiRGBW = 4, hiRGBH = 4;
-    let dispRGB = deps.resources.shift(), dispRGBW = 4, dispRGBH = 4;
     let ssimds = { destroy: deps.onSsimDestroy };
     let models = [{ destroy: deps.onModelDestroy }], modelsDevice = device, activeModel = models[0];
     let highStages = [{ destroy: deps.onHighModelDestroy }], artStages = {};
@@ -176,7 +175,7 @@ async function loadCoordinator(deps) {
         recovering: !!deviceRecoveryPromise || deviceRecoveryTimer != null,
         providerInvalidating: !!deviceLossInvalidationPromise,
         display: canvas.style.display, gpu: snapshotGpu(),
-        chainTapTex, lumaTexture, hiRGB, dispRGB, context, models, highStages };
+        chainTapTex, lumaTexture, hiRGB, context, models, highStages };
     }
   `;
   globalThis.__mainDeviceLossDeps = deps;
@@ -436,7 +435,9 @@ test("current device loss retires stale state and single-flights recovery", asyn
   );
   assert.equal(coordinator.state().gpu.lastFailure.code, "device-lost");
   assert.equal(coordinator.state().display, "none");
-  assert.equal(deps.destroyed.count, 4);
+  // One fewer than before: dispRGB was never assigned a texture, so it was a
+  // phantom entry in the retirement set rather than a real allocation.
+  assert.equal(deps.destroyed.count, 3);
   assert.equal(deps.modelDestroys, 1);
   assert.equal(deps.highModelDestroys, 1);
   assert.equal(coordinator.state().highStages.length, 0);
@@ -449,8 +450,8 @@ test("current device loss retires stale state and single-flights recovery", asyn
     "the retained RIFE provider must join the same device-loss barrier");
   assert.deepEqual(
     [coordinator.state().chainTapTex, coordinator.state().lumaTexture,
-      coordinator.state().hiRGB, coordinator.state().dispRGB],
-    [null, null, null, null],
+      coordinator.state().hiRGB],
+    [null, null, null],
   );
 
   deps.recoveryGate.resolve();
