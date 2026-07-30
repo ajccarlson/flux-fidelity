@@ -3,6 +3,7 @@
 // relays popup messages. Modes: 'off' | 'passthrough' | 'upscale'.
 
 import { FsrcnnxModel } from "./fsrcnnx-runtime.js";
+import { GPU_TIMING_FEATURE, GpuFrameTimer } from "./fsrcnnx-gpu-timing.js";
 import {
   ENGINES as CONTRACT_ENGINES,
   INTERPOLATION_MODELS as CONTRACT_INTERPOLATION_MODELS,
@@ -80,6 +81,10 @@ let mode = "off";
 let modeSelectionGeneration = 0;
 let preferenceRestoreGeneration = 0;
 let device = null, deviceOwnedByMain = false;
+// Starts disabled so every call site can spread its descriptor fragments
+// unconditionally; a real timer replaces it once a device advertising
+// timestamp-query is published.
+let gpuTimer = new GpuFrameTimer(null);
 let gpuResourceGeneration = 0;
 let gpuResourcePhase = "idle"; // idle | initializing | active | releasing
 let gpuResourceReason = null;
@@ -174,6 +179,16 @@ function resetScaleSelection() {
 let sharpenEnabled = false, sharpenStrength = 1.0;
 let sharpenPipeline = null, sharpenStrengthBuilt = null;
 let models = [], activeModel = null;
+
+// Compile a freshly built stage set off the critical path. Failures are ignored
+// on purpose: warming is an optimization, and allocate() still compiles
+// synchronously if this has not finished or did not succeed.
+function warmStagePipelines(stages) {
+  for (const stage of stages || []) {
+    try { stage?.warmPipelines?.().catch(() => {}); } catch {}
+  }
+}
+
 let modelsDevice = null, modelLoadPromise = null, modelLoadDevice = null;
 const ART_FILES = ARTCNN_MODEL_NAMES;
 let requestedEngine = "fsrcnnx"; // durable user choice
@@ -183,6 +198,23 @@ let neuralEng = null, neuralModelKey = "", neuralBusy = false, neuralFail = 0; /
 let neuralTemporalResetReason = null;
 let neuralTemporalResetGeneration = 0;
 let rendererFallback = null, neuralLastFailure = null;
+// Ceiling on the intermediate textures one model chain may hold at once. Every
+// intermediate is rgba16float at its stage's input resolution and all of them
+// live simultaneously, so cost scales with source area: FSRCNNX High keeps 45 of
+// them and standard keeps 17. Measured against the shipped manifests:
+//
+//   standard 1-deep @1080p  0.32 GiB     High 1-deep @1080p  0.76 GiB
+//   standard 2-deep @1080p  1.62 GiB     High 1-deep @1440p  1.35 GiB
+//   standard 1-deep @2160p  1.30 GiB     High 1-deep @2160p  3.03 GiB
+//                                        High 2-deep @1080p  3.79 GiB
+//
+// WebGPU exposes no VRAM query, so this cannot be derived from the adapter. The
+// value sits between the largest configuration that works today (1.62 GiB) and
+// the smallest that would attempt a multi-gigabyte allocation (3.03 GiB), so no
+// currently-working setup is refused. Exceeding it is not fatal: the renderer
+// degrades to a cheaper model and says so. maxTextureDimension2D already rejects
+// the deep chains whose *output* is oversized, which is a separate limit.
+const MODEL_WORKING_SET_BUDGET_BYTES = 2048 * 1024 * 1024;
 const playbackPerformance = new PlaybackPerformanceGuard();
 let performanceObservationGeneration = 0;
 let performanceQueueSamplePending = false;
@@ -759,6 +791,7 @@ async function ensureHighStages(depth) {
       while (baseStages.length + created.length < requestedDepth) {
         created.push(new FsrcnnxModel(targetDevice, source.manifest, source.wgsl, {
           expectedName: HIGH_MODEL,
+          maxWorkingSetBytes: MODEL_WORKING_SET_BUDGET_BYTES,
         }));
       }
     } catch (error) {
@@ -770,6 +803,7 @@ async function ensureHighStages(depth) {
       throw new Error("FSRCNNX-high stage build superseded by device change");
     }
     highStages = [...baseStages, ...created];
+    warmStagePipelines(created);
     return highStages.slice(0, requestedDepth);
   })().finally(() => {
     if (highStageBuildPromise === promise) highStageBuildPromise = null;
@@ -814,6 +848,7 @@ async function ensureFsrcnnxStages(depth) {
       throw new Error("FSRCNNX stage build superseded by device change");
     }
     models = [...baseStages, ...created];
+    warmStagePipelines(created);
     return models.slice(0, requestedDepth);
   })().finally(() => {
     if (fsrcnnxStageBuildPromise === promise) fsrcnnxStageBuildPromise = null;
@@ -868,7 +903,10 @@ async function ensureArtStages(name, depth) {
     const created = [];
     try {
       while (baseStages.length + created.length < requestedDepth) {
-        created.push(new ArtCnnModel(targetDevice, source.manifest, source.wgsl, { expectedName: name }));
+        created.push(new ArtCnnModel(targetDevice, source.manifest, source.wgsl, {
+          expectedName: name,
+          maxWorkingSetBytes: MODEL_WORKING_SET_BUDGET_BYTES,
+        }));
       }
     } catch (error) {
       for (const stage of created) { try { stage.destroy?.(); } catch {} }
@@ -879,6 +917,7 @@ async function ensureArtStages(name, depth) {
       throw new Error("ArtCNN stage build superseded by device change");
     }
     stageMap[name] = [...baseStages, ...created];
+    warmStagePipelines(created);
     return stageMap[name].slice(0, requestedDepth);
   })().finally(() => {
     if (artStageBuildPromise === promise) artStageBuildPromise = null;
@@ -921,7 +960,10 @@ async function loadModels() {
     const created = [];
     try {
       for (const source of sources) {
-        created.push(new FsrcnnxModel(targetDevice, source.manifest, source.wgsl, { expectedName: source.name }));
+        created.push(new FsrcnnxModel(targetDevice, source.manifest, source.wgsl, {
+          expectedName: source.name,
+          maxWorkingSetBytes: MODEL_WORKING_SET_BUDGET_BYTES,
+        }));
       }
     } catch (error) {
       for (const model of created) { try { model.destroy?.(); } catch {} }
@@ -937,6 +979,7 @@ async function loadModels() {
     }
     const oldModels = models;
     models = created;
+    warmStagePipelines(created);
     modelsDevice = targetDevice;
     activeModel = null;
     chainedFsrcnnx = null;
@@ -1792,6 +1835,8 @@ function retireGpuResources(reason = "idle") {
   // remain alive until their drains and the captured device fence settle.
   device = null;
   deviceOwnedByMain = false;
+  try { gpuTimer.destroy(); } catch {}
+  gpuTimer = new GpuFrameTimer(null);
   cancelDeviceRecovery();
   adoptionGeneration++;
   imageUpscalerInitGeneration++;
@@ -2366,6 +2411,10 @@ async function initWebGPUInternal(resourceGeneration = gpuResourceGeneration) {
   notifyState();
   const feats = [];
   if (adapter.features.has("float32-filterable")) feats.push("float32-filterable");
+  // Optional and often absent — gated behind a flag on several platforms and
+  // unavailable under SwiftShader — so it is requested only when advertised and
+  // never becomes a hard requirement for upscaling.
+  if (adapter.features.has(GPU_TIMING_FEATURE)) feats.push(GPU_TIMING_FEATURE);
   let requestedDevice;
   try {
     requestedDevice = await adapter.requestDevice({ requiredFeatures: feats });
@@ -2389,6 +2438,7 @@ async function initWebGPUInternal(resourceGeneration = gpuResourceGeneration) {
     return true;
   }
   device = requestedDevice;
+  publishGpuTimer(requestedDevice);
   deviceOwnedByMain = true;
   watchDeviceLoss(requestedDevice);
 
@@ -2624,6 +2674,7 @@ async function adoptChainDeviceInternal(extDevice, isRequestCurrent, { preserveM
     if (!attemptCurrent() || device !== old) return false;
     // ---- swap + rebuild ----
     device = extDevice;
+    publishGpuTimer(extDevice);
     swapped = true;
     // External devices are owned by ORT (or another chain provider). They must
     // remain alive for persistent sessions that can be resumed after a mode or
@@ -3027,10 +3078,26 @@ function renderUpscale() {
   }
 
   if (!positionCanvas(outW, outH) || !ensureLumaTexture(srcW, srcH)) return;
-  activeModel.allocate(srcW, srcH, lumaTexture);
+  try {
+    activeModel.allocate(srcW, srcH, lumaTexture);
+  } catch (error) {
+    // The working-set budget is the only allocation failure that has a cheaper
+    // configuration to retry with. Anything else is a genuine GPU fault and
+    // belongs on the existing failure path.
+    if (error?.code !== "MODEL_WORKING_SET_LIMIT") throw error;
+    const detail = boundedRuntimeDetail(error, "model working set exceeded");
+    if (!activateCapacityFallback(detail)) {
+      warn(`standard FSRCNNX cannot fit this source either: ${detail}`);
+      renderFallback();
+    }
+    return;
+  }
 
   const ext = _ts ? null : safeImportExternal();
   if (!_ts && !ext) return;
+  // Arm before any pass is encoded: the opening and closing timestamp fragments
+  // must agree about whether this frame is being sampled.
+  gpuTimer.beginFrame();
   const srcRes = _ts ? _ts.tex.createView() : ext;
   const pExtract = _ts ? extractPipelineTex : extractPipeline;
   const pRecombine = _ts ? recombinePipelineTex : recombinePipeline;
@@ -3047,7 +3114,9 @@ function renderUpscale() {
         { binding: 2, resource: lumaTexture.createView() },
       ],
     });
-    const cp = enc.beginComputePass();
+    // First GPU work of the frame, so it carries the opening timestamp. The
+    // fragment is empty unless this frame was armed for sampling.
+    const cp = enc.beginComputePass({ ...gpuTimer.beginningWrites() });
     cp.setPipeline(pExtract);
     cp.setBindGroup(0, bg);
     cp.dispatchWorkgroups(Math.ceil(srcW / 8), Math.ceil(srcH / 8));
@@ -3085,7 +3154,7 @@ function renderUpscale() {
     ssimds.prepare(modelOutW, modelOutH, outW, outH, hiRGB);
     const dsOut = ssimds.run(enc, hiRGB);
     if (!positionCanvas(outW, outH)) return;
-    finalizeToCanvas(enc, dsOut);
+    finalizeToCanvas(enc, dsOut, gpuTimer.endWrites());
   } else if (sharpenEnabled || presentation.downsample) {
     // Recombine at the model's native size; the filter/blit tail samples it
     // into the selected presentation size (including exact force3 output).
@@ -3106,7 +3175,7 @@ function renderUpscale() {
     rp.draw(3);
     rp.end();
     if (!positionCanvas(outW, outH)) return;
-    finalizeToCanvas(enc, hiRGB);
+    finalizeToCanvas(enc, hiRGB, gpuTimer.endWrites());
   } else {
     // No reduction or filters: recombine straight to the native-size canvas.
     if (!positionCanvas(outW, outH)) return;
@@ -3120,6 +3189,7 @@ function renderUpscale() {
     });
     const rp = enc.beginRenderPass({
       colorAttachments: [{ view: context.getCurrentTexture().createView(), clearValue: { r: 0, g: 0, b: 0, a: 1 }, loadOp: "clear", storeOp: "store" }],
+      ...gpuTimer.endWrites(),
     });
     rp.setPipeline(pRecombine);
     rp.setBindGroup(0, bg);
@@ -3127,7 +3197,11 @@ function renderUpscale() {
     rp.end();
   }
 
+  gpuTimer.resolve(enc);
   device.queue.submit([enc.finish()]);
+  // Deliberately not awaited: the sample lands a few frames later, and blocking
+  // the frame on a map would corrupt the very measurement being taken.
+  gpuTimer.collect();
   const sharpenSource = presentation.ssimds
     ? { width: outW, height: outH }
     : { width: modelOutW, height: modelOutH };
@@ -3148,7 +3222,15 @@ function renderUpscale() {
 
 // Final stage: take an rgba16float RGB texture and put it on the canvas, applying
 // adaptive sharpen when enabled or a plain normalized blit otherwise.
-function finalizeToCanvas(enc, srcTex) {
+// Replace the timer whenever a device is published. An adopted external device
+// may not carry timestamp-query even when ours did, so the timer is rebuilt from
+// that device's own feature set rather than assumed to survive the swap.
+function publishGpuTimer(nextDevice) {
+  try { gpuTimer.destroy(); } catch {}
+  gpuTimer = new GpuFrameTimer(nextDevice);
+}
+
+function finalizeToCanvas(enc, srcTex, passExtra = {}) {
   ensureSharpenPipeline();
   const pipe = sharpenEnabled ? sharpenPipeline : blitPipeline;
   const bg = device.createBindGroup({
@@ -3157,6 +3239,7 @@ function finalizeToCanvas(enc, srcTex) {
   });
   const rp = enc.beginRenderPass({
     colorAttachments: [{ view: context.getCurrentTexture().createView(), loadOp: "clear", clearValue: { r:0,g:0,b:0,a:1 }, storeOp: "store" }],
+    ...passExtra,
   });
   rp.setPipeline(pipe);
   rp.setBindGroup(0, bg);
@@ -3260,6 +3343,39 @@ function activatePerformanceFallback(signal) {
     warn("standard FSRCNNX fallback preload failed:", fallbackError.message));
   notifyState();
   warn(`${from} lowered to standard FSRCNNX for this playback: ${detail}`);
+  return rendererFallback;
+}
+
+// A model whose working set exceeds the budget must not throw into the frame
+// callback. Degrade to standard FSRCNNX — 17 intermediates against High's 45 —
+// which keeps enhancement running at source sizes where High cannot fit.
+// Standard FSRCNNX is already the floor, so it has nowhere further to fall and
+// the caller drops to passthrough instead.
+function activateCapacityFallback(detail) {
+  if (engine === "fsrcnnx" || rendererFallback?.category === "capacity") return null;
+  const from = engine;
+  engineSelectionGeneration++;
+  engine = "fsrcnnx";
+  chainDepth = 1;
+  rendererFallback = {
+    category: "capacity",
+    from,
+    to: "fsrcnnx",
+    code: "model-working-set-exceeded",
+    detail,
+    at: Date.now(),
+  };
+  resetScaleSelection();
+  clearMultiTargets();
+  if (from === "neural") {
+    void stopNeuralEngine("capacity fallback");
+    hidePrimaryOverlays();
+    resumeInterpolationAfterNeural();
+  }
+  ensureFsrcnnxStages(1).catch((fallbackError) =>
+    warn("standard FSRCNNX capacity fallback preload failed:", fallbackError.message));
+  notifyState();
+  warn(`${from} exceeded the model memory budget and was lowered to standard FSRCNNX: ${detail}`);
   return rendererFallback;
 }
 
@@ -4897,7 +5013,10 @@ function ensureTargetModels(t) {
     // Secondary targets can select a second stage dynamically in display/auto
     // mode, so provision both cheap model instances and allocate textures lazily.
     while (t.models.length < 2) {
-      t.models.push(new FsrcnnxModel(device, s.manifest, s.wgsl, { expectedName: STANDARD_MODEL }));
+      t.models.push(new FsrcnnxModel(device, s.manifest, s.wgsl, {
+        expectedName: STANDARD_MODEL,
+        maxWorkingSetBytes: MODEL_WORKING_SET_BUDGET_BYTES,
+      }));
     }
   } else if (engine === "fsrcnnx-hi") {
     const s = srcCache.fsrcnnx[HIGH_MODEL];
@@ -4905,6 +5024,7 @@ function ensureTargetModels(t) {
     while (t.highStages.length < chainDepth) {
       t.highStages.push(new FsrcnnxModel(device, s.manifest, s.wgsl, {
         expectedName: HIGH_MODEL,
+        maxWorkingSetBytes: MODEL_WORKING_SET_BUDGET_BYTES,
       }));
     }
   } else if (engine === "artcnn") {
@@ -4912,7 +5032,10 @@ function ensureTargetModels(t) {
     if (!s) return false; // not loaded yet; primary path will have triggered the fetch
     if (!t.artStages[artVariant]) t.artStages[artVariant] = [];
     while (t.artStages[artVariant].length < chainDepth) {
-      t.artStages[artVariant].push(new ArtCnnModel(device, s.manifest, s.wgsl, { expectedName: artVariant }));
+      t.artStages[artVariant].push(new ArtCnnModel(device, s.manifest, s.wgsl, {
+        expectedName: artVariant,
+        maxWorkingSetBytes: MODEL_WORKING_SET_BUDGET_BYTES,
+      }));
     }
   }
   return true;
@@ -5565,6 +5688,13 @@ export function getStatus() {
              // itself cost frame time to measure frame time. Rounded to 0.1 ms to
              // keep the payload small and copied so callers cannot mutate the ring.
              encodeMs: frameTimes.map((value) => Math.round(value * 10) / 10),
+             // encodeMs is CPU wall time that ends at queue.submit(), so it can
+             // never show what the GPU actually costs. gpuMs is the measured
+             // span from the first pass to the last, sampled every 15th frame
+             // through timestamp-query. `supported: false` means the feature is
+             // absent — commonly under SwiftShader or behind a platform flag —
+             // not that the GPU is idle.
+             gpuMs: { ...gpuTimer.stats(), series: gpuTimer.series() },
              // Read straight from the media element rather than through
              // PlaybackPerformanceGuard. That guard only accumulates windows when
              // performanceFallbackEligible() holds, which requires the opt-in

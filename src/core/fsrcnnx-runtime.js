@@ -3,6 +3,7 @@
 
 import {
   DEFAULT_MODEL_WORKING_SET_BYTES,
+  passSaves,
   preflightModelDimensions,
   validateModelBundle,
 } from "./fsrcnnx-model-bundle.js";
@@ -30,6 +31,7 @@ export class FsrcnnxModel {
     this.bindGroups = null;
     this.allocationPlan = null;
     this.destroyed = false;
+    this._warmPromise = null;
   }
 
   _assertLive() {
@@ -55,6 +57,44 @@ export class FsrcnnxModel {
     // Publish only a complete pipeline generation.
     this.pipelines = candidates;
     return candidates;
+  }
+
+  // createComputePipeline blocks the caller while the driver compiles, and
+  // allocate() runs inside the frame callback — so the first frame of a model
+  // paid for every pass at once. FSRCNNX High is 54 passes of a ~380 KB shader.
+  // Warming through the async form off the critical path leaves buildPipelines()
+  // as a correctness fallback that then finds the work already done.
+  async warmPipelines() {
+    this._assertLive();
+    if (this.pipelines.length === this.manifest.passes.length) return this.pipelines;
+    if (!this._warmPromise) {
+      this._warmPromise = this._compileAsync().finally(() => { this._warmPromise = null; });
+    }
+    return this._warmPromise;
+  }
+
+  async _compileAsync() {
+    // Not every device implements the async form — notably the fakes used by the
+    // unit suites — so fall back rather than making warming a hard requirement.
+    if (typeof this.device.createComputePipelineAsync !== "function") {
+      return this.buildPipelines();
+    }
+    const candidates = await Promise.all(this.manifest.passes.map((pass, index) => {
+      const module = this.device.createShaderModule({
+        label: `fsrcnnx-${this.manifest.name}-p${index}`,
+        code: this.entries.get(index),
+      });
+      return this.device.createComputePipelineAsync({
+        label: `fsrcnnx-p${index}-${sanitize(pass.desc)}`,
+        layout: "auto",
+        compute: { module, entryPoint: "main" },
+      });
+    }));
+    // Destruction or a synchronous build may have overtaken this compile. Publish
+    // only when nothing else has, so a generation is never half-replaced.
+    if (this.destroyed) return [];
+    if (this.pipelines.length !== this.manifest.passes.length) this.pipelines = candidates;
+    return this.pipelines;
   }
 
   preflight(lumaW, lumaH, options = {}) {
@@ -121,10 +161,17 @@ export class FsrcnnxModel {
       const candidateOutputView = candidateOutput.createView();
       const candidateBindGroups = this.manifest.passes.map((pass, index) => {
         const entries = pass.binds.map((name, binding) => ({ binding, resource: viewOf(name) }));
-        entries.push({
-          binding: pass.binds.length,
-          resource: pass.kind === "shuffle" ? candidateOutputView : viewOf(pass.save),
-        });
+        // Inputs occupy bindings 0..n-1 and the outputs follow in manifest order.
+        // A fused pass writes several of them from one dispatch; the terminal
+        // shuffle declares no logical save and writes the model output instead.
+        const outputs = passSaves(pass);
+        if (!outputs.length) {
+          entries.push({ binding: pass.binds.length, resource: candidateOutputView });
+        } else {
+          outputs.forEach((name, offset) => {
+            entries.push({ binding: pass.binds.length + offset, resource: viewOf(name) });
+          });
+        }
         return this.device.createBindGroup({
           layout: pipelines[index].getBindGroupLayout(0),
           entries,
@@ -195,6 +242,7 @@ export class FsrcnnxModel {
     this.destroyTextures();
     this.pipelines = [];
     this.entries = new Map();
+    this._warmPromise = null;
     this.destroyed = true;
   }
 }

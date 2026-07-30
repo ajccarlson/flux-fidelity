@@ -6,6 +6,7 @@ import { ArtCnnModel } from "../src/core/fsrcnnx-artcnn-runtime.js";
 import {
   allocateModelChain,
   DEFAULT_MODEL_WORKING_SET_BYTES,
+  passSaves,
   preflightModelDimensions,
   preflightModelChain,
   splitModelEntries,
@@ -32,12 +33,18 @@ function loadBundle(name, kind) {
 
 const shippedBundles = GENERATED_MODEL_CATALOG.map(({ name, kind }) => loadBundle(name, kind));
 
-function passSource(index, inputCount) {
+function passSource(index, inputCount, outputCount = 1) {
   const bindings = [];
   for (let binding = 0; binding < inputCount; binding++) {
     bindings.push(`@group(0) @binding(${binding}) var input${binding}: texture_2d<f32>;`);
   }
-  bindings.push(`@group(0) @binding(${inputCount}) var output: texture_storage_2d<rgba16float, write>;`);
+  // A fused pass declares one storage texture per output, immediately after its
+  // inputs, which is the binding layout the runtime builds bind groups against.
+  for (let offset = 0; offset < outputCount; offset++) {
+    bindings.push(
+      `@group(0) @binding(${inputCount + offset}) var output${offset}: texture_storage_2d<rgba16float, write>;`,
+    );
+  }
   return `//==== ENTRY pass${index} : fixture ====\n${bindings.join("\n")}\n` +
     "@compute @workgroup_size(8,8)\nfn main() {}\n";
 }
@@ -397,4 +404,333 @@ test("chained allocation clears every stage after a later failure and retries co
   stages[0].maxWorkingSetBytes = 250;
   assert.throws(() => preflightModelChain(stages, 8, 6, "fixture"),
     (error) => error.code === "MODEL_WORKING_SET_LIMIT");
+});
+
+// The working-set machinery existed and was fully implemented, but production
+// never passed a budget, so DEFAULT_MODEL_WORKING_SET_BYTES (MAX_SAFE_INTEGER)
+// applied and the guard only caught integer overflow. These pin the real byte
+// cost of the shipped manifests so the budget in fsrcnnx-main.js can be reasoned
+// about rather than guessed at, and so a transpiler change that multiplies the
+// intermediate count fails here rather than at a user's GPU.
+const PRODUCTION_BUDGET_BYTES = 2048 * 1024 * 1024;
+const limits = { maxTextureDimension2D: 8192, maxStorageTexturesPerShaderStage: 4 };
+
+function workingSetAt(name, width, height) {
+  const bundle = loadBundle(name, "fsrcnnx");
+  return preflightModelDimensions("fsrcnnx", bundle.manifest, width, height, {
+    deviceLimits: limits,
+  }).workingSetBytes;
+}
+
+test("every intermediate is source-sized, so cost scales with source area", () => {
+  // Doubling each dimension quadruples the working set: the intermediates do not
+  // shrink as the network deepens, and none of them are aliased or reused.
+  const at720 = workingSetAt("FSRCNNX_x2_56-16-4-1", 1280, 720);
+  const at1440 = workingSetAt("FSRCNNX_x2_56-16-4-1", 2560, 1440);
+  assert.equal(at1440, at720 * 4);
+
+  // FSRCNNX High keeps far more state than standard, which is what makes it the
+  // configuration worth degrading away from when memory runs short.
+  const high = workingSetAt("FSRCNNX_x2_56-16-4-1", 1920, 1080);
+  const standard = workingSetAt("FSRCNNX_x2_16-0-4-1", 1920, 1080);
+  assert.ok(high > standard * 2, `High ${high} should dwarf standard ${standard}`);
+});
+
+test("the production budget admits every working setup and refuses the rest", () => {
+  const fits = (name, w, h) => {
+    try {
+      preflightModelDimensions("fsrcnnx", loadBundle(name, "fsrcnnx").manifest, w, h, {
+        deviceLimits: limits,
+        maxWorkingSetBytes: PRODUCTION_BUDGET_BYTES,
+      });
+      return true;
+    } catch (error) {
+      assert.equal(error.code, "MODEL_WORKING_SET_LIMIT");
+      return false;
+    }
+  };
+  // Configurations that work today must keep working: the budget is a guard
+  // against a multi-gigabyte allocation, not a quality reduction. High at 1440p
+  // is 1.35 GiB and the deepest working chain is 1.62 GiB, so both must pass.
+  assert.equal(fits("FSRCNNX_x2_56-16-4-1", 1920, 1080), true);
+  assert.equal(fits("FSRCNNX_x2_56-16-4-1", 2560, 1440), true);
+  // A 4K source through High is the case that would otherwise ask for ~3 GiB.
+  assert.equal(fits("FSRCNNX_x2_56-16-4-1", 3840, 2160), false);
+  // Standard FSRCNNX is the degradation target, so it must still fit there.
+  assert.equal(fits("FSRCNNX_x2_16-0-4-1", 3840, 2160), true);
+});
+
+test("an over-budget model reports a code the renderer can branch on", () => {
+  // The render path retries with a cheaper model for this code alone and rethrows
+  // everything else, so an untyped error would turn a recoverable capacity
+  // problem into a dropped frame.
+  assert.throws(
+    () => preflightModelDimensions("fsrcnnx", loadBundle("FSRCNNX_x2_56-16-4-1", "fsrcnnx").manifest,
+      3840, 2160, { deviceLimits: limits, maxWorkingSetBytes: PRODUCTION_BUDGET_BYTES }),
+    (error) => error.code === "MODEL_WORKING_SET_LIMIT" && /working set/.test(error.message),
+  );
+});
+
+test("a chain budget is the tightest stage budget and covers every stage together", () => {
+  const bundle = loadBundle("FSRCNNX_x2_16-0-4-1", "fsrcnnx");
+  const stage = (budget) => new FsrcnnxModel(
+    { limits, createTexture: () => ({}), createShaderModule: () => ({}) },
+    bundle.manifest, bundle.wgsl,
+    { expectedName: "FSRCNNX_x2_16-0-4-1", maxWorkingSetBytes: budget },
+  );
+  const single = preflightModelChain([stage(PRODUCTION_BUDGET_BYTES)], 1920, 1080);
+  const doubled = preflightModelChain(
+    [stage(PRODUCTION_BUDGET_BYTES), stage(PRODUCTION_BUDGET_BYTES)], 1920, 1080,
+  );
+  // The second stage runs at 2x, so a two-deep chain costs five times one stage,
+  // not twice. Budgeting per stage rather than per chain would miss that.
+  assert.equal(doubled.workingSetBytes, single.workingSetBytes * 5);
+  assert.equal(doubled.maxWorkingSetBytes, PRODUCTION_BUDGET_BYTES);
+
+  // The tightest stage wins, so one conservatively-budgeted stage constrains all.
+  // Both budgets comfortably fit a 64x64 chain; only which one is reported differs.
+  const tighter = 50 * 1024 * 1024;
+  const mixed = preflightModelChain([stage(PRODUCTION_BUDGET_BYTES), stage(tighter)], 64, 64);
+  assert.equal(mixed.maxWorkingSetBytes, tighter);
+  assert.ok(mixed.workingSetBytes < tighter);
+
+  // And a budget below the chain's actual cost is refused with the branchable code.
+  assert.throws(
+    () => preflightModelChain([stage(PRODUCTION_BUDGET_BYTES), stage(4096)], 64, 64),
+    (error) => error.code === "MODEL_WORKING_SET_LIMIT",
+  );
+});
+
+// createComputePipeline blocks while the driver compiles, and allocate() runs
+// inside the frame callback — so the first frame of FSRCNNX High paid for 54
+// compiles of a ~380 KB shader at once. Warming moves that off the critical path
+// without making it a requirement.
+function asyncPipelineDevice({ resolveNow = true } = {}) {
+  const device = fakeDevice();
+  device.asyncCalls = 0;
+  device.pending = [];
+  device.createComputePipelineAsync = function (descriptor) {
+    this.asyncCalls++;
+    const pipeline = { getBindGroupLayout: () => ({}), descriptor };
+    if (resolveNow) return Promise.resolve(pipeline);
+    return new Promise((resolve) => this.pending.push(() => resolve(pipeline)));
+  };
+  return device;
+}
+
+test("warming compiles through the async form and satisfies later builds", async () => {
+  const { manifest, wgsl } = fsrcnnxFixture();
+  const device = asyncPipelineDevice();
+  const model = new FsrcnnxModel(device, manifest, wgsl, { expectedName: "fixture_x2" });
+
+  const warmed = await model.warmPipelines();
+  assert.equal(warmed.length, manifest.passes.length);
+  assert.equal(device.asyncCalls, manifest.passes.length);
+  // The blocking form must not have been used at all.
+  assert.equal(device.counts.pipelines, 0);
+
+  // allocate() still calls buildPipelines(), which must now find the work done
+  // rather than recompiling on the frame callback.
+  model.allocate(64, 64, luma(64, 64, device));
+  assert.equal(device.counts.pipelines, 0);
+  assert.equal(model.pipelines, warmed);
+});
+
+test("warming is single-flight, so concurrent callers share one compile", async () => {
+  const { manifest, wgsl } = fsrcnnxFixture();
+  const device = asyncPipelineDevice({ resolveNow: false });
+  const model = new FsrcnnxModel(device, manifest, wgsl, { expectedName: "fixture_x2" });
+
+  const first = model.warmPipelines();
+  const second = model.warmPipelines();
+  assert.equal(device.asyncCalls, manifest.passes.length, "a second call must not recompile");
+  for (const resolve of device.pending) resolve();
+  const [a, b] = await Promise.all([first, second]);
+  assert.equal(a, b);
+  // Once settled the promise is released, and a later call is a cheap hit.
+  assert.equal(model._warmPromise, null);
+  assert.equal(await model.warmPipelines(), a);
+  assert.equal(device.asyncCalls, manifest.passes.length);
+});
+
+test("a device without the async form still warms, just synchronously", async () => {
+  const { manifest, wgsl } = fsrcnnxFixture();
+  // The unit-suite fakes implement only createComputePipeline. Warming must
+  // degrade rather than become a hard requirement on the device.
+  const device = fakeDevice();
+  const model = new FsrcnnxModel(device, manifest, wgsl, { expectedName: "fixture_x2" });
+  const warmed = await model.warmPipelines();
+  assert.equal(warmed.length, manifest.passes.length);
+  assert.equal(device.counts.pipelines, manifest.passes.length);
+});
+
+test("a warm that lands after destruction publishes nothing", async () => {
+  const { manifest, wgsl } = fsrcnnxFixture();
+  const device = asyncPipelineDevice({ resolveNow: false });
+  const model = new FsrcnnxModel(device, manifest, wgsl, { expectedName: "fixture_x2" });
+  const warming = model.warmPipelines();
+  model.destroy();
+  for (const resolve of device.pending) resolve();
+  assert.deepEqual(await warming, []);
+  assert.deepEqual(model.pipelines, []);
+});
+
+test("a synchronous build that overtakes a warm is not replaced by it", async () => {
+  const { manifest, wgsl } = fsrcnnxFixture();
+  const device = asyncPipelineDevice({ resolveNow: false });
+  const model = new FsrcnnxModel(device, manifest, wgsl, { expectedName: "fixture_x2" });
+  const warming = model.warmPipelines();
+  // A frame arrived before warming finished and compiled synchronously. Those
+  // pipelines are already bound into bind groups, so the late warm must not
+  // swap them out from underneath.
+  const built = model.buildPipelines();
+  for (const resolve of device.pending) resolve();
+  await warming;
+  assert.equal(model.pipelines, built);
+});
+
+test("ArtCNN warms through the same contract", async () => {
+  const { manifest, wgsl } = artcnnFixture();
+  const device = asyncPipelineDevice();
+  const model = new ArtCnnModel(device, manifest, wgsl, { expectedName: "ArtCNN_fixture" });
+  const warmed = await model.warmPipelines();
+  assert.equal(warmed.length, manifest.passes.length);
+  assert.equal(device.asyncCalls, manifest.passes.length);
+  assert.equal(device.counts.pipelines, 0);
+});
+
+// Upstream writes one hook per output feature map, so the network is full of
+// sibling passes reading identical inputs with identical footprints and writing
+// different textures. Run separately each re-fetched every input texel. Fusing
+// them into one multi-output dispatch is the single largest saving available,
+// and these lock the invariants that make it safe.
+test("the shipped FSRCNNX models fuse into far fewer dispatches", () => {
+  const expectations = new Map([
+    ["FSRCNNX_x2_16-0-4-1", { upstream: 26, dispatches: 8 }],
+    ["FSRCNNX_x2_56-16-4-1", { upstream: 54, dispatches: 16 }],
+  ]);
+  for (const [name, { upstream, dispatches }] of expectations) {
+    const { manifest } = loadBundle(name, "fsrcnnx");
+    assert.equal(manifest.passes.length, dispatches, name);
+    // Every upstream hook must still be accounted for — fusion may reorganize
+    // dispatches but must never drop a layer.
+    const members = manifest.passes.reduce(
+      (total, pass) => total + (pass.fusedFrom?.length ?? 1), 0,
+    );
+    assert.equal(members, upstream, `${name} must retain every upstream pass`);
+    const covered = manifest.passes.flatMap((pass) => pass.fusedFrom ?? []);
+    const sorted = [...covered].sort((a, b) => a - b);
+    assert.deepEqual(sorted, [...new Set(sorted)], "no upstream pass may be fused twice");
+  }
+});
+
+test("a fused pass never reads what one of its own outputs writes", () => {
+  // This is the correctness condition for fusion: siblings run in a single
+  // dispatch, so a member reading another member's save would consume a texture
+  // that does not exist yet.
+  for (const name of ["FSRCNNX_x2_16-0-4-1", "FSRCNNX_x2_56-16-4-1"]) {
+    const { manifest } = loadBundle(name, "fsrcnnx");
+    for (const pass of manifest.passes) {
+      const saves = pass.saves ?? (pass.save ? [pass.save] : []);
+      for (const bind of pass.binds) {
+        assert.ok(!saves.includes(bind),
+          `${name} pass ${pass.index} binds ${bind} while also writing it`);
+      }
+      assert.equal(new Set(saves).size, saves.length,
+        `${name} pass ${pass.index} writes a resource twice`);
+    }
+  }
+});
+
+test("fusion stays inside the portable WebGPU binding limits", () => {
+  // maxStorageTexturesPerShaderStage is 4 in the baseline, which is exactly what
+  // a four-way group needs — there is no headroom, so this must be enforced.
+  for (const name of ["FSRCNNX_x2_16-0-4-1", "FSRCNNX_x2_56-16-4-1"]) {
+    const { manifest, wgsl } = loadBundle(name, "fsrcnnx");
+    for (const pass of manifest.passes) {
+      const saves = pass.saves ?? (pass.save ? [pass.save] : []);
+      assert.ok(Math.max(saves.length, 1) <= 4, `${name} pass ${pass.index} storage bindings`);
+      assert.ok(pass.binds.length <= 16, `${name} pass ${pass.index} sampled bindings`);
+    }
+    // And the bundle validates against a device advertising exactly the baseline.
+    assert.doesNotThrow(() => validateModelBundle("fsrcnnx", manifest, wgsl, {
+      expectedName: name,
+      deviceLimits: {
+        maxTextureDimension2D: 8192,
+        maxBindingsPerBindGroup: 1000,
+        maxSampledTexturesPerShaderStage: 16,
+        maxStorageTexturesPerShaderStage: 4,
+      },
+    }));
+  }
+});
+
+test("a five-output pass is refused on a baseline device", () => {
+  const manifest = {
+    name: "over_x2",
+    whenThreshold: 1.3,
+    passes: [
+      { index: 0, desc: "too wide", binds: ["LUMA"],
+        saves: ["A", "B", "C", "D", "E"], components: 4,
+        widthMul: 1, heightMul: 1, kind: "conv" },
+      { index: 1, desc: "shuffle", binds: ["A"], save: null, components: 1,
+        widthMul: 2, heightMul: 2, kind: "shuffle" },
+    ],
+  };
+  assert.throws(
+    () => validateModelBundle("fsrcnnx", manifest, passSource(0, 1) + passSource(1, 1), {
+      expectedName: "over_x2",
+      deviceLimits: { maxStorageTexturesPerShaderStage: 4 },
+    }),
+    (error) => error.code === "MODEL_BINDING_LIMIT" && /5 storage textures/.test(error.message),
+  );
+});
+
+test("a fused pass binds its outputs after its inputs, in manifest order", () => {
+  const manifest = {
+    name: "fused_x2",
+    whenThreshold: 1.3,
+    passes: [
+      { index: 0, desc: "fused", binds: ["LUMA"], saves: ["A", "B"], components: 4,
+        widthMul: 1, heightMul: 1, kind: "conv" },
+      { index: 1, desc: "shuffle", binds: ["A"], save: null, components: 1,
+        widthMul: 2, heightMul: 2, kind: "shuffle" },
+    ],
+  };
+  // One sampled input at binding 0, two storage outputs at bindings 1 and 2.
+  const wgsl = passSource(0, 1, 2) + passSource(1, 1);
+  const device = fakeDevice();
+  const model = new FsrcnnxModel(device, manifest, wgsl, { expectedName: "fused_x2" });
+  const lumaTexture = luma(64, 64, device);
+  model.allocate(64, 64, lumaTexture);
+
+  const [fused] = model.bindGroups;
+  assert.deepEqual(fused.entries.map(({ binding }) => binding), [0, 1, 2]);
+  // Binding 1 must be A's texture and binding 2 must be B's — a swap here would
+  // silently transpose two feature maps and no dimension check would notice.
+  assert.equal(fused.entries[0].resource.texture, lumaTexture);
+  assert.equal(fused.entries[1].resource.texture, model.textures.get("A"));
+  assert.equal(fused.entries[2].resource.texture, model.textures.get("B"));
+
+  // The terminal shuffle still writes the model output rather than a save.
+  const [, terminal] = model.bindGroups;
+  assert.equal(terminal.entries[1].resource.texture, model.outputTexture);
+});
+
+test("each fused output still gets its own texture of the right size", () => {
+  const { manifest } = loadBundle("FSRCNNX_x2_16-0-4-1", "fsrcnnx");
+  const plan = preflightModelDimensions("fsrcnnx", manifest, 320, 180, {
+    deviceLimits: { maxTextureDimension2D: 8192 },
+  });
+  const names = plan.resources.map(({ name }) => name);
+  // 17 intermediates plus the output: fusing dispatches must not fuse storage.
+  assert.equal(new Set(names).size, names.length);
+  assert.equal(names.length, 18);
+  for (const resource of plan.resources) {
+    if (resource.name === "OUTPUT") {
+      assert.deepEqual([resource.width, resource.height], [640, 360]);
+    } else {
+      assert.deepEqual([resource.width, resource.height], [320, 180]);
+    }
+  }
 });

@@ -79,7 +79,15 @@ function validateBindingLimits(pass, index, limits) {
     invalid(`pass ${index} has ${pass.binds.length} sampled textures; device limit is ${sampled}`,
       "MODEL_BINDING_LIMIT");
   }
-  if (storage < 1 || pass.binds.length + 1 > total) {
+  // A terminal pass declares no logical save but still writes the output texture,
+  // so every pass costs at least one storage binding. maxStorageTexturesPerShaderStage
+  // is 4 in the WebGPU baseline, which is exactly what a four-way fused group needs.
+  const storageCount = Math.max(passSaves(pass).length, 1);
+  if (storageCount > storage) {
+    invalid(`pass ${index} writes ${storageCount} storage textures; device limit is ${storage}`,
+      "MODEL_BINDING_LIMIT");
+  }
+  if (pass.binds.length + storageCount > total) {
     invalid(`pass ${index} exceeds the device bind-group limits`, "MODEL_BINDING_LIMIT");
   }
 }
@@ -128,7 +136,8 @@ function stripWgslComments(source) {
 function validateBindingDeclarations(entries, passes) {
   for (const pass of passes) {
     const code = stripWgslComments(entries.get(pass.index));
-    const expectedCount = pass.binds.length + 1;
+    const storageCount = Math.max(passSaves(pass).length, 1);
+    const expectedCount = pass.binds.length + storageCount;
     const groups = [...code.matchAll(/@group\s*\(\s*(\d+)\s*\)/g)]
       .map((match) => Number(match[1]));
     if (groups.some((group) => group !== 0)) {
@@ -164,8 +173,11 @@ function validateBindingDeclarations(entries, passes) {
         invalid(`WGSL entry pass ${pass.index} input binding ${binding} must be a sampled texture_2d<f32>`);
       }
     }
-    if (byBinding.get(pass.binds.length) !== "texture_storage_2d<rgba16float,write>") {
-      invalid(`WGSL entry pass ${pass.index} output binding ${pass.binds.length} must be a writable rgba16float storage texture`);
+    for (let offset = 0; offset < storageCount; offset++) {
+      const binding = pass.binds.length + offset;
+      if (byBinding.get(binding) !== "texture_storage_2d<rgba16float,write>") {
+        invalid(`WGSL entry pass ${pass.index} output binding ${binding} must be a writable rgba16float storage texture`);
+      }
     }
   }
 }
@@ -174,6 +186,7 @@ function immutableManifestCopy(manifest) {
   const passes = manifest.passes.map((pass) => Object.freeze({
     ...pass,
     binds: Object.freeze([...pass.binds]),
+    ...(Array.isArray(pass.saves) ? { saves: Object.freeze([...pass.saves]) } : {}),
   }));
   return Object.freeze({ ...manifest, passes: Object.freeze(passes) });
 }
@@ -209,21 +222,38 @@ function validateCommonManifest(manifest, { expectedName, deviceLimits } = {}) {
     positiveInteger(pass.heightMul, `pass ${index} heightMul`);
     validateBindingLimits(pass, index, deviceLimits);
 
-    if (pass.save != null) {
-      requireResourceName(pass.save, `pass ${index} save`);
-      if (pass.save === "LUMA" || pass.save === "OUTPUT") {
-        invalid(`pass ${index} cannot overwrite reserved resource ${pass.save}`);
+    const seenSaves = new Set();
+    for (const save of passSaves(pass)) {
+      requireResourceName(save, `pass ${index} save`);
+      if (save === "LUMA" || save === "OUTPUT") {
+        invalid(`pass ${index} cannot overwrite reserved resource ${save}`);
       }
-      if (seenBinds.has(pass.save)) invalid(`pass ${index} reads and writes ${pass.save}`);
-      const oldDims = dimensionsBySave.get(pass.save);
+      if (seenBinds.has(save)) invalid(`pass ${index} reads and writes ${save}`);
+      // A fused pass writes several textures from one dispatch. Two of its
+      // outputs naming the same resource would race within a single invocation.
+      if (seenSaves.has(save)) invalid(`pass ${index} writes ${save} more than once`);
+      seenSaves.add(save);
+      const oldDims = dimensionsBySave.get(save);
       if (oldDims && (oldDims[0] !== pass.widthMul || oldDims[1] !== pass.heightMul)) {
-        invalid(`resource ${pass.save} is reused with inconsistent dimensions`);
+        invalid(`resource ${save} is reused with inconsistent dimensions`);
       }
-      dimensionsBySave.set(pass.save, [pass.widthMul, pass.heightMul]);
-      available.add(pass.save);
+      dimensionsBySave.set(save, [pass.widthMul, pass.heightMul]);
     }
+    // Publish only after the whole pass is validated. Making an output readable
+    // mid-pass would let a fused group bind a sibling's result, which does not
+    // exist yet at dispatch time.
+    for (const save of seenSaves) available.add(save);
   }
   return { dimensionsBySave };
+}
+
+// Independent sibling passes are fused into one dispatch that writes several
+// storage textures, so a pass has a list of outputs rather than a single one.
+// Single-output passes — every ArtCNN pass, and FSRCNNX passes that had no
+// fusable sibling — keep the original `save` field.
+export function passSaves(pass) {
+  if (Array.isArray(pass?.saves)) return pass.saves;
+  return pass?.save == null ? [] : [pass.save];
 }
 
 function validateFsrcnnxManifest(manifest, options) {
@@ -234,7 +264,7 @@ function validateFsrcnnxManifest(manifest, options) {
     const pass = manifest.passes[index];
     if (pass.kind === "conv") {
       if (index === manifest.passes.length - 1) invalid("FSRCNNX final pass must be shuffle");
-      if (pass.save == null) invalid(`FSRCNNX conv pass ${index} must save an output`);
+      if (!passSaves(pass).length) invalid(`FSRCNNX conv pass ${index} must save an output`);
       if (pass.widthMul !== 1 || pass.heightMul !== 1) {
         invalid(`FSRCNNX conv pass ${index} must use native dimensions`);
       }
@@ -244,7 +274,7 @@ function validateFsrcnnxManifest(manifest, options) {
     } else if (pass.kind === "shuffle") {
       terminalCount++;
       if (index !== manifest.passes.length - 1) invalid("FSRCNNX shuffle pass must be final");
-      if (pass.save != null) invalid("FSRCNNX shuffle pass cannot save a logical intermediate");
+      if (passSaves(pass).length) invalid("FSRCNNX shuffle pass cannot save a logical intermediate");
       if (pass.widthMul !== pass.heightMul) invalid("FSRCNNX shuffle scale must be square");
       scale = pass.widthMul;
     } else {
@@ -265,7 +295,7 @@ function validateArtCnnManifest(manifest, options) {
     const pass = manifest.passes[index];
     if (pass.kind === "conv") {
       if (index === manifest.passes.length - 1) invalid("ArtCNN final pass must be d2s");
-      if (pass.save == null) invalid(`ArtCNN conv pass ${index} must save an output`);
+      if (!passSaves(pass).length) invalid(`ArtCNN conv pass ${index} must save an output`);
       if (!Number.isInteger(pass.numResults) || ![1, 8].includes(pass.numResults)) {
         invalid(`ArtCNN conv pass ${index} has unsupported result count`);
       }
@@ -283,7 +313,7 @@ function validateArtCnnManifest(manifest, options) {
     } else if (pass.kind === "d2s") {
       terminalCount++;
       if (index !== manifest.passes.length - 1) invalid("ArtCNN d2s pass must be final");
-      if (pass.save != null) invalid("ArtCNN d2s pass cannot save a logical intermediate");
+      if (passSaves(pass).length) invalid("ArtCNN d2s pass cannot save a logical intermediate");
       if (pass.binds.length !== 1) invalid("ArtCNN d2s pass must have one input");
       if (pass.widthMul !== scale || pass.heightMul !== scale || pass.numResults !== 0) {
         invalid("ArtCNN d2s metadata does not match manifest scale");
@@ -337,10 +367,12 @@ export function preflightModelDimensions(kind, manifest, lumaW, lumaH, options =
   const resources = [];
   const saves = new Map();
   for (const pass of manifest.passes) {
-    if (pass.save == null || saves.has(pass.save)) continue;
-    const width = checkedProduct([lumaW, pass.widthMul], `${pass.save} width`);
-    const height = checkedProduct([lumaH, pass.heightMul], `${pass.save} height`);
-    saves.set(pass.save, { name: pass.save, width, height });
+    for (const save of passSaves(pass)) {
+      if (saves.has(save)) continue;
+      const width = checkedProduct([lumaW, pass.widthMul], `${save} width`);
+      const height = checkedProduct([lumaH, pass.heightMul], `${save} height`);
+      saves.set(save, { name: save, width, height });
+    }
   }
   resources.push(...saves.values());
   const outputWidth = checkedProduct([lumaW, scale], "model output width");

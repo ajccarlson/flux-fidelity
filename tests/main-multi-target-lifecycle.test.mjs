@@ -193,6 +193,12 @@ async function loadIntegratedRetirement(deps) {
     const deps = globalThis.__multiTargetLifecycleDeps;
     let pageSuspended = false;
     let device = deps.device, deviceOwnedByMain = true;
+    // This slice includes retirement/adoption, which retire and republish the GPU
+    // frame timer. Timing is a diagnostic with no bearing on those lifecycles, so
+    // the harness supplies an inert stand-in rather than the real module.
+    const GpuFrameTimer = class { destroy() {} };
+    let gpuTimer = new GpuFrameTimer();
+    const publishGpuTimer = () => { gpuTimer = new GpuFrameTimer(); };
     let gpuResourceGeneration = 0, gpuResourcePhase = "active", gpuResourceReason = null;
     let gpuRetirementTail = Promise.resolve(), gpuRetirementPromise = null;
     let gpuAdapterPhase = "ready", gpuDevicePhase = "ready";
@@ -269,6 +275,13 @@ async function loadTargetModelPreparation(deps) {
       artcnn: {},
     };
     const FsrcnnxModel = deps.FsrcnnxModel;
+    // Stage builders warm pipelines off the critical path after publishing. That is
+    // an optimization with no bearing on build ordering, so it is a no-op here.
+    const warmStagePipelines = () => {};
+    // Model construction now carries the production working-set budget. This slice
+    // tests build ordering and device scoping, not capacity, so any finite budget
+    // large enough to admit the fixtures serves.
+    const MODEL_WORKING_SET_BUDGET_BYTES = 2048 * 1024 * 1024;
     const ArtCnnModel = deps.ArtCnnModel;
     ${production}
     export { ensureTargetModels };
@@ -433,7 +446,11 @@ test("secondary High targets receive an independent depth-matched model pool", a
   assert.equal(target.highStages.length, 3);
   assert.ok(target.highStages.every((stage) => stage.owner === device));
   assert.ok(target.highStages.every((stage) => stage.options.expectedName === "model-high"));
-  assert.ok(target.highStages.every((stage) => stage.options.maxWorkingSetBytes === undefined));
+  // Secondary targets are budgeted exactly like the primary. They are the case
+  // that most needs it: several videos each holding a full High working set is
+  // how a page reaches multiple gigabytes without any single chain looking large.
+  assert.ok(target.highStages.every((stage) =>
+    stage.options.maxWorkingSetBytes === 2048 * 1024 * 1024));
   assert.equal(target.models.length, 0, "High targets do not reuse the standard pool");
 
   assert.equal(prep.ensureTargetModels(target), true);
