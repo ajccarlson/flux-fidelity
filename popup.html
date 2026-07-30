@@ -199,6 +199,27 @@
     }
     .spark-line { fill: none; stroke: var(--accent); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
     .spark-budget { fill: none; stroke: var(--danger); stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+    .tab-dot {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      margin-left: 5px;
+      border-radius: 50%;
+      background: var(--success);
+      vertical-align: middle;
+    }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      padding: 0;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+      border: 0;
+    }
+    .field-note { display: block; margin-top: 4px; font-size: 10px; color: var(--muted); }
     .diagnostics { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
     .diagnostics a { color: var(--focus); font-size: 11px; }
     .status dt {
@@ -458,9 +479,9 @@
 
     <div class="tabs" role="tablist" aria-label="Sections">
       <button id="tab-video" type="button" role="tab" aria-selected="true"
-        aria-controls="panel-video" data-panel="panel-video">Video</button>
+        aria-controls="panel-video" data-panel="panel-video">Video<span class="tab-dot" id="tab-video-dot" hidden></span><span class="sr-only" id="tab-video-state"></span></button>
       <button id="tab-interpolation" type="button" role="tab" aria-selected="false"
-        aria-controls="panel-interpolation" data-panel="panel-interpolation" tabindex="-1">Interpolation</button>
+        aria-controls="panel-interpolation" data-panel="panel-interpolation" tabindex="-1">Interp<span class="tab-dot" id="tab-interpolation-dot" hidden></span><span class="sr-only" id="tab-interpolation-state"></span></button>
       <button id="tab-advanced" type="button" role="tab" aria-selected="false"
         aria-controls="panel-advanced" data-panel="panel-advanced" tabindex="-1">Advanced</button>
       <button id="tab-performance" type="button" role="tab" aria-selected="false"
@@ -535,7 +556,7 @@
     <section aria-labelledby="mode-heading">
       <fieldset>
         <legend id="mode-heading">Mode</legend>
-        <div class="modes">
+        <div class="modes" data-group="video">
           <button type="button" data-mode="off" data-active="1" aria-pressed="true">Off</button>
           <button type="button" data-mode="passthrough" data-active="0" aria-pressed="false">Passthrough</button>
           <button type="button" data-mode="upscale" data-active="0" aria-pressed="false">Upscale</button>
@@ -545,94 +566,97 @@
     </div>
 
     <div id="panel-interpolation" role="tabpanel" aria-labelledby="tab-interpolation" tabindex="0" hidden>
-      <h2 class="panel-heading">Frame interpolation</h2>
-      <div class="advanced-body">
-        <div class="subpanel">
-          <label class="switch-row" for="interpolate">
-            <input id="interpolate" type="checkbox">
-            <span class="copy">
-              <strong>Frame interpolation</strong>
-              <small>Generate intermediate frames with RIFE or frame blending.</small>
-            </span>
-          </label>
-          <span id="interp-stats"></span>
+    <section aria-labelledby="interp-heading">
+      <h2 id="interp-heading">Interpolation</h2>
+      <div class="control-stack">
+        <div class="field">
+          <label for="interp-model">Engine</label>
+          <select id="interp-model">
+            <option value="rife_v4.26">RIFE 4.26 (default; may wave on bright motion)</option>
+            <option value="rife_v4.26_fp16">RIFE 4.26 FP16 (experimental)</option>
+            <option value="blend">Blend (no AI)</option>
+          </select>
+        </div>
 
-          <div id="interp-res-row">
-            <div class="interp-controls">
-              <div class="field">
-                <label for="interp-model">Model</label>
-                <select id="interp-model">
-                  <option value="rife_v4.26">RIFE 4.26 (default; may wave on bright motion)</option>
-                  <option value="rife_v4.26_fp16">RIFE 4.26 FP16 (experimental)</option>
-                  <option value="blend">Blend (no AI)</option>
-                </select>
-              </div>
+        <div class="field">
+          <label for="interp-res">Inference resolution</label>
+          <select id="interp-res">
+            <option value="auto">Auto (adapt to budget)</option>
+            <option value="full" selected>Full</option>
+            <option value="half">Half</option>
+            <option value="quarter">Quarter</option>
+          </select>
+        </div>
 
-              <div class="field">
-                <label for="interp-res">Inference resolution</label>
-                <select id="interp-res">
-                  <option value="auto">Auto (adapt to budget)</option>
-                  <option value="full" selected>Full</option>
-                  <option value="half">Half</option>
-                  <option value="quarter">Quarter</option>
-                </select>
-              </div>
+        <div class="field">
+          <label for="interp-target">Target rate</label>
+          <select id="interp-target">
+            <option value="auto">Auto (display refresh)</option>
+            <option value="60">60 fps</option>
+            <option value="120">120 fps</option>
+            <option value="144">144 fps</option>
+            <option value="165">165 fps</option>
+            <option value="240">240 fps</option>
+          </select>
+          <span id="interp-target-hz" class="field-note"></span>
+        </div>
 
-              <div class="field">
-                <label for="interp-target">Blend target frame rate</label>
-                <select id="interp-target">
-                  <option value="auto">Auto (display refresh)</option>
-                  <option value="60">60 fps</option>
-                  <option value="120">120 fps</option>
-                  <option value="144">144 fps</option>
-                  <option value="165">165 fps</option>
-                  <option value="240">240 fps</option>
-                </select>
-                <span id="interp-target-hz"></span>
-              </div>
-
-              <div class="av-row">
-                <label for="interp-avoff">A/V sync fine trim</label>
-                <input id="interp-avoff" type="range" min="-100" max="300" step="5" value="0">
-                <output for="interp-avoff"><span id="interp-avoff-val">0</span> ms</output>
-              </div>
-
-              <label class="switch-row" for="interp-diag">
-                <input id="interp-diag" type="checkbox" checked>
-                <span class="copy">
-                  <strong>Stabilize static detail</strong>
-                  <small>Use source pixels where the scene is not moving.</small>
-                </span>
-              </label>
-
-              <label class="switch-row" for="interp-ladder">
-                <input id="interp-ladder" type="checkbox">
-                <span class="copy">
-                  <strong>Blend ladder</strong>
-                  <small>Add inexpensive blended frames between RIFE frames.</small>
-                </span>
-              </label>
-
-              <label class="switch-row" for="interp-invert">
-                <input id="interp-invert" type="checkbox" checked>
-                <span class="copy">
-                  <strong>Interpolate before upscale</strong>
-                  <small>Run RIFE at source resolution, then upscale each presented frame.</small>
-                </span>
-              </label>
-
-              <label class="switch-row" for="interp-autofallback">
-                <input id="interp-autofallback" type="checkbox">
-                <span class="copy">
-                  <strong>Automatic blend fallback</strong>
-                  <small>Use blending when RIFE cannot maintain a useful frame rate.</small>
-                </span>
-              </label>
+        <div class="field">
+          <label for="interp-avoff">Audio delay</label>
+          <div class="range-row">
+            <div class="range-layout">
+              <input id="interp-avoff" type="range" min="-100" max="300" step="5" value="0">
+              <output for="interp-avoff"><span id="interp-avoff-val">0</span> ms</output>
             </div>
+            <small>Shifts audio to match the interpolated picture. Raise it if sound leads the video.</small>
           </div>
         </div>
-        <p class="help">Interpolation is remembered separately for each site. It needs a readable, non-protected source and enough GPU headroom to sustain the target rate.</p>
+
+        <label class="switch-row" for="interp-diag">
+          <input id="interp-diag" type="checkbox" checked>
+          <span class="copy">
+            <strong>Stabilize static detail</strong>
+            <small>Keeps source pixels in regions that are not moving.</small>
+          </span>
+        </label>
+
+        <label class="switch-row" for="interp-ladder">
+          <input id="interp-ladder" type="checkbox">
+          <span class="copy">
+            <strong>Blend ladder</strong>
+            <small>Generates several intermediate blends per gap instead of one.</small>
+          </span>
+        </label>
+
+        <label class="switch-row" for="interp-invert">
+          <input id="interp-invert" type="checkbox" checked>
+          <span class="copy">
+            <strong>Interpolate before upscale</strong>
+            <small>Interpolates the source frames, then upscales the result.</small>
+          </span>
+        </label>
+
+        <label class="switch-row" for="interp-autofallback">
+          <input id="interp-autofallback" type="checkbox">
+          <span class="copy">
+            <strong>Automatic blend fallback</strong>
+            <small>Drops to blend interpolation when the neural engine cannot sustain the target rate.</small>
+          </span>
+        </label>
       </div>
+      <p class="help">Interpolation is remembered separately for each site. It needs a readable, non-protected source and enough GPU headroom to sustain the target rate.</p>
+    </section>
+
+    <section aria-labelledby="interp-mode-heading">
+      <fieldset>
+        <legend id="interp-mode-heading">Mode</legend>
+        <div class="modes" data-group="interpolation">
+          <button type="button" data-mode="off" data-active="1" aria-pressed="true">Off</button>
+          <button type="button" data-mode="on" data-active="0" aria-pressed="false">On</button>
+        </div>
+        <span id="interp-stats" class="field-note"></span>
+      </fieldset>
+    </section>
     </div>
 
     <div id="panel-advanced" role="tabpanel" aria-labelledby="tab-advanced" tabindex="0" hidden>
