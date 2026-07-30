@@ -1159,22 +1159,39 @@ export function createPopupController({
   // because colour alone is not an accessible signal, and the text becomes part of
   // the tab's accessible name.
   function renderTabIndicators(status) {
-    // "On" means the feature is actually doing its job, not merely switched on.
-    // activeMode comes from currentPresentedRuntime(), which reports a mode only
-    // while frames are being presented for the current video on a live device — so
-    // it already implies a running video, and passthrough is excluded because it
-    // performs no upscaling. interpolationRuntime.phase is the equivalent for
-    // interpolation: "active" requires it enabled, not suspended or failed, with a
-    // video present and the interpolator running.
-    const states = [
-      ["tab-video", status?.activeMode === "upscale"],
-      ["tab-interpolation", status?.interpolationRuntime?.phase === "active"],
+    // Three states rather than present/absent:
+    //   off     — the mode is not enabled
+    //   on      — enabled and actually running
+    //   pending — enabled, but not running: no video playing, or it is suspended,
+    //             recovering, or has failed
+    //
+    // A dot is always rendered and only its colour changes. The previous version
+    // toggled the hidden attribute, which an author `display: inline-block` rule on
+    // .tab-dot silently overrode — so the dot was permanently visible and
+    // permanently green. The tests asserted the attribute rather than the rendered
+    // result, so nothing caught it.
+    //
+    // "running" for upscaling is activeMode, which comes from
+    // currentPresentedRuntime() and reports a mode only while frames are being
+    // presented for the current video on a live device.
+    const features = [
+      ["tab-video", status?.mode === "upscale", status?.activeMode === "upscale"],
+      [
+        "tab-interpolation",
+        status?.interpolate === true,
+        status?.interpolationRuntime?.phase === "active",
+      ],
     ];
-    for (const [tabId, on] of states) {
+    for (const [tabId, enabled, running] of features) {
+      const state = !enabled ? "off" : running ? "on" : "pending";
       const dot = $(`${tabId}-dot`);
-      if (dot) dot.hidden = !on;
-      // "on"/"off" rather than a symbol, so the announcement is unambiguous.
-      setText($(`${tabId}-state`), on ? " (on)" : " (off)");
+      if (dot) dot.dataset.state = state;
+      // Written out as well as coloured: the state must not depend on hue alone.
+      setText($(`${tabId}-state`), state === "on"
+        ? " (on)"
+        : state === "pending"
+          ? " (on, not running)"
+          : " (off)");
     }
   }
 

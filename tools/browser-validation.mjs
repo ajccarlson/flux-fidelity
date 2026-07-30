@@ -1329,7 +1329,7 @@ async function runPopupSmoke(httpBase, controlClient, extensionId, expectedName,
         state.interpModeStates.find(({ pressed }) => pressed === "true")?.mode !== "off") {
       problems.push("popup interpolation mode row is invalid");
     }
-    if (state?.modeStates?.length !== 3 ||
+    if (state?.modeStates?.length !== 2 ||
         state.modeStates.filter(({ pressed }) => pressed === "true").length !== 1 ||
         state.modeStates.find(({ pressed }) => pressed === "true")?.mode !== "off") {
       problems.push("popup mode accessibility state is invalid");
@@ -2069,7 +2069,12 @@ async function runRealVideoIntegration(
     { timeoutMs: CDP_TIMEOUT_MS, signal });
     checkpoint("content injection/off baseline");
 
-    await clickPopupMode(popupPage.client, "passthrough");
+    // Passthrough is no longer offered as a popup button — it presents the source
+    // unenhanced, which is a development aid rather than a user choice — but the mode
+    // still exists because the renderer falls back to it internally, and this is the
+    // only coverage that exercises capture-and-present in isolation from the models.
+    // So it is driven by message instead of by a click.
+    await sendContentCommand(popupPage.client, "FSRCNNX_SETMODE", { mode: "passthrough" }, fixtureTab.id);
     const passthrough = await waitForStatus(popupPage.client, fixtureTab.id, "passthrough activation", (status) =>
       status.mode === "passthrough" && status.activeMode === "passthrough" &&
       status.renderer?.phase === "active" && status.frameCount > 0 &&
@@ -2533,7 +2538,7 @@ async function runRealVideoIntegration(
     checkpoint("standalone interpolation and teardown");
 
     const finalPopup = await popupSnapshot(popupPage.client);
-    requireCondition(finalPopup.modeStates.length === 3 &&
+    requireCondition(finalPopup.modeStates.length === 2 &&
       finalPopup.modeStates.filter(({ pressed }) => pressed === "true").length === 1 &&
       finalPopup.modeStates.find(({ pressed }) => pressed === "true")?.mode === "off",
     "popup mode aria-pressed state is invalid after teardown");
