@@ -727,7 +727,11 @@ export function createPopupController({
     const code = status?.error;
     if (code === "unsupported-page") {
       $("s-webgpu").textContent = "unavailable";
-      feedback("Open an http, https, or permitted local file page to use the extension.", "notice", "context");
+      // No guidance text for this state: the status field already reads
+      // "unavailable" and every control is disabled. Cleared rather than simply
+      // left unwritten, because clearPageState() does not touch the operation
+      // line and a message from the previous page would otherwise persist.
+      feedback("", "", "context");
     } else if (code === "no-content-script") {
       $("s-webgpu").textContent = "disconnected";
       feedback("Reload this page so it can connect to the extension.", "error", "context");
