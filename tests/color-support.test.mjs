@@ -66,6 +66,7 @@ async function loadMainColorPolicy(deps) {
     };
     let video = deps.video;
     let videoColorSupportCache = new WeakMap();
+    let videoAccessCache = new WeakMap();
     const uncheckedColorSupport = (detail) => ({
       supported: false,
       code: "color-not-checked",
@@ -362,4 +363,46 @@ test("every runtime WebGPU color boundary explicitly requests sRGB", async () =>
   assert.doesNotMatch(colorShader, /limited\s*->\s*full handled implicitly/i);
   assert.match(colorShader, /source primaries, transfer, YUV matrix/);
   assert.match(colorShader, /does not perform source YUV range or primary conversion/);
+});
+
+test("access probing is cached per source but never caches a DRM verdict", async (t) => {
+  const previous = globalThis.__colorPolicyDeps;
+  t.after(() => { globalThis.__colorPolicyDeps = previous; });
+  const video = {
+    currentSrc: "https://example.test/a.mp4",
+    src: "https://example.test/a.mp4",
+    videoWidth: 640,
+    videoHeight: 360,
+  };
+  const deps = { video, now: 100, calls: 0, result: support("color-supported") };
+  deps.probe = () => { deps.calls++; return deps.result; };
+  const { probeVideo, invalidateVideoColorSupport } = await loadMainColorPolicy(deps);
+
+  // The readback allocates a canvas and does a synchronous getImageData, and ran
+  // from five call sites uncached — including twice per multi-target reconcile.
+  assert.equal(probeVideo(video), "ok");
+  assert.equal(probeVideo(video), "ok");
+  const firstColorCalls = deps.calls;
+  deps.now = 200;
+  probeVideo(video);
+  assert.equal(deps.calls, firstColorCalls, "a fresh probe within the window must reuse the cache");
+
+  // MediaKeys can be attached mid-playback, so DRM must be re-read every call
+  // rather than served from a cached "ok".
+  video.mediaKeys = {};
+  assert.equal(probeVideo(video), "drm");
+  delete video.mediaKeys;
+
+  // A source change must re-probe rather than trust the previous element result.
+  video.currentSrc = "https://example.test/b.mp4";
+  video.src = video.currentSrc;
+  deps.now = 250;
+  probeVideo(video);
+  assert.ok(deps.calls > firstColorCalls, "a new source must be probed again");
+
+  // Explicit invalidation clears both caches together.
+  invalidateVideoColorSupport(video);
+  const beforeInvalidated = deps.calls;
+  probeVideo(video);
+  assert.ok(deps.calls > beforeInvalidated);
 });
