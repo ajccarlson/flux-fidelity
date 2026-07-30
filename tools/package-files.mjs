@@ -1,6 +1,6 @@
 import { GENERATED_MODEL_ASSET_PATHS } from "../src/core/fsrcnnx-model-catalog.js";
 
-export const EXPECTED_PACKAGE_FILE_COUNT = 90;
+export const EXPECTED_PACKAGE_FILE_COUNT = 91;
 
 // These files let recipients inspect, rebuild, and substitute the LGPL-covered
 // shader portions and retain exact licenses for bundled third-party components.
@@ -80,6 +80,7 @@ export const PACKAGE_FILES = Object.freeze([
   "src/core/fsrcnnx-cda-priors.js",
   "src/core/fsrcnnx-color-support.js",
   "src/core/fsrcnnx-color.js",
+  "src/core/fsrcnnx-frame-signature.js",
   "src/core/fsrcnnx-gpu-timing.js",
   "src/core/fsrcnnx-grab.js",
   "src/core/fsrcnnx-images.js",

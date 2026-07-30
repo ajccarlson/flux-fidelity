@@ -254,6 +254,29 @@ export function describeGpuSeries(gpuMs, budgetMs) {
   return `${parts.join(" · ")}.`;
 }
 
+// Frames the renderer declined to compute. Worth stating plainly: a user seeing
+// low GPU time should be able to tell "the model is fast" from "most frames were
+// skipped", and a user suspecting a stale image should be able to see whether
+// skipping is happening at all.
+export function describeAvoidedWork(renderer) {
+  const duplicates = renderer?.duplicateFrames || null;
+  const offscreen = renderer?.offscreenFrames || null;
+  const parts = [];
+  if (duplicates?.supported === false) {
+    parts.push("repeat detection unavailable");
+  } else if (Number.isFinite(duplicates?.skipped)) {
+    const rate = Number.isFinite(duplicates.duplicateRate)
+      ? ` (${Math.round(duplicates.duplicateRate * 100)}% of sampled frames)` : "";
+    parts.push(`${duplicates.skipped} repeated frames reused${rate}`);
+    if (duplicates.probing === false) parts.push("detection paused: content does not repeat");
+  }
+  if (Number.isFinite(offscreen?.skipped) && offscreen.skipped > 0) {
+    parts.push(`${offscreen.skipped} skipped while scrolled out of view`);
+  }
+  if (!parts.length) return "Nothing skipped yet.";
+  return `${parts.join(" · ")}.`;
+}
+
 // Turns the status payload into a pasteable report. getStatus() already computes
 // far more than the popup shows; without this, a user whose video looks wrong has
 // nothing to hand over and no way to reach validate.html.
@@ -1229,6 +1252,7 @@ export function createPopupController({
     $("perf-encode-budget")?.setAttribute("d", spark.budget);
     setText($("perf-encode-summary"), describeEncodeSeries(samples, budgetMs));
     setText($("perf-gpu-summary"), describeGpuSeries(renderer.gpuMs, budgetMs));
+    setText($("perf-avoided-summary"), describeAvoidedWork(renderer));
 
     // Decoded-frame counts come from the media element, so they populate whatever
     // the automatic-quality-fallback setting is. Reading them from the guard's

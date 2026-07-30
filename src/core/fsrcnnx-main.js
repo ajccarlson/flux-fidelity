@@ -4,6 +4,7 @@
 
 import { FsrcnnxModel } from "./fsrcnnx-runtime.js";
 import { GPU_TIMING_FEATURE, GpuFrameTimer } from "./fsrcnnx-gpu-timing.js";
+import { FrameSignature } from "./fsrcnnx-frame-signature.js";
 import {
   ENGINES as CONTRACT_ENGINES,
   INTERPOLATION_MODELS as CONTRACT_INTERPOLATION_MODELS,
@@ -1837,6 +1838,17 @@ function retireGpuResources(reason = "idle") {
   deviceOwnedByMain = false;
   try { gpuTimer.destroy(); } catch {}
   gpuTimer = new GpuFrameTimer(null);
+  // The overlay's cached result does not survive retirement, so no later
+  // frame may be judged a duplicate of it, and the viewport observer has
+  // nothing left to gate.
+  frameSignatureIdentity = null;
+  // A cached bind group must never outlive the texture it references.
+  finalizeBindGroup = null;
+  finalizeBindKey = null;
+  try { viewportObserver?.disconnect(); } catch {}
+  viewportObserver = null;
+  viewportObservedVideo = null;
+  videoInViewport = true;
   cancelDeviceRecovery();
   adoptionGeneration++;
   imageUpscalerInitGeneration++;
@@ -3222,6 +3234,76 @@ function renderUpscale() {
 
 // Final stage: take an rgba16float RGB texture and put it on the canvas, applying
 // adaptive sharpen when enabled or a plain normalized blit otherwise.
+// Upscaling a video that has been scrolled out of view is pure waste: the overlay
+// is positioned over the element, so neither is on screen. findVideo() already
+// filters by viewport when *selecting* a video, but nothing re-checked it
+// afterwards, so scrolling a playing video away left the full chain running.
+//
+// This uses IntersectionObserver rather than a per-frame getBoundingClientRect
+// because the latter forces layout on the host page every frame — the cost this
+// change exists to avoid. The margin starts rendering slightly before the element
+// reaches the viewport, so scrolling back finds a current frame rather than a
+// stale one.
+const VIEWPORT_PREROLL_MARGIN = "150px";
+
+function ensureViewportObserver(target) {
+  if (viewportObservedVideo === target) return;
+  try { viewportObserver?.disconnect(); } catch {}
+  viewportObserver = null;
+  viewportObservedVideo = target;
+  // Assume visible until told otherwise: the observer reports asynchronously, and
+  // culling a visible video for even one frame is worse than one wasted frame.
+  videoInViewport = true;
+  if (!target || typeof IntersectionObserver !== "function") return;
+  try {
+    viewportObserver = new IntersectionObserver((entries) => {
+      const entry = entries[entries.length - 1];
+      if (entry) videoInViewport = entry.isIntersecting;
+    }, { rootMargin: VIEWPORT_PREROLL_MARGIN, threshold: 0 });
+    viewportObserver.observe(target);
+  } catch {
+    viewportObserver = null;
+  }
+}
+
+function viewportCullable(target) {
+  if (videoInViewport || !target) return false;
+  // Picture-in-Picture and fullscreen present the element somewhere other than
+  // its layout position, where an intersection ratio of zero means nothing.
+  try {
+    if (document.pictureInPictureElement === target) return false;
+    if (document.fullscreenElement) return false;
+  } catch { return false; }
+  return true;
+}
+
+// A skipped frame reuses whatever the overlay is already showing, so the cached
+// result must have been produced by the same video, at the same source size, by
+// the same model and presentation settings. Any change to that tuple invalidates
+// it — judging a new configuration against an old signature would leave the
+// previous configuration's image on screen.
+function frameSignatureCurrent() {
+  const identity = [
+    video?.videoWidth || 0,
+    video?.videoHeight || 0,
+    activeModel?.manifest?.name || "none",
+    activeModel?.scale || 0,
+    engine,
+    upscalePolicy,
+    ssimdsEnabled ? 1 : 0,
+    sharpenEnabled ? sharpenStrength : 0,
+  ].join("|");
+  // The element itself is compared by reference: a replaced <video> can present
+  // identical dimensions and settings while showing entirely different content.
+  if (identity !== frameSignatureIdentity || video !== frameSignatureVideo) {
+    frameSignatureIdentity = identity;
+    frameSignatureVideo = video;
+    frameSignature.reset();
+    return false;
+  }
+  return true;
+}
+
 // Replace the timer whenever a device is published. An adopted external device
 // may not carry timestamp-query even when ours did, so the timer is rebuilt from
 // that device's own feature set rather than assumed to survive the swap.
@@ -3230,13 +3312,25 @@ function publishGpuTimer(nextDevice) {
   gpuTimer = new GpuFrameTimer(nextDevice);
 }
 
+// The presentation tail samples a texture this module owns, unlike the capture
+// and recombine passes whose source is an imported external texture — those expire
+// with the task and must be rebound every frame, which is a WebGPU rule rather
+// than an oversight. This one is stable between frames, so its bind group and
+// view are kept until the pipeline or texture actually changes.
+let finalizeBindGroup = null, finalizeBindKey = null;
+
 function finalizeToCanvas(enc, srcTex, passExtra = {}) {
   ensureSharpenPipeline();
   const pipe = sharpenEnabled ? sharpenPipeline : blitPipeline;
-  const bg = device.createBindGroup({
-    layout: pipe.getBindGroupLayout(0),
-    entries: [{ binding: 0, resource: sampler }, { binding: 1, resource: srcTex.createView() }],
-  });
+  if (finalizeBindKey?.pipe !== pipe || finalizeBindKey?.tex !== srcTex ||
+      finalizeBindKey?.sampler !== sampler) {
+    finalizeBindGroup = device.createBindGroup({
+      layout: pipe.getBindGroupLayout(0),
+      entries: [{ binding: 0, resource: sampler }, { binding: 1, resource: srcTex.createView() }],
+    });
+    finalizeBindKey = { pipe, tex: srcTex, sampler };
+  }
+  const bg = finalizeBindGroup;
   const rp = enc.beginRenderPass({
     colorAttachments: [{ view: context.getCurrentTexture().createView(), loadOp: "clear", clearValue: { r:0,g:0,b:0,a:1 }, storeOp: "store" }],
     ...passExtra,
@@ -3782,6 +3876,12 @@ function renderTexturePassthrough(tex, width, height) {
 }
 
 let frameTimes = [];
+// Duplicate-frame detection. The identity tuple guards which cached result the
+// signature is allowed to speak for; see frameSignatureCurrent().
+const frameSignature = new FrameSignature();
+let frameSignatureIdentity = null, frameSignatureVideo = null, duplicateFramesSkipped = 0;
+let viewportObserver = null, viewportObservedVideo = null;
+let videoInViewport = true, offscreenFramesSkipped = 0;
 function cancelMainLoop() {
   primaryController?.cancelScheduledFrame?.();
 }
@@ -3914,14 +4014,43 @@ function loop(owner, frameNow = null, frameMetadata = null) {
       scheduleMainLoop();
       return;
     }
-    if (mode === "upscale" && engine === "neural") renderNeuralFrame(frameMetadata);
+    // A decoded frame whose content is unchanged needs no work: the overlay still
+    // holds the correct image, and not touching getCurrentTexture() leaves the
+    // canvas presenting it. Animation drawn on twos or threes repeats most of its
+    // frames, and the chain costs over 10,000 multiply-accumulates per source
+    // pixel, so this is the cheapest saving available.
+    //
+    // Not while the chain tap is on: the interpolator consumes one upscaled frame
+    // per tick, and withholding one would look like a stalled source to its
+    // watchdog rather than like a repeated frame.
+    ensureViewportObserver(video);
+    // Scrolled out of view: the overlay is offscreen with it, so there is nothing
+    // to show and nothing worth computing. The tap is held back for the same
+    // reason a duplicate frame holds it back.
+    const offscreenFrame = mode !== "off" && !chainTapOn &&
+      !(mode === "upscale" && engine === "neural") && viewportCullable(video);
+    const duplicateFrame = !offscreenFrame && mode === "upscale" && engine !== "neural" &&
+      !chainTapOn && frameSignatureCurrent() && frameSignature.shouldSkip(video);
+    if (offscreenFrame) {
+      offscreenFramesSkipped++;
+      // The cached overlay stays on screen but nothing refreshed it, so the next
+      // visible frame must not be judged a duplicate of a result from before the
+      // gap.
+      frameSignature.reset();
+    } else if (duplicateFrame) {
+      duplicateFramesSkipped++;
+    } else if (mode === "upscale" && engine === "neural") renderNeuralFrame(frameMetadata);
     else if (mode === "upscale") renderUpscale();
     else renderPassthrough();
     if (mode === "off" || owner !== primaryController || owner.video !== video) return;
     // CHAIN TAP: if the interpolation chain is consuming upscaled frames, copy the
     // finished frame (still valid pre-present within this task) into a persistent
     // texture the interpolator (same device) samples from. Only when tapped.
-    if (chainTapOn && !(mode === "upscale" && engine === "neural")) {
+    // A skipped frame never acquired a swap-chain texture. Calling
+    // getCurrentTexture() here would hand back an uninitialized back buffer and
+    // publish it as the tapped frame, so the tap is skipped in lockstep.
+    if (chainTapOn && !duplicateFrame && !offscreenFrame &&
+        !(mode === "upscale" && engine === "neural")) {
       try {
         const curTex = context.getCurrentTexture();
         ensureChainTapTexture(curTex.width, curTex.height);
@@ -3951,8 +4080,13 @@ function loop(owner, frameNow = null, frameMetadata = null) {
     frameCount++;
     sampleGpuQueuePerformance();
     const dt = performance.now() - t0;
-    frameTimes.push(dt);
-    if (frameTimes.length > 120) frameTimes.shift();
+    // Skipped frames are excluded: they cost almost nothing, so mixing them in
+    // would drag the reported encode time toward zero and hide the cost of the
+    // frames that actually rendered. They are reported as their own counter.
+    if (!duplicateFrame && !offscreenFrame) {
+      frameTimes.push(dt);
+      if (frameTimes.length > 120) frameTimes.shift();
+    }
     const now = performance.now();
     if (now - lastLog > 2000) {
       lastLog = now;
@@ -3996,6 +4130,10 @@ function attach() {
     onFrame: (current, now, metadata) => loop(current, now, metadata),
     onLayout: (current) => {
       if (current === primaryController && current.video === video) {
+        // The overlay is repositioned here, but its backing resolution is only
+        // set while rendering. Skipping frames on static content would leave the
+        // old backing stretched to the new size, so force the next frame to draw.
+        frameSignature.reset();
         if (!videoPageVisible(current.video)) {
           hidePrimaryOverlays();
           interpolator?.refreshLayout?.();
@@ -5695,6 +5833,11 @@ export function getStatus() {
              // absent — commonly under SwiftShader or behind a platform flag —
              // not that the GPU is idle.
              gpuMs: { ...gpuTimer.stats(), series: gpuTimer.series() },
+             // Decoded frames whose content matched the previous one and so
+             // reused the existing overlay instead of re-running the chain.
+             duplicateFrames: { skipped: duplicateFramesSkipped, ...frameSignature.stats() },
+             // Frames skipped because the element was scrolled out of view.
+             offscreenFrames: { skipped: offscreenFramesSkipped, inViewport: videoInViewport },
              // Read straight from the media element rather than through
              // PlaybackPerformanceGuard. That guard only accumulates windows when
              // performanceFallbackEligible() holds, which requires the opt-in

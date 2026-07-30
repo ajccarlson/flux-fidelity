@@ -327,7 +327,7 @@ test("every runtime WebGPU color boundary explicitly requests sRGB", async () =>
   assert.equal(externalImports.length, 3, "all three video import paths are covered");
   assert.equal(canvasConfigurations.length, 4, "all four presentation canvases are covered");
   assert.equal(externalCopies.length, 1, "the image upload path is covered");
-  assert.equal(canvas2dContexts.length, 13, "all 2D readback and presentation contexts are covered");
+  assert.equal(canvas2dContexts.length, 14, "all 2D readback and presentation contexts are covered");
   for (const boundary of [
     ...externalImports,
     ...canvasConfigurations,

@@ -46,6 +46,11 @@ async function loadRetirementHarness(deps) {
     const GpuFrameTimer = class { destroy() {} };
     let gpuTimer = new GpuFrameTimer();
     const publishGpuTimer = () => { gpuTimer = new GpuFrameTimer(); };
+    // Retirement clears duplicate-frame state and the viewport observer. Neither
+    // affects device ownership, which is what these slices test.
+    let frameSignatureIdentity = null;
+    let viewportObserver = null, viewportObservedVideo = null, videoInViewport = true;
+    let finalizeBindGroup = null, finalizeBindKey = null;
     let gpuResourceGeneration = 4, gpuResourcePhase = "active", gpuResourceReason = null;
     let gpuRetirementTail = Promise.resolve(), gpuRetirementPromise = null;
     let gpuAdapterPhase = "ready", gpuDevicePhase = "ready", gpuRecoveryPhase = "idle", gpuRecoveryAttempt = 0;
