@@ -554,6 +554,26 @@ export function createSettingsStore({
       setCachedRecord(field, record);
     }
 
+    // Legacy hostname-keyed records were read forever and never removed, so an
+    // upgraded user retained an indefinite record of every site they had ever
+    // configured, in addition to the current origin-keyed records. They are only
+    // consulted as a fallback when a field has no current record, so they are safe
+    // to delete once every field they supplied has one — which makes this a no-op
+    // on fresh installs and a one-time cleanup for migrated ones. Deleting earlier
+    // would drop values the fallback is still serving.
+    const legacyKeysPresent = [...legacySiteKeys, LEGACY_MAP_KEY].filter((key) => hasOwn(stored, key));
+    if (legacyKeysPresent.length && typeof storage.remove === "function") {
+      const stillNeeded = [...legacyFallbacks.keys()].some((field) => !records.has(field));
+      if (!stillNeeded) {
+        try {
+          await storage.remove(legacyKeysPresent);
+          legacyFallbacks.clear();
+        } catch {
+          // A failed cleanup must never block initialization; it retries next load.
+        }
+      }
+    }
+
     initialized = true;
     storageError = null;
     storageErrorOperation = null;
