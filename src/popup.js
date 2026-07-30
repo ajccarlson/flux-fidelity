@@ -1060,6 +1060,15 @@ export function createPopupController({
   }
 
   function bind() {
+    // Destructive, so it confirms first. There is no undo: the tombstones are
+    // convergent and will propagate to every other tab for this origin.
+    $("forget-site")?.addEventListener("click", () => {
+      const proceed = globalThis.confirm?.(
+        "Clear all Flux Fidelity settings for this site and return it to defaults?",
+      );
+      if (proceed === false) return;
+      return runCommand("Forgetting this site", () => transport.send("FSRCNNX_FORGETSITE"));
+    });
     $("copy-diagnostics")?.addEventListener("click", async () => {
       const report = formatDiagnostics(currentStatus, {
         version: chromeApi?.runtime?.getManifest?.()?.version ?? null,

@@ -86,6 +86,7 @@ async function loadBridge(importModule, { prerendering = false, visibilityState 
 function completeApi(overrides = {}) {
   return {
     restoreSitePrefs: async () => ({ ok: true, restored: true }),
+    forgetSitePreferences: async () => ({ ok: true, persistence: { state: "ready" } }),
     syncSitePrefs: async () => ({ ok: true }),
     flushPreferenceWrites: async () => ({ ok: true }),
     getStatus: () => ({ mode: "upscale", hasVideo: true, webgpu: true, frameCount: 7 }),
@@ -276,7 +277,10 @@ test("the command contract matrix covers the complete production allowlist", asy
   const production = [...commandSource.matchAll(/^  (FSRCNNX_[A-Z0-9_]+):/gm)]
     .map((match) => match[1])
     .sort();
-  const tested = ["FSRCNNX_RESTORE", ...COMMAND_CASES.map(({ type }) => type)].sort();
+  // Both of these take no payload, so they are seeded rather than driven through
+  // the payload matrix; each has its own behavioural test below.
+  const tested = ["FSRCNNX_RESTORE", "FSRCNNX_FORGETSITE",
+    ...COMMAND_CASES.map(({ type }) => type)].sort();
   assert.deepEqual(production, tested);
 });
 
@@ -920,4 +924,25 @@ test("an extension message repairs a missed visible-document activation", async 
 
   assert.equal(status.responses.length, 1);
   assert.deepEqual(calls, ["resume", "suspend", "sync", "resume"]);
+});
+
+test("forgetting a site clears stored preferences and rejects any payload", async () => {
+  let calls = 0;
+  const bridge = await loadBridge(async () => completeApi({
+    forgetSitePreferences: async () => { calls++; return { ok: true, persistence: { state: "ready" } }; },
+  }));
+
+  const reset = bridge.message({ type: "FSRCNNX_FORGETSITE" });
+  await flush();
+  assert.deepEqual(reset.responses, [{ ok: true, persistence: { state: "ready" } }]);
+  assert.equal(calls, 1);
+
+  // Before this command there was no reset of any kind: the store exposed none, no
+  // storage.remove existed anywhere, and the popup had no control — so a user's only
+  // recourse was reverting every setting by hand or wiping extension storage.
+  const withPayload = bridge.message({ type: "FSRCNNX_FORGETSITE", scope: "all" });
+  await flush();
+  assert.equal(withPayload.responses[0].ok, false);
+  assert.equal(withPayload.responses[0].error, "invalid-input");
+  assert.equal(calls, 1, "a malformed reset must not reach the runtime");
 });

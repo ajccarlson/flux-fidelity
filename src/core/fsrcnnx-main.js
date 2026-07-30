@@ -407,6 +407,25 @@ function saveSitePrefs(fields = DEFAULT_SETTING_FIELDS) {
   return pending;
 }
 
+// Clears this origin's stored settings and returns the runtime to defaults. There
+// was previously no reset of any kind: no storage.remove call existed anywhere, the
+// store exposed no reset, and the popup had no control, so a user's only recourse
+// for 22 settings across N origins was reverting each by hand or wiping extension
+// storage from chrome://extensions.
+export async function forgetSitePreferences() {
+  cancelPreferenceRestore();
+  try {
+    await siteSettingsStore.reset();
+  } catch (error) {
+    return { ok: false, reason: "reset failed", detail: boundedRuntimeDetail(error) };
+  }
+  // Apply the cleared state through the same authoritative path an external change
+  // would take, so the live runtime converges instead of waiting for a reload.
+  queueExternalPreferenceApplication(authoritativeSitePreferencePatch(), { authoritative: true });
+  await drainExternalPreferenceApplications();
+  return { ok: true, persistence: persistenceStatus() };
+}
+
 export async function flushPreferenceWrites() {
   await siteSettingsStore.flush();
   return { ok: true, persistence: persistenceStatus() };
