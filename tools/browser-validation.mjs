@@ -2538,7 +2538,7 @@ async function runRealVideoIntegration(
     checkpoint("standalone interpolation and teardown");
 
     const finalPopup = await popupSnapshot(popupPage.client);
-    requireCondition(finalPopup.modeStates.length === 3 &&
+    requireCondition(finalPopup.modeStates.length === 2 &&
       finalPopup.modeStates.filter(({ pressed }) => pressed === "true").length === 1 &&
       finalPopup.modeStates.find(({ pressed }) => pressed === "true")?.mode === "off",
     "popup mode aria-pressed state is invalid after teardown");
