@@ -217,6 +217,11 @@ async function loadAdoptionInternal(deps) {
     const GpuFrameTimer = class { destroy() {} };
     let gpuTimer = new GpuFrameTimer();
     const publishGpuTimer = () => { gpuTimer = new GpuFrameTimer(); };
+    // Retirement clears duplicate-frame state and the viewport observer. Neither
+    // affects device ownership, which is what these slices test.
+    let frameSignatureIdentity = null;
+    let viewportObserver = null, viewportObservedVideo = null, videoInViewport = true;
+    let finalizeBindGroup = null, finalizeBindKey = null;
     let gpuResourceGeneration = 0;
     let adoptionGeneration = 1, adopting = false;
     let pageSuspended = false, primaryController = null, videoMonitor = null, video = {};

@@ -56,6 +56,11 @@ async function loadCoordinator(deps) {
     const GpuFrameTimer = class { destroy() {} };
     let gpuTimer = new GpuFrameTimer();
     const publishGpuTimer = () => { gpuTimer = new GpuFrameTimer(); };
+    // Retirement clears duplicate-frame state and the viewport observer. Neither
+    // affects device ownership, which is what these slices test.
+    let frameSignatureIdentity = null;
+    let viewportObserver = null, viewportObservedVideo = null, videoInViewport = true;
+    let finalizeBindGroup = null, finalizeBindKey = null;
     let adoptionGeneration = 0;
     let videoSelectionGeneration = 0;
     let imagesSelectionGeneration = 0;

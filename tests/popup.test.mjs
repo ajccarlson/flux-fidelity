@@ -8,6 +8,7 @@ import {
   createPopupController,
   describeCommandFailure,
   describeEncodeSeries,
+  describeAvoidedWork,
   describeGpuSeries,
   encodeSparkline,
   formatDiagnostics,
@@ -136,7 +137,7 @@ function popupDocument() {
     "s-webgpu", "s-video", "s-model", "s-frames", "s-resolution", "runtime-status", "drm-banner",
     "copy-diagnostics", "forget-site",
     "perf-idle", "perf-body", "perf-encode-line", "perf-encode-budget", "perf-encode-summary",
-    "perf-gpu-summary",
+    "perf-gpu-summary", "perf-avoided-summary",
     "perf-presented", "perf-dropped", "perf-engine", "perf-output",
     "perf-interp-group", "perf-interp-fps", "perf-interp-frames", "perf-interp-infer",
     "perf-interp-stutter",
@@ -1520,5 +1521,29 @@ test("interpolation mode buttons mirror the upscaler's mode row", async () => {
   assert.ok(
     sent.some(([type, payload]) => type === "FSRCNNX_SETINTERPOLATE" && payload?.on === false),
     "the Off button must disable interpolation",
+  );
+});
+
+test("the avoided-work summary distinguishes fast from skipped", () => {
+  // A user seeing low GPU time must be able to tell "the model is fast" from
+  // "most frames were never computed", and a user suspecting a stale image must
+  // be able to see whether skipping is happening at all.
+  assert.match(describeAvoidedWork({}), /Nothing skipped yet/);
+  assert.match(
+    describeAvoidedWork({ duplicateFrames: { supported: false } }),
+    /repeat detection unavailable/,
+  );
+  const busy = describeAvoidedWork({
+    duplicateFrames: { supported: true, skipped: 412, duplicateRate: 0.38, probing: true },
+    offscreenFrames: { skipped: 96, inViewport: false },
+  });
+  assert.match(busy, /412 repeated frames reused/);
+  assert.match(busy, /38% of sampled frames/);
+  assert.match(busy, /96 skipped while scrolled out of view/);
+  // Backing off is stated, so a zero count reads as "not applicable" rather than
+  // "broken".
+  assert.match(
+    describeAvoidedWork({ duplicateFrames: { supported: true, skipped: 0, duplicateRate: 0, probing: false } }),
+    /detection paused/,
   );
 });

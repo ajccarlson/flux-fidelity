@@ -408,6 +408,11 @@ async function loadStatusHarness(storeHealth = {
     // getStatus publishes GPU timing alongside encodeMs. This slice is about the
     // settings contract, so the timer reports its unsupported shape — which is
     // also the shape most real devices produce, timestamp-query being optional.
+    // getStatus publishes duplicate-frame and viewport-cull counters. This slice
+    // is about the settings contract, so they report an idle renderer.
+    let duplicateFramesSkipped = 0, offscreenFramesSkipped = 0, videoInViewport = true;
+    const frameSignature = { stats: () => ({ supported: true, disabledReason: null,
+      probing: true, probes: 0, duplicates: 0, skipped: 0, duplicateRate: 0 }) };
     const gpuTimer = deps.gpuTimer || {
       stats: () => ({ supported: false, samples: 0, avgMs: null, maxMs: null, lastMs: null }),
       series: () => [],
