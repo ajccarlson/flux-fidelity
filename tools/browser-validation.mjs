@@ -1293,11 +1293,11 @@ async function runPopupSmoke(httpBase, controlClient, extensionId, expectedName,
         }
         throw error;
       }
+      // s-webgpu only leaves "checking…" once the unavailable path has run, so it
+      // is the readiness signal on its own. The unsupported-page state no longer
+      // writes guidance text, so waiting on that would spin until timeout.
       if (state?.href === popupUrl && state.readyState === "complete" &&
-          new Set(["unavailable", "disconnected"]).has(state.webgpuText) &&
-          /(?:open an http, https, or permitted local file page|reload this page)/i.test(
-            state.operationText,
-          )) break;
+          new Set(["unavailable", "disconnected"]).has(state.webgpuText)) break;
       await delay(100, signal);
     }
 
@@ -1310,10 +1310,15 @@ async function runPopupSmoke(httpBase, controlClient, extensionId, expectedName,
     if (!new Set(["unavailable", "disconnected"]).has(state?.webgpuText)) {
       problems.push("popup non-content-page state was not rendered");
     }
-    if (!/(?:open an http, https, or permitted local file page|reload this page)/i.test(
-      state?.operationText || "",
-    )) {
-      problems.push("popup non-content-page guidance is missing");
+    // A disconnected page still tells the user to reload, because that state is
+    // recoverable by an action they can take. An unsupported page says nothing
+    // beyond the status field: there is no action, and the controls are disabled.
+    if (state?.webgpuText === "disconnected" &&
+        !/reload this page/i.test(state?.operationText || "")) {
+      problems.push("popup disconnected-page guidance is missing");
+    }
+    if (state?.webgpuText === "unavailable" && (state?.operationText || "").trim()) {
+      problems.push(`unsupported page should show no guidance, got "${state.operationText}"`);
     }
     if (!Number.isInteger(state?.controlCount) || state.controlCount < 20 ||
         state.disabledCount !== state.controlCount) {
