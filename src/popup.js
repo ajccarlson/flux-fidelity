@@ -1152,15 +1152,18 @@ export function createPopupController({
     $("perf-encode-budget")?.setAttribute("d", spark.budget);
     setText($("perf-encode-summary"), describeEncodeSeries(samples, budgetMs));
 
-    const window = perf.lastWindow || null;
-    const presented = Number(window?.presentedFrames);
-    const dropped = Number(window?.droppedFrames ?? window?.droppedVideoFrames);
-    $("perf-presented").textContent = Number.isFinite(presented) ? String(presented) : "—";
+    // Decoded-frame counts come from the media element, so they populate whatever
+    // the automatic-quality-fallback setting is. Reading them from the guard's
+    // window meant they stayed blank for every default configuration.
+    const quality = renderer.playbackQuality || null;
+    const total = Number(quality?.totalFrames);
+    const dropped = Number(quality?.droppedFrames);
+    $("perf-presented").textContent = Number.isFinite(total) ? String(total) : "—";
     // A ratio rather than a bare count: 40 dropped frames means nothing without
-    // knowing how many were presented alongside them.
+    // knowing how many arrived alongside them.
     $("perf-dropped").textContent = Number.isFinite(dropped)
-      ? (Number.isFinite(presented) && presented + dropped > 0
-        ? `${dropped} (${Math.round((dropped / (presented + dropped)) * 100)}%)`
+      ? (Number.isFinite(total) && total > 0
+        ? `${dropped} (${Math.round((dropped / total) * 100)}%)`
         : String(dropped))
       : "—";
     // Requested versus effective engine: after a fallback these differ, and that

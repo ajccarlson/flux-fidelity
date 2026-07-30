@@ -453,9 +453,14 @@
   </header>
 
   <main>
+    <p id="drm-banner" role="alert" aria-live="assertive"></p>
+    <p id="operation-status" role="status" aria-live="polite" aria-atomic="true"></p>
+
     <div class="tabs" role="tablist" aria-label="Sections">
       <button id="tab-video" type="button" role="tab" aria-selected="true"
         aria-controls="panel-video" data-panel="panel-video">Video</button>
+      <button id="tab-interpolation" type="button" role="tab" aria-selected="false"
+        aria-controls="panel-interpolation" data-panel="panel-interpolation" tabindex="-1">Interpolation</button>
       <button id="tab-advanced" type="button" role="tab" aria-selected="false"
         aria-controls="panel-advanced" data-panel="panel-advanced" tabindex="-1">Advanced</button>
       <button id="tab-performance" type="button" role="tab" aria-selected="false"
@@ -463,40 +468,6 @@
     </div>
 
     <div id="panel-video" role="tabpanel" aria-labelledby="tab-video" tabindex="0">
-    <section aria-labelledby="status-heading">
-      <h2 id="status-heading">Current page</h2>
-      <dl class="status">
-        <div>
-          <dt>WebGPU</dt>
-          <dd id="s-webgpu" class="v">—</dd>
-        </div>
-        <div>
-          <dt>Video</dt>
-          <dd id="s-video" class="v">—</dd>
-        </div>
-        <div>
-          <dt>Model</dt>
-          <dd id="s-model" class="v">—</dd>
-        </div>
-        <div>
-          <dt>Frames</dt>
-          <dd id="s-frames" class="v">0</dd>
-        </div>
-        <div>
-          <dt>Output</dt>
-          <dd id="s-resolution" class="v">&#8212;</dd>
-        </div>
-      </dl>
-      <p id="runtime-status" aria-live="polite" aria-atomic="true"></p>
-      <div class="diagnostics">
-        <button id="copy-diagnostics" type="button">Copy diagnostics</button>
-        <button id="forget-site" type="button">Forget this site</button>
-        <a id="self-test-link" href="validate.html" target="_blank" rel="noopener">Run self-test</a>
-      </div>
-    </section>
-
-    <p id="drm-banner" role="alert" aria-live="assertive"></p>
-    <p id="operation-status" role="status" aria-live="polite" aria-atomic="true"></p>
 
     <section aria-labelledby="upscaler-heading">
       <h2 id="upscaler-heading">Upscaler</h2>
@@ -573,53 +544,9 @@
     </section>
     </div>
 
-    <div id="panel-advanced" role="tabpanel" aria-labelledby="tab-advanced" tabindex="0" hidden>
-      <h2 class="panel-heading">Advanced and site-specific</h2>
+    <div id="panel-interpolation" role="tabpanel" aria-labelledby="tab-interpolation" tabindex="0" hidden>
+      <h2 class="panel-heading">Frame interpolation</h2>
       <div class="advanced-body">
-        <div class="subpanel">
-          <label class="switch-row" for="hover-reveal">
-            <input id="hover-reveal" type="checkbox">
-            <span class="copy">
-              <strong>Hover reveal</strong>
-              <small>Reveal the native video while the pointer is over the player or Shift is held.</small>
-            </span>
-          </label>
-
-          <label class="switch-row" for="all-videos">
-            <input id="all-videos" type="checkbox">
-            <span class="copy">
-              <strong>Upscale every video</strong>
-              <small>Process all qualifying videos on this page. Uses more GPU memory.</small>
-            </span>
-            <span id="multi-count" class="count"></span>
-          </label>
-
-          <label class="switch-row" for="idle-power-saving">
-            <input id="idle-power-saving" type="checkbox">
-            <span class="copy">
-              <strong>Idle power saving</strong>
-              <small>Release GPU resources while this site is hidden. They rebuild when you return.</small>
-            </span>
-          </label>
-
-          <label class="switch-row" for="auto-quality-fallback">
-            <input id="auto-quality-fallback" type="checkbox">
-            <span class="copy">
-              <strong>Automatic quality fallback</strong>
-              <small>Use standard FSRCNNX after sustained frame drops or GPU backlog.</small>
-            </span>
-          </label>
-
-          <label class="switch-row" for="images">
-            <input id="images" type="checkbox">
-            <span class="copy">
-              <strong>Upscale images</strong>
-              <small>Enhance images on this site. Uses more GPU time.</small>
-            </span>
-            <span id="image-count" class="count"></span>
-          </label>
-        </div>
-
         <div class="subpanel">
           <label class="switch-row" for="interpolate">
             <input id="interpolate" type="checkbox">
@@ -704,6 +631,57 @@
             </div>
           </div>
         </div>
+        <p class="help">Interpolation is remembered separately for each site. It needs a readable, non-protected source and enough GPU headroom to sustain the target rate.</p>
+      </div>
+    </div>
+
+    <div id="panel-advanced" role="tabpanel" aria-labelledby="tab-advanced" tabindex="0" hidden>
+      <h2 class="panel-heading">Advanced and site-specific</h2>
+      <div class="advanced-body">
+        <div class="subpanel">
+          <label class="switch-row" for="hover-reveal">
+            <input id="hover-reveal" type="checkbox">
+            <span class="copy">
+              <strong>Hover reveal</strong>
+              <small>Reveal the native video while the pointer is over the player or Shift is held.</small>
+            </span>
+          </label>
+
+          <label class="switch-row" for="all-videos">
+            <input id="all-videos" type="checkbox">
+            <span class="copy">
+              <strong>Upscale every video</strong>
+              <small>Process all qualifying videos on this page. Uses more GPU memory.</small>
+            </span>
+            <span id="multi-count" class="count"></span>
+          </label>
+
+          <label class="switch-row" for="idle-power-saving">
+            <input id="idle-power-saving" type="checkbox">
+            <span class="copy">
+              <strong>Idle power saving</strong>
+              <small>Release GPU resources while this site is hidden. They rebuild when you return.</small>
+            </span>
+          </label>
+
+          <label class="switch-row" for="auto-quality-fallback">
+            <input id="auto-quality-fallback" type="checkbox">
+            <span class="copy">
+              <strong>Automatic quality fallback</strong>
+              <small>Use standard FSRCNNX after sustained frame drops or GPU backlog.</small>
+            </span>
+          </label>
+
+          <label class="switch-row" for="images">
+            <input id="images" type="checkbox">
+            <span class="copy">
+              <strong>Upscale images</strong>
+              <small>Enhance images on this site. Uses more GPU time.</small>
+            </span>
+            <span id="image-count" class="count"></span>
+          </label>
+        </div>
+
 
         <p class="help">Settings are remembered separately for each site. Protected video and cross-origin sources without CORS cannot be processed.</p>
       </div>
@@ -711,9 +689,41 @@
 
     <div id="panel-performance" role="tabpanel" aria-labelledby="tab-performance" tabindex="0" hidden>
       <h2 class="panel-heading">Performance</h2>
+    <section aria-labelledby="status-heading">
+      <h2 id="status-heading">Current page</h2>
+      <dl class="status">
+        <div>
+          <dt>WebGPU</dt>
+          <dd id="s-webgpu" class="v">—</dd>
+        </div>
+        <div>
+          <dt>Video</dt>
+          <dd id="s-video" class="v">—</dd>
+        </div>
+        <div>
+          <dt>Model</dt>
+          <dd id="s-model" class="v">—</dd>
+        </div>
+        <div>
+          <dt>Frames</dt>
+          <dd id="s-frames" class="v">0</dd>
+        </div>
+        <div>
+          <dt>Output</dt>
+          <dd id="s-resolution" class="v">&#8212;</dd>
+        </div>
+      </dl>
+      <p id="runtime-status" aria-live="polite" aria-atomic="true"></p>
+      <div class="diagnostics">
+        <button id="copy-diagnostics" type="button">Copy diagnostics</button>
+        <button id="forget-site" type="button">Forget this site</button>
+        <a id="self-test-link" href="validate.html" target="_blank" rel="noopener">Run self-test</a>
+      </div>
+    </section>
+
       <p class="help" id="perf-idle">Statistics appear while a video is being processed.</p>
       <div id="perf-body" hidden>
-        <h3 class="perf-heading">Frame budget</h3>
+        <h3 class="perf-heading">Upscale encode time</h3>
         <!-- The chart is decorative: every value it draws is also published as
              text in #perf-encode-summary, so the panel is usable without it. -->
         <svg id="perf-encode-chart" class="spark" viewBox="0 0 240 48" preserveAspectRatio="none"
@@ -722,17 +732,18 @@
           <path id="perf-encode-line" class="spark-line" d=""></path>
         </svg>
         <p class="perf-line" id="perf-encode-summary">&#8212;</p>
+        <p class="help">CPU time spent building each upscaled frame, against the display's frame interval. Decoded and dropped counts come from the browser's own decoder, so they cover the whole video, not just enhanced frames.</p>
         <dl class="status perf-grid">
-          <div><dt>Presented</dt><dd id="perf-presented" class="v">&#8212;</dd></div>
-          <div><dt>Dropped</dt><dd id="perf-dropped" class="v">&#8212;</dd></div>
-          <div><dt>Engine</dt><dd id="perf-engine" class="v">&#8212;</dd></div>
+          <div><dt>Decoded frames</dt><dd id="perf-presented" class="v">&#8212;</dd></div>
+          <div><dt>Dropped by browser</dt><dd id="perf-dropped" class="v">&#8212;</dd></div>
+          <div><dt>Upscale engine</dt><dd id="perf-engine" class="v">&#8212;</dd></div>
           <div><dt>Output</dt><dd id="perf-output" class="v">&#8212;</dd></div>
         </dl>
         <div id="perf-interp-group" hidden>
           <h3 class="perf-heading">Interpolation</h3>
           <dl class="status perf-grid">
-            <div><dt>Rate</dt><dd id="perf-interp-fps" class="v">&#8212;</dd></div>
-            <div><dt>Frames</dt><dd id="perf-interp-frames" class="v">&#8212;</dd></div>
+            <div><dt>Source &#8594; output</dt><dd id="perf-interp-fps" class="v">&#8212;</dd></div>
+            <div><dt>Generated / shown</dt><dd id="perf-interp-frames" class="v">&#8212;</dd></div>
             <div><dt>Inference</dt><dd id="perf-interp-infer" class="v">&#8212;</dd></div>
             <div><dt>Stutters</dt><dd id="perf-interp-stutter" class="v">&#8212;</dd></div>
           </dl>
