@@ -8,6 +8,7 @@ import {
   createPopupController,
   describeCommandFailure,
   describeEncodeSeries,
+  describeGpuSeries,
   encodeSparkline,
   formatDiagnostics,
   formatPresentation,
@@ -135,6 +136,7 @@ function popupDocument() {
     "s-webgpu", "s-video", "s-model", "s-frames", "s-resolution", "runtime-status", "drm-banner",
     "copy-diagnostics", "forget-site",
     "perf-idle", "perf-body", "perf-encode-line", "perf-encode-budget", "perf-encode-summary",
+    "perf-gpu-summary",
     "perf-presented", "perf-dropped", "perf-engine", "perf-output",
     "perf-interp-group", "perf-interp-fps", "perf-interp-frames", "perf-interp-infer",
     "perf-interp-stutter",
@@ -1337,6 +1339,30 @@ test("the encode summary names the number that actually matters", () => {
   assert.match(describeEncodeSeries([], 16.7), /No frames measured/);
   // Without a known budget the summary must not invent one.
   assert.equal(/budget/.test(describeEncodeSeries([4, 5], 0)), false);
+});
+
+test("the GPU summary distinguishes unsupported from not-yet-measured", () => {
+  // The distinction matters: a dash or a zero would read as "the GPU costs
+  // nothing", when in fact nothing was measured. timestamp-query is absent
+  // under SwiftShader and behind a flag on several platforms.
+  assert.match(describeGpuSeries(undefined, 16.7), /Not available/);
+  assert.match(describeGpuSeries({ supported: false }, 16.7), /Not available/);
+  assert.match(
+    describeGpuSeries({ supported: true, samples: 0, avgMs: null, maxMs: null }, 16.7),
+    /Measuring/,
+  );
+  const described = describeGpuSeries(
+    { supported: true, samples: 8, avgMs: 3.5, maxMs: 9.25 }, 16.7,
+  );
+  assert.match(described, /8 samples/);
+  assert.match(described, /mean 3\.5 ms/);
+  assert.match(described, /peak 9\.3 ms/);
+  assert.match(described, /budget 16\.7 ms/);
+  // Without a known frame interval the summary must not invent a budget.
+  assert.equal(
+    /budget/.test(describeGpuSeries({ supported: true, samples: 8, avgMs: 3.5, maxMs: 9.25 }, 0)),
+    false,
+  );
 });
 
 test("tabs expose one selected panel and keep the rest out of the tab order", () => {

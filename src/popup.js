@@ -237,6 +237,23 @@ export function describeEncodeSeries(samples, budgetMs) {
   return `${parts.join(" · ")}.`;
 }
 
+// GPU time is sampled, not per-frame, and the feature behind it is frequently
+// missing. Saying so plainly beats showing a dash that reads as "zero".
+export function describeGpuSeries(gpuMs, budgetMs) {
+  if (!gpuMs || gpuMs.supported !== true) {
+    return "Not available on this GPU or browser build.";
+  }
+  if (!Number.isFinite(gpuMs.avgMs) || !gpuMs.samples) return "Measuring…";
+  const budget = Number.isFinite(budgetMs) && budgetMs > 0 ? budgetMs : null;
+  const parts = [
+    `${gpuMs.samples} samples`,
+    `mean ${gpuMs.avgMs.toFixed(1)} ms`,
+    `peak ${Number(gpuMs.maxMs).toFixed(1)} ms`,
+  ];
+  if (budget) parts.push(`budget ${budget.toFixed(1)} ms`);
+  return `${parts.join(" · ")}.`;
+}
+
 // Turns the status payload into a pasteable report. getStatus() already computes
 // far more than the popup shows; without this, a user whose video looks wrong has
 // nothing to hand over and no way to reach validate.html.
@@ -1211,6 +1228,7 @@ export function createPopupController({
     $("perf-encode-line")?.setAttribute("d", spark.line);
     $("perf-encode-budget")?.setAttribute("d", spark.budget);
     setText($("perf-encode-summary"), describeEncodeSeries(samples, budgetMs));
+    setText($("perf-gpu-summary"), describeGpuSeries(renderer.gpuMs, budgetMs));
 
     // Decoded-frame counts come from the media element, so they populate whatever
     // the automatic-quality-fallback setting is. Reading them from the guard's

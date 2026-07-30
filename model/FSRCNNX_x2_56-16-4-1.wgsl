@@ -11,569 +11,468 @@ fn clampCoord(c : vec2i, dim : vec2u) -> vec2i {
 }
 
 
-//==== ENTRY pass0 : feature_map_1 ====
-// ---- PASS 0: feature map 1 (save=FEATURE1, comps=4) ----
+//==== ENTRY pass0 : fused_FEATURE1_FEATURE2_FEATURE3_FEATURE4 ====
+// ---- PASS 0: feature map 1 + feature map 2 + feature map 3 + feature map 4 (saves=FEATURE1,FEATURE2,FEATURE3,FEATURE4) ----
 // binds: LUMA
+// Fused: 4 upstream hooks sharing one set of input fetches.
 @group(0) @binding(0) var t_LUMA : texture_2d<f32>;
-@group(0) @binding(1) var outTex : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(1) var out_FEATURE1 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(2) var out_FEATURE2 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(3) var out_FEATURE3 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(4) var out_FEATURE4 : texture_storage_2d<rgba16float, write>;
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
+  let dims = textureDimensions(out_FEATURE1);
   if (gid.x >= dims.x || gid.y >= dims.y) { return; }
   let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.0244051795, -0.0193878058, -0.0408127122, 0.0702814460);
-  res += vec4f(-0.0305029228, -0.00358368969, -0.0525588207, 0.0233328007) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.396738619, 0.0242232922, 0.124520741, 0.0321335159) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.769295990, -0.0644070730, -0.00642746221, -0.0261363462) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.350231528, -0.0301914830, 0.0446504839, 0.0351650193) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0840748623, 0.0158976614, -0.0431204550, 0.0423995480) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0692521483, -0.0154635711, -0.0878194794, 0.0380097367) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.462146282, 0.244517654, -0.0483161584, -0.0825494602) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.175225466, 0.229707018, -0.0433780998, 0.0209546890) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.560336351, -0.368313462, 0.0635155290, -0.00859611295) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0407595411, -0.000991033739, 0.00849559344, -0.0430746563) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0919678733, -0.0591838472, 0.158466473, -0.177771717) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0391578414, -0.860149384, 0.0685950741, 0.235374853) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.632899225, 0.711531579, 0.179347903, -2.64340258) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.193029970, 0.198437691, 0.204708442, -0.459560573) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0253029671, 0.00195743376, -0.220797718, 0.130740210) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0261420719, 0.198131651, -0.0946076140, 0.0572174974) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0892286673, 0.0300107896, -0.225931570, 0.0375103466) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.185122207, -0.730409205, 0.533282638, -0.400856227) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0449813530, 0.203363165, 0.0855500028, 0.0154375760) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.00498483796, -0.0261826478, -0.0955868065, 0.0205896143) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0284302905, -0.0846604258, 0.0166263673, 0.0238431115) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0241703577, 0.0866994560, 0.0471411571, 0.0376262292) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.00121730601, 0.0462623984, -0.276718438, 0.0619318709) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0606135279, -0.0286561288, -0.0170328338, 0.0167214982) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.00115182530, -0.00566567900, 0.0126261134, 0.0268452261) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 2), textureDimensions(t_LUMA)), 0).x;
-  res = max(res, vec4f(0.0)) + vec4f(0.0949606225, -0.0675728917, 0.347396314, -0.0177416950) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
+  let d_LUMA = textureDimensions(t_LUMA);
+  var res0 = vec4f(-0.0244051795, -0.0193878058, -0.0408127122, 0.0702814460);
+  res0 += vec4f(-0.0305029228, -0.00358368969, -0.0525588207, 0.0233328007) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -2), d_LUMA), 0).x;
+  res0 += vec4f(0.396738619, 0.0242232922, 0.124520741, 0.0321335159) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -1), d_LUMA), 0).x;
+  res0 += vec4f(-0.769295990, -0.0644070730, -0.00642746221, -0.0261363462) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 0), d_LUMA), 0).x;
+  res0 += vec4f(-0.350231528, -0.0301914830, 0.0446504839, 0.0351650193) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 1), d_LUMA), 0).x;
+  res0 += vec4f(0.0840748623, 0.0158976614, -0.0431204550, 0.0423995480) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 2), d_LUMA), 0).x;
+  res0 += vec4f(0.0692521483, -0.0154635711, -0.0878194794, 0.0380097367) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -2), d_LUMA), 0).x;
+  res0 += vec4f(-0.462146282, 0.244517654, -0.0483161584, -0.0825494602) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -1), d_LUMA), 0).x;
+  res0 += vec4f(-0.175225466, 0.229707018, -0.0433780998, 0.0209546890) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 0), d_LUMA), 0).x;
+  res0 += vec4f(0.560336351, -0.368313462, 0.0635155290, -0.00859611295) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 1), d_LUMA), 0).x;
+  res0 += vec4f(0.0407595411, -0.000991033739, 0.00849559344, -0.0430746563) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 2), d_LUMA), 0).x;
+  res0 += vec4f(-0.0919678733, -0.0591838472, 0.158466473, -0.177771717) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -2), d_LUMA), 0).x;
+  res0 += vec4f(0.0391578414, -0.860149384, 0.0685950741, 0.235374853) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -1), d_LUMA), 0).x;
+  res0 += vec4f(0.632899225, 0.711531579, 0.179347903, -2.64340258) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 0), d_LUMA), 0).x;
+  res0 += vec4f(-0.193029970, 0.198437691, 0.204708442, -0.459560573) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 1), d_LUMA), 0).x;
+  res0 += vec4f(-0.0253029671, 0.00195743376, -0.220797718, 0.130740210) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 2), d_LUMA), 0).x;
+  res0 += vec4f(0.0261420719, 0.198131651, -0.0946076140, 0.0572174974) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -2), d_LUMA), 0).x;
+  res0 += vec4f(0.0892286673, 0.0300107896, -0.225931570, 0.0375103466) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -1), d_LUMA), 0).x;
+  res0 += vec4f(-0.185122207, -0.730409205, 0.533282638, -0.400856227) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 0), d_LUMA), 0).x;
+  res0 += vec4f(0.0449813530, 0.203363165, 0.0855500028, 0.0154375760) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 1), d_LUMA), 0).x;
+  res0 += vec4f(0.00498483796, -0.0261826478, -0.0955868065, 0.0205896143) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 2), d_LUMA), 0).x;
+  res0 += vec4f(-0.0284302905, -0.0846604258, 0.0166263673, 0.0238431115) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -2), d_LUMA), 0).x;
+  res0 += vec4f(-0.0241703577, 0.0866994560, 0.0471411571, 0.0376262292) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -1), d_LUMA), 0).x;
+  res0 += vec4f(0.00121730601, 0.0462623984, -0.276718438, 0.0619318709) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 0), d_LUMA), 0).x;
+  res0 += vec4f(-0.0606135279, -0.0286561288, -0.0170328338, 0.0167214982) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 1), d_LUMA), 0).x;
+  res0 += vec4f(0.00115182530, -0.00566567900, 0.0126261134, 0.0268452261) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 2), d_LUMA), 0).x;
+  res0 = max(res0, vec4f(0.0)) + vec4f(0.0949606225, -0.0675728917, 0.347396314, -0.0177416950) * min(res0, vec4f(0.0));
+  var res1 = vec4f(-0.0259333923, -0.0741869286, -0.0000278289099, 0.0563091859);
+  res1 += vec4f(0.0752074346, -0.0476923473, -0.0788608715, -0.0306314379) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -2), d_LUMA), 0).x;
+  res1 += vec4f(-0.297021806, 0.0287952181, 0.0647072643, -0.0631131977) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -1), d_LUMA), 0).x;
+  res1 += vec4f(-0.0158463828, 0.0774371922, 0.0487521961, 0.0410824753) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 0), d_LUMA), 0).x;
+  res1 += vec4f(0.180971175, -0.0259164628, 0.0244978517, -0.00387134543) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 1), d_LUMA), 0).x;
+  res1 += vec4f(-0.0456995405, -0.0619007498, -0.0555472225, -0.0272416640) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 2), d_LUMA), 0).x;
+  res1 += vec4f(0.0527532250, 0.0228812918, 0.0506056063, 0.0479417555) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -2), d_LUMA), 0).x;
+  res1 += vec4f(-0.491436005, -0.153865725, 0.113649182, -0.640294492) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -1), d_LUMA), 0).x;
+  res1 += vec4f(0.415425360, 0.0340576321, -0.947778702, -0.284301311) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 0), d_LUMA), 0).x;
+  res1 += vec4f(-0.0931098759, -0.0202076193, 0.104176775, 0.0739866197) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 1), d_LUMA), 0).x;
+  res1 += vec4f(0.0521339998, -0.0444932692, -0.0170728154, 0.0330023430) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 2), d_LUMA), 0).x;
+  res1 += vec4f(-0.0275115781, 0.000962830090, 0.0424331762, 0.119859412) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -2), d_LUMA), 0).x;
+  res1 += vec4f(0.204280600, 0.0831027478, -0.266842484, -1.49579489) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -1), d_LUMA), 0).x;
+  res1 += vec4f(0.417684168, 0.680342674, 0.453423142, 0.618804932) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 0), d_LUMA), 0).x;
+  res1 += vec4f(-0.451963663, 0.136506498, -0.0982315540, 0.201760799) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 1), d_LUMA), 0).x;
+  res1 += vec4f(0.0100931292, 0.0378644094, 0.112635516, 0.0510680266) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 2), d_LUMA), 0).x;
+  res1 += vec4f(-0.240755767, 0.0472496003, 0.0940687358, 0.132785097) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -2), d_LUMA), 0).x;
+  res1 += vec4f(0.216923609, -0.0215977672, -0.0491868481, 0.0187245551) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -1), d_LUMA), 0).x;
+  res1 += vec4f(-0.281359613, -0.113359891, -0.0436514020, 0.208506778) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 0), d_LUMA), 0).x;
+  res1 += vec4f(0.0719869956, -0.0820932910, -0.123576015, 0.0772113577) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 1), d_LUMA), 0).x;
+  res1 += vec4f(0.113527611, -0.0543608814, -0.0437160358, 0.0351124816) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 2), d_LUMA), 0).x;
+  res1 += vec4f(-0.0164945107, 0.0579764955, -0.0152996555, -0.0218851790) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -2), d_LUMA), 0).x;
+  res1 += vec4f(0.141842276, -0.111184314, -0.0289203506, 0.0345272161) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -1), d_LUMA), 0).x;
+  res1 += vec4f(-0.0249018706, -0.0700801238, 0.0316865109, -0.0494593829) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 0), d_LUMA), 0).x;
+  res1 += vec4f(-0.00874983333, 0.0957423002, 0.0936378092, -0.0198494047) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 1), d_LUMA), 0).x;
+  res1 += vec4f(-0.0244425312, -0.0156988166, 0.00699066743, -0.0169634074) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 2), d_LUMA), 0).x;
+  res1 = max(res1, vec4f(0.0)) + vec4f(-0.100740090, 0.993596911, 0.00668932963, 0.00411439454) * min(res1, vec4f(0.0));
+  var res2 = vec4f(-0.187498391, -0.0983499810, 0.100833490, 0.0246317480);
+  res2 += vec4f(-0.0158633236, -0.0799552724, 0.0772196651, 0.0461650901) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -2), d_LUMA), 0).x;
+  res2 += vec4f(-0.0477179103, -0.0647140145, -0.0738564506, 0.0840781182) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -1), d_LUMA), 0).x;
+  res2 += vec4f(-0.0580589250, -0.0141898198, -0.0715759769, -0.0452612676) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 0), d_LUMA), 0).x;
+  res2 += vec4f(0.0272958204, 0.0582425073, 0.0709329471, -0.0323361643) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 1), d_LUMA), 0).x;
+  res2 += vec4f(0.0287393052, 0.00837234966, 0.0451795645, 0.0180755928) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 2), d_LUMA), 0).x;
+  res2 += vec4f(0.0483760834, -0.0621175542, -0.0345418453, 0.00392439589) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -2), d_LUMA), 0).x;
+  res2 += vec4f(-0.0210150015, 0.0601340011, 0.183494180, 0.0475284979) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -1), d_LUMA), 0).x;
+  res2 += vec4f(-0.0219953209, -0.0927855074, -0.0869141221, -0.246250644) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 0), d_LUMA), 0).x;
+  res2 += vec4f(0.0602624305, -0.0903063267, 0.0158158503, 0.0792356357) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 1), d_LUMA), 0).x;
+  res2 += vec4f(-0.0582050085, 0.0491473973, 0.00935330335, -0.125141874) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 2), d_LUMA), 0).x;
+  res2 += vec4f(0.0528309830, 0.126834154, 0.161129251, -0.0213313699) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -2), d_LUMA), 0).x;
+  res2 += vec4f(-0.0350427255, -0.168509573, -0.293689281, -0.240568474) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -1), d_LUMA), 0).x;
+  res2 += vec4f(0.312266976, 0.359876752, -0.124092437, -0.169774234) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 0), d_LUMA), 0).x;
+  res2 += vec4f(0.113685973, 0.126020476, 0.0482620373, 0.589734733) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 1), d_LUMA), 0).x;
+  res2 += vec4f(0.0428296067, -0.0432401896, 0.0330568738, -0.113496862) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 2), d_LUMA), 0).x;
+  res2 += vec4f(0.0532170050, 0.0377691761, -0.175817892, -0.0296310913) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -2), d_LUMA), 0).x;
+  res2 += vec4f(-0.0504792221, 0.0379330032, -1.59201849, 0.119906522) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -1), d_LUMA), 0).x;
+  res2 += vec4f(0.315834731, 0.163852707, 0.286894530, 0.498069674) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 0), d_LUMA), 0).x;
+  res2 += vec4f(0.0997058451, -0.110267252, -0.0227740947, -0.327751517) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 1), d_LUMA), 0).x;
+  res2 += vec4f(0.00777837448, 0.00961712003, 0.0657324642, 0.0145994229) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 2), d_LUMA), 0).x;
+  res2 += vec4f(-0.00241310801, 0.00440460909, 0.0810335279, -0.000527572702) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -2), d_LUMA), 0).x;
+  res2 += vec4f(-0.00343508064, 0.0836500153, 0.202133700, -0.0669304952) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -1), d_LUMA), 0).x;
+  res2 += vec4f(0.00880392175, -0.0172668807, 0.0957236290, -0.0275402647) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 0), d_LUMA), 0).x;
+  res2 += vec4f(0.0573911853, 0.0164401550, -0.0786970928, -0.0312734246) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 1), d_LUMA), 0).x;
+  res2 += vec4f(0.0883933008, -0.0811970010, -0.0377582088, -0.00642326800) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 2), d_LUMA), 0).x;
+  res2 = max(res2, vec4f(0.0)) + vec4f(1.00509167, 0.951499462, 0.00970332138, 0.769128919) * min(res2, vec4f(0.0));
+  var res3 = vec4f(0.129055664, -0.0153669231, -0.126377627, 0.0372813344);
+  res3 += vec4f(-0.0115844728, -0.0222413354, 0.0720750540, -0.0660502538) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -2), d_LUMA), 0).x;
+  res3 += vec4f(-0.0285728052, 0.0761775970, -0.0332792848, 0.0485707037) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -1), d_LUMA), 0).x;
+  res3 += vec4f(0.0703690499, 0.122471862, -0.122079685, 0.118885882) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 0), d_LUMA), 0).x;
+  res3 += vec4f(0.0239379071, -0.0330842137, 0.00505955610, -0.0143965567) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 1), d_LUMA), 0).x;
+  res3 += vec4f(-0.0188533068, 0.0159141794, 0.0302107073, -0.0403910093) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 2), d_LUMA), 0).x;
+  res3 += vec4f(0.00919989496, 0.0247111712, -0.0475897677, 0.115985557) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -2), d_LUMA), 0).x;
+  res3 += vec4f(0.0587658286, 0.0420398787, 0.0671191886, 0.134051755) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -1), d_LUMA), 0).x;
+  res3 += vec4f(-0.0873436779, 0.739150047, -0.0623583645, -0.384309590) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 0), d_LUMA), 0).x;
+  res3 += vec4f(0.0998015106, 0.0294257980, -0.0527512841, 0.270849437) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 1), d_LUMA), 0).x;
+  res3 += vec4f(0.0117722889, 0.0309023969, 0.0470202938, 0.0605190657) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 2), d_LUMA), 0).x;
+  res3 += vec4f(-0.0153799402, 0.0149575621, -0.0203406364, 0.0994740427) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -2), d_LUMA), 0).x;
+  res3 += vec4f(-0.0146938805, -0.356875330, 0.132854536, -0.901224494) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -1), d_LUMA), 0).x;
+  res3 += vec4f(-0.525388300, -0.816916227, 0.580745757, -1.28745079) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 0), d_LUMA), 0).x;
+  res3 += vec4f(-0.167616308, 0.0874188095, 0.0482898243, -0.199273512) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 1), d_LUMA), 0).x;
+  res3 += vec4f(0.0463831015, -0.0779396296, 0.00680277077, -0.0994428471) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 2), d_LUMA), 0).x;
+  res3 += vec4f(0.00344575406, 0.00139322935, -0.0147332121, 0.0584593713) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -2), d_LUMA), 0).x;
+  res3 += vec4f(-0.0456955694, 0.0931271538, -0.0825150535, 0.159272134) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -1), d_LUMA), 0).x;
+  res3 += vec4f(-0.00806793105, 0.0121016400, -0.0448250920, 0.115331091) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 0), d_LUMA), 0).x;
+  res3 += vec4f(0.0478903316, 0.0341515765, -0.0427059829, 0.160331994) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 1), d_LUMA), 0).x;
+  res3 += vec4f(-0.0243552849, 0.0189464651, 0.0187432542, 0.0333258584) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 2), d_LUMA), 0).x;
+  res3 += vec4f(0.0355883576, -0.00658025779, -0.0182888210, -0.0207219124) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -2), d_LUMA), 0).x;
+  res3 += vec4f(-0.0207351036, -0.000860722153, 0.0511963442, -0.0865134001) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -1), d_LUMA), 0).x;
+  res3 += vec4f(0.0283467695, -0.0338325799, 0.0456032790, -0.0939507410) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 0), d_LUMA), 0).x;
+  res3 += vec4f(-0.0205151159, -0.0159811173, -0.120272480, -0.0115631158) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 1), d_LUMA), 0).x;
+  res3 += vec4f(0.00232908945, -0.0100958534, 0.0593048669, -0.0219872780) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 2), d_LUMA), 0).x;
+  res3 = max(res3, vec4f(0.0)) + vec4f(0.246902093, -0.111202396, 1.01042342, -0.0137968538) * min(res3, vec4f(0.0));
+  textureStore(out_FEATURE1, p, res0);
+  textureStore(out_FEATURE2, p, res1);
+  textureStore(out_FEATURE3, p, res2);
+  textureStore(out_FEATURE4, p, res3);
 }
 
-//==== ENTRY pass1 : feature_map_2 ====
-// ---- PASS 1: feature map 2 (save=FEATURE2, comps=4) ----
+//==== ENTRY pass1 : fused_FEATURE5_FEATURE6_FEATURE7_FEATURE8 ====
+// ---- PASS 1: feature map 5 + feature map 6 + feature map 7 + feature map 8 (saves=FEATURE5,FEATURE6,FEATURE7,FEATURE8) ----
 // binds: LUMA
+// Fused: 4 upstream hooks sharing one set of input fetches.
 @group(0) @binding(0) var t_LUMA : texture_2d<f32>;
-@group(0) @binding(1) var outTex : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(1) var out_FEATURE5 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(2) var out_FEATURE6 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(3) var out_FEATURE7 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(4) var out_FEATURE8 : texture_storage_2d<rgba16float, write>;
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
+  let dims = textureDimensions(out_FEATURE5);
   if (gid.x >= dims.x || gid.y >= dims.y) { return; }
   let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.0259333923, -0.0741869286, -0.0000278289099, 0.0563091859);
-  res += vec4f(0.0752074346, -0.0476923473, -0.0788608715, -0.0306314379) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.297021806, 0.0287952181, 0.0647072643, -0.0631131977) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0158463828, 0.0774371922, 0.0487521961, 0.0410824753) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.180971175, -0.0259164628, 0.0244978517, -0.00387134543) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0456995405, -0.0619007498, -0.0555472225, -0.0272416640) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0527532250, 0.0228812918, 0.0506056063, 0.0479417555) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.491436005, -0.153865725, 0.113649182, -0.640294492) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.415425360, 0.0340576321, -0.947778702, -0.284301311) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0931098759, -0.0202076193, 0.104176775, 0.0739866197) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0521339998, -0.0444932692, -0.0170728154, 0.0330023430) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0275115781, 0.000962830090, 0.0424331762, 0.119859412) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.204280600, 0.0831027478, -0.266842484, -1.49579489) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.417684168, 0.680342674, 0.453423142, 0.618804932) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.451963663, 0.136506498, -0.0982315540, 0.201760799) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0100931292, 0.0378644094, 0.112635516, 0.0510680266) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.240755767, 0.0472496003, 0.0940687358, 0.132785097) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.216923609, -0.0215977672, -0.0491868481, 0.0187245551) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.281359613, -0.113359891, -0.0436514020, 0.208506778) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0719869956, -0.0820932910, -0.123576015, 0.0772113577) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.113527611, -0.0543608814, -0.0437160358, 0.0351124816) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0164945107, 0.0579764955, -0.0152996555, -0.0218851790) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.141842276, -0.111184314, -0.0289203506, 0.0345272161) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0249018706, -0.0700801238, 0.0316865109, -0.0494593829) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.00874983333, 0.0957423002, 0.0936378092, -0.0198494047) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0244425312, -0.0156988166, 0.00699066743, -0.0169634074) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 2), textureDimensions(t_LUMA)), 0).x;
-  res = max(res, vec4f(0.0)) + vec4f(-0.100740090, 0.993596911, 0.00668932963, 0.00411439454) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
+  let d_LUMA = textureDimensions(t_LUMA);
+  var res0 = vec4f(-0.311532021, 0.146944493, 0.0196794905, 0.0763509125);
+  res0 += vec4f(0.240639299, 0.0744781494, -0.0472058915, 0.0286449064) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -2), d_LUMA), 0).x;
+  res0 += vec4f(-0.162368849, -0.0759652182, 0.0788279027, -0.0289599691) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -1), d_LUMA), 0).x;
+  res0 += vec4f(-0.225628600, -0.0219380613, 0.114639185, -0.0214659646) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 0), d_LUMA), 0).x;
+  res0 += vec4f(0.0937342271, -0.0252691284, -0.0490102507, -0.0481422842) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 1), d_LUMA), 0).x;
+  res0 += vec4f(0.0630491972, 0.000370926020, -0.0307642780, 0.00640888419) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 2), d_LUMA), 0).x;
+  res0 += vec4f(-0.0519883409, 0.00607427536, -0.0145623637, -0.0168666113) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -2), d_LUMA), 0).x;
+  res0 += vec4f(0.131484136, -0.122356057, 0.0696693733, 0.0225179195) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -1), d_LUMA), 0).x;
+  res0 += vec4f(-0.102663286, 0.149843708, -0.576350451, 0.0233518779) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 0), d_LUMA), 0).x;
+  res0 += vec4f(-0.421713799, 0.150059506, 0.0625780299, 0.0138862198) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 1), d_LUMA), 0).x;
+  res0 += vec4f(0.0348467827, 0.0898338035, 0.00382186798, 0.0118735963) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 2), d_LUMA), 0).x;
+  res0 += vec4f(0.0565612651, 0.191228643, 0.0449618399, 0.0172657613) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -2), d_LUMA), 0).x;
+  res0 += vec4f(-0.0206387006, -0.370833576, -0.172199890, -0.00283691077) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -1), d_LUMA), 0).x;
+  res0 += vec4f(0.133167908, -1.89093602, 0.375235200, -0.727413893) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 0), d_LUMA), 0).x;
+  res0 += vec4f(0.234137520, 0.224154949, 0.00530209253, 0.238607958) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 1), d_LUMA), 0).x;
+  res0 += vec4f(-0.00390483183, -0.288621902, 0.00361726177, 0.0357279480) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 2), d_LUMA), 0).x;
+  res0 += vec4f(-0.142144680, 0.0716201812, -0.0685054958, 0.0708274841) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -2), d_LUMA), 0).x;
+  res0 += vec4f(-0.164785966, 0.00264620478, 0.0781848133, -0.0331983007) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -1), d_LUMA), 0).x;
+  res0 += vec4f(0.424581647, 0.186323926, 0.0243080445, 0.100927800) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 0), d_LUMA), 0).x;
+  res0 += vec4f(0.249448776, 0.158895791, 0.0863514319, 0.109140076) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 1), d_LUMA), 0).x;
+  res0 += vec4f(-0.00588959269, 0.0224806871, 0.119416304, -0.0203119460) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 2), d_LUMA), 0).x;
+  res0 += vec4f(0.111850932, -0.0266017653, -0.0304768737, -0.00919446070) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -2), d_LUMA), 0).x;
+  res0 += vec4f(-0.157359421, 0.0406884588, -0.0205392260, 0.0424489602) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -1), d_LUMA), 0).x;
+  res0 += vec4f(-0.301794767, -0.155400723, -0.0462533087, 0.0469637699) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 0), d_LUMA), 0).x;
+  res0 += vec4f(-0.119770080, 0.00955757778, -0.0115545802, -0.0261674244) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 1), d_LUMA), 0).x;
+  res0 += vec4f(0.134069175, 0.0537358150, -0.0257806126, 0.0773098320) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 2), d_LUMA), 0).x;
+  res0 = max(res0, vec4f(0.0)) + vec4f(0.00713988440, -0.0966563895, 0.922880471, 0.936311901) * min(res0, vec4f(0.0));
+  var res1 = vec4f(0.0776331723, -0.0294944830, -0.00800377131, -0.000166642101);
+  res1 += vec4f(0.00785766821, -0.0360049047, 0.0368952677, 0.0327782705) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -2), d_LUMA), 0).x;
+  res1 += vec4f(-0.00110740645, 0.0131143862, 0.0156473555, 0.00143915357) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -1), d_LUMA), 0).x;
+  res1 += vec4f(0.0878513828, 0.0476087146, -0.403894722, 0.0339350104) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 0), d_LUMA), 0).x;
+  res1 += vec4f(-0.0125165908, -0.104594849, 0.167050868, -0.0821032748) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 1), d_LUMA), 0).x;
+  res1 += vec4f(0.0178957004, 0.0319805108, -0.0571091585, 0.0768107474) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 2), d_LUMA), 0).x;
+  res1 += vec4f(0.0431962423, 0.0252633449, 0.0869948566, -0.155234128) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -2), d_LUMA), 0).x;
+  res1 += vec4f(0.0680968985, 0.00542932050, -0.110557966, 0.146075696) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -1), d_LUMA), 0).x;
+  res1 += vec4f(-0.102554768, 0.0393223986, 0.484628528, 0.132630825) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 0), d_LUMA), 0).x;
+  res1 += vec4f(0.0849009678, 0.214410380, -0.497993469, -0.132189453) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 1), d_LUMA), 0).x;
+  res1 += vec4f(-0.0508803390, -0.104975671, -0.0735911727, -0.235993668) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 2), d_LUMA), 0).x;
+  res1 += vec4f(-0.0422602147, 0.635468245, -0.0403720140, -0.171226561) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -2), d_LUMA), 0).x;
+  res1 += vec4f(0.0282066520, -0.104822949, 0.413912207, -0.147957966) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -1), d_LUMA), 0).x;
+  res1 += vec4f(0.228248462, -0.236447617, -0.0910172239, 0.456460297) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 0), d_LUMA), 0).x;
+  res1 += vec4f(0.275444090, -0.353088796, -0.0898706317, 0.106960319) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 1), d_LUMA), 0).x;
+  res1 += vec4f(-0.0406159125, -0.0338010341, 0.0709752738, -1.09392571) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 2), d_LUMA), 0).x;
+  res1 += vec4f(-0.0203486178, -0.178041488, -0.144248053, -0.171090841) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -2), d_LUMA), 0).x;
+  res1 += vec4f(0.209961236, -0.372139603, -0.233613104, 0.0667994246) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -1), d_LUMA), 0).x;
+  res1 += vec4f(-1.23991299, -0.314015061, -0.0948303044, 0.0849615335) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 0), d_LUMA), 0).x;
+  res1 += vec4f(-0.166274905, 0.380977094, 0.477289617, -0.272323340) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 1), d_LUMA), 0).x;
+  res1 += vec4f(0.0731437430, 0.105919860, -0.0291688107, -0.547640443) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 2), d_LUMA), 0).x;
+  res1 += vec4f(-0.0119869821, -0.0217606071, 0.0978049636, 0.0574811101) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -2), d_LUMA), 0).x;
+  res1 += vec4f(0.0487400405, -0.00234267651, -0.260499448, 0.174760297) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -1), d_LUMA), 0).x;
+  res1 += vec4f(-0.0734328851, 0.211454764, 0.0899142846, -0.0364907198) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 0), d_LUMA), 0).x;
+  res1 += vec4f(0.0385777168, 0.0414263569, -0.0565257743, 0.201229081) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 1), d_LUMA), 0).x;
+  res1 += vec4f(-0.00201891409, -0.0533584915, -0.320149302, 0.103548445) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 2), d_LUMA), 0).x;
+  res1 = max(res1, vec4f(0.0)) + vec4f(0.202914357, -0.0543082878, -0.0168685224, 0.00129078655) * min(res1, vec4f(0.0));
+  var res2 = vec4f(-0.0187136959, 0.0831674859, -0.111693263, -0.000581726898);
+  res2 += vec4f(-0.00459680241, 0.0649750680, 0.0540746786, -0.0115636541) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -2), d_LUMA), 0).x;
+  res2 += vec4f(-0.0262039620, -0.00109881000, 0.0832441226, 0.0293392930) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -1), d_LUMA), 0).x;
+  res2 += vec4f(-0.0120418565, -0.0992007852, -0.0845316052, 0.0675578341) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 0), d_LUMA), 0).x;
+  res2 += vec4f(0.0475163572, -0.0406978577, 0.0939263180, -0.0341708772) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 1), d_LUMA), 0).x;
+  res2 += vec4f(0.0209192540, 0.0286517181, -0.0843287110, 0.0290359128) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 2), d_LUMA), 0).x;
+  res2 += vec4f(0.0209416226, -0.0200429298, 0.225172669, 0.0580249280) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -2), d_LUMA), 0).x;
+  res2 += vec4f(-0.0135388765, 0.112500444, 0.0830827579, 0.0164586529) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -1), d_LUMA), 0).x;
+  res2 += vec4f(0.103910379, 0.138666064, -0.284203768, 0.0238130745) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 0), d_LUMA), 0).x;
+  res2 += vec4f(-0.0657494813, 0.0106255384, -0.105918057, 0.0269528143) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 1), d_LUMA), 0).x;
+  res2 += vec4f(-0.0247739218, 0.0103789661, 0.0963194147, 0.0319722965) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 2), d_LUMA), 0).x;
+  res2 += vec4f(-0.0637300313, 0.325039208, 0.0115360664, 0.00524943508) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -2), d_LUMA), 0).x;
+  res2 += vec4f(-0.0210174602, -0.685337186, 0.377419233, -0.0693136752) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -1), d_LUMA), 0).x;
+  res2 += vec4f(0.231796220, 0.204342619, -0.809239566, 0.357418954) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 0), d_LUMA), 0).x;
+  res2 += vec4f(0.446876287, -0.186418712, 0.388841122, -0.363185853) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 1), d_LUMA), 0).x;
+  res2 += vec4f(-0.115427867, 0.00607956480, -0.0699666366, 0.0702272728) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 2), d_LUMA), 0).x;
+  res2 += vec4f(0.117090464, 0.0511123873, 0.00910020620, -0.0288592484) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -2), d_LUMA), 0).x;
+  res2 += vec4f(0.0678106174, 0.0408032797, 0.286037892, 0.117596254) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -1), d_LUMA), 0).x;
+  res2 += vec4f(-0.426768214, -0.449513346, -0.339450598, -0.300739318) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 0), d_LUMA), 0).x;
+  res2 += vec4f(0.00251056720, 0.276579469, -0.0460667126, -0.418792278) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 1), d_LUMA), 0).x;
+  res2 += vec4f(-0.0293216705, -0.0334570669, 0.0339457951, 0.0985327512) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 2), d_LUMA), 0).x;
+  res2 += vec4f(-0.0406346135, -0.0355573781, -0.0147582078, 0.0263845604) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -2), d_LUMA), 0).x;
+  res2 += vec4f(0.0316427834, 0.0310490523, 0.129600540, -0.0387054607) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -1), d_LUMA), 0).x;
+  res2 += vec4f(-0.108314201, 0.171619177, -0.0841980949, 0.117046691) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 0), d_LUMA), 0).x;
+  res2 += vec4f(0.0277729612, -0.0746757612, 0.0299424995, -0.0706993341) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 1), d_LUMA), 0).x;
+  res2 += vec4f(-0.0502414219, 0.0537468456, -0.0816364363, 0.0479545556) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 2), d_LUMA), 0).x;
+  res2 = max(res2, vec4f(0.0)) + vec4f(0.839956224, 0.843664169, -0.0240177251, -0.0855448917) * min(res2, vec4f(0.0));
+  var res3 = vec4f(-0.00815434661, 0.0458484925, -0.0422668047, -0.0286568273);
+  res3 += vec4f(-0.0225184355, 0.0448420346, -0.0605560765, -0.0102129988) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -2), d_LUMA), 0).x;
+  res3 += vec4f(0.00160987012, 0.0990698859, -0.250722557, 0.0448262542) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -1), d_LUMA), 0).x;
+  res3 += vec4f(-0.344596148, 0.121891581, -0.426929951, 0.0203870554) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 0), d_LUMA), 0).x;
+  res3 += vec4f(0.0368794464, 0.0776121542, 0.223196507, 0.0376024023) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 1), d_LUMA), 0).x;
+  res3 += vec4f(-0.00944103859, 0.0552083217, -0.0295412075, 0.0489511415) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 2), d_LUMA), 0).x;
+  res3 += vec4f(0.100925602, 0.0953381732, 0.0674138367, 0.0732126236) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -2), d_LUMA), 0).x;
+  res3 += vec4f(0.177228481, -0.528764606, 0.164859638, -0.0118712876) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -1), d_LUMA), 0).x;
+  res3 += vec4f(0.769660592, 0.0107876109, -0.0538160242, 0.341084182) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 0), d_LUMA), 0).x;
+  res3 += vec4f(0.359493136, -0.0157510992, -0.532476425, -0.222514525) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 1), d_LUMA), 0).x;
+  res3 += vec4f(-0.0265295338, -0.0374278128, -0.0914405510, -0.0228209551) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 2), d_LUMA), 0).x;
+  res3 += vec4f(-0.150646135, -0.395741463, 0.136458904, -0.232981429) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -2), d_LUMA), 0).x;
+  res3 += vec4f(-0.0447356030, -0.701885104, -0.186698318, -0.351461381) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -1), d_LUMA), 0).x;
+  res3 += vec4f(-1.69361365, -0.0976926163, 0.684699297, 0.0465949066) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 0), d_LUMA), 0).x;
+  res3 += vec4f(-0.133152142, -0.109478123, 0.295263559, 0.382330209) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 1), d_LUMA), 0).x;
+  res3 += vec4f(-0.0368863791, -0.123222716, 0.0821860880, 0.134097159) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 2), d_LUMA), 0).x;
+  res3 += vec4f(0.0274522752, 0.142322719, -0.0313339569, 0.0331953764) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -2), d_LUMA), 0).x;
+  res3 += vec4f(-0.0191112719, 0.00663724029, -0.0416414067, 0.0952508524) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -1), d_LUMA), 0).x;
+  res3 += vec4f(-0.250984311, 0.0805470049, -0.277193010, -0.193408459) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 0), d_LUMA), 0).x;
+  res3 += vec4f(0.115782931, 0.165399835, -0.0822748318, -0.196518660) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 1), d_LUMA), 0).x;
+  res3 += vec4f(0.0324398465, -0.103962876, 0.0444518067, 0.0433194675) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 2), d_LUMA), 0).x;
+  res3 += vec4f(0.00236328668, 0.0422169752, 0.0176460966, -0.0199319609) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -2), d_LUMA), 0).x;
+  res3 += vec4f(0.0374523997, -0.0236300416, 0.0502775721, 0.0910332501) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -1), d_LUMA), 0).x;
+  res3 += vec4f(0.167487279, 0.0242216010, 0.0431379564, -0.135983810) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 0), d_LUMA), 0).x;
+  res3 += vec4f(-0.0373916626, 0.149101347, 0.00779957697, 0.0168425478) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 1), d_LUMA), 0).x;
+  res3 += vec4f(-0.0357284173, 0.138516873, -0.00737609994, 0.0863596201) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 2), d_LUMA), 0).x;
+  res3 = max(res3, vec4f(0.0)) + vec4f(-0.0225117858, 0.0279447008, -0.0243210122, 0.972044289) * min(res3, vec4f(0.0));
+  textureStore(out_FEATURE5, p, res0);
+  textureStore(out_FEATURE6, p, res1);
+  textureStore(out_FEATURE7, p, res2);
+  textureStore(out_FEATURE8, p, res3);
 }
 
-//==== ENTRY pass2 : feature_map_3 ====
-// ---- PASS 2: feature map 3 (save=FEATURE3, comps=4) ----
+//==== ENTRY pass2 : fused_FEATURE9_FEATURE10_FEATURE11_FEATURE12 ====
+// ---- PASS 2: feature map 9 + feature map 10 + feature map 11 + feature map 12 (saves=FEATURE9,FEATURE10,FEATURE11,FEATURE12) ----
 // binds: LUMA
+// Fused: 4 upstream hooks sharing one set of input fetches.
 @group(0) @binding(0) var t_LUMA : texture_2d<f32>;
-@group(0) @binding(1) var outTex : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(1) var out_FEATURE9 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(2) var out_FEATURE10 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(3) var out_FEATURE11 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(4) var out_FEATURE12 : texture_storage_2d<rgba16float, write>;
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
+  let dims = textureDimensions(out_FEATURE9);
   if (gid.x >= dims.x || gid.y >= dims.y) { return; }
   let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.187498391, -0.0983499810, 0.100833490, 0.0246317480);
-  res += vec4f(-0.0158633236, -0.0799552724, 0.0772196651, 0.0461650901) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0477179103, -0.0647140145, -0.0738564506, 0.0840781182) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0580589250, -0.0141898198, -0.0715759769, -0.0452612676) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0272958204, 0.0582425073, 0.0709329471, -0.0323361643) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0287393052, 0.00837234966, 0.0451795645, 0.0180755928) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0483760834, -0.0621175542, -0.0345418453, 0.00392439589) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0210150015, 0.0601340011, 0.183494180, 0.0475284979) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0219953209, -0.0927855074, -0.0869141221, -0.246250644) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0602624305, -0.0903063267, 0.0158158503, 0.0792356357) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0582050085, 0.0491473973, 0.00935330335, -0.125141874) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0528309830, 0.126834154, 0.161129251, -0.0213313699) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0350427255, -0.168509573, -0.293689281, -0.240568474) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.312266976, 0.359876752, -0.124092437, -0.169774234) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.113685973, 0.126020476, 0.0482620373, 0.589734733) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0428296067, -0.0432401896, 0.0330568738, -0.113496862) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0532170050, 0.0377691761, -0.175817892, -0.0296310913) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0504792221, 0.0379330032, -1.59201849, 0.119906522) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.315834731, 0.163852707, 0.286894530, 0.498069674) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0997058451, -0.110267252, -0.0227740947, -0.327751517) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.00777837448, 0.00961712003, 0.0657324642, 0.0145994229) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.00241310801, 0.00440460909, 0.0810335279, -0.000527572702) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.00343508064, 0.0836500153, 0.202133700, -0.0669304952) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.00880392175, -0.0172668807, 0.0957236290, -0.0275402647) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0573911853, 0.0164401550, -0.0786970928, -0.0312734246) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0883933008, -0.0811970010, -0.0377582088, -0.00642326800) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 2), textureDimensions(t_LUMA)), 0).x;
-  res = max(res, vec4f(0.0)) + vec4f(1.00509167, 0.951499462, 0.00970332138, 0.769128919) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
+  let d_LUMA = textureDimensions(t_LUMA);
+  var res0 = vec4f(0.110599741, -0.0321370326, -0.287254691, -0.0229754914);
+  res0 += vec4f(-0.102566436, -0.00120837067, 0.0713334084, 0.0840533227) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -2), d_LUMA), 0).x;
+  res0 += vec4f(0.205529004, -0.0250967480, -0.0178916380, -0.124674119) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -1), d_LUMA), 0).x;
+  res0 += vec4f(-0.366543770, 0.00648614299, 0.193074822, -0.00622453447) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 0), d_LUMA), 0).x;
+  res0 += vec4f(-0.0413905941, 0.0130840531, 0.181262136, 0.0685612783) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 1), d_LUMA), 0).x;
+  res0 += vec4f(0.0419425704, -0.0350595452, -0.00238724845, -0.00278018112) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 2), d_LUMA), 0).x;
+  res0 += vec4f(0.0862500817, -0.0567291006, -0.0324579962, -0.0285885371) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -2), d_LUMA), 0).x;
+  res0 += vec4f(0.0585840531, 0.0411324129, 0.314883292, -0.0775967240) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -1), d_LUMA), 0).x;
+  res0 += vec4f(0.205736354, -0.153455317, -0.0459325202, -0.00804699957) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 0), d_LUMA), 0).x;
+  res0 += vec4f(0.204767287, -0.0605280511, -0.248015046, -0.288344443) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 1), d_LUMA), 0).x;
+  res0 += vec4f(-0.114418946, 0.0693403035, 0.121133700, 0.159834370) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 2), d_LUMA), 0).x;
+  res0 += vec4f(-0.118624657, 0.0353790708, 0.0968240350, -0.108536676) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -2), d_LUMA), 0).x;
+  res0 += vec4f(-0.0346313529, -0.187643439, -0.249090925, -0.0293010063) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -1), d_LUMA), 0).x;
+  res0 += vec4f(-0.147390470, 0.600184560, -0.462108374, 0.00918253325) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 0), d_LUMA), 0).x;
+  res0 += vec4f(-0.715562046, 0.0420041159, 0.0427288227, -0.140712827) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 1), d_LUMA), 0).x;
+  res0 += vec4f(0.123963274, -0.0357227139, -0.0699777752, 0.439487278) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 2), d_LUMA), 0).x;
+  res0 += vec4f(0.0893752426, 0.0134352855, -0.107992060, -0.136729062) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -2), d_LUMA), 0).x;
+  res0 += vec4f(0.107070759, -0.0936988741, 0.0248220637, 0.0994095728) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -1), d_LUMA), 0).x;
+  res0 += vec4f(0.179734915, 0.143348530, 0.172808528, -0.236874014) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 0), d_LUMA), 0).x;
+  res0 += vec4f(-0.120821804, -0.00375957275, -0.0691050887, 0.178805172) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 1), d_LUMA), 0).x;
+  res0 += vec4f(-0.0314872116, 0.0316008665, 0.0509007797, 0.0666419417) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 2), d_LUMA), 0).x;
+  res0 += vec4f(-0.0103220837, -0.00694216089, 0.0895231813, 0.0391273424) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -2), d_LUMA), 0).x;
+  res0 += vec4f(-0.00120546017, -0.000309840922, 0.00305463513, -0.0388011560) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -1), d_LUMA), 0).x;
+  res0 += vec4f(-0.0186178628, -0.0403962098, 0.0799902976, 0.00723760808) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 0), d_LUMA), 0).x;
+  res0 += vec4f(0.0778539777, -0.0699384362, 0.0748066232, 0.00464496622) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 1), d_LUMA), 0).x;
+  res0 += vec4f(0.101179570, -0.00851831865, 0.0541678183, -0.0332108848) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 2), d_LUMA), 0).x;
+  res0 = max(res0, vec4f(0.0)) + vec4f(0.564146996, -0.317956179, -0.0121607939, -0.161245346) * min(res0, vec4f(0.0));
+  var res1 = vec4f(-0.0141821699, -0.0118469829, 0.0551232025, -0.0845571384);
+  res1 += vec4f(-0.0688524544, -0.0136825750, 0.0259341933, 0.000193989894) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -2), d_LUMA), 0).x;
+  res1 += vec4f(0.0478359722, -0.0108549111, 0.0586514026, 0.111264780) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -1), d_LUMA), 0).x;
+  res1 += vec4f(0.0477793179, 0.00540097058, 0.0205054469, 0.0705273598) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 0), d_LUMA), 0).x;
+  res1 += vec4f(-0.0295070019, 0.00763331261, 0.0272115301, 0.0221200511) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 1), d_LUMA), 0).x;
+  res1 += vec4f(0.0234940834, -0.00848776009, 0.0304548070, -0.0461652167) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 2), d_LUMA), 0).x;
+  res1 += vec4f(0.0594854616, -0.00936102681, -0.0626980141, -0.0511184111) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -2), d_LUMA), 0).x;
+  res1 += vec4f(-0.122262664, 0.0745500550, 0.0639353245, -0.0753441676) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -1), d_LUMA), 0).x;
+  res1 += vec4f(0.228671163, -0.0764879063, 0.0143717155, 0.432819366) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 0), d_LUMA), 0).x;
+  res1 += vec4f(-0.185521677, -0.0584453382, 0.0843035877, -0.0672681704) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 1), d_LUMA), 0).x;
+  res1 += vec4f(-0.00637457613, 0.0105258580, -0.000665882777, 0.0375970677) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 2), d_LUMA), 0).x;
+  res1 += vec4f(0.168119490, -0.0270915851, -0.0380395912, -0.0769857019) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -2), d_LUMA), 0).x;
+  res1 += vec4f(0.0468460619, -0.113948755, 0.336630583, -0.146278605) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -1), d_LUMA), 0).x;
+  res1 += vec4f(0.519063473, -0.543827832, 0.0406825542, 0.112061247) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 0), d_LUMA), 0).x;
+  res1 += vec4f(0.239973545, 0.554317713, -0.145674676, 0.115850404) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 1), d_LUMA), 0).x;
+  res1 += vec4f(-1.41342282, 0.0108112190, 0.0682754144, -0.127188921) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 2), d_LUMA), 0).x;
+  res1 += vec4f(-0.0107656689, 0.0148989167, 0.226324931, 0.00758884242) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -2), d_LUMA), 0).x;
+  res1 += vec4f(0.0824880674, -0.0871526077, -0.393100291, 0.0492754020) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -1), d_LUMA), 0).x;
+  res1 += vec4f(0.0910159126, 0.165784225, -1.52137136, -0.146035895) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 0), d_LUMA), 0).x;
+  res1 += vec4f(-0.236596927, 0.263349265, 0.0288766809, -0.0487620384) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 1), d_LUMA), 0).x;
+  res1 += vec4f(0.292441905, -0.372554064, -0.0203988981, 0.157366738) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 2), d_LUMA), 0).x;
+  res1 += vec4f(-0.0187680181, 0.0146176638, -0.0739408135, -0.0587778240) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -2), d_LUMA), 0).x;
+  res1 += vec4f(-0.00907534920, -0.0198503342, 0.0269282348, -0.0543944836) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -1), d_LUMA), 0).x;
+  res1 += vec4f(0.0673184320, 0.0765125528, -0.141015932, 0.0504529588) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 0), d_LUMA), 0).x;
+  res1 += vec4f(0.0359344147, -0.201615855, -0.0286796968, -0.163830861) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 1), d_LUMA), 0).x;
+  res1 += vec4f(-0.0846963674, 0.114939615, 0.0422864929, -0.00115915423) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 2), d_LUMA), 0).x;
+  res1 = max(res1, vec4f(0.0)) + vec4f(-0.0262951218, -0.0745066255, 0.00496771000, 0.385611981) * min(res1, vec4f(0.0));
+  var res2 = vec4f(-0.128251836, -0.0588794127, -0.0259500127, -0.160796642);
+  res2 += vec4f(-0.0555855744, 0.0407830998, 0.00934032537, -0.00653592031) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -2), d_LUMA), 0).x;
+  res2 += vec4f(-0.0385138318, -0.0108216899, -0.0276679341, 0.110759348) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -1), d_LUMA), 0).x;
+  res2 += vec4f(-0.0525236204, 0.0144090429, 0.0855501816, -0.0597699583) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 0), d_LUMA), 0).x;
+  res2 += vec4f(-0.0156073021, 0.105699696, -0.0246112477, -0.0128085054) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 1), d_LUMA), 0).x;
+  res2 += vec4f(-0.0163701158, -0.0624946021, 0.0185476299, 0.0218474418) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 2), d_LUMA), 0).x;
+  res2 += vec4f(-0.0299830940, -0.0955237597, 0.00816044305, 0.0205764398) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -2), d_LUMA), 0).x;
+  res2 += vec4f(0.0580674708, -0.122169830, 0.0119742807, 0.0820280239) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -1), d_LUMA), 0).x;
+  res2 += vec4f(0.326150924, 0.0444815159, -0.209566653, 0.0746369660) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 0), d_LUMA), 0).x;
+  res2 += vec4f(0.0866333544, 0.0361687727, 0.0155689558, 0.00445994176) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 1), d_LUMA), 0).x;
+  res2 += vec4f(-0.0570631064, 0.0483722240, -0.00935117714, -0.0308284946) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 2), d_LUMA), 0).x;
+  res2 += vec4f(0.00293527218, -0.0801278204, 0.00654160371, -0.0587052256) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -2), d_LUMA), 0).x;
+  res2 += vec4f(0.0955238417, -0.310288817, 0.0909458697, 0.750718653) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -1), d_LUMA), 0).x;
+  res2 += vec4f(0.436310172, 0.579096675, 0.963091195, -0.0368671417) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 0), d_LUMA), 0).x;
+  res2 += vec4f(0.0331773758, -0.111610249, 0.127384305, -0.259821832) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 1), d_LUMA), 0).x;
+  res2 += vec4f(0.102265857, -0.0652990565, -0.0143060787, -0.00721910270) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 2), d_LUMA), 0).x;
+  res2 += vec4f(-0.0544187389, 0.0872575417, 0.0462388210, 0.0714829117) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -2), d_LUMA), 0).x;
+  res2 += vec4f(-0.0718115196, -0.307866365, -0.189058483, -0.0275883023) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -1), d_LUMA), 0).x;
+  res2 += vec4f(-0.0380510278, 0.134202600, -0.545576513, -0.0387341678) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 0), d_LUMA), 0).x;
+  res2 += vec4f(-0.0303806104, 0.00184912223, -0.172683194, -0.0240191165) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 1), d_LUMA), 0).x;
+  res2 += vec4f(0.0550380535, 0.0563694462, 0.0509442762, 0.00849009398) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 2), d_LUMA), 0).x;
+  res2 += vec4f(0.00697137322, -0.0189238433, -0.0525683463, -0.0418045111) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -2), d_LUMA), 0).x;
+  res2 += vec4f(-0.0312586501, -0.0550817214, 0.0943823233, 0.0750982314) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -1), d_LUMA), 0).x;
+  res2 += vec4f(0.138509452, 0.0736083835, -0.270103604, -0.0407848544) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 0), d_LUMA), 0).x;
+  res2 += vec4f(-0.0394911766, 0.0393749289, 0.0253944229, 0.00796985906) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 1), d_LUMA), 0).x;
+  res2 += vec4f(0.0170778949, -0.0212379694, -0.0435176715, 0.0127966218) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 2), d_LUMA), 0).x;
+  res2 = max(res2, vec4f(0.0)) + vec4f(0.981594801, 0.0128545649, -0.0640218705, 1.10992372) * min(res2, vec4f(0.0));
+  var res3 = vec4f(-0.00760371285, -0.00181490148, 0.0202369317, 0.00961574353);
+  res3 += vec4f(0.0113319783, 0.00718524447, 0.0526952557, 0.00329320086) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -2), d_LUMA), 0).x;
+  res3 += vec4f(-0.0254743882, 0.0213686489, -0.159348354, 0.0144406240) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -1), d_LUMA), 0).x;
+  res3 += vec4f(-0.0589635745, -0.00271937787, 0.120389357, -0.0177818444) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 0), d_LUMA), 0).x;
+  res3 += vec4f(0.0363058522, 0.0131134335, -0.0343931764, 0.00228495034) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 1), d_LUMA), 0).x;
+  res3 += vec4f(0.0105471993, 0.00395421451, 0.0132639930, -0.00244124047) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 2), d_LUMA), 0).x;
+  res3 += vec4f(-0.00123358774, -0.0453284681, 0.0560912006, -0.0245296508) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -2), d_LUMA), 0).x;
+  res3 += vec4f(0.0940087661, -0.105762087, -0.290643007, 0.0182857886) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -1), d_LUMA), 0).x;
+  res3 += vec4f(0.0324056670, 0.119762443, 0.363934577, 0.0601416454) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 0), d_LUMA), 0).x;
+  res3 += vec4f(-0.400029451, -0.0564949960, -0.0658207089, -0.0693945363) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 1), d_LUMA), 0).x;
+  res3 += vec4f(0.00607193867, -0.00945008080, -0.0936000794, 0.0384639315) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 2), d_LUMA), 0).x;
+  res3 += vec4f(0.0235001128, -0.114911415, 0.191236451, -0.0108984271) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -2), d_LUMA), 0).x;
+  res3 += vec4f(-0.0768385381, -0.268975347, 0.0446463861, 0.546644926) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -1), d_LUMA), 0).x;
+  res3 += vec4f(0.475014776, -0.490121424, -0.0231175944, 0.252634674) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 0), d_LUMA), 0).x;
+  res3 += vec4f(0.0355548710, 0.0446857847, 0.0368949361, -0.735037327) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 1), d_LUMA), 0).x;
+  res3 += vec4f(-0.110100262, 0.0776322186, -0.218600675, -0.0278012957) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 2), d_LUMA), 0).x;
+  res3 += vec4f(0.0184847619, -0.0922851712, -0.216093928, -0.00834435225) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -2), d_LUMA), 0).x;
+  res3 += vec4f(-0.151123151, -0.0803182796, 0.293468088, 0.0145456446) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -1), d_LUMA), 0).x;
+  res3 += vec4f(-0.0637643114, -0.0330357216, -0.254121751, -0.0402361788) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 0), d_LUMA), 0).x;
+  res3 += vec4f(0.0979804546, -0.0460036434, 0.0271863006, -0.0160188135) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 1), d_LUMA), 0).x;
+  res3 += vec4f(-0.0225141533, -0.0142977526, 0.181806937, 0.0331513993) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 2), d_LUMA), 0).x;
+  res3 += vec4f(-0.0250744037, -0.0621390790, -0.0951434672, 0.00605682284) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -2), d_LUMA), 0).x;
+  res3 += vec4f(0.0151329078, 0.0470663570, 0.103069715, -0.00406836858) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -1), d_LUMA), 0).x;
+  res3 += vec4f(0.0798252523, 0.0335181989, -0.164351165, 0.0215004999) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 0), d_LUMA), 0).x;
+  res3 += vec4f(-0.0317995213, 0.0380280651, 0.0431890711, -0.00645664800) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 1), d_LUMA), 0).x;
+  res3 += vec4f(-0.0298408344, -0.00973943993, 0.0800784156, 0.00279461220) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 2), d_LUMA), 0).x;
+  res3 = max(res3, vec4f(0.0)) + vec4f(0.181486353, 0.172084019, 0.266921014, -0.137046784) * min(res3, vec4f(0.0));
+  textureStore(out_FEATURE9, p, res0);
+  textureStore(out_FEATURE10, p, res1);
+  textureStore(out_FEATURE11, p, res2);
+  textureStore(out_FEATURE12, p, res3);
 }
 
-//==== ENTRY pass3 : feature_map_4 ====
-// ---- PASS 3: feature map 4 (save=FEATURE4, comps=4) ----
+//==== ENTRY pass3 : fused_FEATURE13_FEATURE14 ====
+// ---- PASS 3: feature map 13 + feature map 14 (saves=FEATURE13,FEATURE14) ----
 // binds: LUMA
+// Fused: 2 upstream hooks sharing one set of input fetches.
 @group(0) @binding(0) var t_LUMA : texture_2d<f32>;
-@group(0) @binding(1) var outTex : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(1) var out_FEATURE13 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(2) var out_FEATURE14 : texture_storage_2d<rgba16float, write>;
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
+  let dims = textureDimensions(out_FEATURE13);
   if (gid.x >= dims.x || gid.y >= dims.y) { return; }
   let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(0.129055664, -0.0153669231, -0.126377627, 0.0372813344);
-  res += vec4f(-0.0115844728, -0.0222413354, 0.0720750540, -0.0660502538) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0285728052, 0.0761775970, -0.0332792848, 0.0485707037) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0703690499, 0.122471862, -0.122079685, 0.118885882) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0239379071, -0.0330842137, 0.00505955610, -0.0143965567) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0188533068, 0.0159141794, 0.0302107073, -0.0403910093) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.00919989496, 0.0247111712, -0.0475897677, 0.115985557) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0587658286, 0.0420398787, 0.0671191886, 0.134051755) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0873436779, 0.739150047, -0.0623583645, -0.384309590) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0998015106, 0.0294257980, -0.0527512841, 0.270849437) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0117722889, 0.0309023969, 0.0470202938, 0.0605190657) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0153799402, 0.0149575621, -0.0203406364, 0.0994740427) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0146938805, -0.356875330, 0.132854536, -0.901224494) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.525388300, -0.816916227, 0.580745757, -1.28745079) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.167616308, 0.0874188095, 0.0482898243, -0.199273512) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0463831015, -0.0779396296, 0.00680277077, -0.0994428471) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.00344575406, 0.00139322935, -0.0147332121, 0.0584593713) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0456955694, 0.0931271538, -0.0825150535, 0.159272134) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.00806793105, 0.0121016400, -0.0448250920, 0.115331091) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0478903316, 0.0341515765, -0.0427059829, 0.160331994) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0243552849, 0.0189464651, 0.0187432542, 0.0333258584) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0355883576, -0.00658025779, -0.0182888210, -0.0207219124) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0207351036, -0.000860722153, 0.0511963442, -0.0865134001) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0283467695, -0.0338325799, 0.0456032790, -0.0939507410) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0205151159, -0.0159811173, -0.120272480, -0.0115631158) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.00232908945, -0.0100958534, 0.0593048669, -0.0219872780) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 2), textureDimensions(t_LUMA)), 0).x;
-  res = max(res, vec4f(0.0)) + vec4f(0.246902093, -0.111202396, 1.01042342, -0.0137968538) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
+  let d_LUMA = textureDimensions(t_LUMA);
+  var res0 = vec4f(-0.145089656, 0.0423413850, 0.138294697, 0.0169552322);
+  res0 += vec4f(-0.000991406618, -0.00405403692, 0.0118474076, 0.102273166) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -2), d_LUMA), 0).x;
+  res0 += vec4f(0.00799678452, 0.0819996148, -0.0218528379, -0.00126000179) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -1), d_LUMA), 0).x;
+  res0 += vec4f(-0.145826846, -0.101246022, 0.102054879, -0.0521035604) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 0), d_LUMA), 0).x;
+  res0 += vec4f(0.102036417, 0.0148455268, -0.0277783200, -0.0578720532) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 1), d_LUMA), 0).x;
+  res0 += vec4f(-0.0306005515, -0.0307307821, 0.0333600938, -0.0943924487) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 2), d_LUMA), 0).x;
+  res0 += vec4f(-0.0298132058, 0.0224514604, 0.0178009626, -0.143896148) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -2), d_LUMA), 0).x;
+  res0 += vec4f(0.0265887287, -0.0263483953, 0.0368294232, -0.0694976747) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -1), d_LUMA), 0).x;
+  res0 += vec4f(-0.292218477, 0.398408920, 0.0362420306, -0.0441809967) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 0), d_LUMA), 0).x;
+  res0 += vec4f(0.130839780, 0.0175629575, -0.0412170850, 0.160915151) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 1), d_LUMA), 0).x;
+  res0 += vec4f(-0.0134791294, 0.108371139, 0.0907805637, 0.0139364442) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 2), d_LUMA), 0).x;
+  res0 += vec4f(-0.0101588005, 0.0684983507, 0.0969912633, -0.243290335) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -2), d_LUMA), 0).x;
+  res0 += vec4f(0.259930849, -0.0744843110, -0.289497882, -0.0401687659) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -1), d_LUMA), 0).x;
+  res0 += vec4f(-0.675939322, -0.511460543, 0.153705537, 0.421373069) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 0), d_LUMA), 0).x;
+  res0 += vec4f(0.272352010, 0.460743099, -1.96133518, 0.0741961002) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 1), d_LUMA), 0).x;
+  res0 += vec4f(0.358402729, -0.180435538, -0.271140575, 0.107634045) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 2), d_LUMA), 0).x;
+  res0 += vec4f(0.00233933120, -0.0518781878, 0.0645927191, 0.00587370573) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -2), d_LUMA), 0).x;
+  res0 += vec4f(0.0557491407, 0.0239115395, 0.153209656, -0.268856972) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -1), d_LUMA), 0).x;
+  res0 += vec4f(-0.587401450, -0.173982099, 0.258829027, -0.124904945) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 0), d_LUMA), 0).x;
+  res0 += vec4f(0.357895195, 0.00298903673, -0.0137363262, 0.159037933) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 1), d_LUMA), 0).x;
+  res0 += vec4f(0.151534572, 0.0577202551, 0.111324988, 0.0305496119) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 2), d_LUMA), 0).x;
+  res0 += vec4f(-0.0806309357, 0.0173187181, -0.0578725114, -0.0187675264) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -2), d_LUMA), 0).x;
+  res0 += vec4f(0.0675672516, -0.0585909486, 0.0340775736, 0.202888772) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -1), d_LUMA), 0).x;
+  res0 += vec4f(-0.0362208113, -0.0240654498, -0.0491992608, -0.229431063) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 0), d_LUMA), 0).x;
+  res0 += vec4f(0.0420785286, 0.0263750143, -0.00996655505, -0.203028247) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 1), d_LUMA), 0).x;
+  res0 += vec4f(-0.0386635587, -0.0342589431, 0.0264653191, -0.0143541638) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 2), d_LUMA), 0).x;
+  res0 = max(res0, vec4f(0.0)) + vec4f(-0.0667449012, 0.922162473, 0.00793628953, 0.0694949627) * min(res0, vec4f(0.0));
+  var res1 = vec4f(-0.0283234697, -0.145565510, -0.0126814842, 0.113309309);
+  res1 += vec4f(-0.0416482016, 0.0841948912, 0.00728538539, 0.0479499325) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -2), d_LUMA), 0).x;
+  res1 += vec4f(0.0409918539, 0.0391742438, 0.0124683362, 0.140375152) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -1), d_LUMA), 0).x;
+  res1 += vec4f(-0.0114537254, 0.0801634565, 0.0174761955, -0.257970601) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 0), d_LUMA), 0).x;
+  res1 += vec4f(0.0672911108, -0.0215044469, 0.0154995723, 0.0502936877) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 1), d_LUMA), 0).x;
+  res1 += vec4f(-0.00840820652, 0.0345825516, -0.0434184968, 0.0252381694) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 2), d_LUMA), 0).x;
+  res1 += vec4f(0.000890438911, 0.0180404205, -0.0220362619, 0.0650177747) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -2), d_LUMA), 0).x;
+  res1 += vec4f(-0.389024913, -0.0352587067, 0.0309891272, -0.0671683773) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -1), d_LUMA), 0).x;
+  res1 += vec4f(-1.36652470, 0.140874431, 0.0867248029, -1.47410429) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 0), d_LUMA), 0).x;
+  res1 += vec4f(-0.0558894537, -0.00923436787, -0.124864690, 0.0781533793) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 1), d_LUMA), 0).x;
+  res1 += vec4f(-0.0829242021, 0.0949924588, 0.0388622358, 0.0426593758) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 2), d_LUMA), 0).x;
+  res1 += vec4f(0.0302911084, -0.0320095904, -0.0802175254, 0.00972408708) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -2), d_LUMA), 0).x;
+  res1 += vec4f(0.534460485, -0.0831594691, 0.0897934139, 0.184149534) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -1), d_LUMA), 0).x;
+  res1 += vec4f(0.595009327, 0.535688818, 0.132424414, 0.368116736) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 0), d_LUMA), 0).x;
+  res1 += vec4f(0.210655555, 0.119401924, -0.279144883, 0.00407929160) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 1), d_LUMA), 0).x;
+  res1 += vec4f(0.00792305358, -0.0730824992, 0.0645869374, -0.0596207418) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 2), d_LUMA), 0).x;
+  res1 += vec4f(-0.0440587774, -0.00845399778, 0.0674981400, -0.0116446065) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -2), d_LUMA), 0).x;
+  res1 += vec4f(0.114602484, 0.0830659792, 0.0236081164, 0.0511589646) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -1), d_LUMA), 0).x;
+  res1 += vec4f(0.374855578, 0.128612310, 0.714225411, -0.147779614) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 0), d_LUMA), 0).x;
+  res1 += vec4f(-0.0449619927, 0.0612773895, -0.00889021810, 0.0800691172) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 1), d_LUMA), 0).x;
+  res1 += vec4f(0.0264297612, -0.0377321355, 0.112932220, -0.00894173793) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 2), d_LUMA), 0).x;
+  res1 += vec4f(-0.00213506748, -0.0316912346, -0.00364155951, 0.0402513072) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -2), d_LUMA), 0).x;
+  res1 += vec4f(-0.0360868946, 0.0832278207, -0.0620454513, 0.0222212989) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -1), d_LUMA), 0).x;
+  res1 += vec4f(0.0155399637, 0.0445138440, -0.381652087, 0.0412740894) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 0), d_LUMA), 0).x;
+  res1 += vec4f(-0.0389963090, -0.00322602130, -0.0634914711, 0.0519195199) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 1), d_LUMA), 0).x;
+  res1 += vec4f(0.0229787678, -0.0137038417, -0.0875898004, -0.0394235812) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 2), d_LUMA), 0).x;
+  res1 = max(res1, vec4f(0.0)) + vec4f(-0.219615430, 1.01809669, 0.451766223, 0.106886819) * min(res1, vec4f(0.0));
+  textureStore(out_FEATURE13, p, res0);
+  textureStore(out_FEATURE14, p, res1);
 }
 
-//==== ENTRY pass4 : feature_map_5 ====
-// ---- PASS 4: feature map 5 (save=FEATURE5, comps=4) ----
-// binds: LUMA
-@group(0) @binding(0) var t_LUMA : texture_2d<f32>;
-@group(0) @binding(1) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.311532021, 0.146944493, 0.0196794905, 0.0763509125);
-  res += vec4f(0.240639299, 0.0744781494, -0.0472058915, 0.0286449064) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.162368849, -0.0759652182, 0.0788279027, -0.0289599691) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.225628600, -0.0219380613, 0.114639185, -0.0214659646) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0937342271, -0.0252691284, -0.0490102507, -0.0481422842) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0630491972, 0.000370926020, -0.0307642780, 0.00640888419) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0519883409, 0.00607427536, -0.0145623637, -0.0168666113) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.131484136, -0.122356057, 0.0696693733, 0.0225179195) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.102663286, 0.149843708, -0.576350451, 0.0233518779) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.421713799, 0.150059506, 0.0625780299, 0.0138862198) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0348467827, 0.0898338035, 0.00382186798, 0.0118735963) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0565612651, 0.191228643, 0.0449618399, 0.0172657613) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0206387006, -0.370833576, -0.172199890, -0.00283691077) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.133167908, -1.89093602, 0.375235200, -0.727413893) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.234137520, 0.224154949, 0.00530209253, 0.238607958) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.00390483183, -0.288621902, 0.00361726177, 0.0357279480) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.142144680, 0.0716201812, -0.0685054958, 0.0708274841) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.164785966, 0.00264620478, 0.0781848133, -0.0331983007) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.424581647, 0.186323926, 0.0243080445, 0.100927800) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.249448776, 0.158895791, 0.0863514319, 0.109140076) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.00588959269, 0.0224806871, 0.119416304, -0.0203119460) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.111850932, -0.0266017653, -0.0304768737, -0.00919446070) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.157359421, 0.0406884588, -0.0205392260, 0.0424489602) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.301794767, -0.155400723, -0.0462533087, 0.0469637699) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.119770080, 0.00955757778, -0.0115545802, -0.0261674244) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.134069175, 0.0537358150, -0.0257806126, 0.0773098320) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 2), textureDimensions(t_LUMA)), 0).x;
-  res = max(res, vec4f(0.0)) + vec4f(0.00713988440, -0.0966563895, 0.922880471, 0.936311901) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass5 : feature_map_6 ====
-// ---- PASS 5: feature map 6 (save=FEATURE6, comps=4) ----
-// binds: LUMA
-@group(0) @binding(0) var t_LUMA : texture_2d<f32>;
-@group(0) @binding(1) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(0.0776331723, -0.0294944830, -0.00800377131, -0.000166642101);
-  res += vec4f(0.00785766821, -0.0360049047, 0.0368952677, 0.0327782705) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.00110740645, 0.0131143862, 0.0156473555, 0.00143915357) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0878513828, 0.0476087146, -0.403894722, 0.0339350104) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0125165908, -0.104594849, 0.167050868, -0.0821032748) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0178957004, 0.0319805108, -0.0571091585, 0.0768107474) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0431962423, 0.0252633449, 0.0869948566, -0.155234128) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0680968985, 0.00542932050, -0.110557966, 0.146075696) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.102554768, 0.0393223986, 0.484628528, 0.132630825) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0849009678, 0.214410380, -0.497993469, -0.132189453) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0508803390, -0.104975671, -0.0735911727, -0.235993668) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0422602147, 0.635468245, -0.0403720140, -0.171226561) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0282066520, -0.104822949, 0.413912207, -0.147957966) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.228248462, -0.236447617, -0.0910172239, 0.456460297) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.275444090, -0.353088796, -0.0898706317, 0.106960319) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0406159125, -0.0338010341, 0.0709752738, -1.09392571) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0203486178, -0.178041488, -0.144248053, -0.171090841) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.209961236, -0.372139603, -0.233613104, 0.0667994246) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-1.23991299, -0.314015061, -0.0948303044, 0.0849615335) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.166274905, 0.380977094, 0.477289617, -0.272323340) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0731437430, 0.105919860, -0.0291688107, -0.547640443) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0119869821, -0.0217606071, 0.0978049636, 0.0574811101) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0487400405, -0.00234267651, -0.260499448, 0.174760297) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0734328851, 0.211454764, 0.0899142846, -0.0364907198) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0385777168, 0.0414263569, -0.0565257743, 0.201229081) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.00201891409, -0.0533584915, -0.320149302, 0.103548445) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 2), textureDimensions(t_LUMA)), 0).x;
-  res = max(res, vec4f(0.0)) + vec4f(0.202914357, -0.0543082878, -0.0168685224, 0.00129078655) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass6 : feature_map_7 ====
-// ---- PASS 6: feature map 7 (save=FEATURE7, comps=4) ----
-// binds: LUMA
-@group(0) @binding(0) var t_LUMA : texture_2d<f32>;
-@group(0) @binding(1) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.0187136959, 0.0831674859, -0.111693263, -0.000581726898);
-  res += vec4f(-0.00459680241, 0.0649750680, 0.0540746786, -0.0115636541) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0262039620, -0.00109881000, 0.0832441226, 0.0293392930) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0120418565, -0.0992007852, -0.0845316052, 0.0675578341) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0475163572, -0.0406978577, 0.0939263180, -0.0341708772) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0209192540, 0.0286517181, -0.0843287110, 0.0290359128) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0209416226, -0.0200429298, 0.225172669, 0.0580249280) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0135388765, 0.112500444, 0.0830827579, 0.0164586529) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.103910379, 0.138666064, -0.284203768, 0.0238130745) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0657494813, 0.0106255384, -0.105918057, 0.0269528143) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0247739218, 0.0103789661, 0.0963194147, 0.0319722965) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0637300313, 0.325039208, 0.0115360664, 0.00524943508) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0210174602, -0.685337186, 0.377419233, -0.0693136752) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.231796220, 0.204342619, -0.809239566, 0.357418954) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.446876287, -0.186418712, 0.388841122, -0.363185853) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.115427867, 0.00607956480, -0.0699666366, 0.0702272728) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.117090464, 0.0511123873, 0.00910020620, -0.0288592484) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0678106174, 0.0408032797, 0.286037892, 0.117596254) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.426768214, -0.449513346, -0.339450598, -0.300739318) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.00251056720, 0.276579469, -0.0460667126, -0.418792278) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0293216705, -0.0334570669, 0.0339457951, 0.0985327512) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0406346135, -0.0355573781, -0.0147582078, 0.0263845604) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0316427834, 0.0310490523, 0.129600540, -0.0387054607) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.108314201, 0.171619177, -0.0841980949, 0.117046691) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0277729612, -0.0746757612, 0.0299424995, -0.0706993341) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0502414219, 0.0537468456, -0.0816364363, 0.0479545556) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 2), textureDimensions(t_LUMA)), 0).x;
-  res = max(res, vec4f(0.0)) + vec4f(0.839956224, 0.843664169, -0.0240177251, -0.0855448917) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass7 : feature_map_8 ====
-// ---- PASS 7: feature map 8 (save=FEATURE8, comps=4) ----
-// binds: LUMA
-@group(0) @binding(0) var t_LUMA : texture_2d<f32>;
-@group(0) @binding(1) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.00815434661, 0.0458484925, -0.0422668047, -0.0286568273);
-  res += vec4f(-0.0225184355, 0.0448420346, -0.0605560765, -0.0102129988) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.00160987012, 0.0990698859, -0.250722557, 0.0448262542) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.344596148, 0.121891581, -0.426929951, 0.0203870554) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0368794464, 0.0776121542, 0.223196507, 0.0376024023) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.00944103859, 0.0552083217, -0.0295412075, 0.0489511415) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.100925602, 0.0953381732, 0.0674138367, 0.0732126236) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.177228481, -0.528764606, 0.164859638, -0.0118712876) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.769660592, 0.0107876109, -0.0538160242, 0.341084182) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.359493136, -0.0157510992, -0.532476425, -0.222514525) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0265295338, -0.0374278128, -0.0914405510, -0.0228209551) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.150646135, -0.395741463, 0.136458904, -0.232981429) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0447356030, -0.701885104, -0.186698318, -0.351461381) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-1.69361365, -0.0976926163, 0.684699297, 0.0465949066) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.133152142, -0.109478123, 0.295263559, 0.382330209) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0368863791, -0.123222716, 0.0821860880, 0.134097159) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0274522752, 0.142322719, -0.0313339569, 0.0331953764) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0191112719, 0.00663724029, -0.0416414067, 0.0952508524) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.250984311, 0.0805470049, -0.277193010, -0.193408459) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.115782931, 0.165399835, -0.0822748318, -0.196518660) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0324398465, -0.103962876, 0.0444518067, 0.0433194675) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.00236328668, 0.0422169752, 0.0176460966, -0.0199319609) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0374523997, -0.0236300416, 0.0502775721, 0.0910332501) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.167487279, 0.0242216010, 0.0431379564, -0.135983810) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0373916626, 0.149101347, 0.00779957697, 0.0168425478) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0357284173, 0.138516873, -0.00737609994, 0.0863596201) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 2), textureDimensions(t_LUMA)), 0).x;
-  res = max(res, vec4f(0.0)) + vec4f(-0.0225117858, 0.0279447008, -0.0243210122, 0.972044289) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass8 : feature_map_9 ====
-// ---- PASS 8: feature map 9 (save=FEATURE9, comps=4) ----
-// binds: LUMA
-@group(0) @binding(0) var t_LUMA : texture_2d<f32>;
-@group(0) @binding(1) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(0.110599741, -0.0321370326, -0.287254691, -0.0229754914);
-  res += vec4f(-0.102566436, -0.00120837067, 0.0713334084, 0.0840533227) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.205529004, -0.0250967480, -0.0178916380, -0.124674119) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.366543770, 0.00648614299, 0.193074822, -0.00622453447) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0413905941, 0.0130840531, 0.181262136, 0.0685612783) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0419425704, -0.0350595452, -0.00238724845, -0.00278018112) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0862500817, -0.0567291006, -0.0324579962, -0.0285885371) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0585840531, 0.0411324129, 0.314883292, -0.0775967240) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.205736354, -0.153455317, -0.0459325202, -0.00804699957) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.204767287, -0.0605280511, -0.248015046, -0.288344443) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.114418946, 0.0693403035, 0.121133700, 0.159834370) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.118624657, 0.0353790708, 0.0968240350, -0.108536676) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0346313529, -0.187643439, -0.249090925, -0.0293010063) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.147390470, 0.600184560, -0.462108374, 0.00918253325) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.715562046, 0.0420041159, 0.0427288227, -0.140712827) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.123963274, -0.0357227139, -0.0699777752, 0.439487278) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0893752426, 0.0134352855, -0.107992060, -0.136729062) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.107070759, -0.0936988741, 0.0248220637, 0.0994095728) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.179734915, 0.143348530, 0.172808528, -0.236874014) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.120821804, -0.00375957275, -0.0691050887, 0.178805172) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0314872116, 0.0316008665, 0.0509007797, 0.0666419417) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0103220837, -0.00694216089, 0.0895231813, 0.0391273424) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.00120546017, -0.000309840922, 0.00305463513, -0.0388011560) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0186178628, -0.0403962098, 0.0799902976, 0.00723760808) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0778539777, -0.0699384362, 0.0748066232, 0.00464496622) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.101179570, -0.00851831865, 0.0541678183, -0.0332108848) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 2), textureDimensions(t_LUMA)), 0).x;
-  res = max(res, vec4f(0.0)) + vec4f(0.564146996, -0.317956179, -0.0121607939, -0.161245346) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass9 : feature_map_10 ====
-// ---- PASS 9: feature map 10 (save=FEATURE10, comps=4) ----
-// binds: LUMA
-@group(0) @binding(0) var t_LUMA : texture_2d<f32>;
-@group(0) @binding(1) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.0141821699, -0.0118469829, 0.0551232025, -0.0845571384);
-  res += vec4f(-0.0688524544, -0.0136825750, 0.0259341933, 0.000193989894) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0478359722, -0.0108549111, 0.0586514026, 0.111264780) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0477793179, 0.00540097058, 0.0205054469, 0.0705273598) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0295070019, 0.00763331261, 0.0272115301, 0.0221200511) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0234940834, -0.00848776009, 0.0304548070, -0.0461652167) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0594854616, -0.00936102681, -0.0626980141, -0.0511184111) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.122262664, 0.0745500550, 0.0639353245, -0.0753441676) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.228671163, -0.0764879063, 0.0143717155, 0.432819366) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.185521677, -0.0584453382, 0.0843035877, -0.0672681704) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.00637457613, 0.0105258580, -0.000665882777, 0.0375970677) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.168119490, -0.0270915851, -0.0380395912, -0.0769857019) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0468460619, -0.113948755, 0.336630583, -0.146278605) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.519063473, -0.543827832, 0.0406825542, 0.112061247) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.239973545, 0.554317713, -0.145674676, 0.115850404) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-1.41342282, 0.0108112190, 0.0682754144, -0.127188921) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0107656689, 0.0148989167, 0.226324931, 0.00758884242) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0824880674, -0.0871526077, -0.393100291, 0.0492754020) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0910159126, 0.165784225, -1.52137136, -0.146035895) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.236596927, 0.263349265, 0.0288766809, -0.0487620384) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.292441905, -0.372554064, -0.0203988981, 0.157366738) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0187680181, 0.0146176638, -0.0739408135, -0.0587778240) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.00907534920, -0.0198503342, 0.0269282348, -0.0543944836) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0673184320, 0.0765125528, -0.141015932, 0.0504529588) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0359344147, -0.201615855, -0.0286796968, -0.163830861) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0846963674, 0.114939615, 0.0422864929, -0.00115915423) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 2), textureDimensions(t_LUMA)), 0).x;
-  res = max(res, vec4f(0.0)) + vec4f(-0.0262951218, -0.0745066255, 0.00496771000, 0.385611981) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass10 : feature_map_11 ====
-// ---- PASS 10: feature map 11 (save=FEATURE11, comps=4) ----
-// binds: LUMA
-@group(0) @binding(0) var t_LUMA : texture_2d<f32>;
-@group(0) @binding(1) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.128251836, -0.0588794127, -0.0259500127, -0.160796642);
-  res += vec4f(-0.0555855744, 0.0407830998, 0.00934032537, -0.00653592031) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0385138318, -0.0108216899, -0.0276679341, 0.110759348) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0525236204, 0.0144090429, 0.0855501816, -0.0597699583) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0156073021, 0.105699696, -0.0246112477, -0.0128085054) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0163701158, -0.0624946021, 0.0185476299, 0.0218474418) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0299830940, -0.0955237597, 0.00816044305, 0.0205764398) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0580674708, -0.122169830, 0.0119742807, 0.0820280239) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.326150924, 0.0444815159, -0.209566653, 0.0746369660) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0866333544, 0.0361687727, 0.0155689558, 0.00445994176) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0570631064, 0.0483722240, -0.00935117714, -0.0308284946) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.00293527218, -0.0801278204, 0.00654160371, -0.0587052256) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0955238417, -0.310288817, 0.0909458697, 0.750718653) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.436310172, 0.579096675, 0.963091195, -0.0368671417) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0331773758, -0.111610249, 0.127384305, -0.259821832) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.102265857, -0.0652990565, -0.0143060787, -0.00721910270) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0544187389, 0.0872575417, 0.0462388210, 0.0714829117) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0718115196, -0.307866365, -0.189058483, -0.0275883023) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0380510278, 0.134202600, -0.545576513, -0.0387341678) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0303806104, 0.00184912223, -0.172683194, -0.0240191165) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0550380535, 0.0563694462, 0.0509442762, 0.00849009398) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.00697137322, -0.0189238433, -0.0525683463, -0.0418045111) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0312586501, -0.0550817214, 0.0943823233, 0.0750982314) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.138509452, 0.0736083835, -0.270103604, -0.0407848544) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0394911766, 0.0393749289, 0.0253944229, 0.00796985906) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0170778949, -0.0212379694, -0.0435176715, 0.0127966218) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 2), textureDimensions(t_LUMA)), 0).x;
-  res = max(res, vec4f(0.0)) + vec4f(0.981594801, 0.0128545649, -0.0640218705, 1.10992372) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass11 : feature_map_12 ====
-// ---- PASS 11: feature map 12 (save=FEATURE12, comps=4) ----
-// binds: LUMA
-@group(0) @binding(0) var t_LUMA : texture_2d<f32>;
-@group(0) @binding(1) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.00760371285, -0.00181490148, 0.0202369317, 0.00961574353);
-  res += vec4f(0.0113319783, 0.00718524447, 0.0526952557, 0.00329320086) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0254743882, 0.0213686489, -0.159348354, 0.0144406240) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0589635745, -0.00271937787, 0.120389357, -0.0177818444) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0363058522, 0.0131134335, -0.0343931764, 0.00228495034) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0105471993, 0.00395421451, 0.0132639930, -0.00244124047) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.00123358774, -0.0453284681, 0.0560912006, -0.0245296508) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0940087661, -0.105762087, -0.290643007, 0.0182857886) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0324056670, 0.119762443, 0.363934577, 0.0601416454) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.400029451, -0.0564949960, -0.0658207089, -0.0693945363) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.00607193867, -0.00945008080, -0.0936000794, 0.0384639315) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0235001128, -0.114911415, 0.191236451, -0.0108984271) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0768385381, -0.268975347, 0.0446463861, 0.546644926) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.475014776, -0.490121424, -0.0231175944, 0.252634674) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0355548710, 0.0446857847, 0.0368949361, -0.735037327) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.110100262, 0.0776322186, -0.218600675, -0.0278012957) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0184847619, -0.0922851712, -0.216093928, -0.00834435225) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.151123151, -0.0803182796, 0.293468088, 0.0145456446) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0637643114, -0.0330357216, -0.254121751, -0.0402361788) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0979804546, -0.0460036434, 0.0271863006, -0.0160188135) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0225141533, -0.0142977526, 0.181806937, 0.0331513993) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0250744037, -0.0621390790, -0.0951434672, 0.00605682284) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0151329078, 0.0470663570, 0.103069715, -0.00406836858) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0798252523, 0.0335181989, -0.164351165, 0.0215004999) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0317995213, 0.0380280651, 0.0431890711, -0.00645664800) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0298408344, -0.00973943993, 0.0800784156, 0.00279461220) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 2), textureDimensions(t_LUMA)), 0).x;
-  res = max(res, vec4f(0.0)) + vec4f(0.181486353, 0.172084019, 0.266921014, -0.137046784) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass12 : feature_map_13 ====
-// ---- PASS 12: feature map 13 (save=FEATURE13, comps=4) ----
-// binds: LUMA
-@group(0) @binding(0) var t_LUMA : texture_2d<f32>;
-@group(0) @binding(1) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.145089656, 0.0423413850, 0.138294697, 0.0169552322);
-  res += vec4f(-0.000991406618, -0.00405403692, 0.0118474076, 0.102273166) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.00799678452, 0.0819996148, -0.0218528379, -0.00126000179) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.145826846, -0.101246022, 0.102054879, -0.0521035604) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.102036417, 0.0148455268, -0.0277783200, -0.0578720532) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0306005515, -0.0307307821, 0.0333600938, -0.0943924487) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0298132058, 0.0224514604, 0.0178009626, -0.143896148) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0265887287, -0.0263483953, 0.0368294232, -0.0694976747) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.292218477, 0.398408920, 0.0362420306, -0.0441809967) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.130839780, 0.0175629575, -0.0412170850, 0.160915151) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0134791294, 0.108371139, 0.0907805637, 0.0139364442) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0101588005, 0.0684983507, 0.0969912633, -0.243290335) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.259930849, -0.0744843110, -0.289497882, -0.0401687659) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.675939322, -0.511460543, 0.153705537, 0.421373069) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.272352010, 0.460743099, -1.96133518, 0.0741961002) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.358402729, -0.180435538, -0.271140575, 0.107634045) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.00233933120, -0.0518781878, 0.0645927191, 0.00587370573) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0557491407, 0.0239115395, 0.153209656, -0.268856972) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.587401450, -0.173982099, 0.258829027, -0.124904945) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.357895195, 0.00298903673, -0.0137363262, 0.159037933) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.151534572, 0.0577202551, 0.111324988, 0.0305496119) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0806309357, 0.0173187181, -0.0578725114, -0.0187675264) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0675672516, -0.0585909486, 0.0340775736, 0.202888772) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0362208113, -0.0240654498, -0.0491992608, -0.229431063) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0420785286, 0.0263750143, -0.00996655505, -0.203028247) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0386635587, -0.0342589431, 0.0264653191, -0.0143541638) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 2), textureDimensions(t_LUMA)), 0).x;
-  res = max(res, vec4f(0.0)) + vec4f(-0.0667449012, 0.922162473, 0.00793628953, 0.0694949627) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass13 : feature_map_14 ====
-// ---- PASS 13: feature map 14 (save=FEATURE14, comps=4) ----
-// binds: LUMA
-@group(0) @binding(0) var t_LUMA : texture_2d<f32>;
-@group(0) @binding(1) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.0283234697, -0.145565510, -0.0126814842, 0.113309309);
-  res += vec4f(-0.0416482016, 0.0841948912, 0.00728538539, 0.0479499325) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0409918539, 0.0391742438, 0.0124683362, 0.140375152) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0114537254, 0.0801634565, 0.0174761955, -0.257970601) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0672911108, -0.0215044469, 0.0154995723, 0.0502936877) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.00840820652, 0.0345825516, -0.0434184968, 0.0252381694) * textureLoad(t_LUMA, clampCoord(p + vec2i(-2, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.000890438911, 0.0180404205, -0.0220362619, 0.0650177747) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.389024913, -0.0352587067, 0.0309891272, -0.0671683773) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-1.36652470, 0.140874431, 0.0867248029, -1.47410429) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0558894537, -0.00923436787, -0.124864690, 0.0781533793) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0829242021, 0.0949924588, 0.0388622358, 0.0426593758) * textureLoad(t_LUMA, clampCoord(p + vec2i(-1, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0302911084, -0.0320095904, -0.0802175254, 0.00972408708) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.534460485, -0.0831594691, 0.0897934139, 0.184149534) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.595009327, 0.535688818, 0.132424414, 0.368116736) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.210655555, 0.119401924, -0.279144883, 0.00407929160) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.00792305358, -0.0730824992, 0.0645869374, -0.0596207418) * textureLoad(t_LUMA, clampCoord(p + vec2i(0, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0440587774, -0.00845399778, 0.0674981400, -0.0116446065) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.114602484, 0.0830659792, 0.0236081164, 0.0511589646) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.374855578, 0.128612310, 0.714225411, -0.147779614) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0449619927, 0.0612773895, -0.00889021810, 0.0800691172) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0264297612, -0.0377321355, 0.112932220, -0.00894173793) * textureLoad(t_LUMA, clampCoord(p + vec2i(1, 2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.00213506748, -0.0316912346, -0.00364155951, 0.0402513072) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -2), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0360868946, 0.0832278207, -0.0620454513, 0.0222212989) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, -1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0155399637, 0.0445138440, -0.381652087, 0.0412740894) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 0), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(-0.0389963090, -0.00322602130, -0.0634914711, 0.0519195199) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 1), textureDimensions(t_LUMA)), 0).x;
-  res += vec4f(0.0229787678, -0.0137038417, -0.0875898004, -0.0394235812) * textureLoad(t_LUMA, clampCoord(p + vec2i(2, 2), textureDimensions(t_LUMA)), 0).x;
-  res = max(res, vec4f(0.0)) + vec4f(-0.219615430, 1.01809669, 0.451766223, 0.106886819) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass14 : shrinking_1 ====
-// ---- PASS 14: shrinking 1 (save=SHRINKED1, comps=4) ----
+//==== ENTRY pass4 : fused_SHRINKED1_SHRINKED2_SHRINKED3_SHRINKED4 ====
+// ---- PASS 4: shrinking 1 + shrinking 2 + shrinking 3 + shrinking 4 (saves=SHRINKED1,SHRINKED2,SHRINKED3,SHRINKED4) ----
 // binds: FEATURE1, FEATURE2, FEATURE3, FEATURE4, FEATURE5, FEATURE6, FEATURE7, FEATURE8, FEATURE9, FEATURE10, FEATURE11, FEATURE12, FEATURE13, FEATURE14
+// Fused: 4 upstream hooks sharing one set of input fetches.
 @group(0) @binding(0) var t_FEATURE1 : texture_2d<f32>;
 @group(0) @binding(1) var t_FEATURE2 : texture_2d<f32>;
 @group(0) @binding(2) var t_FEATURE3 : texture_2d<f32>;
@@ -588,1423 +487,1064 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
 @group(0) @binding(11) var t_FEATURE12 : texture_2d<f32>;
 @group(0) @binding(12) var t_FEATURE13 : texture_2d<f32>;
 @group(0) @binding(13) var t_FEATURE14 : texture_2d<f32>;
-@group(0) @binding(14) var outTex : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(14) var out_SHRINKED1 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(15) var out_SHRINKED2 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(16) var out_SHRINKED3 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(17) var out_SHRINKED4 : texture_storage_2d<rgba16float, write>;
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
+  let dims = textureDimensions(out_SHRINKED1);
   if (gid.x >= dims.x || gid.y >= dims.y) { return; }
   let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.0760205910, 0.0612602048, 0.0246716533, -0.0132222623);
-  res += mat4x4f(-0.103520468, -0.0594252646, 0.259573907, 0.132701859, -0.0904255956, 0.244124040, -0.128855467, 0.392160982, 0.160596088, 0.222680509, -0.0667162985, 0.298630953, 0.144961938, 0.0136648025, 0.295643002, -0.0554188751) * textureLoad(t_FEATURE1, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE1)), 0);
-  res += mat4x4f(-0.0281582884, 0.0961815938, 0.309425265, 0.131353021, -0.275960088, -0.378264397, -0.209473342, -0.459923804, 0.0230565444, -0.343909681, 0.0388521776, 0.483819962, 0.0236700121, 0.0205587000, -0.160496369, 0.256728351) * textureLoad(t_FEATURE2, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE2)), 0);
-  res += mat4x4f(0.246522993, 0.101198517, 0.0521934368, 0.0323152207, -0.0126392841, -0.133781597, -0.0830805451, 0.111260816, -0.0776733011, 0.0962971225, 0.0539281033, -0.0465009622, -0.0239777192, -0.183340967, 0.181542277, 0.386399359) * textureLoad(t_FEATURE3, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE3)), 0);
-  res += mat4x4f(-0.0782358050, -0.145849317, 0.473285735, 0.0965705886, 0.0229239631, 0.545695961, -0.0651860163, -0.126026049, -0.144458666, 0.0636151955, 0.125458464, 0.0163302999, 0.0745953545, 0.256057620, 0.129615322, -0.512478769) * textureLoad(t_FEATURE4, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE4)), 0);
-  res += mat4x4f(0.00616801856, 0.134418398, 0.0510129333, -0.480344981, -0.0196210518, -0.0359200500, 0.252289802, -0.0565670617, -0.0514357798, -0.0165012795, 0.0443242341, -0.267130017, 0.556448281, -0.0990152583, 0.203534603, -0.248386368) * textureLoad(t_FEATURE5, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE5)), 0);
-  res += mat4x4f(-0.0609007142, -0.0643832535, -0.224693418, -0.137158364, -0.0300457720, 0.0257157907, 0.0722783953, -0.0180204678, -0.0103133926, -0.0482218862, -0.122529253, -0.0445458069, 0.0249962863, -0.122245669, 0.156666934, 0.147685289) * textureLoad(t_FEATURE6, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE6)), 0);
-  res += mat4x4f(-0.0682170019, -0.0694242790, 0.285603732, -0.365591407, -0.485803843, 0.00442911638, -0.0389154740, -0.0922155753, -0.0607033819, -0.0331781283, -0.119436264, 0.181407928, -0.0707392320, -0.271816403, 0.0122497752, -0.0425989740) * textureLoad(t_FEATURE7, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE7)), 0);
-  res += mat4x4f(0.0770607591, -0.0407722518, -0.0853697956, -0.248381317, -0.0796208531, -0.000403415033, 0.0471934266, -0.0507359840, -0.0748941228, 0.0000714735506, -0.0809665620, 0.377058566, -0.201171488, -0.274867713, 0.378783405, -0.0373833515) * textureLoad(t_FEATURE8, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE8)), 0);
-  res += mat4x4f(-0.121366292, 0.0838761926, -0.0224442724, 0.0592802018, -0.00463210186, 0.166639715, 0.168423668, -0.331533998, 0.137433738, 0.0710704401, -0.253452092, -0.153216690, -0.0320380405, 0.0705244690, -0.137062877, -0.126827613) * textureLoad(t_FEATURE9, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE9)), 0);
-  res += mat4x4f(0.0302315187, -0.0985422060, 0.281085253, -0.00448672846, -0.0940691605, 0.202620819, -0.343114018, 0.0384720303, -0.0847244039, 0.0153100118, -0.259547561, -0.357555419, -0.00342633598, -0.0963309854, -0.0198470484, -0.00125628675) * textureLoad(t_FEATURE10, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE10)), 0);
-  res += mat4x4f(-0.0115913358, 0.0542110726, 0.288766742, -0.0172828734, 0.153300077, 0.0821803212, 0.236259371, -0.245462939, -0.0142405946, -0.154972956, 0.405184239, 0.639502585, 0.566110432, 0.196699128, 0.203330144, -0.138123825) * textureLoad(t_FEATURE11, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE11)), 0);
-  res += mat4x4f(0.0189436283, 0.173395276, 0.130125776, -0.0139866006, -0.183623269, -0.0248139761, 0.144978151, -0.174383596, -0.00588271581, -0.133703843, -0.288244843, -0.0311792605, -0.00232571946, -0.604766190, -0.145893037, 0.100432441) * textureLoad(t_FEATURE12, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE12)), 0);
-  res += mat4x4f(-0.0839206800, 0.0722977221, -0.255311668, 0.189634845, 0.0646996126, -0.325479627, -0.0907708034, 0.353437632, -0.0946927965, -0.138879567, -0.399811029, -0.108647101, 0.0905820057, 0.224241003, -0.0942123756, -0.120142706) * textureLoad(t_FEATURE13, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE13)), 0);
-  res += mat4x4f(0.0963789150, -0.255083859, 0.0478922278, -0.144579232, 0.0185848046, -0.123378485, -0.334670365, 0.0259011965, 0.193403155, -0.0193958208, 0.177383184, 0.160124376, -0.0225989111, -0.0762863532, -0.0523622073, -0.120579474) * textureLoad(t_FEATURE14, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE14)), 0);
-  textureStore(outTex, p, res);
+  let d_FEATURE1 = textureDimensions(t_FEATURE1);
+  let d_FEATURE2 = textureDimensions(t_FEATURE2);
+  let d_FEATURE3 = textureDimensions(t_FEATURE3);
+  let d_FEATURE4 = textureDimensions(t_FEATURE4);
+  let d_FEATURE5 = textureDimensions(t_FEATURE5);
+  let d_FEATURE6 = textureDimensions(t_FEATURE6);
+  let d_FEATURE7 = textureDimensions(t_FEATURE7);
+  let d_FEATURE8 = textureDimensions(t_FEATURE8);
+  let d_FEATURE9 = textureDimensions(t_FEATURE9);
+  let d_FEATURE10 = textureDimensions(t_FEATURE10);
+  let d_FEATURE11 = textureDimensions(t_FEATURE11);
+  let d_FEATURE12 = textureDimensions(t_FEATURE12);
+  let d_FEATURE13 = textureDimensions(t_FEATURE13);
+  let d_FEATURE14 = textureDimensions(t_FEATURE14);
+  var res0 = vec4f(-0.0760205910, 0.0612602048, 0.0246716533, -0.0132222623);
+  res0 += mat4x4f(-0.103520468, -0.0594252646, 0.259573907, 0.132701859, -0.0904255956, 0.244124040, -0.128855467, 0.392160982, 0.160596088, 0.222680509, -0.0667162985, 0.298630953, 0.144961938, 0.0136648025, 0.295643002, -0.0554188751) * textureLoad(t_FEATURE1, clampCoord(p + vec2i(0, 0), d_FEATURE1), 0);
+  res0 += mat4x4f(-0.0281582884, 0.0961815938, 0.309425265, 0.131353021, -0.275960088, -0.378264397, -0.209473342, -0.459923804, 0.0230565444, -0.343909681, 0.0388521776, 0.483819962, 0.0236700121, 0.0205587000, -0.160496369, 0.256728351) * textureLoad(t_FEATURE2, clampCoord(p + vec2i(0, 0), d_FEATURE2), 0);
+  res0 += mat4x4f(0.246522993, 0.101198517, 0.0521934368, 0.0323152207, -0.0126392841, -0.133781597, -0.0830805451, 0.111260816, -0.0776733011, 0.0962971225, 0.0539281033, -0.0465009622, -0.0239777192, -0.183340967, 0.181542277, 0.386399359) * textureLoad(t_FEATURE3, clampCoord(p + vec2i(0, 0), d_FEATURE3), 0);
+  res0 += mat4x4f(-0.0782358050, -0.145849317, 0.473285735, 0.0965705886, 0.0229239631, 0.545695961, -0.0651860163, -0.126026049, -0.144458666, 0.0636151955, 0.125458464, 0.0163302999, 0.0745953545, 0.256057620, 0.129615322, -0.512478769) * textureLoad(t_FEATURE4, clampCoord(p + vec2i(0, 0), d_FEATURE4), 0);
+  res0 += mat4x4f(0.00616801856, 0.134418398, 0.0510129333, -0.480344981, -0.0196210518, -0.0359200500, 0.252289802, -0.0565670617, -0.0514357798, -0.0165012795, 0.0443242341, -0.267130017, 0.556448281, -0.0990152583, 0.203534603, -0.248386368) * textureLoad(t_FEATURE5, clampCoord(p + vec2i(0, 0), d_FEATURE5), 0);
+  res0 += mat4x4f(-0.0609007142, -0.0643832535, -0.224693418, -0.137158364, -0.0300457720, 0.0257157907, 0.0722783953, -0.0180204678, -0.0103133926, -0.0482218862, -0.122529253, -0.0445458069, 0.0249962863, -0.122245669, 0.156666934, 0.147685289) * textureLoad(t_FEATURE6, clampCoord(p + vec2i(0, 0), d_FEATURE6), 0);
+  res0 += mat4x4f(-0.0682170019, -0.0694242790, 0.285603732, -0.365591407, -0.485803843, 0.00442911638, -0.0389154740, -0.0922155753, -0.0607033819, -0.0331781283, -0.119436264, 0.181407928, -0.0707392320, -0.271816403, 0.0122497752, -0.0425989740) * textureLoad(t_FEATURE7, clampCoord(p + vec2i(0, 0), d_FEATURE7), 0);
+  res0 += mat4x4f(0.0770607591, -0.0407722518, -0.0853697956, -0.248381317, -0.0796208531, -0.000403415033, 0.0471934266, -0.0507359840, -0.0748941228, 0.0000714735506, -0.0809665620, 0.377058566, -0.201171488, -0.274867713, 0.378783405, -0.0373833515) * textureLoad(t_FEATURE8, clampCoord(p + vec2i(0, 0), d_FEATURE8), 0);
+  res0 += mat4x4f(-0.121366292, 0.0838761926, -0.0224442724, 0.0592802018, -0.00463210186, 0.166639715, 0.168423668, -0.331533998, 0.137433738, 0.0710704401, -0.253452092, -0.153216690, -0.0320380405, 0.0705244690, -0.137062877, -0.126827613) * textureLoad(t_FEATURE9, clampCoord(p + vec2i(0, 0), d_FEATURE9), 0);
+  res0 += mat4x4f(0.0302315187, -0.0985422060, 0.281085253, -0.00448672846, -0.0940691605, 0.202620819, -0.343114018, 0.0384720303, -0.0847244039, 0.0153100118, -0.259547561, -0.357555419, -0.00342633598, -0.0963309854, -0.0198470484, -0.00125628675) * textureLoad(t_FEATURE10, clampCoord(p + vec2i(0, 0), d_FEATURE10), 0);
+  res0 += mat4x4f(-0.0115913358, 0.0542110726, 0.288766742, -0.0172828734, 0.153300077, 0.0821803212, 0.236259371, -0.245462939, -0.0142405946, -0.154972956, 0.405184239, 0.639502585, 0.566110432, 0.196699128, 0.203330144, -0.138123825) * textureLoad(t_FEATURE11, clampCoord(p + vec2i(0, 0), d_FEATURE11), 0);
+  res0 += mat4x4f(0.0189436283, 0.173395276, 0.130125776, -0.0139866006, -0.183623269, -0.0248139761, 0.144978151, -0.174383596, -0.00588271581, -0.133703843, -0.288244843, -0.0311792605, -0.00232571946, -0.604766190, -0.145893037, 0.100432441) * textureLoad(t_FEATURE12, clampCoord(p + vec2i(0, 0), d_FEATURE12), 0);
+  res0 += mat4x4f(-0.0839206800, 0.0722977221, -0.255311668, 0.189634845, 0.0646996126, -0.325479627, -0.0907708034, 0.353437632, -0.0946927965, -0.138879567, -0.399811029, -0.108647101, 0.0905820057, 0.224241003, -0.0942123756, -0.120142706) * textureLoad(t_FEATURE13, clampCoord(p + vec2i(0, 0), d_FEATURE13), 0);
+  res0 += mat4x4f(0.0963789150, -0.255083859, 0.0478922278, -0.144579232, 0.0185848046, -0.123378485, -0.334670365, 0.0259011965, 0.193403155, -0.0193958208, 0.177383184, 0.160124376, -0.0225989111, -0.0762863532, -0.0523622073, -0.120579474) * textureLoad(t_FEATURE14, clampCoord(p + vec2i(0, 0), d_FEATURE14), 0);
+  var res1 = vec4f(0.0475499779, -0.00505871885, -0.0455184020, -0.00397342304);
+  res1 += mat4x4f(-0.165957421, 0.0219357889, -0.170343161, 0.0744752660, 0.151462466, 0.268443435, 0.113416314, -0.167845562, -0.205740884, 0.293590307, 0.0850598365, -0.118017554, -0.783921599, 0.0356217660, 0.185998932, -0.155222073) * textureLoad(t_FEATURE1, clampCoord(p + vec2i(0, 0), d_FEATURE1), 0);
+  res1 += mat4x4f(0.0432646461, -0.111899167, -0.0398604870, -0.0756863356, 0.0951438397, 0.0783733279, -0.00619209465, 0.431768864, -0.457172513, -0.180810511, 0.281949759, 0.0303001646, -0.0588399544, 0.106513523, -0.0493245162, 0.130688906) * textureLoad(t_FEATURE2, clampCoord(p + vec2i(0, 0), d_FEATURE2), 0);
+  res1 += mat4x4f(-0.0822065994, -0.0471106321, 0.385050774, -0.0531568117, 0.387939394, 0.137854055, 0.226737767, -0.00977330282, 0.0118722869, 0.0385264345, -0.0179664902, 0.0654688179, 0.600362659, 0.118103847, 0.236744002, -0.0967409834) * textureLoad(t_FEATURE3, clampCoord(p + vec2i(0, 0), d_FEATURE3), 0);
+  res1 += mat4x4f(-0.342228621, 0.0819709226, -0.0361955799, 0.218775943, 0.206754133, 0.0321792625, 0.144490331, -0.0546250120, 0.179823235, 0.230574176, -0.0571053885, 0.315992296, 0.0384787321, -0.00564693473, -0.108430900, -0.269608110) * textureLoad(t_FEATURE4, clampCoord(p + vec2i(0, 0), d_FEATURE4), 0);
+  res1 += mat4x4f(-0.0136540234, 0.224245235, -0.0687166601, 0.0613728687, -0.0551527813, -0.157170802, 0.0310073998, -0.0253034607, -0.00753023615, 0.176845446, 0.318630189, 0.226519316, -0.00571416831, 0.281341225, 0.0534514599, -0.713103890) * textureLoad(t_FEATURE5, clampCoord(p + vec2i(0, 0), d_FEATURE5), 0);
+  res1 += mat4x4f(0.310358763, 0.0426350161, -0.227298379, 0.124054395, 0.209932506, -0.0163425971, -0.0676917955, -0.0268171076, -0.197660729, -0.0256170966, 0.0250854809, -0.0815284327, -0.0358851440, 0.123983666, 0.0204729550, 0.0170122143) * textureLoad(t_FEATURE6, clampCoord(p + vec2i(0, 0), d_FEATURE6), 0);
+  res1 += mat4x4f(0.0982442126, 0.253127396, -0.335049480, -0.170179412, -0.214386493, 0.192120209, -0.000903237204, 0.147341773, -0.0158099961, 0.0877293423, 0.0397890918, 0.00805510674, 0.0891115069, -0.0274623968, -0.0894690230, 0.200713590) * textureLoad(t_FEATURE7, clampCoord(p + vec2i(0, 0), d_FEATURE7), 0);
+  res1 += mat4x4f(-0.145504847, 0.0651188865, 0.103013225, -0.0364485793, 0.160510480, 0.114968732, 0.0352706946, -0.00612674560, 0.0482625291, -0.0658288673, -0.147723630, -0.0103131374, -0.0343083106, -0.197277546, -0.00490203546, -0.126066312) * textureLoad(t_FEATURE8, clampCoord(p + vec2i(0, 0), d_FEATURE8), 0);
+  res1 += mat4x4f(-0.0932509527, -0.146352276, -0.110862777, 0.206254661, -0.302872866, 0.161510050, 0.132655084, -0.143966898, 0.0514756776, 0.0705104917, 0.00636097742, -0.0343689471, 0.0346089676, 0.0493377522, 0.0841338485, -0.149462104) * textureLoad(t_FEATURE9, clampCoord(p + vec2i(0, 0), d_FEATURE9), 0);
+  res1 += mat4x4f(-0.00820201170, 0.0318989605, -0.0454207920, 0.0811427683, -0.213568211, -0.0114574041, 0.103990264, -0.0914926380, 0.220375881, 0.151532844, -0.103753783, 0.0548354834, 0.197889060, 0.0423592068, -0.0539082065, 0.00474489108) * textureLoad(t_FEATURE10, clampCoord(p + vec2i(0, 0), d_FEATURE10), 0);
+  res1 += mat4x4f(0.0939587131, -0.0964978933, -0.559137702, -0.0513675325, 0.0444526821, 0.0431782156, -0.0334453098, 0.0653236285, -0.338557869, -0.218985140, 0.0835943669, 0.0572970510, -0.102736719, 0.0179366302, -0.301342249, -0.00488062948) * textureLoad(t_FEATURE11, clampCoord(p + vec2i(0, 0), d_FEATURE11), 0);
+  res1 += mat4x4f(0.198164597, 0.267328084, 0.0158585906, -0.217155427, -0.200305909, -0.151439101, 0.0476937145, -0.293464124, 0.0748659223, 0.160217106, 0.0543619506, 0.0183286462, -0.0612713471, 0.0976600423, 0.139417902, 0.0359516591) * textureLoad(t_FEATURE12, clampCoord(p + vec2i(0, 0), d_FEATURE12), 0);
+  res1 += mat4x4f(-0.0211742949, -0.101245441, -0.00258671911, 0.0932002813, 0.184277818, 0.254497439, -0.377024889, -0.473734379, -0.154645741, -0.318192810, -0.0203629341, 0.0992865637, 0.108299136, -0.228574187, -0.0605079718, -0.00913070329) * textureLoad(t_FEATURE13, clampCoord(p + vec2i(0, 0), d_FEATURE13), 0);
+  res1 += mat4x4f(-0.0240833294, -0.140304714, -0.104676552, 0.305203408, -0.136635199, -0.141281456, 0.0523895100, 0.141865417, -0.0508327000, -0.292548627, 0.233777359, -0.0332694352, -0.0759806111, -0.0444357097, 0.0295972005, 0.148172304) * textureLoad(t_FEATURE14, clampCoord(p + vec2i(0, 0), d_FEATURE14), 0);
+  var res2 = vec4f(-0.0767782703, -0.0850214884, 0.0704585984, 0.0357924215);
+  res2 += mat4x4f(0.215304211, -0.0242620781, 0.277044833, -0.216657862, -0.125990734, -0.0369912758, 0.285111219, -0.0694495291, 0.0150474068, 0.0637977719, 0.00620373525, 0.0125690866, -0.148073524, -0.0154945813, 0.484863192, -0.0285202302) * textureLoad(t_FEATURE1, clampCoord(p + vec2i(0, 0), d_FEATURE1), 0);
+  res2 += mat4x4f(-0.0799942240, -0.0639128238, -0.0127642024, -0.215226054, 0.00717351772, 0.319670230, -0.201063603, -0.337403208, -0.248534918, 0.122822024, 0.0846888795, -0.0813367441, 0.0571559593, 0.0834988207, -0.290543705, 0.0681679100) * textureLoad(t_FEATURE2, clampCoord(p + vec2i(0, 0), d_FEATURE2), 0);
+  res2 += mat4x4f(0.180397287, 0.296652675, 0.0326798111, 0.00449876068, 0.280432999, 0.0852559581, 0.0288240705, -0.0338724367, 0.0578520037, 0.0505711772, -0.126739532, 0.0322212093, 0.296973497, 0.0592684224, 0.0419152752, 0.0861991793) * textureLoad(t_FEATURE3, clampCoord(p + vec2i(0, 0), d_FEATURE3), 0);
+  res2 += mat4x4f(0.0895887688, -0.0196754001, 0.633333862, 0.0640382767, -0.197282478, 0.103743486, 0.0385428257, 0.124977902, -0.287996948, 0.214055642, -0.137094408, -0.384375632, 0.0492173322, -0.0759541988, 0.276104778, 0.000674167124) * textureLoad(t_FEATURE4, clampCoord(p + vec2i(0, 0), d_FEATURE4), 0);
+  res2 += mat4x4f(0.124636397, -0.00446412107, 0.103667557, -0.110258490, 0.00261305645, -0.0244350433, 0.133833021, 0.175903887, -0.218384147, 0.253270656, 0.0711607039, -0.198131442, -0.194935635, -0.147040427, -0.00386646972, 0.361775398) * textureLoad(t_FEATURE5, clampCoord(p + vec2i(0, 0), d_FEATURE5), 0);
+  res2 += mat4x4f(0.0646070763, 0.00454828795, -0.102660179, -0.0230442639, 0.00453371508, -0.0346353725, -0.0766649917, 0.0187885612, -0.209275857, -0.0898185074, 0.0122888740, 0.135963053, -0.000595269667, 0.0300398041, -0.0179015566, 0.107070185) * textureLoad(t_FEATURE6, clampCoord(p + vec2i(0, 0), d_FEATURE6), 0);
+  res2 += mat4x4f(-0.170445055, 0.236647218, 0.0123033989, 0.00147116091, 0.235030904, -0.0216869749, -0.140777826, 0.0177251808, 0.138359115, -0.0184377320, -0.151084974, 0.148062438, 0.0965931118, -0.0446398519, -0.244431645, 0.0367574841) * textureLoad(t_FEATURE7, clampCoord(p + vec2i(0, 0), d_FEATURE7), 0);
+  res2 += mat4x4f(-0.104326241, -0.0587972105, -0.0476931669, 0.0966573358, 0.0722499862, -0.0257970709, -0.215206265, 0.113136940, 0.228232533, -0.00477097835, 0.180691481, -0.118657589, 0.0813932940, 0.0660327151, -0.0315864012, -0.0558601543) * textureLoad(t_FEATURE8, clampCoord(p + vec2i(0, 0), d_FEATURE8), 0);
+  res2 += mat4x4f(0.294897228, -0.105723292, 0.112047642, -0.0436629765, -0.201549381, 0.0355086550, 0.0716775805, 0.154719383, -0.0854722634, 0.0130411899, -0.499219537, -0.0663665086, -0.114222758, -0.0435267314, 0.0416363068, 0.178767964) * textureLoad(t_FEATURE9, clampCoord(p + vec2i(0, 0), d_FEATURE9), 0);
+  res2 += mat4x4f(0.0564447157, 0.0338486657, -0.135601550, -0.133026868, -0.187234104, -0.0921241343, 0.0153562156, 0.256590366, 0.0261431895, -0.0264331680, -0.235216349, 0.0169676133, 0.172522813, -0.0338921063, -0.00618954375, -0.0256420728) * textureLoad(t_FEATURE10, clampCoord(p + vec2i(0, 0), d_FEATURE10), 0);
+  res2 += mat4x4f(0.190596223, 0.214246735, -0.252245575, -0.0692210346, -0.0715442076, 0.0149599453, 0.0377059467, -0.140104979, -0.178655326, 0.161030099, -0.357332200, 0.117620587, -0.367497414, -0.0859954208, 0.219341382, 0.0593461953) * textureLoad(t_FEATURE11, clampCoord(p + vec2i(0, 0), d_FEATURE11), 0);
+  res2 += mat4x4f(-0.0584959649, 0.00877351314, 0.384491026, -0.316067338, 0.536012232, -0.185874894, 0.469143391, -0.369556308, 0.00892195851, -0.0170261450, 0.108412020, 0.0369915403, -0.281739056, -0.189867720, 0.249875695, 0.0478244275) * textureLoad(t_FEATURE12, clampCoord(p + vec2i(0, 0), d_FEATURE12), 0);
+  res2 += mat4x4f(0.0215077624, -0.0585984848, 0.0259317029, 0.112712428, 0.325552970, 0.0643099025, 0.131522104, 0.179516330, -0.0677906945, -0.0758287534, 0.174947143, 0.0644314587, 0.0834672078, 0.0892717615, 0.0199471917, -0.00369056850) * textureLoad(t_FEATURE13, clampCoord(p + vec2i(0, 0), d_FEATURE13), 0);
+  res2 += mat4x4f(0.186969489, 0.140258700, -0.0521197133, 0.0967011452, 0.200400382, 0.337284118, -0.0652295500, 0.0116533320, 0.104767047, -0.106286593, 0.0633171871, 0.0432997532, -0.180473715, 0.0655591786, -0.0485617667, 0.00503661344) * textureLoad(t_FEATURE14, clampCoord(p + vec2i(0, 0), d_FEATURE14), 0);
+  var res3 = vec4f(-0.0673034638, -0.0837591216, 0.000992596499, 0.0562090650);
+  res3 += mat4x4f(0.119308874, 0.0291083492, 0.154053316, 0.335722446, 0.0696736574, 0.163483948, -0.0768227950, -0.0318036638, -0.00318677374, -0.0203758124, -0.123758405, 0.0617237538, -0.332415372, 0.0830215514, -0.0780046210, 0.173732147) * textureLoad(t_FEATURE1, clampCoord(p + vec2i(0, 0), d_FEATURE1), 0);
+  res3 += mat4x4f(-0.230715781, 0.103468619, 0.0739210695, -0.132130638, -0.0643615723, 0.161482066, -0.155256435, -0.0175316110, -0.202070639, -0.160371244, 0.169171199, 0.254053026, 0.0142227206, -0.151256874, -0.0399198644, 0.0504945777) * textureLoad(t_FEATURE2, clampCoord(p + vec2i(0, 0), d_FEATURE2), 0);
+  res3 += mat4x4f(0.163408592, 0.0580144674, 0.0665062815, -0.234487116, 0.138769209, 0.0573038422, 0.171580344, -0.0129551012, 0.0497281775, -0.0708129779, -0.0991070867, 0.0114808977, 0.0312545188, -0.0811626017, 0.349268973, -0.635981619) * textureLoad(t_FEATURE3, clampCoord(p + vec2i(0, 0), d_FEATURE3), 0);
+  res3 += mat4x4f(-0.171177834, -0.0631817952, -0.0618888214, -0.00935071148, 0.242170811, -0.132514492, -0.381277651, -0.700775504, -0.0742279664, 0.221159846, 0.204425797, 0.107294299, -0.172148541, 0.188491076, 0.107019387, 0.0392183289) * textureLoad(t_FEATURE4, clampCoord(p + vec2i(0, 0), d_FEATURE4), 0);
+  res3 += mat4x4f(-0.147601649, -0.00826669671, 0.365788847, 0.218804404, -0.141913742, 0.0483022705, 0.0194165986, -0.0115485275, -0.294273317, -0.193431079, 0.231297910, 0.147795677, 0.325034410, -0.272709191, 0.326549113, 0.0683420300) * textureLoad(t_FEATURE5, clampCoord(p + vec2i(0, 0), d_FEATURE5), 0);
+  res3 += mat4x4f(-0.0769083947, -0.0781991631, 0.127583921, -0.133315668, -0.125472441, 0.0519167297, 0.0914172977, -0.0838723108, -0.133242950, 0.119796135, -0.00258463062, -0.178693756, -0.00814153813, -0.0401321426, 0.0192348696, 0.0377788730) * textureLoad(t_FEATURE6, clampCoord(p + vec2i(0, 0), d_FEATURE6), 0);
+  res3 += mat4x4f(-0.397116870, -0.212708205, -0.0814306736, 0.128216580, 0.0226074122, 0.173746377, -0.134410352, -0.0142931510, 0.183609560, 0.0335159861, -0.0118450364, 0.124398947, 0.192698702, -0.0577373132, 0.0306651834, -0.438420385) * textureLoad(t_FEATURE7, clampCoord(p + vec2i(0, 0), d_FEATURE7), 0);
+  res3 += mat4x4f(-0.486886889, 0.0183855072, 0.0396929532, -0.106348962, 0.107542917, 0.0644877553, 0.0400538296, 0.253716737, -0.0587622225, 0.0359324180, 0.0808491632, 0.262378752, -0.218121395, -0.0190164428, -0.143042490, 0.186659798) * textureLoad(t_FEATURE8, clampCoord(p + vec2i(0, 0), d_FEATURE8), 0);
+  res3 += mat4x4f(0.0238924772, 0.0547614247, 0.102036528, 0.0433163568, 0.0527843349, 0.0796661675, -0.0195394140, 0.0374730714, -0.115848988, -0.0338291638, 0.0276347399, -0.349643856, -0.113547891, 0.123729646, 0.0460410230, 0.123149142) * textureLoad(t_FEATURE9, clampCoord(p + vec2i(0, 0), d_FEATURE9), 0);
+  res3 += mat4x4f(0.0429439768, -0.0774153545, 0.00557889277, 0.0279425364, -0.0220598187, 0.144263595, -0.00301192654, 0.259775907, -0.0183166564, -0.00172770396, 0.0606239252, -0.297521085, 0.0160823558, 0.0527573191, -0.0225741398, 0.228804201) * textureLoad(t_FEATURE10, clampCoord(p + vec2i(0, 0), d_FEATURE10), 0);
+  res3 += mat4x4f(0.305573136, 0.195413277, 0.0395198055, -0.181667790, 0.0528564639, -0.0306131709, -0.198357522, -0.175313950, 0.450079292, -0.181577116, -0.327348113, -0.252181232, -0.267919332, 0.114840098, -0.0827415362, 0.0510801747) * textureLoad(t_FEATURE11, clampCoord(p + vec2i(0, 0), d_FEATURE11), 0);
+  res3 += mat4x4f(0.475558102, 0.134927586, 0.0621972829, 0.252397895, 0.0313643180, -0.0384092405, -0.227066576, 0.110619612, -0.103721470, 0.00258481153, -0.136459857, 0.0914999768, 0.264992386, 0.177721173, -0.0736449584, -0.102680184) * textureLoad(t_FEATURE12, clampCoord(p + vec2i(0, 0), d_FEATURE12), 0);
+  res3 += mat4x4f(-0.00425098231, 0.0456599668, -0.00340119703, 0.00206307066, 0.0300964266, -0.152935728, -0.142505765, 0.139099911, 0.198114842, 0.0437666960, 0.0722968876, -0.203343749, 0.0958510116, -0.0842160210, -0.0735360458, 0.0378426984) * textureLoad(t_FEATURE13, clampCoord(p + vec2i(0, 0), d_FEATURE13), 0);
+  res3 += mat4x4f(0.471932948, -0.274289370, -0.260779858, 0.248834759, -0.0930292234, 0.224908933, 0.0586016513, 0.0534633920, 0.0350223966, 0.140767291, -0.152740180, 0.103965640, 0.0510676876, -0.165683761, 0.0332467072, -0.352789760) * textureLoad(t_FEATURE14, clampCoord(p + vec2i(0, 0), d_FEATURE14), 0);
+  textureStore(out_SHRINKED1, p, res0);
+  textureStore(out_SHRINKED2, p, res1);
+  textureStore(out_SHRINKED3, p, res2);
+  textureStore(out_SHRINKED4, p, res3);
 }
 
-//==== ENTRY pass15 : shrinking_2 ====
-// ---- PASS 15: shrinking 2 (save=SHRINKED2, comps=4) ----
-// binds: FEATURE1, FEATURE2, FEATURE3, FEATURE4, FEATURE5, FEATURE6, FEATURE7, FEATURE8, FEATURE9, FEATURE10, FEATURE11, FEATURE12, FEATURE13, FEATURE14
-@group(0) @binding(0) var t_FEATURE1 : texture_2d<f32>;
-@group(0) @binding(1) var t_FEATURE2 : texture_2d<f32>;
-@group(0) @binding(2) var t_FEATURE3 : texture_2d<f32>;
-@group(0) @binding(3) var t_FEATURE4 : texture_2d<f32>;
-@group(0) @binding(4) var t_FEATURE5 : texture_2d<f32>;
-@group(0) @binding(5) var t_FEATURE6 : texture_2d<f32>;
-@group(0) @binding(6) var t_FEATURE7 : texture_2d<f32>;
-@group(0) @binding(7) var t_FEATURE8 : texture_2d<f32>;
-@group(0) @binding(8) var t_FEATURE9 : texture_2d<f32>;
-@group(0) @binding(9) var t_FEATURE10 : texture_2d<f32>;
-@group(0) @binding(10) var t_FEATURE11 : texture_2d<f32>;
-@group(0) @binding(11) var t_FEATURE12 : texture_2d<f32>;
-@group(0) @binding(12) var t_FEATURE13 : texture_2d<f32>;
-@group(0) @binding(13) var t_FEATURE14 : texture_2d<f32>;
-@group(0) @binding(14) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(0.0475499779, -0.00505871885, -0.0455184020, -0.00397342304);
-  res += mat4x4f(-0.165957421, 0.0219357889, -0.170343161, 0.0744752660, 0.151462466, 0.268443435, 0.113416314, -0.167845562, -0.205740884, 0.293590307, 0.0850598365, -0.118017554, -0.783921599, 0.0356217660, 0.185998932, -0.155222073) * textureLoad(t_FEATURE1, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE1)), 0);
-  res += mat4x4f(0.0432646461, -0.111899167, -0.0398604870, -0.0756863356, 0.0951438397, 0.0783733279, -0.00619209465, 0.431768864, -0.457172513, -0.180810511, 0.281949759, 0.0303001646, -0.0588399544, 0.106513523, -0.0493245162, 0.130688906) * textureLoad(t_FEATURE2, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE2)), 0);
-  res += mat4x4f(-0.0822065994, -0.0471106321, 0.385050774, -0.0531568117, 0.387939394, 0.137854055, 0.226737767, -0.00977330282, 0.0118722869, 0.0385264345, -0.0179664902, 0.0654688179, 0.600362659, 0.118103847, 0.236744002, -0.0967409834) * textureLoad(t_FEATURE3, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE3)), 0);
-  res += mat4x4f(-0.342228621, 0.0819709226, -0.0361955799, 0.218775943, 0.206754133, 0.0321792625, 0.144490331, -0.0546250120, 0.179823235, 0.230574176, -0.0571053885, 0.315992296, 0.0384787321, -0.00564693473, -0.108430900, -0.269608110) * textureLoad(t_FEATURE4, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE4)), 0);
-  res += mat4x4f(-0.0136540234, 0.224245235, -0.0687166601, 0.0613728687, -0.0551527813, -0.157170802, 0.0310073998, -0.0253034607, -0.00753023615, 0.176845446, 0.318630189, 0.226519316, -0.00571416831, 0.281341225, 0.0534514599, -0.713103890) * textureLoad(t_FEATURE5, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE5)), 0);
-  res += mat4x4f(0.310358763, 0.0426350161, -0.227298379, 0.124054395, 0.209932506, -0.0163425971, -0.0676917955, -0.0268171076, -0.197660729, -0.0256170966, 0.0250854809, -0.0815284327, -0.0358851440, 0.123983666, 0.0204729550, 0.0170122143) * textureLoad(t_FEATURE6, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE6)), 0);
-  res += mat4x4f(0.0982442126, 0.253127396, -0.335049480, -0.170179412, -0.214386493, 0.192120209, -0.000903237204, 0.147341773, -0.0158099961, 0.0877293423, 0.0397890918, 0.00805510674, 0.0891115069, -0.0274623968, -0.0894690230, 0.200713590) * textureLoad(t_FEATURE7, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE7)), 0);
-  res += mat4x4f(-0.145504847, 0.0651188865, 0.103013225, -0.0364485793, 0.160510480, 0.114968732, 0.0352706946, -0.00612674560, 0.0482625291, -0.0658288673, -0.147723630, -0.0103131374, -0.0343083106, -0.197277546, -0.00490203546, -0.126066312) * textureLoad(t_FEATURE8, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE8)), 0);
-  res += mat4x4f(-0.0932509527, -0.146352276, -0.110862777, 0.206254661, -0.302872866, 0.161510050, 0.132655084, -0.143966898, 0.0514756776, 0.0705104917, 0.00636097742, -0.0343689471, 0.0346089676, 0.0493377522, 0.0841338485, -0.149462104) * textureLoad(t_FEATURE9, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE9)), 0);
-  res += mat4x4f(-0.00820201170, 0.0318989605, -0.0454207920, 0.0811427683, -0.213568211, -0.0114574041, 0.103990264, -0.0914926380, 0.220375881, 0.151532844, -0.103753783, 0.0548354834, 0.197889060, 0.0423592068, -0.0539082065, 0.00474489108) * textureLoad(t_FEATURE10, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE10)), 0);
-  res += mat4x4f(0.0939587131, -0.0964978933, -0.559137702, -0.0513675325, 0.0444526821, 0.0431782156, -0.0334453098, 0.0653236285, -0.338557869, -0.218985140, 0.0835943669, 0.0572970510, -0.102736719, 0.0179366302, -0.301342249, -0.00488062948) * textureLoad(t_FEATURE11, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE11)), 0);
-  res += mat4x4f(0.198164597, 0.267328084, 0.0158585906, -0.217155427, -0.200305909, -0.151439101, 0.0476937145, -0.293464124, 0.0748659223, 0.160217106, 0.0543619506, 0.0183286462, -0.0612713471, 0.0976600423, 0.139417902, 0.0359516591) * textureLoad(t_FEATURE12, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE12)), 0);
-  res += mat4x4f(-0.0211742949, -0.101245441, -0.00258671911, 0.0932002813, 0.184277818, 0.254497439, -0.377024889, -0.473734379, -0.154645741, -0.318192810, -0.0203629341, 0.0992865637, 0.108299136, -0.228574187, -0.0605079718, -0.00913070329) * textureLoad(t_FEATURE13, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE13)), 0);
-  res += mat4x4f(-0.0240833294, -0.140304714, -0.104676552, 0.305203408, -0.136635199, -0.141281456, 0.0523895100, 0.141865417, -0.0508327000, -0.292548627, 0.233777359, -0.0332694352, -0.0759806111, -0.0444357097, 0.0295972005, 0.148172304) * textureLoad(t_FEATURE14, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE14)), 0);
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass16 : shrinking_3 ====
-// ---- PASS 16: shrinking 3 (save=SHRINKED3, comps=4) ----
-// binds: FEATURE1, FEATURE2, FEATURE3, FEATURE4, FEATURE5, FEATURE6, FEATURE7, FEATURE8, FEATURE9, FEATURE10, FEATURE11, FEATURE12, FEATURE13, FEATURE14
-@group(0) @binding(0) var t_FEATURE1 : texture_2d<f32>;
-@group(0) @binding(1) var t_FEATURE2 : texture_2d<f32>;
-@group(0) @binding(2) var t_FEATURE3 : texture_2d<f32>;
-@group(0) @binding(3) var t_FEATURE4 : texture_2d<f32>;
-@group(0) @binding(4) var t_FEATURE5 : texture_2d<f32>;
-@group(0) @binding(5) var t_FEATURE6 : texture_2d<f32>;
-@group(0) @binding(6) var t_FEATURE7 : texture_2d<f32>;
-@group(0) @binding(7) var t_FEATURE8 : texture_2d<f32>;
-@group(0) @binding(8) var t_FEATURE9 : texture_2d<f32>;
-@group(0) @binding(9) var t_FEATURE10 : texture_2d<f32>;
-@group(0) @binding(10) var t_FEATURE11 : texture_2d<f32>;
-@group(0) @binding(11) var t_FEATURE12 : texture_2d<f32>;
-@group(0) @binding(12) var t_FEATURE13 : texture_2d<f32>;
-@group(0) @binding(13) var t_FEATURE14 : texture_2d<f32>;
-@group(0) @binding(14) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.0767782703, -0.0850214884, 0.0704585984, 0.0357924215);
-  res += mat4x4f(0.215304211, -0.0242620781, 0.277044833, -0.216657862, -0.125990734, -0.0369912758, 0.285111219, -0.0694495291, 0.0150474068, 0.0637977719, 0.00620373525, 0.0125690866, -0.148073524, -0.0154945813, 0.484863192, -0.0285202302) * textureLoad(t_FEATURE1, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE1)), 0);
-  res += mat4x4f(-0.0799942240, -0.0639128238, -0.0127642024, -0.215226054, 0.00717351772, 0.319670230, -0.201063603, -0.337403208, -0.248534918, 0.122822024, 0.0846888795, -0.0813367441, 0.0571559593, 0.0834988207, -0.290543705, 0.0681679100) * textureLoad(t_FEATURE2, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE2)), 0);
-  res += mat4x4f(0.180397287, 0.296652675, 0.0326798111, 0.00449876068, 0.280432999, 0.0852559581, 0.0288240705, -0.0338724367, 0.0578520037, 0.0505711772, -0.126739532, 0.0322212093, 0.296973497, 0.0592684224, 0.0419152752, 0.0861991793) * textureLoad(t_FEATURE3, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE3)), 0);
-  res += mat4x4f(0.0895887688, -0.0196754001, 0.633333862, 0.0640382767, -0.197282478, 0.103743486, 0.0385428257, 0.124977902, -0.287996948, 0.214055642, -0.137094408, -0.384375632, 0.0492173322, -0.0759541988, 0.276104778, 0.000674167124) * textureLoad(t_FEATURE4, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE4)), 0);
-  res += mat4x4f(0.124636397, -0.00446412107, 0.103667557, -0.110258490, 0.00261305645, -0.0244350433, 0.133833021, 0.175903887, -0.218384147, 0.253270656, 0.0711607039, -0.198131442, -0.194935635, -0.147040427, -0.00386646972, 0.361775398) * textureLoad(t_FEATURE5, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE5)), 0);
-  res += mat4x4f(0.0646070763, 0.00454828795, -0.102660179, -0.0230442639, 0.00453371508, -0.0346353725, -0.0766649917, 0.0187885612, -0.209275857, -0.0898185074, 0.0122888740, 0.135963053, -0.000595269667, 0.0300398041, -0.0179015566, 0.107070185) * textureLoad(t_FEATURE6, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE6)), 0);
-  res += mat4x4f(-0.170445055, 0.236647218, 0.0123033989, 0.00147116091, 0.235030904, -0.0216869749, -0.140777826, 0.0177251808, 0.138359115, -0.0184377320, -0.151084974, 0.148062438, 0.0965931118, -0.0446398519, -0.244431645, 0.0367574841) * textureLoad(t_FEATURE7, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE7)), 0);
-  res += mat4x4f(-0.104326241, -0.0587972105, -0.0476931669, 0.0966573358, 0.0722499862, -0.0257970709, -0.215206265, 0.113136940, 0.228232533, -0.00477097835, 0.180691481, -0.118657589, 0.0813932940, 0.0660327151, -0.0315864012, -0.0558601543) * textureLoad(t_FEATURE8, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE8)), 0);
-  res += mat4x4f(0.294897228, -0.105723292, 0.112047642, -0.0436629765, -0.201549381, 0.0355086550, 0.0716775805, 0.154719383, -0.0854722634, 0.0130411899, -0.499219537, -0.0663665086, -0.114222758, -0.0435267314, 0.0416363068, 0.178767964) * textureLoad(t_FEATURE9, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE9)), 0);
-  res += mat4x4f(0.0564447157, 0.0338486657, -0.135601550, -0.133026868, -0.187234104, -0.0921241343, 0.0153562156, 0.256590366, 0.0261431895, -0.0264331680, -0.235216349, 0.0169676133, 0.172522813, -0.0338921063, -0.00618954375, -0.0256420728) * textureLoad(t_FEATURE10, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE10)), 0);
-  res += mat4x4f(0.190596223, 0.214246735, -0.252245575, -0.0692210346, -0.0715442076, 0.0149599453, 0.0377059467, -0.140104979, -0.178655326, 0.161030099, -0.357332200, 0.117620587, -0.367497414, -0.0859954208, 0.219341382, 0.0593461953) * textureLoad(t_FEATURE11, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE11)), 0);
-  res += mat4x4f(-0.0584959649, 0.00877351314, 0.384491026, -0.316067338, 0.536012232, -0.185874894, 0.469143391, -0.369556308, 0.00892195851, -0.0170261450, 0.108412020, 0.0369915403, -0.281739056, -0.189867720, 0.249875695, 0.0478244275) * textureLoad(t_FEATURE12, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE12)), 0);
-  res += mat4x4f(0.0215077624, -0.0585984848, 0.0259317029, 0.112712428, 0.325552970, 0.0643099025, 0.131522104, 0.179516330, -0.0677906945, -0.0758287534, 0.174947143, 0.0644314587, 0.0834672078, 0.0892717615, 0.0199471917, -0.00369056850) * textureLoad(t_FEATURE13, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE13)), 0);
-  res += mat4x4f(0.186969489, 0.140258700, -0.0521197133, 0.0967011452, 0.200400382, 0.337284118, -0.0652295500, 0.0116533320, 0.104767047, -0.106286593, 0.0633171871, 0.0432997532, -0.180473715, 0.0655591786, -0.0485617667, 0.00503661344) * textureLoad(t_FEATURE14, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE14)), 0);
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass17 : shrinking_4 ====
-// ---- PASS 17: shrinking 4 (save=SHRINKED4, comps=4) ----
-// binds: FEATURE1, FEATURE2, FEATURE3, FEATURE4, FEATURE5, FEATURE6, FEATURE7, FEATURE8, FEATURE9, FEATURE10, FEATURE11, FEATURE12, FEATURE13, FEATURE14
-@group(0) @binding(0) var t_FEATURE1 : texture_2d<f32>;
-@group(0) @binding(1) var t_FEATURE2 : texture_2d<f32>;
-@group(0) @binding(2) var t_FEATURE3 : texture_2d<f32>;
-@group(0) @binding(3) var t_FEATURE4 : texture_2d<f32>;
-@group(0) @binding(4) var t_FEATURE5 : texture_2d<f32>;
-@group(0) @binding(5) var t_FEATURE6 : texture_2d<f32>;
-@group(0) @binding(6) var t_FEATURE7 : texture_2d<f32>;
-@group(0) @binding(7) var t_FEATURE8 : texture_2d<f32>;
-@group(0) @binding(8) var t_FEATURE9 : texture_2d<f32>;
-@group(0) @binding(9) var t_FEATURE10 : texture_2d<f32>;
-@group(0) @binding(10) var t_FEATURE11 : texture_2d<f32>;
-@group(0) @binding(11) var t_FEATURE12 : texture_2d<f32>;
-@group(0) @binding(12) var t_FEATURE13 : texture_2d<f32>;
-@group(0) @binding(13) var t_FEATURE14 : texture_2d<f32>;
-@group(0) @binding(14) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.0673034638, -0.0837591216, 0.000992596499, 0.0562090650);
-  res += mat4x4f(0.119308874, 0.0291083492, 0.154053316, 0.335722446, 0.0696736574, 0.163483948, -0.0768227950, -0.0318036638, -0.00318677374, -0.0203758124, -0.123758405, 0.0617237538, -0.332415372, 0.0830215514, -0.0780046210, 0.173732147) * textureLoad(t_FEATURE1, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE1)), 0);
-  res += mat4x4f(-0.230715781, 0.103468619, 0.0739210695, -0.132130638, -0.0643615723, 0.161482066, -0.155256435, -0.0175316110, -0.202070639, -0.160371244, 0.169171199, 0.254053026, 0.0142227206, -0.151256874, -0.0399198644, 0.0504945777) * textureLoad(t_FEATURE2, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE2)), 0);
-  res += mat4x4f(0.163408592, 0.0580144674, 0.0665062815, -0.234487116, 0.138769209, 0.0573038422, 0.171580344, -0.0129551012, 0.0497281775, -0.0708129779, -0.0991070867, 0.0114808977, 0.0312545188, -0.0811626017, 0.349268973, -0.635981619) * textureLoad(t_FEATURE3, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE3)), 0);
-  res += mat4x4f(-0.171177834, -0.0631817952, -0.0618888214, -0.00935071148, 0.242170811, -0.132514492, -0.381277651, -0.700775504, -0.0742279664, 0.221159846, 0.204425797, 0.107294299, -0.172148541, 0.188491076, 0.107019387, 0.0392183289) * textureLoad(t_FEATURE4, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE4)), 0);
-  res += mat4x4f(-0.147601649, -0.00826669671, 0.365788847, 0.218804404, -0.141913742, 0.0483022705, 0.0194165986, -0.0115485275, -0.294273317, -0.193431079, 0.231297910, 0.147795677, 0.325034410, -0.272709191, 0.326549113, 0.0683420300) * textureLoad(t_FEATURE5, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE5)), 0);
-  res += mat4x4f(-0.0769083947, -0.0781991631, 0.127583921, -0.133315668, -0.125472441, 0.0519167297, 0.0914172977, -0.0838723108, -0.133242950, 0.119796135, -0.00258463062, -0.178693756, -0.00814153813, -0.0401321426, 0.0192348696, 0.0377788730) * textureLoad(t_FEATURE6, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE6)), 0);
-  res += mat4x4f(-0.397116870, -0.212708205, -0.0814306736, 0.128216580, 0.0226074122, 0.173746377, -0.134410352, -0.0142931510, 0.183609560, 0.0335159861, -0.0118450364, 0.124398947, 0.192698702, -0.0577373132, 0.0306651834, -0.438420385) * textureLoad(t_FEATURE7, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE7)), 0);
-  res += mat4x4f(-0.486886889, 0.0183855072, 0.0396929532, -0.106348962, 0.107542917, 0.0644877553, 0.0400538296, 0.253716737, -0.0587622225, 0.0359324180, 0.0808491632, 0.262378752, -0.218121395, -0.0190164428, -0.143042490, 0.186659798) * textureLoad(t_FEATURE8, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE8)), 0);
-  res += mat4x4f(0.0238924772, 0.0547614247, 0.102036528, 0.0433163568, 0.0527843349, 0.0796661675, -0.0195394140, 0.0374730714, -0.115848988, -0.0338291638, 0.0276347399, -0.349643856, -0.113547891, 0.123729646, 0.0460410230, 0.123149142) * textureLoad(t_FEATURE9, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE9)), 0);
-  res += mat4x4f(0.0429439768, -0.0774153545, 0.00557889277, 0.0279425364, -0.0220598187, 0.144263595, -0.00301192654, 0.259775907, -0.0183166564, -0.00172770396, 0.0606239252, -0.297521085, 0.0160823558, 0.0527573191, -0.0225741398, 0.228804201) * textureLoad(t_FEATURE10, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE10)), 0);
-  res += mat4x4f(0.305573136, 0.195413277, 0.0395198055, -0.181667790, 0.0528564639, -0.0306131709, -0.198357522, -0.175313950, 0.450079292, -0.181577116, -0.327348113, -0.252181232, -0.267919332, 0.114840098, -0.0827415362, 0.0510801747) * textureLoad(t_FEATURE11, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE11)), 0);
-  res += mat4x4f(0.475558102, 0.134927586, 0.0621972829, 0.252397895, 0.0313643180, -0.0384092405, -0.227066576, 0.110619612, -0.103721470, 0.00258481153, -0.136459857, 0.0914999768, 0.264992386, 0.177721173, -0.0736449584, -0.102680184) * textureLoad(t_FEATURE12, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE12)), 0);
-  res += mat4x4f(-0.00425098231, 0.0456599668, -0.00340119703, 0.00206307066, 0.0300964266, -0.152935728, -0.142505765, 0.139099911, 0.198114842, 0.0437666960, 0.0722968876, -0.203343749, 0.0958510116, -0.0842160210, -0.0735360458, 0.0378426984) * textureLoad(t_FEATURE13, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE13)), 0);
-  res += mat4x4f(0.471932948, -0.274289370, -0.260779858, 0.248834759, -0.0930292234, 0.224908933, 0.0586016513, 0.0534633920, 0.0350223966, 0.140767291, -0.152740180, 0.103965640, 0.0510676876, -0.165683761, 0.0332467072, -0.352789760) * textureLoad(t_FEATURE14, clampCoord(p + vec2i(0, 0), textureDimensions(t_FEATURE14)), 0);
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass18 : mapping_1_1 ====
-// ---- PASS 18: mapping 1_1 (save=MODEL21, comps=4) ----
+//==== ENTRY pass5 : fused_MODEL21_MODEL22_MODEL23_MODEL24 ====
+// ---- PASS 5: mapping 1_1 + mapping 1_2 + mapping 1_3 + mapping 1_4 (saves=MODEL21,MODEL22,MODEL23,MODEL24) ----
 // binds: SHRINKED1, SHRINKED2, SHRINKED3, SHRINKED4
+// Fused: 4 upstream hooks sharing one set of input fetches.
 @group(0) @binding(0) var t_SHRINKED1 : texture_2d<f32>;
 @group(0) @binding(1) var t_SHRINKED2 : texture_2d<f32>;
 @group(0) @binding(2) var t_SHRINKED3 : texture_2d<f32>;
 @group(0) @binding(3) var t_SHRINKED4 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(4) var out_MODEL21 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(5) var out_MODEL22 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(6) var out_MODEL23 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(7) var out_MODEL24 : texture_storage_2d<rgba16float, write>;
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
+  let dims = textureDimensions(out_MODEL21);
   if (gid.x >= dims.x || gid.y >= dims.y) { return; }
   let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.0371216536, -0.0481771640, 0.00638538180, -0.188156828);
-  res += mat4x4f(0.142699331, 0.0233038031, 0.457957059, 0.102547623, -0.0796705633, -0.00618811278, 0.593155503, -0.167192265, -0.499624044, -0.456577986, -0.984742165, -0.106172040, -0.125783086, 0.00165606663, -0.476287842, 0.112168506) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(-1, -1), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(-0.119136229, -0.121595405, -0.157294556, 0.568838716, 0.0485567562, 0.457381517, 0.194212899, 0.0846369267, 0.0738747418, 0.277314216, 0.266596884, 0.272579789, -0.00693864981, 0.105648465, 0.399445027, -0.000703976199) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(-1, -1), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(-0.0547316447, -0.239972472, 0.0823252946, 0.00699743954, 0.0979457051, 0.00747962156, -0.544111907, 0.0702716038, 0.0600876696, -0.202599645, -0.291484535, 0.0284186807, -0.180608153, -0.00431990623, -1.71990430, -0.155200258) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(-1, -1), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(0.0989423618, -0.218857735, -0.477478951, -0.0311647933, 0.00620253896, -0.153760895, -0.0250261277, 0.0650317818, 0.216704220, -0.341203153, -0.627864122, -0.105738953, 0.147504762, 0.101189904, -0.884560168, 0.224708810) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(-1, -1), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(0.481523693, 0.138452321, -0.431821078, -0.0501189753, 0.00176530762, -0.00728480332, -0.360433966, 0.312160015, 0.0849779919, 0.360642165, 0.318436265, -0.126546800, 0.534735262, 0.0525909439, -0.495770693, -0.668382168) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(-1, 0), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(0.559799194, -0.428926349, 0.665441394, 0.431728214, -0.775057793, 0.00474621542, -0.827924788, 0.0684612244, 0.498345405, -0.525330782, -0.0458710156, -0.202451184, -0.152941063, -0.136684984, -0.602222145, -0.371784866) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(-1, 0), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(0.0543947108, -0.175058797, 0.416358650, -0.0238102321, 0.00170688145, -0.176734358, -0.632758617, -0.0136093125, 0.636853337, -0.392913371, -0.482435942, 0.00502216257, 0.228221312, -0.179326400, 0.0485569462, -0.0150721390) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(-1, 0), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(0.0541491210, -0.0810319632, 0.258216202, -0.342947125, -0.121755920, -0.158060655, -0.256235778, 0.151239410, 0.250617146, 0.295006692, 0.592848778, -0.0709951296, -0.251388639, 0.0124845430, 0.308813214, -0.206417575) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(-1, 0), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(0.00824581832, 0.150704116, 0.322511464, -0.0979826152, -0.176151112, 0.282195240, 0.138832316, 0.210023612, -0.00214092666, 0.447794497, -0.252541780, 0.393046916, -0.0938501358, 0.274079025, -0.344912469, 0.124222815) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(-1, 1), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(0.0530360937, -0.212541342, -0.312843710, 0.506057680, -0.225597888, -0.0832388699, 0.0938740969, -0.400217891, 0.196574166, 0.103270963, -0.0398762226, 0.495253414, -0.221497819, -0.104630843, -0.167873323, -0.192056671) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(-1, 1), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(0.272358656, 0.0528624617, -0.0123643121, 0.152092338, 0.149442330, 0.0350438990, 0.148206070, 0.0383562483, 0.239822134, -0.0714224875, 0.216398180, 0.249804571, 0.0453998148, 0.00598638039, -0.529133618, 0.251770377) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(-1, 1), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(0.251601696, -0.00659810426, -0.398577869, 0.116954975, -0.0873139575, 0.0347786732, -0.216521293, 0.236907721, -0.0270388816, 0.374025106, -0.306549013, -0.344213486, 0.192619994, -0.134319782, 0.0745257437, -0.0290597063) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(-1, 1), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(0.0410803109, -0.0454636142, 0.0593004785, -0.143370301, 0.0992353782, -0.365489066, 0.426776975, -0.0762393251, -0.102289386, 0.0119068576, 0.0425640792, -0.394919664, -0.206225708, -0.0612458661, 0.110282913, 0.178683653) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(0, -1), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(0.168434799, -0.316026717, -0.0296039339, -0.567484856, 0.127141908, -0.239979118, -0.00197926140, -0.137831390, 0.0411298424, -0.452605903, -0.222429737, -0.0320066176, 0.0111933835, 0.0585262291, 0.00689877430, -0.223795235) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(0, -1), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(0.0545967780, 0.114067771, 0.00623940118, 0.00822524447, 0.00294161309, -0.123789258, -0.357380062, 0.218982980, 0.142763644, -0.232891575, 0.206970856, 0.371513635, -0.0258172359, 0.00573680084, -0.214384556, -0.0203872956) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(0, -1), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(-0.171597689, 0.00901359692, 0.507702827, 0.231717423, -0.289171189, -0.0344426110, -0.0944610313, 0.125625089, -0.108544908, -0.150148824, 0.432695717, -0.126629055, -0.0127979675, 0.483980060, -0.554406762, -0.586651981) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(0, -1), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(-0.486720175, 0.404312402, 0.0462208465, 0.171927586, 0.294898629, 0.137496755, -0.249753460, 0.330094665, -0.274450898, 0.537950695, 0.285176992, 0.918305278, -0.216506273, -0.0406005867, 0.458838344, -0.722646713) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(0, 0), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(0.0131229442, -0.107265845, 0.0257053897, -0.600500882, 0.0959250852, 0.268718272, 0.279590189, -0.0301762894, 0.636743009, 0.449164301, -1.05101824, 0.0520041510, 0.121238843, -0.500124276, 0.343983382, -0.966872036) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(0, 0), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(-0.847794652, 0.0268944893, 0.565308392, 0.412739456, 0.0415021330, 0.0483857952, 0.358792275, -0.0119540533, -0.736458600, 0.320506185, -0.0421194285, 0.535918832, -0.333446026, 0.441562802, 0.279021204, 0.678095698) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(0, 0), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(0.307464361, 0.0729425997, -0.174466535, -0.649028063, 0.0810916722, -0.179520324, 0.813495874, -0.204649225, 0.550958514, 0.238725126, -0.810940146, 0.200771466, -0.594492376, 0.299480885, 0.256106287, 0.144967392) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(0, 0), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(-0.00682479935, -0.200253814, 0.159358531, -0.314061493, 0.452829748, 0.478565514, 0.251273125, 0.674202144, -0.149618790, 0.253392607, 0.272161782, 0.164159685, 0.165292203, 0.100094795, 0.282711715, 0.585320115) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(0, 1), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(0.274109572, 0.473859787, 0.280142695, 0.498366445, 0.344337434, -0.358711928, 0.172002047, -0.361645520, 0.248783529, 0.759550452, -0.00705515826, 0.130248129, 0.375123739, -0.101526797, 0.0986373276, -0.275749445) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(0, 1), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(-0.354589194, -0.0808963925, -0.388261735, 0.0759846717, -0.0132769365, 0.0181272663, 0.142449081, 0.0433301926, 0.0580017045, -0.576430678, 0.522959590, -0.372648776, -0.136423036, -0.451109558, 0.121061608, 0.354599953) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(0, 1), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(-0.0910972431, -0.189409629, 0.382189423, -0.154720128, -0.169806302, -0.103609160, -0.0468279198, 0.143380255, -0.132906362, 0.430017322, 0.444317251, -0.0736863092, -0.258523256, -0.486605674, -0.602167964, 0.110600151) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(0, 1), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(0.0308453497, 0.0240840558, -0.291132838, -0.0403471701, -0.156115830, -0.564543962, -0.0468237177, -0.113997817, 0.0258911680, 0.173990697, -0.127575666, 0.0526522845, 0.0848084316, -0.403530270, -0.162550211, 0.134458244) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(1, -1), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(-0.262277901, -0.113283761, -0.0934686437, -0.374217838, -0.0893222019, -0.520933151, -0.187927514, 0.351731390, -0.0544503033, 0.327130288, -0.0697202384, -0.152139917, 0.0998928696, 0.0127184587, -0.0128014814, 0.0982359797) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(1, -1), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(0.199162096, 0.0973315910, -0.466300875, 0.114358187, 0.00648531131, -0.0667247325, 0.0731260702, -0.0619059466, 0.185830444, 0.00386402500, 0.227741718, 0.369172513, -0.0966186374, -0.198246047, -0.279351443, -0.169039011) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(1, -1), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(-0.0378749818, -0.153307915, 0.267335922, -0.245259821, -0.0108865192, 0.260418415, 0.0785505325, 0.0145842154, -0.134421855, -0.0232868530, -0.239020169, -0.115388207, 0.00162797258, 0.142754763, 0.256940424, -0.158721775) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(1, -1), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(0.0191205293, -0.461636186, -0.688624382, -0.0278693624, 0.108257152, 0.301712304, 0.0834859759, -0.322482765, 0.331276596, -0.106440462, 0.133978754, -0.171986818, 0.287445694, 0.282939643, -0.0977966413, -0.133533791) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(1, 0), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(-0.154129818, 0.282345712, 0.207205489, -0.497610748, 0.128671974, 0.136265770, -0.113227308, -0.395634592, -0.106641620, 0.473424196, 0.796262383, -0.0744079202, 0.159742087, -0.0375768058, 0.146138802, 0.208152622) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(1, 0), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(0.301907867, 0.105716385, 0.0250624884, -0.107057743, 0.0727249160, 0.262360722, 0.367740273, 0.208125740, 0.195626885, -0.202508301, -0.214942947, -0.0660840422, 0.249514505, -0.285462111, 0.267274141, -0.150549829) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(1, 0), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(-0.116365038, -0.331805170, -0.209983140, 0.452086806, -0.0518108420, -0.0982908085, 0.152861759, -0.310694665, -0.151609063, 0.410589665, 0.169933945, 1.00231194, 0.294922203, -0.487000942, 0.163039535, 0.762106717) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(1, 0), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(0.0452096388, -0.403696597, 0.0158302207, -0.0465988927, 0.0915427580, 0.161702737, -0.00527742784, 0.0256564189, 0.0846533552, -0.480241448, 0.0895801261, 0.00318996515, -0.184745118, 0.290181994, 0.279731035, 0.161187589) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(1, 1), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(0.0604179241, 0.265099645, -0.223518565, 0.132670447, -0.160035729, 0.0404946320, -0.0737801939, -0.177360982, -0.0239875857, -0.299147308, -0.226772696, 0.0263411067, -0.0328959003, 0.00957948063, -0.228505388, -0.239904836) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(1, 1), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(-0.0391385294, -0.680287898, -0.0324949138, 0.126460642, 0.103308924, 0.0836060867, -0.0505084172, 0.0389420837, -0.00719365943, 0.161535621, 0.289690316, -0.137144119, 0.100480340, 0.326234400, 0.0470274985, -0.128019050) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(1, 1), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(0.103518307, 0.180167332, 0.171381742, -0.326704830, 0.0121855093, 0.127867252, -0.206308410, 0.147641838, 0.0439479686, 0.320249766, -0.0476313494, 0.169005841, -0.0443415157, -0.0158105772, -0.0227310471, 0.244572327) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(1, 1), textureDimensions(t_SHRINKED4)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(-0.336289227, -0.238618240, 0.0974752009, -0.152850285) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
+  let d_SHRINKED1 = textureDimensions(t_SHRINKED1);
+  let d_SHRINKED2 = textureDimensions(t_SHRINKED2);
+  let d_SHRINKED3 = textureDimensions(t_SHRINKED3);
+  let d_SHRINKED4 = textureDimensions(t_SHRINKED4);
+  var res0 = vec4f(-0.0371216536, -0.0481771640, 0.00638538180, -0.188156828);
+  res0 += mat4x4f(0.142699331, 0.0233038031, 0.457957059, 0.102547623, -0.0796705633, -0.00618811278, 0.593155503, -0.167192265, -0.499624044, -0.456577986, -0.984742165, -0.106172040, -0.125783086, 0.00165606663, -0.476287842, 0.112168506) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(-1, -1), d_SHRINKED1), 0);
+  res0 += mat4x4f(-0.119136229, -0.121595405, -0.157294556, 0.568838716, 0.0485567562, 0.457381517, 0.194212899, 0.0846369267, 0.0738747418, 0.277314216, 0.266596884, 0.272579789, -0.00693864981, 0.105648465, 0.399445027, -0.000703976199) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(-1, -1), d_SHRINKED2), 0);
+  res0 += mat4x4f(-0.0547316447, -0.239972472, 0.0823252946, 0.00699743954, 0.0979457051, 0.00747962156, -0.544111907, 0.0702716038, 0.0600876696, -0.202599645, -0.291484535, 0.0284186807, -0.180608153, -0.00431990623, -1.71990430, -0.155200258) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(-1, -1), d_SHRINKED3), 0);
+  res0 += mat4x4f(0.0989423618, -0.218857735, -0.477478951, -0.0311647933, 0.00620253896, -0.153760895, -0.0250261277, 0.0650317818, 0.216704220, -0.341203153, -0.627864122, -0.105738953, 0.147504762, 0.101189904, -0.884560168, 0.224708810) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(-1, -1), d_SHRINKED4), 0);
+  res0 += mat4x4f(0.481523693, 0.138452321, -0.431821078, -0.0501189753, 0.00176530762, -0.00728480332, -0.360433966, 0.312160015, 0.0849779919, 0.360642165, 0.318436265, -0.126546800, 0.534735262, 0.0525909439, -0.495770693, -0.668382168) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(-1, 0), d_SHRINKED1), 0);
+  res0 += mat4x4f(0.559799194, -0.428926349, 0.665441394, 0.431728214, -0.775057793, 0.00474621542, -0.827924788, 0.0684612244, 0.498345405, -0.525330782, -0.0458710156, -0.202451184, -0.152941063, -0.136684984, -0.602222145, -0.371784866) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(-1, 0), d_SHRINKED2), 0);
+  res0 += mat4x4f(0.0543947108, -0.175058797, 0.416358650, -0.0238102321, 0.00170688145, -0.176734358, -0.632758617, -0.0136093125, 0.636853337, -0.392913371, -0.482435942, 0.00502216257, 0.228221312, -0.179326400, 0.0485569462, -0.0150721390) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(-1, 0), d_SHRINKED3), 0);
+  res0 += mat4x4f(0.0541491210, -0.0810319632, 0.258216202, -0.342947125, -0.121755920, -0.158060655, -0.256235778, 0.151239410, 0.250617146, 0.295006692, 0.592848778, -0.0709951296, -0.251388639, 0.0124845430, 0.308813214, -0.206417575) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(-1, 0), d_SHRINKED4), 0);
+  res0 += mat4x4f(0.00824581832, 0.150704116, 0.322511464, -0.0979826152, -0.176151112, 0.282195240, 0.138832316, 0.210023612, -0.00214092666, 0.447794497, -0.252541780, 0.393046916, -0.0938501358, 0.274079025, -0.344912469, 0.124222815) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(-1, 1), d_SHRINKED1), 0);
+  res0 += mat4x4f(0.0530360937, -0.212541342, -0.312843710, 0.506057680, -0.225597888, -0.0832388699, 0.0938740969, -0.400217891, 0.196574166, 0.103270963, -0.0398762226, 0.495253414, -0.221497819, -0.104630843, -0.167873323, -0.192056671) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(-1, 1), d_SHRINKED2), 0);
+  res0 += mat4x4f(0.272358656, 0.0528624617, -0.0123643121, 0.152092338, 0.149442330, 0.0350438990, 0.148206070, 0.0383562483, 0.239822134, -0.0714224875, 0.216398180, 0.249804571, 0.0453998148, 0.00598638039, -0.529133618, 0.251770377) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(-1, 1), d_SHRINKED3), 0);
+  res0 += mat4x4f(0.251601696, -0.00659810426, -0.398577869, 0.116954975, -0.0873139575, 0.0347786732, -0.216521293, 0.236907721, -0.0270388816, 0.374025106, -0.306549013, -0.344213486, 0.192619994, -0.134319782, 0.0745257437, -0.0290597063) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(-1, 1), d_SHRINKED4), 0);
+  res0 += mat4x4f(0.0410803109, -0.0454636142, 0.0593004785, -0.143370301, 0.0992353782, -0.365489066, 0.426776975, -0.0762393251, -0.102289386, 0.0119068576, 0.0425640792, -0.394919664, -0.206225708, -0.0612458661, 0.110282913, 0.178683653) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(0, -1), d_SHRINKED1), 0);
+  res0 += mat4x4f(0.168434799, -0.316026717, -0.0296039339, -0.567484856, 0.127141908, -0.239979118, -0.00197926140, -0.137831390, 0.0411298424, -0.452605903, -0.222429737, -0.0320066176, 0.0111933835, 0.0585262291, 0.00689877430, -0.223795235) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(0, -1), d_SHRINKED2), 0);
+  res0 += mat4x4f(0.0545967780, 0.114067771, 0.00623940118, 0.00822524447, 0.00294161309, -0.123789258, -0.357380062, 0.218982980, 0.142763644, -0.232891575, 0.206970856, 0.371513635, -0.0258172359, 0.00573680084, -0.214384556, -0.0203872956) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(0, -1), d_SHRINKED3), 0);
+  res0 += mat4x4f(-0.171597689, 0.00901359692, 0.507702827, 0.231717423, -0.289171189, -0.0344426110, -0.0944610313, 0.125625089, -0.108544908, -0.150148824, 0.432695717, -0.126629055, -0.0127979675, 0.483980060, -0.554406762, -0.586651981) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(0, -1), d_SHRINKED4), 0);
+  res0 += mat4x4f(-0.486720175, 0.404312402, 0.0462208465, 0.171927586, 0.294898629, 0.137496755, -0.249753460, 0.330094665, -0.274450898, 0.537950695, 0.285176992, 0.918305278, -0.216506273, -0.0406005867, 0.458838344, -0.722646713) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(0, 0), d_SHRINKED1), 0);
+  res0 += mat4x4f(0.0131229442, -0.107265845, 0.0257053897, -0.600500882, 0.0959250852, 0.268718272, 0.279590189, -0.0301762894, 0.636743009, 0.449164301, -1.05101824, 0.0520041510, 0.121238843, -0.500124276, 0.343983382, -0.966872036) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(0, 0), d_SHRINKED2), 0);
+  res0 += mat4x4f(-0.847794652, 0.0268944893, 0.565308392, 0.412739456, 0.0415021330, 0.0483857952, 0.358792275, -0.0119540533, -0.736458600, 0.320506185, -0.0421194285, 0.535918832, -0.333446026, 0.441562802, 0.279021204, 0.678095698) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(0, 0), d_SHRINKED3), 0);
+  res0 += mat4x4f(0.307464361, 0.0729425997, -0.174466535, -0.649028063, 0.0810916722, -0.179520324, 0.813495874, -0.204649225, 0.550958514, 0.238725126, -0.810940146, 0.200771466, -0.594492376, 0.299480885, 0.256106287, 0.144967392) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(0, 0), d_SHRINKED4), 0);
+  res0 += mat4x4f(-0.00682479935, -0.200253814, 0.159358531, -0.314061493, 0.452829748, 0.478565514, 0.251273125, 0.674202144, -0.149618790, 0.253392607, 0.272161782, 0.164159685, 0.165292203, 0.100094795, 0.282711715, 0.585320115) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(0, 1), d_SHRINKED1), 0);
+  res0 += mat4x4f(0.274109572, 0.473859787, 0.280142695, 0.498366445, 0.344337434, -0.358711928, 0.172002047, -0.361645520, 0.248783529, 0.759550452, -0.00705515826, 0.130248129, 0.375123739, -0.101526797, 0.0986373276, -0.275749445) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(0, 1), d_SHRINKED2), 0);
+  res0 += mat4x4f(-0.354589194, -0.0808963925, -0.388261735, 0.0759846717, -0.0132769365, 0.0181272663, 0.142449081, 0.0433301926, 0.0580017045, -0.576430678, 0.522959590, -0.372648776, -0.136423036, -0.451109558, 0.121061608, 0.354599953) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(0, 1), d_SHRINKED3), 0);
+  res0 += mat4x4f(-0.0910972431, -0.189409629, 0.382189423, -0.154720128, -0.169806302, -0.103609160, -0.0468279198, 0.143380255, -0.132906362, 0.430017322, 0.444317251, -0.0736863092, -0.258523256, -0.486605674, -0.602167964, 0.110600151) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(0, 1), d_SHRINKED4), 0);
+  res0 += mat4x4f(0.0308453497, 0.0240840558, -0.291132838, -0.0403471701, -0.156115830, -0.564543962, -0.0468237177, -0.113997817, 0.0258911680, 0.173990697, -0.127575666, 0.0526522845, 0.0848084316, -0.403530270, -0.162550211, 0.134458244) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(1, -1), d_SHRINKED1), 0);
+  res0 += mat4x4f(-0.262277901, -0.113283761, -0.0934686437, -0.374217838, -0.0893222019, -0.520933151, -0.187927514, 0.351731390, -0.0544503033, 0.327130288, -0.0697202384, -0.152139917, 0.0998928696, 0.0127184587, -0.0128014814, 0.0982359797) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(1, -1), d_SHRINKED2), 0);
+  res0 += mat4x4f(0.199162096, 0.0973315910, -0.466300875, 0.114358187, 0.00648531131, -0.0667247325, 0.0731260702, -0.0619059466, 0.185830444, 0.00386402500, 0.227741718, 0.369172513, -0.0966186374, -0.198246047, -0.279351443, -0.169039011) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(1, -1), d_SHRINKED3), 0);
+  res0 += mat4x4f(-0.0378749818, -0.153307915, 0.267335922, -0.245259821, -0.0108865192, 0.260418415, 0.0785505325, 0.0145842154, -0.134421855, -0.0232868530, -0.239020169, -0.115388207, 0.00162797258, 0.142754763, 0.256940424, -0.158721775) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(1, -1), d_SHRINKED4), 0);
+  res0 += mat4x4f(0.0191205293, -0.461636186, -0.688624382, -0.0278693624, 0.108257152, 0.301712304, 0.0834859759, -0.322482765, 0.331276596, -0.106440462, 0.133978754, -0.171986818, 0.287445694, 0.282939643, -0.0977966413, -0.133533791) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(1, 0), d_SHRINKED1), 0);
+  res0 += mat4x4f(-0.154129818, 0.282345712, 0.207205489, -0.497610748, 0.128671974, 0.136265770, -0.113227308, -0.395634592, -0.106641620, 0.473424196, 0.796262383, -0.0744079202, 0.159742087, -0.0375768058, 0.146138802, 0.208152622) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(1, 0), d_SHRINKED2), 0);
+  res0 += mat4x4f(0.301907867, 0.105716385, 0.0250624884, -0.107057743, 0.0727249160, 0.262360722, 0.367740273, 0.208125740, 0.195626885, -0.202508301, -0.214942947, -0.0660840422, 0.249514505, -0.285462111, 0.267274141, -0.150549829) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(1, 0), d_SHRINKED3), 0);
+  res0 += mat4x4f(-0.116365038, -0.331805170, -0.209983140, 0.452086806, -0.0518108420, -0.0982908085, 0.152861759, -0.310694665, -0.151609063, 0.410589665, 0.169933945, 1.00231194, 0.294922203, -0.487000942, 0.163039535, 0.762106717) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(1, 0), d_SHRINKED4), 0);
+  res0 += mat4x4f(0.0452096388, -0.403696597, 0.0158302207, -0.0465988927, 0.0915427580, 0.161702737, -0.00527742784, 0.0256564189, 0.0846533552, -0.480241448, 0.0895801261, 0.00318996515, -0.184745118, 0.290181994, 0.279731035, 0.161187589) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(1, 1), d_SHRINKED1), 0);
+  res0 += mat4x4f(0.0604179241, 0.265099645, -0.223518565, 0.132670447, -0.160035729, 0.0404946320, -0.0737801939, -0.177360982, -0.0239875857, -0.299147308, -0.226772696, 0.0263411067, -0.0328959003, 0.00957948063, -0.228505388, -0.239904836) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(1, 1), d_SHRINKED2), 0);
+  res0 += mat4x4f(-0.0391385294, -0.680287898, -0.0324949138, 0.126460642, 0.103308924, 0.0836060867, -0.0505084172, 0.0389420837, -0.00719365943, 0.161535621, 0.289690316, -0.137144119, 0.100480340, 0.326234400, 0.0470274985, -0.128019050) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(1, 1), d_SHRINKED3), 0);
+  res0 += mat4x4f(0.103518307, 0.180167332, 0.171381742, -0.326704830, 0.0121855093, 0.127867252, -0.206308410, 0.147641838, 0.0439479686, 0.320249766, -0.0476313494, 0.169005841, -0.0443415157, -0.0158105772, -0.0227310471, 0.244572327) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(1, 1), d_SHRINKED4), 0);
+  res0 = max(res0, vec4f(0.0)) + vec4f(-0.336289227, -0.238618240, 0.0974752009, -0.152850285) * min(res0, vec4f(0.0));
+  var res1 = vec4f(-0.246525943, 0.0590888038, 0.0682875365, -0.107946374);
+  res1 += mat4x4f(-0.0835208893, -0.117604151, -0.100837030, -0.136736497, 0.315462768, -0.0514508896, -0.0330346934, -0.0157524291, -0.00763241714, -0.135999799, -0.0249030627, 0.474692225, -0.452033728, 0.242287874, -0.0215963870, -0.513622880) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(-1, -1), d_SHRINKED1), 0);
+  res1 += mat4x4f(-0.504787028, -0.00264664809, 0.399282724, -0.0815692991, 0.205285743, -0.304668158, 0.0527982600, -0.0552678630, 0.307943672, -0.0383647718, -0.0141146062, 0.169381529, 0.141890392, 0.104163155, -0.109375760, -0.183678821) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(-1, -1), d_SHRINKED2), 0);
+  res1 += mat4x4f(-0.129827738, 0.0205797907, 0.0278969500, 0.331958890, -0.000938017562, -0.0955933556, -0.149673715, 0.0426141024, 0.0513450541, -0.270398229, -0.0644350946, 0.0784152895, -0.155833051, -0.218508363, 0.00969971064, 0.158996105) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(-1, -1), d_SHRINKED3), 0);
+  res1 += mat4x4f(0.323399723, -0.0858171284, 0.106475435, 0.302494049, -0.100190148, -0.117180608, -0.0318070538, 0.0251536425, -0.0285468511, 0.0694654435, 0.104197554, -0.0413204655, -0.158413544, -0.327202916, -0.0343795046, -0.372236788) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(-1, -1), d_SHRINKED4), 0);
+  res1 += mat4x4f(0.665062606, -0.325758278, 0.246592581, -0.414406329, 0.252237439, 0.181253567, 0.132026047, -0.143864766, 0.173455447, 0.0648963749, -0.346939445, -0.698185682, -0.264341444, -0.156105906, -0.00506936572, -0.124549732) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(-1, 0), d_SHRINKED1), 0);
+  res1 += mat4x4f(0.295246392, -0.321683168, 0.123182625, 0.450567782, 0.408034414, 0.270786852, -0.0686171427, 0.353125721, 0.400394261, 0.00860569347, -0.111716218, -0.0755592287, -0.776093304, 0.0236023329, 0.249374196, -0.0164723881) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(-1, 0), d_SHRINKED2), 0);
+  res1 += mat4x4f(0.321950614, 0.0168041214, 0.382703602, -0.206844449, -0.636417806, 0.137444392, 0.107473791, -0.313668162, 0.698329329, 0.0269080922, 0.411358923, 0.180252150, 0.401490450, -0.0485344306, -0.0439250432, 0.167269245) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(-1, 0), d_SHRINKED3), 0);
+  res1 += mat4x4f(-0.535037994, 0.180067495, -0.0435891487, -0.515671968, -0.774540067, 0.236438259, 0.129093423, 0.388275295, 0.326133609, -0.243329555, 0.107491642, 0.397040159, -0.367828727, 0.107644454, 0.337816268, 0.0372296795) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(-1, 0), d_SHRINKED4), 0);
+  res1 += mat4x4f(-0.494588494, 0.184261739, -0.190250814, -0.0536697358, 0.987757087, -0.0731572807, 0.0774519891, 0.828834772, 0.368235409, -0.184639126, 0.0912948847, -0.447327495, -0.552416980, -0.361247867, -0.182053983, 0.0788988546) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(-1, 1), d_SHRINKED1), 0);
+  res1 += mat4x4f(-0.121273823, 0.265479743, 0.0438410118, 0.127525598, -0.396368772, -0.122387543, 0.337073326, -0.320363432, 0.0410766676, -0.0616114885, -0.101408698, 0.275365412, 0.352106959, -0.0438192450, -0.0655868351, -0.170918480) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(-1, 1), d_SHRINKED2), 0);
+  res1 += mat4x4f(-0.0156991631, 0.302676827, -0.0503052957, -0.340724915, 0.0110836336, -0.0895584598, -0.0115024121, 0.250616491, -0.591273546, 0.0805195346, 0.0613286830, -0.0912685245, 0.0360441804, -0.0235952344, 0.0128674842, -0.243246660) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(-1, 1), d_SHRINKED3), 0);
+  res1 += mat4x4f(0.0512752198, -0.197149098, 0.125993162, -0.694955707, 0.0260585416, -0.0871653482, 0.116933085, 0.339670032, 0.137601003, 0.0304378606, 0.0710698143, 0.101916656, 0.111945361, 0.346253246, 0.0161663443, -0.327122062) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(-1, 1), d_SHRINKED4), 0);
+  res1 += mat4x4f(-0.130982712, 0.0180190057, 0.0547669679, -0.0699176639, -0.483110160, 0.236561954, -0.276108444, 0.0998060778, 0.521729648, 0.842373490, 0.476294905, 0.0548216887, 0.343005538, -0.219749451, -0.0573652200, 0.461942643) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(0, -1), d_SHRINKED1), 0);
+  res1 += mat4x4f(0.382081062, 0.136759728, -0.105670862, 0.0454096459, -0.332376987, -0.545310915, -0.0615389086, -0.108080372, 0.123610839, 0.209226102, -0.696271658, 0.0198629666, -0.155249715, 0.0225689691, -0.346155375, -0.0327344611) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(0, -1), d_SHRINKED2), 0);
+  res1 += mat4x4f(0.329290479, -0.106966689, -0.0112595987, 0.114428654, -0.0188920032, 0.275228441, 0.175045684, 0.229115397, 0.0336558521, 0.190640882, 0.0604796410, -0.309900939, -0.130278051, -0.0646775141, 0.112230778, -0.120532908) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(0, -1), d_SHRINKED3), 0);
+  res1 += mat4x4f(-0.0672221780, -0.370950788, 0.0215402097, 0.422736287, 0.300915152, -0.128047749, -0.191841826, 0.101009212, -0.132290870, 0.0418008305, -0.173878878, 0.240635872, -0.766072571, 0.224691525, -0.0650401562, -0.752533913) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(0, -1), d_SHRINKED4), 0);
+  res1 += mat4x4f(-0.0550877787, -0.570170403, -1.14326692, 0.149059951, 0.125846535, 0.748402774, -0.205739573, 0.430430472, -0.435239226, 0.450393498, -0.232432514, -0.265900165, 0.271303117, 0.523645580, -0.219527483, 0.0630970150) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(0, 0), d_SHRINKED1), 0);
+  res1 += mat4x4f(0.0967448950, -0.0608417578, -0.366935819, 0.0775822923, 0.200703263, -0.606439829, 0.136865079, 0.0746887773, 0.326249987, 0.836408854, 0.331792891, -0.170428187, -0.0604217276, 0.317886978, 0.177177250, 0.0492388122) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(0, 0), d_SHRINKED2), 0);
+  res1 += mat4x4f(-0.412765145, 0.814735115, 0.294223517, -0.291803360, -0.0975626111, 0.258290499, 0.326008439, -0.758523524, 0.267112136, -0.704630554, -0.751559198, 0.522535145, -0.430905163, -0.0595213398, -0.183319882, 0.0726081878) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(0, 0), d_SHRINKED3), 0);
+  res1 += mat4x4f(0.252044499, 0.145257890, -0.135263860, -0.106415704, 0.0467914529, -0.157333419, -0.182489693, 0.355203241, 0.161286563, 0.472250432, -0.0923231840, -0.0747875944, 0.0931280553, -0.493576795, 0.00193866505, -0.225008413) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(0, 0), d_SHRINKED4), 0);
+  res1 += mat4x4f(-0.0319514535, -0.0175224729, 0.221769184, -0.180542454, 0.767126381, -0.151284143, 0.0868304446, 0.186627015, 0.302696437, 0.109832183, 0.0775794536, -0.873493433, 0.134992242, -0.299692690, 0.120998070, -0.244881302) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(0, 1), d_SHRINKED1), 0);
+  res1 += mat4x4f(0.0831734017, 0.157950953, 0.0688578710, -0.474841654, -0.138550475, -0.149990439, 0.281639427, 0.502929568, -0.548203826, -0.776192546, -0.100596309, -0.0926947817, 0.167128846, -0.0524320640, 0.253359795, -0.0407973826) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(0, 1), d_SHRINKED2), 0);
+  res1 += mat4x4f(-0.175528333, 0.411522776, -0.286435008, 0.620290935, -0.104061000, -0.102499112, 0.104497753, -0.326196343, -0.0587189719, -0.341733813, 0.239313975, 0.343944281, -0.125773132, 0.117433175, -0.143473998, 0.0208654683) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(0, 1), d_SHRINKED3), 0);
+  res1 += mat4x4f(0.323168933, -0.164810136, 0.150999501, -1.23479736, 0.0826930180, -0.459941477, -0.0450249724, 0.364291549, -0.373718649, -0.137281016, -0.363888621, 0.361479551, -0.368920714, 0.201337889, -0.0352487303, 0.647111297) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(0, 1), d_SHRINKED4), 0);
+  res1 += mat4x4f(0.173751935, 0.0800892934, 0.0703732893, -0.0329924859, -0.321824431, 0.168679222, 0.0329092853, -0.385314882, 0.137123704, -0.345563680, 0.160467282, 0.270327121, 0.291682422, 0.0424405262, 0.111030698, 0.342397600) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(1, -1), d_SHRINKED1), 0);
+  res1 += mat4x4f(0.122875944, 0.0985508263, 0.0211960059, -0.605390906, 0.480379850, 0.0420496054, 0.0802931339, 0.416220814, -0.141036049, 0.0994543359, 0.358239412, -0.124086760, -0.157832012, 0.280691355, 0.00917819981, -0.0827906206) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(1, -1), d_SHRINKED2), 0);
+  res1 += mat4x4f(0.0330263674, 0.113003291, -0.325330138, 0.161618501, -0.126691401, -0.154226258, 0.0816356093, -0.0490542911, 0.548878908, 0.0621016845, -0.122077920, 0.0763546228, -0.112674989, -0.0970966965, -0.279713660, 0.370646596) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(1, -1), d_SHRINKED3), 0);
+  res1 += mat4x4f(0.465431541, -0.166234389, 0.121989995, 0.00902134459, -0.0349960327, -0.0593675151, 0.0990805179, -0.118967131, -0.345924258, -0.121711090, -0.152936921, -0.183185816, 0.131650090, -0.473657966, 0.137347117, -0.325824469) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(1, -1), d_SHRINKED4), 0);
+  res1 += mat4x4f(0.325078040, -0.108314291, -0.0470311195, 0.228431195, -0.325749576, 0.155455932, -0.170875698, 0.227190346, -0.267545104, -0.285672128, 0.175914139, 0.0998992398, 0.491195321, 0.200293645, 0.237952054, 0.189859375) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(1, 0), d_SHRINKED1), 0);
+  res1 += mat4x4f(-0.179375514, -0.0795077235, -0.167154804, -0.0126010422, -0.165892541, 0.473205179, -0.142610699, 0.217111602, -0.356336832, 0.00575297140, 0.0576786920, 0.334186941, -0.0146778580, -0.0714842752, -0.311041325, 0.373417377) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(1, 0), d_SHRINKED2), 0);
+  res1 += mat4x4f(0.819967031, -0.498591572, 0.381911635, -0.780045509, 0.0128220143, -0.274690032, 0.0697929412, -0.278793305, 0.0656379759, -0.0586434714, -0.00971039385, 0.151236311, -0.261507720, 0.300452918, 0.144737273, -0.0326888338) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(1, 0), d_SHRINKED3), 0);
+  res1 += mat4x4f(0.231249034, 0.346745700, -0.210317433, 0.277834535, -0.0398289487, 0.162074402, -0.179115489, 0.331380218, 0.335045516, 0.351420850, 0.139644027, 0.381832987, 1.54826474, 0.186844796, -0.0439286046, -0.259938717) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(1, 0), d_SHRINKED4), 0);
+  res1 += mat4x4f(-0.0767258853, -0.00669181906, -0.0450136401, 0.114770375, 0.102278657, -0.588342369, 0.0345356427, 0.154523000, 0.248076916, -0.117609940, -0.0194331035, -0.260142565, 0.00865218602, 0.353747964, -0.0543141589, 0.223764092) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(1, 1), d_SHRINKED1), 0);
+  res1 += mat4x4f(0.511442900, -0.387462437, 0.00481648091, 0.213375211, 0.0624081492, 0.374983639, -0.148125559, -0.251333266, -0.0611753240, 0.258617342, 0.108405471, 0.459763914, -0.0399927832, -0.0599541664, 0.0590456985, 0.215855464) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(1, 1), d_SHRINKED2), 0);
+  res1 += mat4x4f(0.304526746, -0.0787427053, -0.204524606, 0.651613653, -0.125969425, 0.377382934, -0.143533677, 0.115016371, 0.135630965, 0.0337585583, -0.247467339, -0.00909556355, 0.00444523524, -0.0344419964, -0.0890473723, -0.276846498) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(1, 1), d_SHRINKED3), 0);
+  res1 += mat4x4f(0.268953025, -0.123197839, -0.168875739, -0.189307675, 0.0921706557, 0.0972316712, -0.0754991993, -0.0113875028, 0.431008279, -0.168504089, 0.377430588, 0.337967694, 0.633391857, 0.285564810, -0.0988231897, 0.338529438) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(1, 1), d_SHRINKED4), 0);
+  res1 = max(res1, vec4f(0.0)) + vec4f(0.0647197887, 0.498333156, 0.517479122, 0.0454305857) * min(res1, vec4f(0.0));
+  var res2 = vec4f(0.0354270488, 0.0728243291, -0.0616331510, 0.0311630554);
+  res2 += mat4x4f(-0.375471085, 0.00718604261, -0.429597825, 0.201756999, 0.156898290, -0.102427460, -0.536934912, -0.172520742, 0.245940208, 0.154656440, 0.246093392, 0.0260979142, 0.282785624, -0.00859596580, 0.0506463386, 0.00409038458) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(-1, -1), d_SHRINKED1), 0);
+  res2 += mat4x4f(-0.255652934, 0.388475835, -0.132376701, 0.0304193832, -0.229359508, 0.459876925, -0.131336674, 0.261193663, 0.140842572, 0.280136734, 0.0831678063, 0.216374144, 0.178198144, 0.0798961744, 0.318994462, -0.0310177747) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(-1, -1), d_SHRINKED2), 0);
+  res2 += mat4x4f(-0.352055043, -0.0661006644, 0.0991899893, 0.0634982288, -0.0414974317, -0.241607890, -0.276578486, 0.0331849307, -0.239490509, -0.239818186, -0.312143475, 0.00877221394, -0.0145549029, -0.681753457, -0.491128951, -0.0933565125) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(-1, -1), d_SHRINKED3), 0);
+  res2 += mat4x4f(0.0179903414, -0.180541441, 0.0275782533, -0.0116454540, 0.0921521783, 0.00233927625, 0.0681477264, 0.0692204461, -0.166492686, -0.421745509, -0.263756722, -0.140611202, -0.265751243, -0.0703693926, -0.840464115, -0.226463348) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(-1, -1), d_SHRINKED4), 0);
+  res2 += mat4x4f(0.145432547, -0.287598789, -1.04999375, -0.268233538, 0.142750785, -0.240366697, -0.171205908, 0.0442707613, -0.234125286, -0.796400845, -0.0768983066, -0.285297483, -0.130520821, -0.378934801, 0.234069824, -0.0567431673) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(-1, 0), d_SHRINKED1), 0);
+  res2 += mat4x4f(-0.588331819, -0.689131200, 0.00121768634, -0.414032727, 0.237816289, 0.242512912, 0.0759186223, -0.00847408082, 0.350870073, -0.592032433, 0.250707716, -0.182965934, -0.167298287, -0.297233075, 0.0769646615, -0.116079427) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(-1, 0), d_SHRINKED2), 0);
+  res2 += mat4x4f(-0.351733714, 0.436503977, -0.488138884, -0.107519552, 0.178777769, -0.0412815325, 0.207143381, 0.109594524, 0.0503253192, 0.110243298, -0.0493151657, 0.0369251855, 0.0141819334, -0.470655054, 0.107211612, -0.279815227) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(-1, 0), d_SHRINKED3), 0);
+  res2 += mat4x4f(0.0584370717, 0.0727466419, 0.708708823, 0.124050565, -0.0488122217, -0.234741285, 0.167187303, -0.173268318, -0.282764554, 0.121486351, -0.174060524, -0.136775151, -0.209790453, 0.381822348, -0.0815254226, -0.0432127193) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(-1, 0), d_SHRINKED4), 0);
+  res2 += mat4x4f(-0.0773001984, 1.09005392, -0.248752370, -0.344008952, -0.300069064, 0.185913071, 0.0399173796, -0.0340403840, -0.146594375, -0.563046455, 0.287132800, -0.186448053, -0.0596628189, -0.907389998, -0.135413736, 0.0918352604) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(-1, 1), d_SHRINKED1), 0);
+  res2 += mat4x4f(0.116178721, 0.833305955, 0.230016321, -0.0503365211, 0.0937003270, -0.0955260545, 0.112340145, 0.149557993, 0.00248327968, 0.238948554, 0.0389217734, 0.142111018, -0.130106613, 0.145629942, 0.235664412, 0.0913641006) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(-1, 1), d_SHRINKED2), 0);
+  res2 += mat4x4f(0.0694204420, -0.179946944, -0.00701628160, 0.302430063, -0.346588552, -0.983808160, 0.157323226, 0.0108372066, -0.0593702011, -0.783539474, 0.173059806, 0.160522237, 0.0610041432, -1.28999269, 0.142219633, 0.100341760) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(-1, 1), d_SHRINKED3), 0);
+  res2 += mat4x4f(-0.248011723, -0.315622479, -0.360177904, 0.0234890394, 0.161328703, -0.400416851, 0.110643797, 0.102172025, -0.149119169, -0.376733541, -0.259107828, -0.117956281, -0.164629281, 0.761080086, 0.00905345101, 0.125507057) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(-1, 1), d_SHRINKED4), 0);
+  res2 += mat4x4f(-0.139642164, -0.433353513, 0.828429818, -0.254062086, 0.135322243, -0.0968159586, -0.325206965, 0.121071585, 0.142571792, 0.0419529788, 0.0706175491, -0.0617700107, -0.177976072, -0.199795902, 0.201964930, 0.0163790192) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(0, -1), d_SHRINKED1), 0);
+  res2 += mat4x4f(-0.128300115, -0.175606996, -0.743901491, -0.0465103351, 0.146077529, -0.471725971, -0.0466832072, -0.403229773, 0.0717985928, 0.192246079, -0.406642437, -0.147234917, 0.343605071, 0.0354665816, -0.451710105, -0.174672231) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(0, -1), d_SHRINKED2), 0);
+  res2 += mat4x4f(0.0432135314, -0.397521079, 0.709142923, -0.270040989, -0.114987686, 0.215639517, -0.611764550, 0.0469082147, 0.361038566, -0.0559643507, -0.0683121532, 0.0685282350, -0.135699555, 0.170087442, -0.213011459, 0.0147677725) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(0, -1), d_SHRINKED3), 0);
+  res2 += mat4x4f(0.176198304, 0.112015635, -0.00635701837, 0.0551933460, 0.385426134, 0.222231746, -0.165579408, -0.191436023, 0.850076556, -0.0969462395, -0.475780845, 0.135543212, -0.126398683, 0.244576320, -0.0278148707, 0.239888400) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(0, -1), d_SHRINKED4), 0);
+  res2 += mat4x4f(-0.457092106, -0.196800932, 0.840053082, 0.127523676, -1.08503270, -0.503286600, -0.221428588, 0.291122317, 0.167700365, 0.674340308, 0.440025598, 0.721228004, -0.666425765, 0.0859988928, -0.0558551028, -0.412710905) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(0, 0), d_SHRINKED1), 0);
+  res2 += mat4x4f(0.958618283, 1.02269566, 0.247545823, -0.0639756694, 1.19877911, 0.0506992228, -0.104151711, 0.593639493, -0.903173864, 1.41431153, -0.262534857, -0.111281849, -0.302962750, 0.107448995, 0.0141594736, -0.476496428) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(0, 0), d_SHRINKED2), 0);
+  res2 += mat4x4f(0.943036854, -0.241521537, 0.471537292, 0.770241022, 0.210145801, 0.670571387, 0.0862335637, 0.238505647, 0.106713407, -0.0230286140, 0.256668866, -0.0850627348, -0.000458473864, -0.153742462, 0.391921073, 0.292995155) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(0, 0), d_SHRINKED3), 0);
+  res2 += mat4x4f(-0.712013125, -0.150268108, -0.150142178, -0.309412628, -0.327259958, -0.412873209, 0.0424575917, -0.229608908, -0.0507128239, 0.998351991, -0.497391075, -0.0557052307, 0.229538545, -0.609665155, 0.409080356, -0.115314305) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(0, 0), d_SHRINKED4), 0);
+  res2 += mat4x4f(0.339248359, 0.479899049, -0.428405702, -0.254393607, 0.644539237, -0.0260703042, 0.344656497, 0.155054808, -0.250655442, -0.525926471, -0.348909914, 0.116247855, -0.260219276, -0.196744621, 0.235421956, 0.0944507346) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(0, 1), d_SHRINKED1), 0);
+  res2 += mat4x4f(-0.0218862165, -0.374137491, 0.123253040, 0.331658930, -0.553679645, 0.214847311, -0.0654821172, -0.670907676, -0.411148965, 0.149179503, 0.213432357, 0.527567923, -0.318155855, -0.433847398, 0.179417223, 0.252862573) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(0, 1), d_SHRINKED2), 0);
+  res2 += mat4x4f(0.0592876524, -0.152367994, 0.0180816390, 0.235243380, -0.0632626489, -0.277519166, -0.0163244810, 0.268619686, -0.505579412, -0.345357031, -0.221074715, -0.340735763, -0.0427224189, -0.249483556, -0.239010632, -0.0126752080) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(0, 1), d_SHRINKED3), 0);
+  res2 += mat4x4f(0.450764984, 0.0957014412, -0.153708279, -0.0665199086, -0.231717303, -0.487172306, -0.0671654642, -0.0665062815, 1.11018014, -0.551656008, 0.153294817, 0.260892034, -0.284230381, -0.174894214, 0.361385316, -0.153557226) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(0, 1), d_SHRINKED4), 0);
+  res2 += mat4x4f(-0.115774348, -0.108623050, 0.697629273, 0.0670034885, -0.367214143, 0.0659544989, 0.529340267, -0.0275434405, 0.0380571522, 0.0632237867, -0.432072371, 0.280994028, 0.0658211485, 0.120009474, 0.0497889593, -0.202436492) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(1, -1), d_SHRINKED1), 0);
+  res2 += mat4x4f(0.606041253, -0.116166838, -0.285654515, -0.141866773, 0.198131174, 0.130306572, 0.0949402079, 0.161061630, -0.142177165, -0.0991433635, -0.305183738, 0.0644805208, -0.226184830, 0.0158794504, -0.405234307, -0.130566105) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(1, -1), d_SHRINKED2), 0);
+  res2 += mat4x4f(0.0108690886, -0.0493984967, 0.279318482, 0.0346334651, -0.148696214, 0.167890668, -0.293561071, 0.0216826722, 0.0434555672, 0.314597249, -0.267310500, 0.176859483, -0.0355712473, 0.141531706, -0.244021088, -0.165792227) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(1, -1), d_SHRINKED3), 0);
+  res2 += mat4x4f(0.0275184456, 0.157436445, -0.291162223, 0.191558287, 0.155954495, 0.0973343626, -0.280356526, 0.196484938, -0.0452867635, 0.105698019, 0.179135278, -0.0831882879, 0.0920400918, 0.0511482842, 0.140406147, -0.151654214) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(1, -1), d_SHRINKED4), 0);
+  res2 += mat4x4f(0.0748704150, 0.0475342497, 0.0513447225, 0.335631251, -0.481424034, 0.222506404, 0.584453046, -0.0531023853, -0.156034514, -0.285783231, 0.173360094, 0.159187406, 0.0955131724, 0.302747428, 0.0865843296, -0.157843456) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(1, 0), d_SHRINKED1), 0);
+  res2 += mat4x4f(-0.0527305007, -0.216273978, 0.285020977, -0.0477382913, 0.328404456, 0.311886191, -0.272604704, 0.0929468423, 0.122927681, -0.673029065, -0.494464070, -0.128109902, 0.370514065, -0.335817873, 0.00399392378, -0.287390441) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(1, 0), d_SHRINKED2), 0);
+  res2 += mat4x4f(-0.0617699437, 0.365239650, -1.05220687, 0.472146064, 0.0860912502, 0.136510476, 0.0763543844, 0.0327059813, 0.260403991, 0.492357016, 0.201486871, -0.160384715, -0.368390292, 0.232512772, -0.131388068, -0.0228569545) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(1, 0), d_SHRINKED3), 0);
+  res2 += mat4x4f(0.0358204730, 0.233281463, -0.401333332, -0.0465268455, 0.102491617, 0.0289428979, 0.208728164, -0.400338441, 0.180869564, -0.100504190, 0.475459456, -0.233200639, 0.621266067, -0.457099497, 0.198811814, -0.0814304650) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(1, 0), d_SHRINKED4), 0);
+  res2 += mat4x4f(0.242534116, 0.0521969795, -0.354033917, -0.539806604, -0.196942076, -0.417994231, 0.0850660354, 0.0780028552, -0.185515970, 0.434277594, -0.384618610, -0.118500374, 0.126514852, -0.0310557093, -0.386911213, 0.212281108) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(1, 1), d_SHRINKED1), 0);
+  res2 += mat4x4f(-0.305834383, -0.164484918, -0.315164328, 0.212739214, -0.249593407, -0.0236311648, 0.0642300248, -0.212103993, -0.216095537, 0.214001164, 0.0944894031, -0.0388460979, 0.0413498804, -0.329063296, 0.198065460, -0.0503699370) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(1, 1), d_SHRINKED2), 0);
+  res2 += mat4x4f(0.287601143, -0.235133126, 0.251732349, 0.177149624, -0.0344777480, -0.0510957614, 0.212218538, 0.121515267, -0.164675161, 0.193028823, 0.139699683, -0.157427013, -0.246166155, -0.0509967133, -0.0539425313, 0.200265408) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(1, 1), d_SHRINKED3), 0);
+  res2 += mat4x4f(-0.291764617, 0.0118361432, -0.147317335, -0.0886615664, -0.312807828, 0.0311102867, 0.0242574122, 0.0450150408, -0.311143339, -0.0269301049, 0.325481594, 0.264833361, 0.0858686939, 0.0215640757, -0.155214578, 0.345987707) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(1, 1), d_SHRINKED4), 0);
+  res2 = max(res2, vec4f(0.0)) + vec4f(0.664483726, 0.0455110632, -0.103403389, -0.274955094) * min(res2, vec4f(0.0));
+  var res3 = vec4f(-0.0115559474, -0.0954066589, -0.838727474, 0.137020722);
+  res3 += mat4x4f(0.0468584374, -0.0874867961, 0.0137629425, 0.0669830590, -0.196273595, 0.127837852, 0.498029649, -0.386044323, 0.0488449372, -0.173924059, 0.125529632, -0.143776894, 0.0976751074, -0.0786421672, -0.240928993, 0.0722903162) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(-1, -1), d_SHRINKED1), 0);
+  res3 += mat4x4f(0.160700709, 0.0277715903, -0.543683290, 0.0644040182, -0.191130400, -0.0341353975, -0.217314973, 0.0155736702, -0.390977234, 0.117017344, -0.0377732702, -0.0352925770, 0.123121247, 0.00332279433, 0.203592598, -0.173109606) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(-1, -1), d_SHRINKED2), 0);
+  res3 += mat4x4f(0.0366708003, -0.0293227490, 0.311912745, 0.00839272980, -0.0960281938, 0.144450128, -0.0841252878, 0.0146390898, 0.0185424816, -0.0651286095, 0.215012372, -0.244178131, -0.250329465, 0.0112946518, 0.112527736, -0.0661261678) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(-1, -1), d_SHRINKED3), 0);
+  res3 += mat4x4f(-0.117833048, 0.00933820195, -0.105846383, 0.275088876, 0.0473453514, 0.100533187, -0.250052780, -0.0340508595, -0.0202873256, -0.135868296, -0.184036478, 0.502946973, -0.0186244752, 0.134732962, -0.0695763826, -0.0235661976) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(-1, -1), d_SHRINKED4), 0);
+  res3 += mat4x4f(-0.105202615, -0.210927084, -0.0421815366, 0.591472864, -0.179341346, -0.0619071461, 0.450984001, 0.456695884, -0.0369449332, -0.0797295719, -0.104758315, 0.463019282, 0.0191727355, -0.147739694, -0.201916009, 0.123353481) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(-1, 0), d_SHRINKED1), 0);
+  res3 += mat4x4f(0.374938190, -0.413706183, -0.00822297204, -0.675539851, 0.113097243, 0.148843691, -0.0905617177, 0.0421009921, -0.0728141591, 0.0622737706, 0.513284028, 0.118576504, 0.168134928, -0.114182599, 0.357499242, -0.0339597501) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(-1, 0), d_SHRINKED2), 0);
+  res3 += mat4x4f(0.364698172, 0.00698928023, 0.0405249931, 0.422126174, -0.200310022, -0.0352868401, 0.0314441547, -0.0952515751, -0.169533819, -0.0684790611, 0.201495945, 0.783920944, 0.157269180, -0.227563903, -0.259820879, 0.429615647) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(-1, 0), d_SHRINKED3), 0);
+  res3 += mat4x4f(-0.0359770954, 0.142895222, 0.0666676238, -0.0268250424, 0.131378248, 0.0457837023, 0.124221519, -0.136983857, 0.0476729721, -0.309874684, 0.377649456, 0.168951571, 0.00358110014, -0.0196769331, 0.0472064912, -0.222859547) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(-1, 0), d_SHRINKED4), 0);
+  res3 += mat4x4f(-0.0603642985, -0.191200614, -0.408328921, -0.145018965, 0.0220420323, -0.135935605, 0.127129957, -0.155051708, -0.0414922051, -0.163418889, 0.150497973, -0.0480890982, 0.287949651, -0.0321080349, -0.379285932, -0.254360646) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(-1, 1), d_SHRINKED1), 0);
+  res3 += mat4x4f(-0.128983244, 0.194873348, -0.393382251, 0.195092753, -0.0874490961, 0.0508037470, 0.104340993, 0.263018310, 0.0638875589, -0.175126180, -0.250646561, 0.427715033, -0.0997801274, 0.0318014845, 0.0587122291, -0.0800600275) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(-1, 1), d_SHRINKED2), 0);
+  res3 += mat4x4f(-0.0391737968, -0.279289275, 0.0997837335, 0.209429353, 0.0411578678, 0.109678589, 0.0108294943, -0.118824758, -0.119502135, 0.134175062, 0.0183065012, 0.00846481044, 0.108098783, -0.0365491398, 0.0365194269, 0.114170186) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(-1, 1), d_SHRINKED3), 0);
+  res3 += mat4x4f(-0.0734360144, -0.0412297584, 0.0838531479, 0.00523896283, 0.126170009, -0.0525000468, -0.135510489, 0.172985196, -0.0607590862, 0.144581497, -0.104375459, 0.189454257, -0.142240360, 0.322911322, -0.316034675, 0.260075748) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(-1, 1), d_SHRINKED4), 0);
+  res3 += mat4x4f(0.0460854433, -0.401815444, -0.440538824, -0.0522119105, -0.331806093, 0.217702493, 0.384768784, -0.0920045301, 0.0787345022, 0.0217580087, 0.188546821, 0.0671361387, -0.0783131719, -0.195011556, -0.602604270, 0.0141439456) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(0, -1), d_SHRINKED1), 0);
+  res3 += mat4x4f(0.136086941, -0.0346532315, 0.122141682, 0.0546019673, -0.260349870, -0.0900533423, 0.450672418, 0.0222456846, 0.170330375, -0.0659236312, 0.144705430, 0.0348633379, 0.0723755434, 0.105564065, 0.187469959, 0.0241385587) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(0, -1), d_SHRINKED2), 0);
+  res3 += mat4x4f(-0.132863522, -0.388703912, 0.567357600, -0.0415148474, -0.201982901, 0.0800976157, 0.232516080, -0.0145296147, 0.0379053876, 0.188009545, -0.352619767, 0.130813137, -0.175288841, 0.285323501, -0.290224969, 0.287819594) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(0, -1), d_SHRINKED3), 0);
+  res3 += mat4x4f(0.0445230715, 0.202405766, -0.204027385, -0.326475084, 0.150845230, -0.0380025879, -0.0978508815, -0.00582312932, 0.120808974, 0.324543864, 0.289375395, -0.244709894, -0.157599196, -0.0514012091, 0.224406406, 0.0358133651) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(0, -1), d_SHRINKED4), 0);
+  res3 += mat4x4f(-0.951956153, 0.523454785, -0.0400611199, -0.190447956, 0.0933662280, -0.0711535662, 0.107966401, 0.00371961365, -0.263964176, 0.536600590, -0.468045324, 0.0726305842, -0.545221567, 0.304111093, -0.145805404, -0.0856090710) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(0, 0), d_SHRINKED1), 0);
+  res3 += mat4x4f(0.0795974880, 0.217942148, 0.949732780, 0.663186550, -0.107406907, 0.0822012648, -0.131296650, 0.176159978, -0.282580465, 0.407742947, 0.0122884940, 0.772191703, 1.07838964, -0.430489808, 0.688948274, 0.683305740) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(0, 0), d_SHRINKED2), 0);
+  res3 += mat4x4f(-0.425624579, 0.215453535, 0.174117297, -0.505746126, -0.162931159, 0.192745030, 0.545045555, 0.166170061, -0.554389775, 0.0395651609, -0.380781680, -0.446091354, -0.730270863, 0.406871349, -0.542054296, -0.280703813) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(0, 0), d_SHRINKED3), 0);
+  res3 += mat4x4f(-0.314707607, -0.0424732417, -0.635898113, 0.303910404, 0.128749773, -0.0115990285, 0.564772844, -0.0228280872, -0.370505780, 0.229931056, 0.474940270, 0.273511857, 0.699040473, -0.276421040, 0.00541731901, -0.00280780811) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(0, 0), d_SHRINKED4), 0);
+  res3 += mat4x4f(0.0659663454, -0.0796864107, 0.572350979, -0.107596591, 0.156979188, -0.369612277, 0.191486523, 0.0992705673, 0.114840850, -0.185659140, -0.201651946, -0.0683379322, -0.0298552234, -0.170777023, 0.221530020, -0.107259005) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(0, 1), d_SHRINKED1), 0);
+  res3 += mat4x4f(-0.141564012, 0.629921675, 0.238187119, -0.0581052490, 0.422772825, -0.334884495, 0.152786031, 0.0311030839, -0.238850266, 0.111200668, -0.580576777, 0.0426577926, -0.111756675, 0.00387821323, 0.171739936, 0.234869972) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(0, 1), d_SHRINKED2), 0);
+  res3 += mat4x4f(0.327932954, -0.132139936, -0.439323008, -0.173346192, -0.0176070817, 0.206090689, -0.130978733, 0.0384801514, -0.210423991, 0.106733866, 0.123444617, -0.107918940, -0.102320321, 0.378265679, 0.113506012, -0.188384473) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(0, 1), d_SHRINKED3), 0);
+  res3 += mat4x4f(-0.262886524, -0.0436420962, 0.240540326, -0.0386440642, -0.180658832, 0.0472445041, 0.114299297, -0.117032051, 0.163251564, 0.142970592, 0.479520887, 0.0818438902, -0.112233885, 0.348641902, -0.448080033, -0.0150097208) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(0, 1), d_SHRINKED4), 0);
+  res3 += mat4x4f(0.00740362471, -0.211998060, 0.0617428683, 0.117596447, 0.167436957, 0.530515790, -0.379079282, -0.0299236719, -0.0543392822, -0.156998739, -0.149662733, 0.0912347287, -0.0307719968, -0.0623899549, 0.469075888, -0.0840169564) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(1, -1), d_SHRINKED1), 0);
+  res3 += mat4x4f(0.174348176, -0.543383002, 0.205227450, 0.0763343126, 0.195677251, -0.185138360, -0.214174852, 0.0667306855, 0.0313551798, 0.257608324, -0.370155454, 0.107087813, 0.00588862179, 0.0788020492, 0.129460335, 0.00289266394) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(1, -1), d_SHRINKED2), 0);
+  res3 += mat4x4f(-0.202207655, -0.00676348014, 0.303176731, 0.0380473174, 0.220215216, -0.256535560, -0.136550680, 0.0443746224, 0.207032755, -0.198989764, 0.137566715, 0.0655018017, 0.388890743, -0.158828139, 0.335337937, -0.152176186) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(1, -1), d_SHRINKED3), 0);
+  res3 += mat4x4f(0.204430982, 0.0874619037, -0.367734790, -0.0514447503, -0.108266257, 0.479466945, 0.0410433225, -0.107190914, -0.0322664455, -0.477778435, -0.0246380642, -0.111270830, -0.122345157, 0.0359591581, 0.201426283, -0.0283110496) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(1, -1), d_SHRINKED4), 0);
+  res3 += mat4x4f(0.172776088, 0.830844343, 0.0541031025, 0.0903189555, -0.0516359806, -0.101351120, 0.178032428, -0.245783553, 0.271124303, 0.891488552, 0.104564898, 0.0755738914, -0.116120003, -0.388155907, 0.717088997, 0.0449695773) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(1, 0), d_SHRINKED1), 0);
+  res3 += mat4x4f(-0.0727074072, 0.0760462359, -0.170529023, -0.0676249042, -0.0947608277, 0.620393038, -0.0415915549, -0.0300914850, 0.165893257, -0.447948337, -0.523409784, -0.0106130159, 0.493639678, -1.09236693, 0.172503471, -0.137226984) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(1, 0), d_SHRINKED2), 0);
+  res3 += mat4x4f(-0.580497622, 0.807566404, 0.534230113, 0.189863965, 0.0738137513, -0.215253606, 0.0666517839, -0.179927677, 0.332399547, -0.243834019, 0.0304238349, -0.303031504, -0.0120707527, -0.151169226, 0.282818288, 0.222865373) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(1, 0), d_SHRINKED3), 0);
+  res3 += mat4x4f(0.236162126, -0.255156934, -0.590492070, 0.0839390904, 0.130896688, -0.757240593, 0.233109072, -0.0632580072, -0.655570567, -0.0639045313, -0.493561417, 0.252646565, 0.374950588, -0.314302653, 0.0174911786, 0.0912150294) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(1, 0), d_SHRINKED4), 0);
+  res3 += mat4x4f(-0.386821300, -0.175020203, -0.210847452, 0.119226411, -0.191086829, -0.0527119115, 0.0510387011, 0.0327628367, 0.0763276219, -0.212368324, 0.133404493, 0.0662392825, -0.215432361, -0.159745708, -0.163505077, 0.0191347692) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(1, 1), d_SHRINKED1), 0);
+  res3 += mat4x4f(0.0716546103, -0.257533073, 0.120432794, -0.0547055453, -0.198959664, 0.0500930622, -0.0932184234, -0.0276701134, 0.266124278, 0.0452572219, 0.0502696857, 0.0943864956, 0.0500964187, -0.0967072621, -0.0390799269, 0.0981164128) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(1, 1), d_SHRINKED2), 0);
+  res3 += mat4x4f(0.343720287, 0.720621109, -0.245280519, -0.0562665947, 0.142731398, 0.0536285006, 0.0914738476, 0.0125551727, 0.0671058297, -0.426516563, 0.0264133438, -0.00627691438, -0.177523032, -0.554565907, 0.302608728, -0.177008718) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(1, 1), d_SHRINKED3), 0);
+  res3 += mat4x4f(0.300078124, -0.104054041, 0.0794740543, -0.226690888, -0.147630826, -0.186192080, -0.288148731, -0.0788696483, -0.225414559, -0.0360599868, 0.209859744, 0.0159713067, 0.104129873, 0.257077634, 0.0402212366, -0.0519279800) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(1, 1), d_SHRINKED4), 0);
+  res3 = max(res3, vec4f(0.0)) + vec4f(1.11245608, -0.272620827, 0.0756795555, 0.0446124487) * min(res3, vec4f(0.0));
+  textureStore(out_MODEL21, p, res0);
+  textureStore(out_MODEL22, p, res1);
+  textureStore(out_MODEL23, p, res2);
+  textureStore(out_MODEL24, p, res3);
 }
 
-//==== ENTRY pass19 : mapping_1_2 ====
-// ---- PASS 19: mapping 1_2 (save=MODEL22, comps=4) ----
-// binds: SHRINKED1, SHRINKED2, SHRINKED3, SHRINKED4
-@group(0) @binding(0) var t_SHRINKED1 : texture_2d<f32>;
-@group(0) @binding(1) var t_SHRINKED2 : texture_2d<f32>;
-@group(0) @binding(2) var t_SHRINKED3 : texture_2d<f32>;
-@group(0) @binding(3) var t_SHRINKED4 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.246525943, 0.0590888038, 0.0682875365, -0.107946374);
-  res += mat4x4f(-0.0835208893, -0.117604151, -0.100837030, -0.136736497, 0.315462768, -0.0514508896, -0.0330346934, -0.0157524291, -0.00763241714, -0.135999799, -0.0249030627, 0.474692225, -0.452033728, 0.242287874, -0.0215963870, -0.513622880) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(-1, -1), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(-0.504787028, -0.00264664809, 0.399282724, -0.0815692991, 0.205285743, -0.304668158, 0.0527982600, -0.0552678630, 0.307943672, -0.0383647718, -0.0141146062, 0.169381529, 0.141890392, 0.104163155, -0.109375760, -0.183678821) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(-1, -1), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(-0.129827738, 0.0205797907, 0.0278969500, 0.331958890, -0.000938017562, -0.0955933556, -0.149673715, 0.0426141024, 0.0513450541, -0.270398229, -0.0644350946, 0.0784152895, -0.155833051, -0.218508363, 0.00969971064, 0.158996105) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(-1, -1), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(0.323399723, -0.0858171284, 0.106475435, 0.302494049, -0.100190148, -0.117180608, -0.0318070538, 0.0251536425, -0.0285468511, 0.0694654435, 0.104197554, -0.0413204655, -0.158413544, -0.327202916, -0.0343795046, -0.372236788) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(-1, -1), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(0.665062606, -0.325758278, 0.246592581, -0.414406329, 0.252237439, 0.181253567, 0.132026047, -0.143864766, 0.173455447, 0.0648963749, -0.346939445, -0.698185682, -0.264341444, -0.156105906, -0.00506936572, -0.124549732) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(-1, 0), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(0.295246392, -0.321683168, 0.123182625, 0.450567782, 0.408034414, 0.270786852, -0.0686171427, 0.353125721, 0.400394261, 0.00860569347, -0.111716218, -0.0755592287, -0.776093304, 0.0236023329, 0.249374196, -0.0164723881) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(-1, 0), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(0.321950614, 0.0168041214, 0.382703602, -0.206844449, -0.636417806, 0.137444392, 0.107473791, -0.313668162, 0.698329329, 0.0269080922, 0.411358923, 0.180252150, 0.401490450, -0.0485344306, -0.0439250432, 0.167269245) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(-1, 0), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(-0.535037994, 0.180067495, -0.0435891487, -0.515671968, -0.774540067, 0.236438259, 0.129093423, 0.388275295, 0.326133609, -0.243329555, 0.107491642, 0.397040159, -0.367828727, 0.107644454, 0.337816268, 0.0372296795) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(-1, 0), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(-0.494588494, 0.184261739, -0.190250814, -0.0536697358, 0.987757087, -0.0731572807, 0.0774519891, 0.828834772, 0.368235409, -0.184639126, 0.0912948847, -0.447327495, -0.552416980, -0.361247867, -0.182053983, 0.0788988546) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(-1, 1), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(-0.121273823, 0.265479743, 0.0438410118, 0.127525598, -0.396368772, -0.122387543, 0.337073326, -0.320363432, 0.0410766676, -0.0616114885, -0.101408698, 0.275365412, 0.352106959, -0.0438192450, -0.0655868351, -0.170918480) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(-1, 1), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(-0.0156991631, 0.302676827, -0.0503052957, -0.340724915, 0.0110836336, -0.0895584598, -0.0115024121, 0.250616491, -0.591273546, 0.0805195346, 0.0613286830, -0.0912685245, 0.0360441804, -0.0235952344, 0.0128674842, -0.243246660) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(-1, 1), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(0.0512752198, -0.197149098, 0.125993162, -0.694955707, 0.0260585416, -0.0871653482, 0.116933085, 0.339670032, 0.137601003, 0.0304378606, 0.0710698143, 0.101916656, 0.111945361, 0.346253246, 0.0161663443, -0.327122062) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(-1, 1), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(-0.130982712, 0.0180190057, 0.0547669679, -0.0699176639, -0.483110160, 0.236561954, -0.276108444, 0.0998060778, 0.521729648, 0.842373490, 0.476294905, 0.0548216887, 0.343005538, -0.219749451, -0.0573652200, 0.461942643) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(0, -1), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(0.382081062, 0.136759728, -0.105670862, 0.0454096459, -0.332376987, -0.545310915, -0.0615389086, -0.108080372, 0.123610839, 0.209226102, -0.696271658, 0.0198629666, -0.155249715, 0.0225689691, -0.346155375, -0.0327344611) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(0, -1), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(0.329290479, -0.106966689, -0.0112595987, 0.114428654, -0.0188920032, 0.275228441, 0.175045684, 0.229115397, 0.0336558521, 0.190640882, 0.0604796410, -0.309900939, -0.130278051, -0.0646775141, 0.112230778, -0.120532908) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(0, -1), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(-0.0672221780, -0.370950788, 0.0215402097, 0.422736287, 0.300915152, -0.128047749, -0.191841826, 0.101009212, -0.132290870, 0.0418008305, -0.173878878, 0.240635872, -0.766072571, 0.224691525, -0.0650401562, -0.752533913) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(0, -1), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(-0.0550877787, -0.570170403, -1.14326692, 0.149059951, 0.125846535, 0.748402774, -0.205739573, 0.430430472, -0.435239226, 0.450393498, -0.232432514, -0.265900165, 0.271303117, 0.523645580, -0.219527483, 0.0630970150) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(0, 0), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(0.0967448950, -0.0608417578, -0.366935819, 0.0775822923, 0.200703263, -0.606439829, 0.136865079, 0.0746887773, 0.326249987, 0.836408854, 0.331792891, -0.170428187, -0.0604217276, 0.317886978, 0.177177250, 0.0492388122) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(0, 0), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(-0.412765145, 0.814735115, 0.294223517, -0.291803360, -0.0975626111, 0.258290499, 0.326008439, -0.758523524, 0.267112136, -0.704630554, -0.751559198, 0.522535145, -0.430905163, -0.0595213398, -0.183319882, 0.0726081878) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(0, 0), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(0.252044499, 0.145257890, -0.135263860, -0.106415704, 0.0467914529, -0.157333419, -0.182489693, 0.355203241, 0.161286563, 0.472250432, -0.0923231840, -0.0747875944, 0.0931280553, -0.493576795, 0.00193866505, -0.225008413) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(0, 0), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(-0.0319514535, -0.0175224729, 0.221769184, -0.180542454, 0.767126381, -0.151284143, 0.0868304446, 0.186627015, 0.302696437, 0.109832183, 0.0775794536, -0.873493433, 0.134992242, -0.299692690, 0.120998070, -0.244881302) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(0, 1), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(0.0831734017, 0.157950953, 0.0688578710, -0.474841654, -0.138550475, -0.149990439, 0.281639427, 0.502929568, -0.548203826, -0.776192546, -0.100596309, -0.0926947817, 0.167128846, -0.0524320640, 0.253359795, -0.0407973826) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(0, 1), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(-0.175528333, 0.411522776, -0.286435008, 0.620290935, -0.104061000, -0.102499112, 0.104497753, -0.326196343, -0.0587189719, -0.341733813, 0.239313975, 0.343944281, -0.125773132, 0.117433175, -0.143473998, 0.0208654683) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(0, 1), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(0.323168933, -0.164810136, 0.150999501, -1.23479736, 0.0826930180, -0.459941477, -0.0450249724, 0.364291549, -0.373718649, -0.137281016, -0.363888621, 0.361479551, -0.368920714, 0.201337889, -0.0352487303, 0.647111297) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(0, 1), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(0.173751935, 0.0800892934, 0.0703732893, -0.0329924859, -0.321824431, 0.168679222, 0.0329092853, -0.385314882, 0.137123704, -0.345563680, 0.160467282, 0.270327121, 0.291682422, 0.0424405262, 0.111030698, 0.342397600) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(1, -1), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(0.122875944, 0.0985508263, 0.0211960059, -0.605390906, 0.480379850, 0.0420496054, 0.0802931339, 0.416220814, -0.141036049, 0.0994543359, 0.358239412, -0.124086760, -0.157832012, 0.280691355, 0.00917819981, -0.0827906206) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(1, -1), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(0.0330263674, 0.113003291, -0.325330138, 0.161618501, -0.126691401, -0.154226258, 0.0816356093, -0.0490542911, 0.548878908, 0.0621016845, -0.122077920, 0.0763546228, -0.112674989, -0.0970966965, -0.279713660, 0.370646596) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(1, -1), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(0.465431541, -0.166234389, 0.121989995, 0.00902134459, -0.0349960327, -0.0593675151, 0.0990805179, -0.118967131, -0.345924258, -0.121711090, -0.152936921, -0.183185816, 0.131650090, -0.473657966, 0.137347117, -0.325824469) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(1, -1), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(0.325078040, -0.108314291, -0.0470311195, 0.228431195, -0.325749576, 0.155455932, -0.170875698, 0.227190346, -0.267545104, -0.285672128, 0.175914139, 0.0998992398, 0.491195321, 0.200293645, 0.237952054, 0.189859375) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(1, 0), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(-0.179375514, -0.0795077235, -0.167154804, -0.0126010422, -0.165892541, 0.473205179, -0.142610699, 0.217111602, -0.356336832, 0.00575297140, 0.0576786920, 0.334186941, -0.0146778580, -0.0714842752, -0.311041325, 0.373417377) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(1, 0), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(0.819967031, -0.498591572, 0.381911635, -0.780045509, 0.0128220143, -0.274690032, 0.0697929412, -0.278793305, 0.0656379759, -0.0586434714, -0.00971039385, 0.151236311, -0.261507720, 0.300452918, 0.144737273, -0.0326888338) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(1, 0), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(0.231249034, 0.346745700, -0.210317433, 0.277834535, -0.0398289487, 0.162074402, -0.179115489, 0.331380218, 0.335045516, 0.351420850, 0.139644027, 0.381832987, 1.54826474, 0.186844796, -0.0439286046, -0.259938717) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(1, 0), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(-0.0767258853, -0.00669181906, -0.0450136401, 0.114770375, 0.102278657, -0.588342369, 0.0345356427, 0.154523000, 0.248076916, -0.117609940, -0.0194331035, -0.260142565, 0.00865218602, 0.353747964, -0.0543141589, 0.223764092) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(1, 1), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(0.511442900, -0.387462437, 0.00481648091, 0.213375211, 0.0624081492, 0.374983639, -0.148125559, -0.251333266, -0.0611753240, 0.258617342, 0.108405471, 0.459763914, -0.0399927832, -0.0599541664, 0.0590456985, 0.215855464) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(1, 1), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(0.304526746, -0.0787427053, -0.204524606, 0.651613653, -0.125969425, 0.377382934, -0.143533677, 0.115016371, 0.135630965, 0.0337585583, -0.247467339, -0.00909556355, 0.00444523524, -0.0344419964, -0.0890473723, -0.276846498) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(1, 1), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(0.268953025, -0.123197839, -0.168875739, -0.189307675, 0.0921706557, 0.0972316712, -0.0754991993, -0.0113875028, 0.431008279, -0.168504089, 0.377430588, 0.337967694, 0.633391857, 0.285564810, -0.0988231897, 0.338529438) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(1, 1), textureDimensions(t_SHRINKED4)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(0.0647197887, 0.498333156, 0.517479122, 0.0454305857) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass20 : mapping_1_3 ====
-// ---- PASS 20: mapping 1_3 (save=MODEL23, comps=4) ----
-// binds: SHRINKED1, SHRINKED2, SHRINKED3, SHRINKED4
-@group(0) @binding(0) var t_SHRINKED1 : texture_2d<f32>;
-@group(0) @binding(1) var t_SHRINKED2 : texture_2d<f32>;
-@group(0) @binding(2) var t_SHRINKED3 : texture_2d<f32>;
-@group(0) @binding(3) var t_SHRINKED4 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(0.0354270488, 0.0728243291, -0.0616331510, 0.0311630554);
-  res += mat4x4f(-0.375471085, 0.00718604261, -0.429597825, 0.201756999, 0.156898290, -0.102427460, -0.536934912, -0.172520742, 0.245940208, 0.154656440, 0.246093392, 0.0260979142, 0.282785624, -0.00859596580, 0.0506463386, 0.00409038458) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(-1, -1), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(-0.255652934, 0.388475835, -0.132376701, 0.0304193832, -0.229359508, 0.459876925, -0.131336674, 0.261193663, 0.140842572, 0.280136734, 0.0831678063, 0.216374144, 0.178198144, 0.0798961744, 0.318994462, -0.0310177747) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(-1, -1), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(-0.352055043, -0.0661006644, 0.0991899893, 0.0634982288, -0.0414974317, -0.241607890, -0.276578486, 0.0331849307, -0.239490509, -0.239818186, -0.312143475, 0.00877221394, -0.0145549029, -0.681753457, -0.491128951, -0.0933565125) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(-1, -1), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(0.0179903414, -0.180541441, 0.0275782533, -0.0116454540, 0.0921521783, 0.00233927625, 0.0681477264, 0.0692204461, -0.166492686, -0.421745509, -0.263756722, -0.140611202, -0.265751243, -0.0703693926, -0.840464115, -0.226463348) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(-1, -1), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(0.145432547, -0.287598789, -1.04999375, -0.268233538, 0.142750785, -0.240366697, -0.171205908, 0.0442707613, -0.234125286, -0.796400845, -0.0768983066, -0.285297483, -0.130520821, -0.378934801, 0.234069824, -0.0567431673) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(-1, 0), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(-0.588331819, -0.689131200, 0.00121768634, -0.414032727, 0.237816289, 0.242512912, 0.0759186223, -0.00847408082, 0.350870073, -0.592032433, 0.250707716, -0.182965934, -0.167298287, -0.297233075, 0.0769646615, -0.116079427) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(-1, 0), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(-0.351733714, 0.436503977, -0.488138884, -0.107519552, 0.178777769, -0.0412815325, 0.207143381, 0.109594524, 0.0503253192, 0.110243298, -0.0493151657, 0.0369251855, 0.0141819334, -0.470655054, 0.107211612, -0.279815227) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(-1, 0), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(0.0584370717, 0.0727466419, 0.708708823, 0.124050565, -0.0488122217, -0.234741285, 0.167187303, -0.173268318, -0.282764554, 0.121486351, -0.174060524, -0.136775151, -0.209790453, 0.381822348, -0.0815254226, -0.0432127193) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(-1, 0), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(-0.0773001984, 1.09005392, -0.248752370, -0.344008952, -0.300069064, 0.185913071, 0.0399173796, -0.0340403840, -0.146594375, -0.563046455, 0.287132800, -0.186448053, -0.0596628189, -0.907389998, -0.135413736, 0.0918352604) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(-1, 1), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(0.116178721, 0.833305955, 0.230016321, -0.0503365211, 0.0937003270, -0.0955260545, 0.112340145, 0.149557993, 0.00248327968, 0.238948554, 0.0389217734, 0.142111018, -0.130106613, 0.145629942, 0.235664412, 0.0913641006) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(-1, 1), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(0.0694204420, -0.179946944, -0.00701628160, 0.302430063, -0.346588552, -0.983808160, 0.157323226, 0.0108372066, -0.0593702011, -0.783539474, 0.173059806, 0.160522237, 0.0610041432, -1.28999269, 0.142219633, 0.100341760) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(-1, 1), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(-0.248011723, -0.315622479, -0.360177904, 0.0234890394, 0.161328703, -0.400416851, 0.110643797, 0.102172025, -0.149119169, -0.376733541, -0.259107828, -0.117956281, -0.164629281, 0.761080086, 0.00905345101, 0.125507057) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(-1, 1), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(-0.139642164, -0.433353513, 0.828429818, -0.254062086, 0.135322243, -0.0968159586, -0.325206965, 0.121071585, 0.142571792, 0.0419529788, 0.0706175491, -0.0617700107, -0.177976072, -0.199795902, 0.201964930, 0.0163790192) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(0, -1), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(-0.128300115, -0.175606996, -0.743901491, -0.0465103351, 0.146077529, -0.471725971, -0.0466832072, -0.403229773, 0.0717985928, 0.192246079, -0.406642437, -0.147234917, 0.343605071, 0.0354665816, -0.451710105, -0.174672231) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(0, -1), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(0.0432135314, -0.397521079, 0.709142923, -0.270040989, -0.114987686, 0.215639517, -0.611764550, 0.0469082147, 0.361038566, -0.0559643507, -0.0683121532, 0.0685282350, -0.135699555, 0.170087442, -0.213011459, 0.0147677725) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(0, -1), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(0.176198304, 0.112015635, -0.00635701837, 0.0551933460, 0.385426134, 0.222231746, -0.165579408, -0.191436023, 0.850076556, -0.0969462395, -0.475780845, 0.135543212, -0.126398683, 0.244576320, -0.0278148707, 0.239888400) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(0, -1), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(-0.457092106, -0.196800932, 0.840053082, 0.127523676, -1.08503270, -0.503286600, -0.221428588, 0.291122317, 0.167700365, 0.674340308, 0.440025598, 0.721228004, -0.666425765, 0.0859988928, -0.0558551028, -0.412710905) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(0, 0), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(0.958618283, 1.02269566, 0.247545823, -0.0639756694, 1.19877911, 0.0506992228, -0.104151711, 0.593639493, -0.903173864, 1.41431153, -0.262534857, -0.111281849, -0.302962750, 0.107448995, 0.0141594736, -0.476496428) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(0, 0), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(0.943036854, -0.241521537, 0.471537292, 0.770241022, 0.210145801, 0.670571387, 0.0862335637, 0.238505647, 0.106713407, -0.0230286140, 0.256668866, -0.0850627348, -0.000458473864, -0.153742462, 0.391921073, 0.292995155) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(0, 0), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(-0.712013125, -0.150268108, -0.150142178, -0.309412628, -0.327259958, -0.412873209, 0.0424575917, -0.229608908, -0.0507128239, 0.998351991, -0.497391075, -0.0557052307, 0.229538545, -0.609665155, 0.409080356, -0.115314305) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(0, 0), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(0.339248359, 0.479899049, -0.428405702, -0.254393607, 0.644539237, -0.0260703042, 0.344656497, 0.155054808, -0.250655442, -0.525926471, -0.348909914, 0.116247855, -0.260219276, -0.196744621, 0.235421956, 0.0944507346) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(0, 1), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(-0.0218862165, -0.374137491, 0.123253040, 0.331658930, -0.553679645, 0.214847311, -0.0654821172, -0.670907676, -0.411148965, 0.149179503, 0.213432357, 0.527567923, -0.318155855, -0.433847398, 0.179417223, 0.252862573) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(0, 1), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(0.0592876524, -0.152367994, 0.0180816390, 0.235243380, -0.0632626489, -0.277519166, -0.0163244810, 0.268619686, -0.505579412, -0.345357031, -0.221074715, -0.340735763, -0.0427224189, -0.249483556, -0.239010632, -0.0126752080) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(0, 1), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(0.450764984, 0.0957014412, -0.153708279, -0.0665199086, -0.231717303, -0.487172306, -0.0671654642, -0.0665062815, 1.11018014, -0.551656008, 0.153294817, 0.260892034, -0.284230381, -0.174894214, 0.361385316, -0.153557226) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(0, 1), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(-0.115774348, -0.108623050, 0.697629273, 0.0670034885, -0.367214143, 0.0659544989, 0.529340267, -0.0275434405, 0.0380571522, 0.0632237867, -0.432072371, 0.280994028, 0.0658211485, 0.120009474, 0.0497889593, -0.202436492) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(1, -1), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(0.606041253, -0.116166838, -0.285654515, -0.141866773, 0.198131174, 0.130306572, 0.0949402079, 0.161061630, -0.142177165, -0.0991433635, -0.305183738, 0.0644805208, -0.226184830, 0.0158794504, -0.405234307, -0.130566105) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(1, -1), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(0.0108690886, -0.0493984967, 0.279318482, 0.0346334651, -0.148696214, 0.167890668, -0.293561071, 0.0216826722, 0.0434555672, 0.314597249, -0.267310500, 0.176859483, -0.0355712473, 0.141531706, -0.244021088, -0.165792227) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(1, -1), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(0.0275184456, 0.157436445, -0.291162223, 0.191558287, 0.155954495, 0.0973343626, -0.280356526, 0.196484938, -0.0452867635, 0.105698019, 0.179135278, -0.0831882879, 0.0920400918, 0.0511482842, 0.140406147, -0.151654214) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(1, -1), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(0.0748704150, 0.0475342497, 0.0513447225, 0.335631251, -0.481424034, 0.222506404, 0.584453046, -0.0531023853, -0.156034514, -0.285783231, 0.173360094, 0.159187406, 0.0955131724, 0.302747428, 0.0865843296, -0.157843456) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(1, 0), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(-0.0527305007, -0.216273978, 0.285020977, -0.0477382913, 0.328404456, 0.311886191, -0.272604704, 0.0929468423, 0.122927681, -0.673029065, -0.494464070, -0.128109902, 0.370514065, -0.335817873, 0.00399392378, -0.287390441) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(1, 0), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(-0.0617699437, 0.365239650, -1.05220687, 0.472146064, 0.0860912502, 0.136510476, 0.0763543844, 0.0327059813, 0.260403991, 0.492357016, 0.201486871, -0.160384715, -0.368390292, 0.232512772, -0.131388068, -0.0228569545) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(1, 0), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(0.0358204730, 0.233281463, -0.401333332, -0.0465268455, 0.102491617, 0.0289428979, 0.208728164, -0.400338441, 0.180869564, -0.100504190, 0.475459456, -0.233200639, 0.621266067, -0.457099497, 0.198811814, -0.0814304650) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(1, 0), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(0.242534116, 0.0521969795, -0.354033917, -0.539806604, -0.196942076, -0.417994231, 0.0850660354, 0.0780028552, -0.185515970, 0.434277594, -0.384618610, -0.118500374, 0.126514852, -0.0310557093, -0.386911213, 0.212281108) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(1, 1), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(-0.305834383, -0.164484918, -0.315164328, 0.212739214, -0.249593407, -0.0236311648, 0.0642300248, -0.212103993, -0.216095537, 0.214001164, 0.0944894031, -0.0388460979, 0.0413498804, -0.329063296, 0.198065460, -0.0503699370) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(1, 1), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(0.287601143, -0.235133126, 0.251732349, 0.177149624, -0.0344777480, -0.0510957614, 0.212218538, 0.121515267, -0.164675161, 0.193028823, 0.139699683, -0.157427013, -0.246166155, -0.0509967133, -0.0539425313, 0.200265408) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(1, 1), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(-0.291764617, 0.0118361432, -0.147317335, -0.0886615664, -0.312807828, 0.0311102867, 0.0242574122, 0.0450150408, -0.311143339, -0.0269301049, 0.325481594, 0.264833361, 0.0858686939, 0.0215640757, -0.155214578, 0.345987707) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(1, 1), textureDimensions(t_SHRINKED4)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(0.664483726, 0.0455110632, -0.103403389, -0.274955094) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass21 : mapping_1_4 ====
-// ---- PASS 21: mapping 1_4 (save=MODEL24, comps=4) ----
-// binds: SHRINKED1, SHRINKED2, SHRINKED3, SHRINKED4
-@group(0) @binding(0) var t_SHRINKED1 : texture_2d<f32>;
-@group(0) @binding(1) var t_SHRINKED2 : texture_2d<f32>;
-@group(0) @binding(2) var t_SHRINKED3 : texture_2d<f32>;
-@group(0) @binding(3) var t_SHRINKED4 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.0115559474, -0.0954066589, -0.838727474, 0.137020722);
-  res += mat4x4f(0.0468584374, -0.0874867961, 0.0137629425, 0.0669830590, -0.196273595, 0.127837852, 0.498029649, -0.386044323, 0.0488449372, -0.173924059, 0.125529632, -0.143776894, 0.0976751074, -0.0786421672, -0.240928993, 0.0722903162) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(-1, -1), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(0.160700709, 0.0277715903, -0.543683290, 0.0644040182, -0.191130400, -0.0341353975, -0.217314973, 0.0155736702, -0.390977234, 0.117017344, -0.0377732702, -0.0352925770, 0.123121247, 0.00332279433, 0.203592598, -0.173109606) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(-1, -1), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(0.0366708003, -0.0293227490, 0.311912745, 0.00839272980, -0.0960281938, 0.144450128, -0.0841252878, 0.0146390898, 0.0185424816, -0.0651286095, 0.215012372, -0.244178131, -0.250329465, 0.0112946518, 0.112527736, -0.0661261678) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(-1, -1), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(-0.117833048, 0.00933820195, -0.105846383, 0.275088876, 0.0473453514, 0.100533187, -0.250052780, -0.0340508595, -0.0202873256, -0.135868296, -0.184036478, 0.502946973, -0.0186244752, 0.134732962, -0.0695763826, -0.0235661976) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(-1, -1), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(-0.105202615, -0.210927084, -0.0421815366, 0.591472864, -0.179341346, -0.0619071461, 0.450984001, 0.456695884, -0.0369449332, -0.0797295719, -0.104758315, 0.463019282, 0.0191727355, -0.147739694, -0.201916009, 0.123353481) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(-1, 0), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(0.374938190, -0.413706183, -0.00822297204, -0.675539851, 0.113097243, 0.148843691, -0.0905617177, 0.0421009921, -0.0728141591, 0.0622737706, 0.513284028, 0.118576504, 0.168134928, -0.114182599, 0.357499242, -0.0339597501) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(-1, 0), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(0.364698172, 0.00698928023, 0.0405249931, 0.422126174, -0.200310022, -0.0352868401, 0.0314441547, -0.0952515751, -0.169533819, -0.0684790611, 0.201495945, 0.783920944, 0.157269180, -0.227563903, -0.259820879, 0.429615647) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(-1, 0), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(-0.0359770954, 0.142895222, 0.0666676238, -0.0268250424, 0.131378248, 0.0457837023, 0.124221519, -0.136983857, 0.0476729721, -0.309874684, 0.377649456, 0.168951571, 0.00358110014, -0.0196769331, 0.0472064912, -0.222859547) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(-1, 0), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(-0.0603642985, -0.191200614, -0.408328921, -0.145018965, 0.0220420323, -0.135935605, 0.127129957, -0.155051708, -0.0414922051, -0.163418889, 0.150497973, -0.0480890982, 0.287949651, -0.0321080349, -0.379285932, -0.254360646) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(-1, 1), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(-0.128983244, 0.194873348, -0.393382251, 0.195092753, -0.0874490961, 0.0508037470, 0.104340993, 0.263018310, 0.0638875589, -0.175126180, -0.250646561, 0.427715033, -0.0997801274, 0.0318014845, 0.0587122291, -0.0800600275) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(-1, 1), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(-0.0391737968, -0.279289275, 0.0997837335, 0.209429353, 0.0411578678, 0.109678589, 0.0108294943, -0.118824758, -0.119502135, 0.134175062, 0.0183065012, 0.00846481044, 0.108098783, -0.0365491398, 0.0365194269, 0.114170186) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(-1, 1), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(-0.0734360144, -0.0412297584, 0.0838531479, 0.00523896283, 0.126170009, -0.0525000468, -0.135510489, 0.172985196, -0.0607590862, 0.144581497, -0.104375459, 0.189454257, -0.142240360, 0.322911322, -0.316034675, 0.260075748) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(-1, 1), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(0.0460854433, -0.401815444, -0.440538824, -0.0522119105, -0.331806093, 0.217702493, 0.384768784, -0.0920045301, 0.0787345022, 0.0217580087, 0.188546821, 0.0671361387, -0.0783131719, -0.195011556, -0.602604270, 0.0141439456) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(0, -1), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(0.136086941, -0.0346532315, 0.122141682, 0.0546019673, -0.260349870, -0.0900533423, 0.450672418, 0.0222456846, 0.170330375, -0.0659236312, 0.144705430, 0.0348633379, 0.0723755434, 0.105564065, 0.187469959, 0.0241385587) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(0, -1), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(-0.132863522, -0.388703912, 0.567357600, -0.0415148474, -0.201982901, 0.0800976157, 0.232516080, -0.0145296147, 0.0379053876, 0.188009545, -0.352619767, 0.130813137, -0.175288841, 0.285323501, -0.290224969, 0.287819594) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(0, -1), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(0.0445230715, 0.202405766, -0.204027385, -0.326475084, 0.150845230, -0.0380025879, -0.0978508815, -0.00582312932, 0.120808974, 0.324543864, 0.289375395, -0.244709894, -0.157599196, -0.0514012091, 0.224406406, 0.0358133651) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(0, -1), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(-0.951956153, 0.523454785, -0.0400611199, -0.190447956, 0.0933662280, -0.0711535662, 0.107966401, 0.00371961365, -0.263964176, 0.536600590, -0.468045324, 0.0726305842, -0.545221567, 0.304111093, -0.145805404, -0.0856090710) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(0, 0), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(0.0795974880, 0.217942148, 0.949732780, 0.663186550, -0.107406907, 0.0822012648, -0.131296650, 0.176159978, -0.282580465, 0.407742947, 0.0122884940, 0.772191703, 1.07838964, -0.430489808, 0.688948274, 0.683305740) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(0, 0), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(-0.425624579, 0.215453535, 0.174117297, -0.505746126, -0.162931159, 0.192745030, 0.545045555, 0.166170061, -0.554389775, 0.0395651609, -0.380781680, -0.446091354, -0.730270863, 0.406871349, -0.542054296, -0.280703813) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(0, 0), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(-0.314707607, -0.0424732417, -0.635898113, 0.303910404, 0.128749773, -0.0115990285, 0.564772844, -0.0228280872, -0.370505780, 0.229931056, 0.474940270, 0.273511857, 0.699040473, -0.276421040, 0.00541731901, -0.00280780811) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(0, 0), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(0.0659663454, -0.0796864107, 0.572350979, -0.107596591, 0.156979188, -0.369612277, 0.191486523, 0.0992705673, 0.114840850, -0.185659140, -0.201651946, -0.0683379322, -0.0298552234, -0.170777023, 0.221530020, -0.107259005) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(0, 1), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(-0.141564012, 0.629921675, 0.238187119, -0.0581052490, 0.422772825, -0.334884495, 0.152786031, 0.0311030839, -0.238850266, 0.111200668, -0.580576777, 0.0426577926, -0.111756675, 0.00387821323, 0.171739936, 0.234869972) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(0, 1), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(0.327932954, -0.132139936, -0.439323008, -0.173346192, -0.0176070817, 0.206090689, -0.130978733, 0.0384801514, -0.210423991, 0.106733866, 0.123444617, -0.107918940, -0.102320321, 0.378265679, 0.113506012, -0.188384473) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(0, 1), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(-0.262886524, -0.0436420962, 0.240540326, -0.0386440642, -0.180658832, 0.0472445041, 0.114299297, -0.117032051, 0.163251564, 0.142970592, 0.479520887, 0.0818438902, -0.112233885, 0.348641902, -0.448080033, -0.0150097208) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(0, 1), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(0.00740362471, -0.211998060, 0.0617428683, 0.117596447, 0.167436957, 0.530515790, -0.379079282, -0.0299236719, -0.0543392822, -0.156998739, -0.149662733, 0.0912347287, -0.0307719968, -0.0623899549, 0.469075888, -0.0840169564) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(1, -1), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(0.174348176, -0.543383002, 0.205227450, 0.0763343126, 0.195677251, -0.185138360, -0.214174852, 0.0667306855, 0.0313551798, 0.257608324, -0.370155454, 0.107087813, 0.00588862179, 0.0788020492, 0.129460335, 0.00289266394) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(1, -1), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(-0.202207655, -0.00676348014, 0.303176731, 0.0380473174, 0.220215216, -0.256535560, -0.136550680, 0.0443746224, 0.207032755, -0.198989764, 0.137566715, 0.0655018017, 0.388890743, -0.158828139, 0.335337937, -0.152176186) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(1, -1), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(0.204430982, 0.0874619037, -0.367734790, -0.0514447503, -0.108266257, 0.479466945, 0.0410433225, -0.107190914, -0.0322664455, -0.477778435, -0.0246380642, -0.111270830, -0.122345157, 0.0359591581, 0.201426283, -0.0283110496) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(1, -1), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(0.172776088, 0.830844343, 0.0541031025, 0.0903189555, -0.0516359806, -0.101351120, 0.178032428, -0.245783553, 0.271124303, 0.891488552, 0.104564898, 0.0755738914, -0.116120003, -0.388155907, 0.717088997, 0.0449695773) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(1, 0), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(-0.0727074072, 0.0760462359, -0.170529023, -0.0676249042, -0.0947608277, 0.620393038, -0.0415915549, -0.0300914850, 0.165893257, -0.447948337, -0.523409784, -0.0106130159, 0.493639678, -1.09236693, 0.172503471, -0.137226984) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(1, 0), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(-0.580497622, 0.807566404, 0.534230113, 0.189863965, 0.0738137513, -0.215253606, 0.0666517839, -0.179927677, 0.332399547, -0.243834019, 0.0304238349, -0.303031504, -0.0120707527, -0.151169226, 0.282818288, 0.222865373) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(1, 0), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(0.236162126, -0.255156934, -0.590492070, 0.0839390904, 0.130896688, -0.757240593, 0.233109072, -0.0632580072, -0.655570567, -0.0639045313, -0.493561417, 0.252646565, 0.374950588, -0.314302653, 0.0174911786, 0.0912150294) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(1, 0), textureDimensions(t_SHRINKED4)), 0);
-  res += mat4x4f(-0.386821300, -0.175020203, -0.210847452, 0.119226411, -0.191086829, -0.0527119115, 0.0510387011, 0.0327628367, 0.0763276219, -0.212368324, 0.133404493, 0.0662392825, -0.215432361, -0.159745708, -0.163505077, 0.0191347692) * textureLoad(t_SHRINKED1, clampCoord(p + vec2i(1, 1), textureDimensions(t_SHRINKED1)), 0);
-  res += mat4x4f(0.0716546103, -0.257533073, 0.120432794, -0.0547055453, -0.198959664, 0.0500930622, -0.0932184234, -0.0276701134, 0.266124278, 0.0452572219, 0.0502696857, 0.0943864956, 0.0500964187, -0.0967072621, -0.0390799269, 0.0981164128) * textureLoad(t_SHRINKED2, clampCoord(p + vec2i(1, 1), textureDimensions(t_SHRINKED2)), 0);
-  res += mat4x4f(0.343720287, 0.720621109, -0.245280519, -0.0562665947, 0.142731398, 0.0536285006, 0.0914738476, 0.0125551727, 0.0671058297, -0.426516563, 0.0264133438, -0.00627691438, -0.177523032, -0.554565907, 0.302608728, -0.177008718) * textureLoad(t_SHRINKED3, clampCoord(p + vec2i(1, 1), textureDimensions(t_SHRINKED3)), 0);
-  res += mat4x4f(0.300078124, -0.104054041, 0.0794740543, -0.226690888, -0.147630826, -0.186192080, -0.288148731, -0.0788696483, -0.225414559, -0.0360599868, 0.209859744, 0.0159713067, 0.104129873, 0.257077634, 0.0402212366, -0.0519279800) * textureLoad(t_SHRINKED4, clampCoord(p + vec2i(1, 1), textureDimensions(t_SHRINKED4)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(1.11245608, -0.272620827, 0.0756795555, 0.0446124487) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass22 : mapping_2_1 ====
-// ---- PASS 22: mapping 2_1 (save=MODEL1, comps=4) ----
+//==== ENTRY pass6 : fused_MODEL1_MODEL2_MODEL3_MODEL4 ====
+// ---- PASS 6: mapping 2_1 + mapping 2_2 + mapping 2_3 + mapping 2_4 (saves=MODEL1,MODEL2,MODEL3,MODEL4) ----
 // binds: MODEL21, MODEL22, MODEL23, MODEL24
+// Fused: 4 upstream hooks sharing one set of input fetches.
 @group(0) @binding(0) var t_MODEL21 : texture_2d<f32>;
 @group(0) @binding(1) var t_MODEL22 : texture_2d<f32>;
 @group(0) @binding(2) var t_MODEL23 : texture_2d<f32>;
 @group(0) @binding(3) var t_MODEL24 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(4) var out_MODEL1 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(5) var out_MODEL2 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(6) var out_MODEL3 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(7) var out_MODEL4 : texture_storage_2d<rgba16float, write>;
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
+  let dims = textureDimensions(out_MODEL1);
   if (gid.x >= dims.x || gid.y >= dims.y) { return; }
   let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(0.191096291, 0.118082337, -0.0155482134, 0.0202376060);
-  res += mat4x4f(-0.0835043788, 0.320936829, -0.00847153831, -0.266538531, -0.0623734221, -0.0784289986, -0.121421061, 0.202541679, 0.0144935185, 0.230709106, -0.0679582953, -0.323342890, 0.0655283332, -0.0785074085, -0.0701586828, -0.397837043) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.0522326939, -0.229451507, 0.150098577, -0.0270188563, -0.0110954400, -0.0316505060, -0.243020222, 0.826346040, -0.0421515889, 0.134129941, 0.117890224, -0.117816173, 0.0170810483, -0.0616252869, 0.0396965519, -0.208331749) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.0570328794, 0.0318897925, -0.108744740, -0.0937756896, -0.0193286296, -0.231209546, 0.333971202, -0.121061519, 0.0254167672, 0.108722180, -0.0708989128, -0.0626340732, 0.0516111851, 0.270863116, 0.116174988, -0.00589017384) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.0226302855, -0.0901356414, -0.104092516, -0.296060383, 0.162141785, -0.393312007, 0.0503337458, 0.132422864, -0.0487809330, 0.00388976908, 0.0353553481, 0.0222108439, 0.0639005080, 0.0270982124, -0.0497931316, 0.310036719) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.0533053949, 0.192781165, 0.109614521, -0.335484475, 0.0584460609, 0.0664003119, 0.0334077626, 0.447061777, 0.0281130858, -0.271410853, -0.0379265659, -0.136523396, -0.0212840941, -0.235665306, 0.0457138158, -0.187572658) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.0353358388, 0.0274007097, -0.0636283159, 0.135066599, 0.00135026185, 0.290659159, 0.0463014059, 0.327624112, -0.314151108, -0.0369141735, -0.105469249, -0.132340461, -0.0913199931, 0.102573469, 0.0186791606, 0.213764831) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.0244297180, -0.0856372714, -0.474326283, -0.201401532, 0.0730626509, 0.384380013, -0.339937121, 0.182962924, 0.0723727047, -0.204983816, -0.00524215680, 0.255992204, -0.0833062232, 0.634550035, -0.679360926, 0.00978923310) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.0990470573, 0.349263966, 0.00297242962, 0.376591951, 0.148287684, 0.204209715, 0.700293303, 0.0480134003, -0.000598180864, -0.139589220, -0.0144439414, 0.240445942, 0.0424263664, -0.0785983130, -0.0118202167, 0.390625238) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.0434386618, -0.312244058, 0.0911769420, 0.0228179209, -0.0662108809, -0.0275177769, -0.149389535, 0.0957570672, -0.0268660560, -0.131532550, 0.219678313, 0.211699873, 0.0897344425, 0.0814676061, -0.0564308353, -0.0565161072) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.0779543519, 0.229595646, 0.0637364760, -0.0696602240, -0.0980207846, 0.383502603, 0.425339460, 0.0772323906, -0.0477042049, 0.0498802550, -0.199901745, -0.208233580, -0.0269773081, 0.0241024848, -0.133664504, -0.100880228) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.0117000053, -0.0602870099, 0.386916935, -0.0578138679, 0.0138670066, -0.128200501, 0.0626409650, -0.0789210424, -0.0927192867, 0.276778013, -0.0647650510, -0.00898302160, -0.00283997948, 0.105342865, -0.227332652, -0.0601032674) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.0165065322, 0.108358353, 0.0306896176, 0.0714910552, -0.000547725125, -0.302721322, 0.690933049, -0.114901900, -0.0369489565, 0.363634944, -0.0670856759, 0.0404936112, 0.0639278665, 0.322027981, -0.102218688, -0.112317741) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.0887541100, 0.0722083673, 0.134502500, -0.125358075, -0.0952963531, 0.0892397389, 0.0244714227, -0.0142309973, -0.0321915112, 0.161093235, 0.207961053, 0.148043841, -0.0489299521, -0.178717896, 0.219274864, -0.0773427039) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.0864689946, 0.233068675, 0.0849193707, -0.0819132254, 0.00348676741, -0.415909410, -0.260461152, -0.142850205, -0.0817381144, 0.197839677, -0.0285985190, 0.110425122, 0.0397681221, -0.102063522, -0.0816109926, -0.250549138) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.0657642037, 0.333122760, 0.0923847631, 0.372169822, -0.299549878, 1.08262241, 0.230661511, 0.324610025, 0.0854215398, -0.0173258036, -0.0899626687, 0.128338978, -0.0596249439, -0.173842102, 0.0500116199, -0.439648271) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.0576705709, -0.140645370, 0.0755439475, 0.445335448, -0.0344630927, -0.397032320, -0.258351207, 0.125652671, -0.00709831715, -0.125738502, 0.0679773837, 0.156890780, 0.0705309808, -0.00439019874, -0.0854624957, 0.177181646) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.173485309, -0.228088006, -0.0730370432, 0.543988764, -0.0125889918, -0.163449183, 0.364013493, 0.255002230, 0.0113501027, 0.248464659, 0.232526079, 0.486107647, -0.00819183514, -0.601890206, -0.216747150, -0.383389622) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.00621658051, 0.179948404, -0.00998901017, -0.114968188, -0.101559132, -0.466226012, -0.211684033, -0.602481365, 0.208021030, -0.161155358, 0.551515698, 0.128410831, 0.0731352791, 0.488187194, 0.153526917, -0.410031438) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.0725996345, -0.588310301, 0.119344592, 0.0949277058, 0.156406298, -0.861713529, -0.0177855156, -0.691650450, 0.251751244, 0.0402554460, -0.140814185, -0.0957379118, 0.0221001618, -1.28781784, -0.565343380, -0.532599688) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.274068326, 0.498131752, -0.146524921, 0.212210134, -0.316557556, -0.446683615, 0.382790625, 0.219005108, 0.280690640, -0.540124893, 0.114010505, -0.282503933, -0.0787481666, -0.177874818, 0.202093750, -0.580213726) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.252028197, 0.263704509, -0.471653998, 0.217153460, 0.0925339386, -0.151340127, -0.419560313, 0.0492689908, -0.00722828927, -0.105160154, -0.569017470, 0.0561541729, -0.0586895049, 0.488690197, -0.363726139, -0.0622695908) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.0460322276, -0.0466793329, 0.132961661, -0.0600009970, -0.0229834989, -0.969236612, 0.368442863, -0.154355898, 0.167816356, -0.333820254, -0.318002701, 0.303485513, -0.141321912, 0.117828429, 0.211384341, 0.0322614536) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.0183320958, 0.0827004090, -0.842336535, 0.234093279, -0.0535792373, 0.0480247326, 0.0779319555, -0.181220680, 0.242228657, -0.226780489, -0.0564081334, -0.0699552968, 0.0936812758, -0.603143752, -0.108835153, -0.0653923303) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.509662211, -0.197731391, -0.203839898, -0.241959512, -0.134026825, 0.0541922189, 0.288017660, 0.0769006982, 0.274232358, 0.268230855, -0.306350917, -0.0476246998, 0.0836594850, -0.368317872, 0.307955980, -0.237987027) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.0334813781, -0.234065920, 0.221207857, 0.271446168, -0.0234802533, -0.319227755, -0.0402724519, 0.378328860, -0.0570328869, -0.410877556, 0.109485254, 0.111768439, 0.000551630510, -0.138855755, 0.0891965851, 0.158496976) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.0609852411, 0.0333012603, 0.125719443, 0.200493082, 0.0884419233, 0.0971443877, 0.0367564447, -0.270049691, 0.0766598955, -0.181431487, -0.0187010188, -0.0265211482, 0.134309739, 0.261863261, -0.0105380509, 0.0218748804) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.0590157025, -0.470154703, -0.113162480, 0.0387580357, 0.272280544, 0.532985747, 0.555640697, 0.120424971, -0.0543330237, 0.123648912, 0.0369715169, -0.0403839089, 0.0823150724, 0.393272310, 0.0200071558, 0.0547098331) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.00142848562, 0.317295820, -0.0787122473, -0.0779520795, 0.0447607674, -0.356001616, -0.106691696, -0.00745183090, -0.0236969311, 0.196310103, -0.0431807190, -0.104243316, 0.125383049, 0.0850050896, -0.197134152, -0.282021940) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.221669316, 0.218818918, 0.242600039, 0.350815177, 0.0532642081, -0.406765372, -0.274101198, 0.144368514, -0.0154005084, -0.126898587, 0.0269314162, -0.0422992967, 0.176814556, -0.219362602, -0.0629033372, 0.0801898316) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.0844821483, -0.346438855, -0.110856943, -0.246936306, 0.163773909, 0.559442520, -0.00873385742, 0.0258984119, 0.0493676998, -0.0751936808, 0.0924034044, -0.0814731941, 0.196468502, 0.296227902, 0.0327874422, 0.0333134085) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.118751228, 0.143534675, 0.313851297, -0.125794157, -0.522570074, 0.158850178, 0.240885168, 0.303821057, 0.136876181, 0.256659836, -0.292328417, -0.103683092, 0.00164700148, 0.316015363, 0.365450233, 0.213347703) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.136681646, -0.0472744666, 0.0655301362, -0.333476067, 0.148660138, -0.628658295, -0.304576725, -0.131446287, -0.101340055, -0.490237862, 0.0292488094, -0.0628819168, -0.976173401, 0.233433455, -0.0816941112, -0.312259942) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.00662430609, -0.282198697, -0.348632604, -0.361591011, -0.0156137003, -0.173478901, -0.180921897, -0.100337021, 0.366464674, -0.767414570, 0.474318445, 0.839928508, 0.343853205, -0.111585930, -0.164723292, 0.109615229) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.0570074543, 0.157541975, -0.165506095, -0.0781890824, -0.119038269, 0.506914318, -0.471635967, -0.118163347, 0.0809463039, -0.0930275247, 0.395359099, -0.0700016096, 0.0459560528, -0.0490137078, 0.108860627, -0.0732236058) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.198683023, -0.0437214300, 0.146019712, -0.269085646, -0.0868395716, -0.0731469989, -0.0900536031, 0.0945235416, -0.460628062, -0.119860493, 0.136535957, -0.131732374, -0.0282216445, 0.244298354, 0.106416151, 0.111917853) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.302394420, -0.0211776644, 0.123817913, 0.0453351401, 0.0186634455, -0.258633912, -0.0534412973, -0.0767093748, -0.0187266618, 0.474092424, 0.169050202, -0.162011236, -0.377098799, 0.228852227, 0.395186394, 0.288728803) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL24)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(-0.291868776, -0.0294898953, -0.366670340, -0.349473506) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
+  let d_MODEL21 = textureDimensions(t_MODEL21);
+  let d_MODEL22 = textureDimensions(t_MODEL22);
+  let d_MODEL23 = textureDimensions(t_MODEL23);
+  let d_MODEL24 = textureDimensions(t_MODEL24);
+  var res0 = vec4f(0.191096291, 0.118082337, -0.0155482134, 0.0202376060);
+  res0 += mat4x4f(-0.0835043788, 0.320936829, -0.00847153831, -0.266538531, -0.0623734221, -0.0784289986, -0.121421061, 0.202541679, 0.0144935185, 0.230709106, -0.0679582953, -0.323342890, 0.0655283332, -0.0785074085, -0.0701586828, -0.397837043) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, -1), d_MODEL21), 0);
+  res0 += mat4x4f(0.0522326939, -0.229451507, 0.150098577, -0.0270188563, -0.0110954400, -0.0316505060, -0.243020222, 0.826346040, -0.0421515889, 0.134129941, 0.117890224, -0.117816173, 0.0170810483, -0.0616252869, 0.0396965519, -0.208331749) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, -1), d_MODEL22), 0);
+  res0 += mat4x4f(0.0570328794, 0.0318897925, -0.108744740, -0.0937756896, -0.0193286296, -0.231209546, 0.333971202, -0.121061519, 0.0254167672, 0.108722180, -0.0708989128, -0.0626340732, 0.0516111851, 0.270863116, 0.116174988, -0.00589017384) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, -1), d_MODEL23), 0);
+  res0 += mat4x4f(-0.0226302855, -0.0901356414, -0.104092516, -0.296060383, 0.162141785, -0.393312007, 0.0503337458, 0.132422864, -0.0487809330, 0.00388976908, 0.0353553481, 0.0222108439, 0.0639005080, 0.0270982124, -0.0497931316, 0.310036719) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, -1), d_MODEL24), 0);
+  res0 += mat4x4f(-0.0533053949, 0.192781165, 0.109614521, -0.335484475, 0.0584460609, 0.0664003119, 0.0334077626, 0.447061777, 0.0281130858, -0.271410853, -0.0379265659, -0.136523396, -0.0212840941, -0.235665306, 0.0457138158, -0.187572658) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 0), d_MODEL21), 0);
+  res0 += mat4x4f(-0.0353358388, 0.0274007097, -0.0636283159, 0.135066599, 0.00135026185, 0.290659159, 0.0463014059, 0.327624112, -0.314151108, -0.0369141735, -0.105469249, -0.132340461, -0.0913199931, 0.102573469, 0.0186791606, 0.213764831) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 0), d_MODEL22), 0);
+  res0 += mat4x4f(0.0244297180, -0.0856372714, -0.474326283, -0.201401532, 0.0730626509, 0.384380013, -0.339937121, 0.182962924, 0.0723727047, -0.204983816, -0.00524215680, 0.255992204, -0.0833062232, 0.634550035, -0.679360926, 0.00978923310) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 0), d_MODEL23), 0);
+  res0 += mat4x4f(-0.0990470573, 0.349263966, 0.00297242962, 0.376591951, 0.148287684, 0.204209715, 0.700293303, 0.0480134003, -0.000598180864, -0.139589220, -0.0144439414, 0.240445942, 0.0424263664, -0.0785983130, -0.0118202167, 0.390625238) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 0), d_MODEL24), 0);
+  res0 += mat4x4f(-0.0434386618, -0.312244058, 0.0911769420, 0.0228179209, -0.0662108809, -0.0275177769, -0.149389535, 0.0957570672, -0.0268660560, -0.131532550, 0.219678313, 0.211699873, 0.0897344425, 0.0814676061, -0.0564308353, -0.0565161072) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 1), d_MODEL21), 0);
+  res0 += mat4x4f(-0.0779543519, 0.229595646, 0.0637364760, -0.0696602240, -0.0980207846, 0.383502603, 0.425339460, 0.0772323906, -0.0477042049, 0.0498802550, -0.199901745, -0.208233580, -0.0269773081, 0.0241024848, -0.133664504, -0.100880228) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 1), d_MODEL22), 0);
+  res0 += mat4x4f(-0.0117000053, -0.0602870099, 0.386916935, -0.0578138679, 0.0138670066, -0.128200501, 0.0626409650, -0.0789210424, -0.0927192867, 0.276778013, -0.0647650510, -0.00898302160, -0.00283997948, 0.105342865, -0.227332652, -0.0601032674) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 1), d_MODEL23), 0);
+  res0 += mat4x4f(-0.0165065322, 0.108358353, 0.0306896176, 0.0714910552, -0.000547725125, -0.302721322, 0.690933049, -0.114901900, -0.0369489565, 0.363634944, -0.0670856759, 0.0404936112, 0.0639278665, 0.322027981, -0.102218688, -0.112317741) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 1), d_MODEL24), 0);
+  res0 += mat4x4f(-0.0887541100, 0.0722083673, 0.134502500, -0.125358075, -0.0952963531, 0.0892397389, 0.0244714227, -0.0142309973, -0.0321915112, 0.161093235, 0.207961053, 0.148043841, -0.0489299521, -0.178717896, 0.219274864, -0.0773427039) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, -1), d_MODEL21), 0);
+  res0 += mat4x4f(0.0864689946, 0.233068675, 0.0849193707, -0.0819132254, 0.00348676741, -0.415909410, -0.260461152, -0.142850205, -0.0817381144, 0.197839677, -0.0285985190, 0.110425122, 0.0397681221, -0.102063522, -0.0816109926, -0.250549138) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, -1), d_MODEL22), 0);
+  res0 += mat4x4f(-0.0657642037, 0.333122760, 0.0923847631, 0.372169822, -0.299549878, 1.08262241, 0.230661511, 0.324610025, 0.0854215398, -0.0173258036, -0.0899626687, 0.128338978, -0.0596249439, -0.173842102, 0.0500116199, -0.439648271) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, -1), d_MODEL23), 0);
+  res0 += mat4x4f(-0.0576705709, -0.140645370, 0.0755439475, 0.445335448, -0.0344630927, -0.397032320, -0.258351207, 0.125652671, -0.00709831715, -0.125738502, 0.0679773837, 0.156890780, 0.0705309808, -0.00439019874, -0.0854624957, 0.177181646) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, -1), d_MODEL24), 0);
+  res0 += mat4x4f(-0.173485309, -0.228088006, -0.0730370432, 0.543988764, -0.0125889918, -0.163449183, 0.364013493, 0.255002230, 0.0113501027, 0.248464659, 0.232526079, 0.486107647, -0.00819183514, -0.601890206, -0.216747150, -0.383389622) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 0), d_MODEL21), 0);
+  res0 += mat4x4f(-0.00621658051, 0.179948404, -0.00998901017, -0.114968188, -0.101559132, -0.466226012, -0.211684033, -0.602481365, 0.208021030, -0.161155358, 0.551515698, 0.128410831, 0.0731352791, 0.488187194, 0.153526917, -0.410031438) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 0), d_MODEL22), 0);
+  res0 += mat4x4f(0.0725996345, -0.588310301, 0.119344592, 0.0949277058, 0.156406298, -0.861713529, -0.0177855156, -0.691650450, 0.251751244, 0.0402554460, -0.140814185, -0.0957379118, 0.0221001618, -1.28781784, -0.565343380, -0.532599688) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 0), d_MODEL23), 0);
+  res0 += mat4x4f(0.274068326, 0.498131752, -0.146524921, 0.212210134, -0.316557556, -0.446683615, 0.382790625, 0.219005108, 0.280690640, -0.540124893, 0.114010505, -0.282503933, -0.0787481666, -0.177874818, 0.202093750, -0.580213726) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 0), d_MODEL24), 0);
+  res0 += mat4x4f(-0.252028197, 0.263704509, -0.471653998, 0.217153460, 0.0925339386, -0.151340127, -0.419560313, 0.0492689908, -0.00722828927, -0.105160154, -0.569017470, 0.0561541729, -0.0586895049, 0.488690197, -0.363726139, -0.0622695908) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 1), d_MODEL21), 0);
+  res0 += mat4x4f(-0.0460322276, -0.0466793329, 0.132961661, -0.0600009970, -0.0229834989, -0.969236612, 0.368442863, -0.154355898, 0.167816356, -0.333820254, -0.318002701, 0.303485513, -0.141321912, 0.117828429, 0.211384341, 0.0322614536) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 1), d_MODEL22), 0);
+  res0 += mat4x4f(-0.0183320958, 0.0827004090, -0.842336535, 0.234093279, -0.0535792373, 0.0480247326, 0.0779319555, -0.181220680, 0.242228657, -0.226780489, -0.0564081334, -0.0699552968, 0.0936812758, -0.603143752, -0.108835153, -0.0653923303) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 1), d_MODEL23), 0);
+  res0 += mat4x4f(0.509662211, -0.197731391, -0.203839898, -0.241959512, -0.134026825, 0.0541922189, 0.288017660, 0.0769006982, 0.274232358, 0.268230855, -0.306350917, -0.0476246998, 0.0836594850, -0.368317872, 0.307955980, -0.237987027) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 1), d_MODEL24), 0);
+  res0 += mat4x4f(-0.0334813781, -0.234065920, 0.221207857, 0.271446168, -0.0234802533, -0.319227755, -0.0402724519, 0.378328860, -0.0570328869, -0.410877556, 0.109485254, 0.111768439, 0.000551630510, -0.138855755, 0.0891965851, 0.158496976) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, -1), d_MODEL21), 0);
+  res0 += mat4x4f(-0.0609852411, 0.0333012603, 0.125719443, 0.200493082, 0.0884419233, 0.0971443877, 0.0367564447, -0.270049691, 0.0766598955, -0.181431487, -0.0187010188, -0.0265211482, 0.134309739, 0.261863261, -0.0105380509, 0.0218748804) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, -1), d_MODEL22), 0);
+  res0 += mat4x4f(0.0590157025, -0.470154703, -0.113162480, 0.0387580357, 0.272280544, 0.532985747, 0.555640697, 0.120424971, -0.0543330237, 0.123648912, 0.0369715169, -0.0403839089, 0.0823150724, 0.393272310, 0.0200071558, 0.0547098331) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, -1), d_MODEL23), 0);
+  res0 += mat4x4f(0.00142848562, 0.317295820, -0.0787122473, -0.0779520795, 0.0447607674, -0.356001616, -0.106691696, -0.00745183090, -0.0236969311, 0.196310103, -0.0431807190, -0.104243316, 0.125383049, 0.0850050896, -0.197134152, -0.282021940) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, -1), d_MODEL24), 0);
+  res0 += mat4x4f(0.221669316, 0.218818918, 0.242600039, 0.350815177, 0.0532642081, -0.406765372, -0.274101198, 0.144368514, -0.0154005084, -0.126898587, 0.0269314162, -0.0422992967, 0.176814556, -0.219362602, -0.0629033372, 0.0801898316) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 0), d_MODEL21), 0);
+  res0 += mat4x4f(-0.0844821483, -0.346438855, -0.110856943, -0.246936306, 0.163773909, 0.559442520, -0.00873385742, 0.0258984119, 0.0493676998, -0.0751936808, 0.0924034044, -0.0814731941, 0.196468502, 0.296227902, 0.0327874422, 0.0333134085) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 0), d_MODEL22), 0);
+  res0 += mat4x4f(0.118751228, 0.143534675, 0.313851297, -0.125794157, -0.522570074, 0.158850178, 0.240885168, 0.303821057, 0.136876181, 0.256659836, -0.292328417, -0.103683092, 0.00164700148, 0.316015363, 0.365450233, 0.213347703) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 0), d_MODEL23), 0);
+  res0 += mat4x4f(-0.136681646, -0.0472744666, 0.0655301362, -0.333476067, 0.148660138, -0.628658295, -0.304576725, -0.131446287, -0.101340055, -0.490237862, 0.0292488094, -0.0628819168, -0.976173401, 0.233433455, -0.0816941112, -0.312259942) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 0), d_MODEL24), 0);
+  res0 += mat4x4f(-0.00662430609, -0.282198697, -0.348632604, -0.361591011, -0.0156137003, -0.173478901, -0.180921897, -0.100337021, 0.366464674, -0.767414570, 0.474318445, 0.839928508, 0.343853205, -0.111585930, -0.164723292, 0.109615229) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 1), d_MODEL21), 0);
+  res0 += mat4x4f(-0.0570074543, 0.157541975, -0.165506095, -0.0781890824, -0.119038269, 0.506914318, -0.471635967, -0.118163347, 0.0809463039, -0.0930275247, 0.395359099, -0.0700016096, 0.0459560528, -0.0490137078, 0.108860627, -0.0732236058) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 1), d_MODEL22), 0);
+  res0 += mat4x4f(0.198683023, -0.0437214300, 0.146019712, -0.269085646, -0.0868395716, -0.0731469989, -0.0900536031, 0.0945235416, -0.460628062, -0.119860493, 0.136535957, -0.131732374, -0.0282216445, 0.244298354, 0.106416151, 0.111917853) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 1), d_MODEL23), 0);
+  res0 += mat4x4f(-0.302394420, -0.0211776644, 0.123817913, 0.0453351401, 0.0186634455, -0.258633912, -0.0534412973, -0.0767093748, -0.0187266618, 0.474092424, 0.169050202, -0.162011236, -0.377098799, 0.228852227, 0.395186394, 0.288728803) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 1), d_MODEL24), 0);
+  res0 = max(res0, vec4f(0.0)) + vec4f(-0.291868776, -0.0294898953, -0.366670340, -0.349473506) * min(res0, vec4f(0.0));
+  var res1 = vec4f(0.158087745, -0.217670292, -0.0185317881, 0.178050697);
+  res1 += mat4x4f(0.0758518130, -0.113779150, 0.102624997, -0.0431579761, 0.0134656997, 0.0188449845, 0.334608525, 0.265728772, 0.231672302, -0.363515675, -0.00363430008, -0.0814866871, 0.197622746, 0.0928352699, 0.0974389687, -0.494667560) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, -1), d_MODEL21), 0);
+  res1 += mat4x4f(0.0148363980, 0.0151116624, 0.183584869, -0.0803946704, 0.494173229, -0.219392106, 0.0727688074, -0.192429453, 0.213936955, -0.0531866960, -0.00638529612, -0.0368750319, -0.00913846493, -0.200858846, -0.286211580, 0.00610290421) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, -1), d_MODEL22), 0);
+  res1 += mat4x4f(0.0982755646, -0.292356431, 0.0563820191, 0.167575866, 0.124246731, 0.122740589, -0.205697805, 0.486336917, 0.0935971513, 0.0494479276, -0.0209939219, 0.303610086, -0.0827917606, -0.383236259, -0.349517792, 0.0460925885) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, -1), d_MODEL23), 0);
+  res1 += mat4x4f(0.00981499441, -0.0256606154, 0.00312965061, 0.245655909, -0.155399010, 0.536309063, -0.0236739889, -0.395325273, -0.0588347055, 0.0442368686, 0.00391616905, 0.199660346, 0.0536432192, 0.174382478, -0.164256185, -0.0355202667) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, -1), d_MODEL24), 0);
+  res1 += mat4x4f(0.192788184, 0.0835899711, -0.144200176, -0.0547327846, 0.168349415, 0.00103965309, 0.215653509, -0.0541883521, -0.111369468, 0.122669205, 0.0908218771, -0.107457489, 0.143596098, -0.307335883, 0.175501227, 0.271327674) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 0), d_MODEL21), 0);
+  res1 += mat4x4f(-0.162023857, -0.251206517, 0.313284516, -0.258374125, 0.0321965329, -0.556311667, 0.159410179, 0.0853305310, -0.658686221, 0.0352494307, 0.0276314653, -0.126371577, -0.225816265, -0.353337049, 0.0310660750, 0.337131619) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 0), d_MODEL22), 0);
+  res1 += mat4x4f(0.157109186, -0.249636292, -0.0945196524, 0.316130161, -0.217629880, 0.106567860, 0.0521435365, -0.182382852, -0.0392202102, 0.271507829, -0.0342833474, 0.495645136, -0.297990412, -0.221037760, 0.0422198698, -0.776360452) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 0), d_MODEL23), 0);
+  res1 += mat4x4f(0.0275207348, -0.0308967829, 0.401726604, 0.129528612, -0.192256823, -0.0559794530, -0.708667278, -1.59105790, 0.0430152044, -0.147676691, -0.111629561, 0.120787837, -0.0980392322, 0.284834146, -0.000243679679, 0.118942596) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 0), d_MODEL24), 0);
+  res1 += mat4x4f(0.0207033008, 0.149664447, 0.0267391670, -0.277195424, 0.0581342354, -0.403647155, 0.134941444, 0.0302642509, 0.140457243, -0.101696678, 0.140541583, 0.345201880, 0.0257042646, -0.0820260942, 0.0924930573, 0.0344888605) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 1), d_MODEL21), 0);
+  res1 += mat4x4f(-0.112005882, -0.478638083, -0.0252110790, -0.199648514, -0.0515367128, -0.132232293, -0.0246379729, 0.0996418893, -0.0301403217, -0.359231502, 0.178156257, 0.544205248, -0.181823626, -0.0687229484, -0.207405493, 0.0137702813) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 1), d_MODEL22), 0);
+  res1 += mat4x4f(-0.149241239, -0.00923625100, 0.154316396, 0.105800740, 0.0174587574, 0.0395568050, -0.466292620, -0.274452657, -0.498193651, -0.120071515, 0.122510701, 0.679168582, 0.0702651441, 0.210203215, -0.544557035, 0.0449331477) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 1), d_MODEL23), 0);
+  res1 += mat4x4f(-0.158731788, -0.0408732444, 0.0423479974, -0.648659885, -0.180765778, -0.385271609, 0.0135432165, 0.159972340, -0.137690380, 0.260266721, -0.0769964829, -0.129068464, -0.129299566, 0.160617352, -0.148824796, -0.179424956) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 1), d_MODEL24), 0);
+  res1 += mat4x4f(0.0659455135, -0.0597113371, -0.00961060356, 0.126402944, 0.301557392, -0.538212001, 0.436588258, -0.00641876040, -0.0185977183, 0.520063639, 0.0127102882, 0.0191303436, 0.311721116, -0.128285751, -0.0724509656, -0.875764012) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, -1), d_MODEL21), 0);
+  res1 += mat4x4f(-0.0788446665, 0.547816336, 0.124608047, -0.0260977671, -0.389977366, 0.412411302, 0.0988227352, -0.0345606655, 0.0417100750, -0.178595707, 0.324086756, 0.110345468, 0.0626829714, -0.281902343, 0.0914943218, 0.336143553) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, -1), d_MODEL22), 0);
+  res1 += mat4x4f(0.288655221, 0.152807727, 0.00319523388, 0.0769772008, 0.0762256533, -0.402751863, 0.234273180, -0.141063303, 0.0349377804, -0.204442367, 0.0722359568, -0.0117119579, -0.353283823, 0.345741749, -0.0999976993, 0.0623140484) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, -1), d_MODEL23), 0);
+  res1 += mat4x4f(-0.215656206, -0.421708196, 0.0148333451, 0.244726181, 0.123496190, 0.0706226230, 0.317195982, -0.233533591, 0.0368134156, 0.123567857, 0.172551751, 0.131921917, 0.228407443, -0.146562979, -0.159726024, 0.0387904234) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, -1), d_MODEL24), 0);
+  res1 += mat4x4f(-0.380630851, 0.259044170, -0.210395247, -0.868260622, 0.144500434, 0.0764837787, -0.197641581, -0.352129489, 0.160760775, -0.132254153, -0.161003903, -0.511525631, 0.207092255, -0.433206320, 0.224460423, 0.558750689) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 0), d_MODEL21), 0);
+  res1 += mat4x4f(-0.207927540, 0.267902613, -0.260160774, 0.494130373, -0.0635280982, 0.192028478, 0.0600927807, 0.203646138, 0.119588807, 0.552412748, -0.449367881, -0.348824561, -0.132829383, -0.349508613, -0.283326030, 0.859655738) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 0), d_MODEL22), 0);
+  res1 += mat4x4f(-0.336516500, 0.914927185, -0.733778656, 0.139035210, 0.190529510, 0.461891502, 0.0111933984, -0.347969800, 0.0248175580, -0.271928579, -0.395186633, 0.405206531, -0.0805231631, -0.000248462602, -0.0278216042, -0.741676748) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 0), d_MODEL23), 0);
+  res1 += mat4x4f(0.718325853, 0.539203346, -0.727627635, -0.102679193, 0.169578910, -1.10283864, 0.363999397, 0.0960472673, 0.432068229, -0.522640526, -0.200746372, -0.334342629, 0.558139443, 0.495950133, 0.0353215672, -0.728135049) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 0), d_MODEL24), 0);
+  res1 += mat4x4f(0.0147131542, -0.179802462, -0.316113114, -0.656521797, 0.150614530, -0.227226540, 0.000356920646, 0.297847092, -0.223475367, -0.428102255, -0.935433984, -0.301660359, 0.0245078411, -0.126998842, -0.391571462, 0.167170450) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 1), d_MODEL21), 0);
+  res1 += mat4x4f(-0.538100839, 0.108946241, -0.00288127852, 0.359585106, 0.0233569834, 0.424352199, 0.552241623, 0.518014848, -0.814990640, 0.194540054, -0.453173578, 0.124625437, -0.151831970, -0.244771808, 0.0947361887, -0.217241079) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 1), d_MODEL22), 0);
+  res1 += mat4x4f(-0.0379735194, -0.366714865, -0.342851132, 0.213122487, 0.161416948, 0.133909225, 0.368729681, -0.0680588484, -0.633139789, 0.397390604, -0.0327995308, 1.05216455, -0.107963659, 0.630932271, 0.0156747643, -0.170154139) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 1), d_MODEL23), 0);
+  res1 += mat4x4f(-0.00807945617, 0.579570234, -0.593471289, -0.152876034, -0.0444745161, 0.109187841, 0.126212791, 0.254768938, 0.0639310703, -0.338509947, 0.00866647810, -0.272189111, -0.0635209456, -0.0986849070, 0.399850965, -0.0991764218) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 1), d_MODEL24), 0);
+  res1 += mat4x4f(-0.321549743, 0.284391612, 0.000183066586, 0.138860777, 0.164297789, 0.233269840, 0.00734401355, 0.193550840, -0.0479794219, -0.275656074, -0.271113485, -0.0586766042, 0.145435736, -0.156424895, -0.103915751, -0.324024945) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, -1), d_MODEL21), 0);
+  res1 += mat4x4f(0.305641115, -0.0167108756, 0.112621024, -0.388399422, -0.142245010, -0.0917421430, -0.206675097, 0.121608667, 0.0444707647, 0.208484560, -0.201448753, 0.0125682056, -0.0517526045, 0.282039136, -0.344411492, 0.213600278) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, -1), d_MODEL22), 0);
+  res1 += mat4x4f(-0.215879217, -0.00807237998, 0.0734426230, 0.0744809434, -0.281421810, -0.174450606, 0.169023171, 0.833174169, -0.0279896799, 0.364031821, 0.0297581423, 0.155773088, 0.0824381560, -0.0858014226, 0.157814562, -0.00697151618) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, -1), d_MODEL23), 0);
+  res1 += mat4x4f(-0.0818758979, -0.0402573049, -0.0228873957, 0.146798491, 0.0251613930, -0.276449800, -0.134703726, -0.0540369339, -0.0473155230, 0.0234754551, -0.194871828, 0.126841873, -0.0349094309, -0.366443038, -0.128102034, 0.131769761) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, -1), d_MODEL24), 0);
+  res1 += mat4x4f(-0.763333261, 0.541316211, -0.382454604, -0.155554444, 0.0351129845, 0.190435812, 0.00845936686, 0.252534688, -0.106657177, 0.446621209, 0.518409967, 0.102423824, 0.352751523, -0.0765509978, 0.0959176272, -0.672018945) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 0), d_MODEL21), 0);
+  res1 += mat4x4f(-0.0475903153, -0.105472103, 0.0830030218, 0.781636059, 0.240821198, -0.0781749487, -0.152628705, 0.366326392, 0.181214392, -0.328735560, 0.240291148, -0.00875178538, -0.198805332, 0.310335040, 0.508988500, 0.187245265) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 0), d_MODEL22), 0);
+  res1 += mat4x4f(0.329795122, -0.502660573, 0.280768365, 0.161289647, -0.666686833, -0.570792735, 0.634160995, 0.687343836, 0.210676283, -0.0787819773, 0.147462457, -0.350691289, -0.111427106, -0.142066240, 0.323447973, 0.120485649) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 0), d_MODEL23), 0);
+  res1 += mat4x4f(-0.227969259, 0.306807518, 0.220705986, 0.0417111889, 0.0166445244, 0.115744799, -0.181724682, -0.201503426, 0.244625837, -0.584081888, 0.175364375, 0.0218477603, 0.141558692, 0.103898004, 0.509752274, 0.388390005) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 0), d_MODEL24), 0);
+  res1 += mat4x4f(-0.212711886, 0.181127742, -0.0768692046, -0.0542910583, 0.182266384, -0.0611174330, 0.263522774, 0.267140090, 0.0882956684, 0.760578334, -0.0483694598, 0.0867225304, 0.163057804, 0.0809839219, 0.0631096587, -0.337883532) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 1), d_MODEL21), 0);
+  res1 += mat4x4f(-0.279900283, 0.802447081, -0.384167731, 0.278266311, -0.218218863, -0.245423377, -0.0930702463, 0.166026309, 0.0517829433, -0.0227586571, -0.220730841, 0.385023475, -0.117128626, -0.180658326, -0.0782627538, 0.284781724) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 1), d_MODEL22), 0);
+  res1 += mat4x4f(-0.0362303704, -0.0382465124, 0.343953192, -0.381216973, -0.0538652129, 0.0830318630, -0.435496807, 0.162039906, -0.181431860, -0.323400855, 0.407768190, -0.359344304, -0.183018029, -0.257758945, -0.169801965, -0.0285135601) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 1), d_MODEL23), 0);
+  res1 += mat4x4f(-0.0694794133, -0.492161185, 0.314448476, -0.0573691763, 0.130215973, 0.248296872, -0.118987828, -0.0855955705, -0.0442915075, -0.0522340871, 0.288049519, 0.206530824, -0.0121621527, -0.936735153, 0.163094848, 0.0247595031) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 1), d_MODEL24), 0);
+  res1 = max(res1, vec4f(0.0)) + vec4f(0.402112663, 0.144628376, 0.339708269, -0.00770804705) * min(res1, vec4f(0.0));
+  var res2 = vec4f(-0.0437118821, 0.194246843, 0.0128156664, -0.0726023018);
+  res2 += mat4x4f(-0.323029250, -0.247575983, -0.133309186, 0.0912710130, 0.0112034371, -0.181695148, -0.446441799, -0.290555120, -0.0443161204, -0.0160919651, -0.233726695, 0.679009199, 0.00850418210, -0.00792086031, 0.0585588440, -0.480883747) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, -1), d_MODEL21), 0);
+  res2 += mat4x4f(0.0855776593, 0.0242188927, 0.0666023195, 0.151919559, -0.169288665, -0.221793726, -0.145008832, -0.339883983, -0.175370961, 0.0712879747, 0.494584233, 0.450556934, -0.165505931, -0.100188412, 0.153608099, 0.318080515) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, -1), d_MODEL22), 0);
+  res2 += mat4x4f(-0.177492067, 0.0814234242, 0.180881068, 0.758887470, -0.0778874978, -0.0944764093, -0.0280988272, -0.733959556, 0.0940898284, -0.135041356, 0.0827919692, -0.0729855895, 0.00106701499, 0.181467265, 0.285802484, 0.314166069) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, -1), d_MODEL23), 0);
+  res2 += mat4x4f(-0.0701537952, -0.381072223, 0.244678438, 0.0292017870, -0.140685856, 0.00244180602, -0.292611390, 0.638532877, 0.0327618271, -0.0595934130, 0.0853318349, 0.122237012, -0.0531855039, 0.0882121846, 0.0491881929, -1.15587294) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, -1), d_MODEL24), 0);
+  res2 += mat4x4f(-0.113171495, -0.139187187, 0.00119329069, -0.615951002, 0.397127479, 0.317650169, -0.299365312, -0.137942851, -0.0318069644, 0.290340364, 0.234868199, -0.620033026, -0.367349267, -0.218544587, 0.0371004418, -0.213607088) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 0), d_MODEL21), 0);
+  res2 += mat4x4f(0.272250324, 0.204431683, 0.104629487, -0.0442763157, -0.230449885, 0.374218404, -0.00202594581, 0.307116002, 0.207980841, 0.172930449, 0.388228834, -0.964850128, -0.336314976, 0.165841058, 0.115896255, -0.216905668) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 0), d_MODEL22), 0);
+  res2 += mat4x4f(0.128262296, -0.282802939, 0.104591668, -0.289028555, 0.151274472, 0.291079223, -0.112665944, 0.771332860, 0.0145233264, -0.362457424, 0.0545686632, 0.238299236, -0.259442300, -0.210903421, -0.0509569272, -0.0687488392) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 0), d_MODEL23), 0);
+  res2 += mat4x4f(0.122629516, 0.188457310, -0.0369512737, -0.148085192, -0.137434334, 0.532746375, 0.00770634273, 0.417097837, 0.304522008, -0.185627222, 0.216567516, -0.257803053, 0.136812359, 0.150924176, -0.0509892553, 0.468368649) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 0), d_MODEL24), 0);
+  res2 += mat4x4f(-0.226842135, -0.335077614, 0.0984120071, 0.345264763, -0.0649627000, 0.0351359099, -0.396623015, 0.0723531023, -0.135889038, -0.242378458, -0.0462488383, -0.183279470, -0.122266643, -0.154255196, 0.112024687, -0.0815230235) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 1), d_MODEL21), 0);
+  res2 += mat4x4f(0.0971643850, 0.212683782, -0.144751281, -0.188877732, 0.0917355940, 0.203227922, -0.0136252530, -0.0488306396, 0.130684957, 0.214469105, -0.0588203333, -0.242550746, -0.177160904, -0.119227566, -0.0227932297, -0.258650988) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 1), d_MODEL22), 0);
+  res2 += mat4x4f(0.00272111851, -0.229161873, -0.0906480923, 0.132799342, -0.0698363334, -0.0910998881, 0.114770465, -0.278882056, -0.107160538, -0.282859117, -0.127834201, 0.239960551, 0.143427357, 0.0918311179, 0.0449577682, 0.0694138855) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 1), d_MODEL23), 0);
+  res2 += mat4x4f(0.309209704, -0.0271725897, -0.0278133955, 0.350299478, -0.0546866693, -0.399190873, 0.118435472, 0.0591981150, 0.140508279, 0.0697252676, -0.163661942, 0.279905617, 0.200742945, 0.332952321, -0.00881751813, -0.315338761) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 1), d_MODEL24), 0);
+  res2 += mat4x4f(0.100151129, -0.0478802063, -0.0808711201, -0.138616145, -0.229255036, -0.0543208495, -0.443864822, -0.126730502, -0.0183197167, -0.0870011747, -0.0856353790, -1.74269736, 0.100305863, 0.105104677, 0.497006357, -0.337380528) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, -1), d_MODEL21), 0);
+  res2 += mat4x4f(0.113868743, 0.182828948, -0.155013129, -0.271417856, 0.358062536, -0.136509374, 0.323676318, 0.295881003, 0.0226396248, -0.0597026460, -1.00068235, 0.213753790, 0.0258392412, -0.157618761, -0.273684084, -0.158925101) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, -1), d_MODEL22), 0);
+  res2 += mat4x4f(0.162114412, 0.136261761, -0.0813228935, -0.513298929, -0.889911294, 0.186534256, 0.140812591, 0.794954360, 0.0147611210, -0.00325846788, 0.124246076, 0.149153501, 0.313748926, 0.214997530, 0.220826045, -0.361353964) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, -1), d_MODEL23), 0);
+  res2 += mat4x4f(0.0430859402, -0.151088879, -0.194155410, 0.157847002, -0.0754416659, 0.0689400360, 0.439295202, 0.0138610583, 0.0682737902, -0.0744250864, -0.157480448, -0.589437187, -0.176680356, -0.134439453, 0.213318080, -0.495924741) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, -1), d_MODEL24), 0);
+  res2 += mat4x4f(1.11661458, -0.0825700387, 0.453697473, -0.330348790, 0.0353471711, 0.0303132404, -0.0693502575, -0.321715117, 0.615285039, 0.146835566, -0.00211754697, 1.57723415, 0.151368693, -0.287347943, -0.115277655, -0.259399742) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 0), d_MODEL21), 0);
+  res2 += mat4x4f(-0.0273721050, -0.0815369934, -0.0480703935, -0.187034130, 0.199408337, 0.572071552, 0.127470449, 0.0227673911, -0.0990702957, -0.311540306, 0.0566441789, -0.421649307, 0.0951363072, 0.0859929547, -0.0905423239, -0.114018813) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 0), d_MODEL22), 0);
+  res2 += mat4x4f(0.189249456, -0.428328931, 0.599468112, -0.252710819, -1.19862151, -0.777328014, -0.400072813, -0.545503795, 0.0131718097, -0.250829726, -0.513843715, 0.151161686, 0.122950904, 0.0861333832, -0.207191780, -0.124175861) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 0), d_MODEL23), 0);
+  res2 += mat4x4f(-0.270926625, 0.139488086, -0.0142653696, -0.299038529, 0.177133441, -0.0569531843, -0.304682344, -0.0400999747, -0.451927572, -0.0832879171, 0.0471361019, -0.151694208, -1.26211810, -0.309205294, -0.230636388, 0.863987923) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 0), d_MODEL24), 0);
+  res2 += mat4x4f(0.0805909336, 0.119068742, -0.319470644, 0.0578039102, 0.0713174418, -0.173203841, -0.216338709, -0.154665515, 0.701565087, 0.569967628, 0.122575685, 0.226546824, 0.0434436500, 0.353150159, 0.0325606987, 0.0801580027) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 1), d_MODEL21), 0);
+  res2 += mat4x4f(-0.149065405, 0.0425965637, 0.0763090253, -0.239301801, -0.242733613, -0.611327946, 0.101718232, -0.184668720, 0.121490739, -0.330357492, -0.0553641729, -0.0508278012, 0.160769030, 0.182655022, 0.246597916, 0.340958774) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 1), d_MODEL22), 0);
+  res2 += mat4x4f(0.365563452, 0.590382695, -0.226651207, 0.106215119, -0.190444082, -0.0756283998, 0.0660094470, -0.0412472896, -0.369518518, 0.0983791277, 0.102034062, 0.355537504, -0.283400416, -0.0562513582, -0.0214648023, 0.149789557) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 1), d_MODEL23), 0);
+  res2 += mat4x4f(-0.313734144, -0.436394632, 0.114102386, -0.150150687, 0.157109171, -0.102591820, 0.190984681, 0.0821657181, -0.348457605, 0.0331038460, 0.0509421639, 0.0321286172, -0.650490344, -0.0932162032, 0.212955996, 0.0894164369) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 1), d_MODEL24), 0);
+  res2 += mat4x4f(-0.117819808, -0.146537334, -0.263683707, 0.254547983, -0.00390222459, -0.00688400306, -0.191185996, -0.325384766, -0.225397035, 0.334209770, 0.383068979, 0.901309073, -0.0518234260, -0.0462697372, -0.817751288, -0.240131944) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, -1), d_MODEL21), 0);
+  res2 += mat4x4f(0.0110800453, 0.333300501, 0.148081452, -0.0280445591, 0.0636819154, -0.0741630048, -0.242662713, -0.371692419, -0.0342182629, 0.0261592008, -0.153377831, 0.338916063, 0.0249342043, 0.0676959977, 0.00370294158, 0.0720434636) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, -1), d_MODEL22), 0);
+  res2 += mat4x4f(-0.00503178686, -0.0268377773, -0.711569309, 0.223792106, 0.726627827, 0.314594775, -0.479378164, 0.650277257, 0.0658533424, -0.0170795228, 0.0930861682, -0.113245666, -0.0376508683, -0.0799458846, -0.133799925, 0.216020167) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, -1), d_MODEL23), 0);
+  res2 += mat4x4f(-0.132307366, -0.154495999, -0.255311877, 0.0289862528, -0.0322874784, 0.0767913014, 0.149008989, 0.0217660517, 0.0471800417, 0.0449854098, -0.0320553072, 0.104897216, 0.0380371846, 0.0364584550, 0.438484132, -0.0955494791) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, -1), d_MODEL24), 0);
+  res2 += mat4x4f(0.210055187, 0.173254579, 0.393345535, -0.288728148, 0.0921343714, 0.0256949943, -0.110666826, 0.0305762049, -0.471047133, 0.469547808, 0.387519568, 0.0170489401, 0.171562597, 0.0455772132, 0.215246588, -0.0888530761) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 0), d_MODEL21), 0);
+  res2 += mat4x4f(-0.376324505, -0.261219472, 0.0257211942, 0.360696018, -0.0321826637, -0.148095116, 0.0659326762, 0.582747638, -0.0228238925, 0.414201081, -0.533506393, -0.315740526, 0.205265358, 0.187730879, 0.0482796505, 0.252923310) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 0), d_MODEL22), 0);
+  res2 += mat4x4f(-0.181703329, 0.473493069, 0.215135366, 0.121500283, 0.577278972, -0.199966744, 0.282297373, -0.182563394, -0.0885683298, -0.0937873051, 0.430278957, 0.00625065435, -0.0748812780, 0.165004745, 0.0951160640, 0.121515192) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 0), d_MODEL23), 0);
+  res2 += mat4x4f(0.0708426386, 0.179255098, 0.0391567349, -0.217699453, -0.0349266008, -0.0358481929, 0.149756178, 0.452197015, 0.000281843822, -0.100339741, -0.394091815, -0.135328278, -0.0379910171, 0.135998100, -0.765549242, 0.235231489) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 0), d_MODEL24), 0);
+  res2 += mat4x4f(0.0101982672, -0.173217729, -0.0692929998, 0.602739036, -0.119460747, 0.00698501850, -0.185224265, -0.357153744, -0.527469754, 0.406016141, -0.209980398, 0.185895160, 0.0696008354, 0.100297906, 0.0265705120, 0.00509216310) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 1), d_MODEL21), 0);
+  res2 += mat4x4f(-0.409750700, 0.263692558, -0.0883946717, 0.0813397914, 0.0963926762, 0.0361901522, -0.0818329528, -0.253445178, -0.0836983100, -0.0530808270, 0.455613375, 0.0414288118, -0.0299449656, 0.115298472, 0.0348126739, -0.123949252) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 1), d_MODEL22), 0);
+  res2 += mat4x4f(-0.209843591, 0.131768137, -0.0609731078, 0.0614244007, -0.0208266396, -0.254472256, -0.0226087812, 0.237720847, 0.174121082, -0.0304947048, 0.0579334982, 0.173447296, 0.0398322567, 0.0218857490, -0.113801345, 0.0982917622) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 1), d_MODEL23), 0);
+  res2 += mat4x4f(0.0428558737, 0.00113213062, 0.0476621352, 0.150674090, -0.0297738519, -0.0487425812, 0.0417745784, -0.0723789483, 0.105959110, 0.0626191944, 0.231815323, -0.0677862242, 0.0403730422, 0.0569714047, 0.0272651464, -0.450160861) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 1), d_MODEL24), 0);
+  res2 = max(res2, vec4f(0.0)) + vec4f(-0.235638186, 0.659242213, -0.282750160, 0.263559550) * min(res2, vec4f(0.0));
+  var res3 = vec4f(-0.0303955469, 0.201563209, 0.0437620506, -0.0141638964);
+  res3 += mat4x4f(-0.0667589530, 0.0209166408, -0.0216323137, -0.200380266, 0.143753141, -0.107280619, -0.263049781, -0.130669490, -0.0261451583, -0.103710815, 0.0659391806, -0.00690280180, -0.0774880722, 0.112573512, -0.0122106140, 0.0000412972149) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, -1), d_MODEL21), 0);
+  res3 += mat4x4f(0.112013258, 0.0516928248, -0.0570916943, -0.0214779750, -0.146276370, -0.105500259, -0.0531550124, -0.249965966, -0.0905289277, -0.144243181, -0.114532173, -0.184350342, -0.135555536, 0.0457401909, -0.141957253, -0.262147099) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, -1), d_MODEL22), 0);
+  res3 += mat4x4f(-0.150451809, 0.122323520, -0.0978632495, 0.158709481, 0.0171791166, 0.0421967506, -0.251131117, 0.0326796807, 0.0593249723, -0.000630756724, -0.0807336047, -0.0323874615, -0.0488985889, -0.0551405735, 0.0295012947, 0.160799503) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, -1), d_MODEL23), 0);
+  res3 += mat4x4f(0.000909763563, -0.0724434927, 0.130506277, -0.224027827, 0.184146568, 0.117212377, -0.234848961, -0.142528653, -0.0103214718, 0.110819682, 0.0175036136, -0.0858234167, -0.0187783353, 0.0972649008, -0.0906015635, 0.0228448194) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, -1), d_MODEL24), 0);
+  res3 += mat4x4f(-0.0979330912, -0.00816372037, -0.00596653577, -0.0395792462, 0.00490844529, -0.0651048198, -0.586637735, 0.240477920, 0.0857089162, -0.0375097096, -0.0627164841, 0.000515135936, 0.0694690272, 0.0679881349, 0.202464938, 0.0942003131) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 0), d_MODEL21), 0);
+  res3 += mat4x4f(-0.0352474451, -0.0893747583, -0.0403917655, 0.105668657, 0.0701703429, -0.286412865, -0.172884002, 0.275183290, -0.0524543822, 0.0683100522, 0.0547600165, 0.263183206, 0.0138548510, 0.0146845672, -0.329381585, 0.0350433849) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 0), d_MODEL22), 0);
+  res3 += mat4x4f(0.0336256027, -0.0831023604, -0.0876121521, 0.00337866438, -0.0748877078, 0.0402043127, -0.0311859529, -0.0686156154, -0.00364425872, 0.120979510, -0.323586017, 0.00846117549, 0.283711076, 0.170825928, 0.421870053, -0.180501685) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 0), d_MODEL23), 0);
+  res3 += mat4x4f(0.0574039668, 0.212727532, -0.0351213068, -0.00677043619, -0.735068619, -0.329479426, -0.642558873, 0.384992003, -0.0841991156, -0.0379965194, 0.0900074542, 0.125034198, -0.00688477745, -0.0180521905, -0.103654861, -0.0837774426) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 0), d_MODEL24), 0);
+  res3 += mat4x4f(0.0936342478, -0.00672549009, 0.0264367219, -0.0811590180, -0.0272533242, -0.0208273083, -0.155570418, 0.185601398, -0.0513577238, 0.111981936, 0.0326709412, -0.211505458, 0.124932468, -0.0196474269, 0.0567213967, 0.0433844104) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 1), d_MODEL21), 0);
+  res3 += mat4x4f(-0.0294500757, -0.0191813949, 0.0179435462, 0.148324043, 0.0524716340, 0.0661004409, 0.0317584984, 0.103249274, 0.0577552095, 0.126259685, -0.113582186, 0.147203729, 0.0205466505, 0.000988957821, 0.000190891602, 0.127915859) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 1), d_MODEL22), 0);
+  res3 += mat4x4f(0.0930388197, 0.0322104730, 0.102207407, 0.0344291702, -0.00113098591, 0.0120503996, -0.150565654, -0.0367717929, -0.0218038466, 0.0120550077, 0.178752512, 0.0763662830, -0.0497464389, 0.0937457159, -0.131992131, 0.0255596638) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 1), d_MODEL23), 0);
+  res3 += mat4x4f(-0.189755633, 0.0426325165, 0.144489348, 0.249678373, 0.0947311893, -0.0813194290, -0.0344269983, -0.170217589, 0.0538561083, -0.0520456694, 0.0441573672, 0.0926737115, -0.0748392045, 0.0390739217, 0.0977431759, 0.149658427) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 1), d_MODEL24), 0);
+  res3 += mat4x4f(0.0397297367, 0.0373724401, -0.0807831064, -0.306839138, -0.125598863, 0.141315609, -0.566622138, -0.0785946697, 0.0378893204, 0.218563542, -0.0623355247, 0.0306292512, -0.214357689, 0.0974943936, 0.0766930878, 0.0393112376) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, -1), d_MODEL21), 0);
+  res3 += mat4x4f(0.0955866873, 0.0785619393, -0.354306668, 0.0832059830, 0.148141712, 0.438446403, 0.539023876, 0.651431024, 0.0571308695, 0.0874798149, -0.177566469, -0.0419887155, 0.0579366758, 0.183846503, 0.0320719443, -0.0344846919) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, -1), d_MODEL22), 0);
+  res3 += mat4x4f(-0.174361765, -0.404606193, -0.398691595, -0.282677621, -0.281819195, -0.339538425, 0.168553546, 0.458485484, -0.0648436099, -0.0859934837, -0.0433097333, 0.0652618408, 0.0598178990, -0.927949965, -0.0809326172, 0.781793475) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, -1), d_MODEL23), 0);
+  res3 += mat4x4f(0.116124712, 0.0430893414, -0.665520251, -0.459981769, 0.0415058210, 0.0807111189, 0.152996570, -0.141051859, -0.00544618256, 0.272704124, -0.100073487, -0.0459178574, -0.106998250, -0.0810241997, 0.246626034, 0.210621417) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, -1), d_MODEL24), 0);
+  res3 += mat4x4f(0.0333369747, -0.206449345, 0.0448732376, 0.242240891, -0.603703558, 0.198817551, -0.0269553605, 0.394803464, -0.435626179, -0.182589829, -0.0982087329, 0.492326498, 0.549033642, 0.101384841, 0.542699099, -0.435862571) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 0), d_MODEL21), 0);
+  res3 += mat4x4f(-0.181465402, -0.00776301743, -0.0124984598, -0.0561078005, -0.249499813, -0.379236549, 0.282422662, -0.277934074, -0.108878903, -0.700110257, 0.187556326, -0.336244792, -0.100084618, -0.0236940756, -0.205573276, -0.303434163) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 0), d_MODEL22), 0);
+  res3 += mat4x4f(0.372722030, -0.0329274833, -0.0902572870, 0.291478187, 0.698240757, 0.200051054, -0.313120306, -0.661873579, 0.0153729059, 0.475333840, -0.141268745, 0.181995884, 0.692888260, 0.0546943061, -0.188026667, -0.569726825) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 0), d_MODEL23), 0);
+  res3 += mat4x4f(-0.417888075, 0.192739412, 0.781854331, 0.605859518, -0.297861695, -0.0978207067, 0.361457288, 0.0725513175, -0.128160790, 0.0618986711, 0.290863901, -0.265455335, -0.100235268, 0.205134928, 0.0786664188, -0.107056409) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 0), d_MODEL24), 0);
+  res3 += mat4x4f(-0.0409481712, -0.00409667846, -0.0890772566, 0.0154823652, -0.223843560, 0.0134049701, -0.471667975, -0.0110686664, 0.181639716, 0.0332541727, -0.157452568, -0.428738385, -0.0450064875, 0.0327890441, 0.129336938, 0.0146531817) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 1), d_MODEL21), 0);
+  res3 += mat4x4f(-0.101653539, 0.0202420875, 0.0141676599, 0.0293209590, 0.209483027, 0.110053271, -0.0963812768, -0.469133139, 0.487402409, 0.273975611, -0.403546751, -0.00452237809, 0.0145254554, -0.0419193953, -0.156867683, -0.0300646368) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 1), d_MODEL22), 0);
+  res3 += mat4x4f(-0.0726586729, 0.0417683683, -0.159771442, 0.000668616558, -0.0648637339, 0.0817920417, 0.121129766, 0.152028859, 0.0500994511, -0.333075792, -0.0601371080, -0.464114338, -0.0185838528, -0.0163494162, -0.0284210742, 0.0556352586) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 1), d_MODEL23), 0);
+  res3 += mat4x4f(0.102177188, 0.0335704125, -0.00679367268, -0.104534261, 0.0945395529, 0.00303337676, 0.0852787942, -0.00375555689, 0.262895137, -0.184408545, 0.0746503696, 0.0900722370, 0.170400739, 0.0308361314, 0.131652534, -0.128792197) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 1), d_MODEL24), 0);
+  res3 += mat4x4f(0.0645278692, -0.0933916643, -0.304705352, -0.646853447, 0.0489573926, 0.133807585, 0.126682997, 0.636297703, 0.176486701, -0.0801815912, 0.775591671, 0.0248163268, -0.0749760419, 0.125393048, 0.0541929379, -0.274325132) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, -1), d_MODEL21), 0);
+  res3 += mat4x4f(0.119067073, 0.123708166, -0.299019605, -0.226076767, -0.0119430888, 0.166574612, -0.297658205, 0.192281067, 0.0785633400, 0.125478551, 0.472177088, 0.114918001, -0.0141243050, 0.0548106842, 0.120137163, 0.346168935) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, -1), d_MODEL22), 0);
+  res3 += mat4x4f(0.0853072330, -0.0104635293, 0.143734038, -0.0258291773, -0.00709682889, -0.488314152, -0.176483899, 0.128728271, -0.0126310848, 0.0366743207, -0.0575351343, -0.119483702, -0.0878940523, -0.227109835, -0.166777030, -0.462304085) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, -1), d_MODEL23), 0);
+  res3 += mat4x4f(0.0768179297, -0.00775831146, 0.0915486589, 0.144421294, 0.0287299994, 0.0293593034, 0.0728936866, 0.0763161704, -0.0504233651, 0.150258064, 0.0878539532, 0.144627124, 0.00184350205, -0.0606416725, 0.347231477, 0.550140142) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, -1), d_MODEL24), 0);
+  res3 += mat4x4f(0.0238226186, -0.103029296, -0.159463629, 0.850730777, 0.0466986857, -0.0562582575, 0.0468065701, 0.0841991901, 0.229025155, -0.464508563, 0.567123830, 0.848021328, -0.0162730534, 0.0472584218, 0.0411714837, 0.0259669255) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 0), d_MODEL21), 0);
+  res3 += mat4x4f(0.0489539318, 0.100513361, 0.251379997, -0.0759835616, 0.0906446949, -0.101084791, -0.0583164208, -0.357055277, -0.139577806, -0.226348743, 0.148912683, -0.196813300, -0.0588962473, 0.0488139316, -0.120516479, -0.0221864283) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 0), d_MODEL22), 0);
+  res3 += mat4x4f(0.100154988, -0.0588116497, -0.0506838635, 0.0870432407, 0.294220656, 0.133877471, 0.00266087032, 0.0961047560, -0.0181901995, -0.105160311, 0.121307209, 0.163472205, 0.0138130262, 0.0497021526, -0.223268136, 0.0108398013) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 0), d_MODEL23), 0);
+  res3 += mat4x4f(0.0406886488, -0.110190041, -0.208071962, -0.289967924, 0.0680289268, -0.0678939074, 0.254351079, -0.0478861742, -0.0431461185, 0.0915185362, 0.110771298, -0.122303493, 0.0773058757, -0.0825007781, -0.147427157, -0.913571060) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 0), d_MODEL24), 0);
+  res3 += mat4x4f(-0.193363428, -0.0407752171, -0.286442667, -0.558365107, 0.0191058274, -0.0780073851, -0.375264019, -0.0937453210, -0.352852553, 0.0949706957, -0.676124752, -0.261909515, 0.0906684473, 0.0195423178, -0.0481604151, 0.0729462430) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 1), d_MODEL21), 0);
+  res3 += mat4x4f(0.0621955283, -0.0853136331, 0.223355159, 0.244856164, -0.108102180, -0.0255489480, -0.00969137065, 0.152172580, 0.186231747, 0.0832419097, 0.128079042, -0.0789105296, 0.101724647, -0.0259300452, -0.171243444, -0.235362232) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 1), d_MODEL22), 0);
+  res3 += mat4x4f(-0.252465308, -0.0488679148, -0.386708021, -0.150221318, 0.111612454, -0.0442849994, 0.251085550, -0.0455915965, 0.00371269719, -0.0921158791, 0.0633169562, 0.0267816354, -0.0956005603, 0.0286383685, 0.0729528144, 0.109328710) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 1), d_MODEL23), 0);
+  res3 += mat4x4f(-0.0846854076, 0.0738482028, -0.0754574016, -0.00512834964, -0.00327017088, -0.0189708732, 0.0296214782, -0.0995842293, 0.126283765, -0.0722080916, -0.114579067, 0.0271917991, 0.282355666, 0.109921657, 0.259030432, 0.370958835) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 1), d_MODEL24), 0);
+  res3 = max(res3, vec4f(0.0)) + vec4f(-0.400748461, -0.611179352, 0.848138571, 0.0703102425) * min(res3, vec4f(0.0));
+  textureStore(out_MODEL1, p, res0);
+  textureStore(out_MODEL2, p, res1);
+  textureStore(out_MODEL3, p, res2);
+  textureStore(out_MODEL4, p, res3);
 }
 
-//==== ENTRY pass23 : mapping_2_2 ====
-// ---- PASS 23: mapping 2_2 (save=MODEL2, comps=4) ----
-// binds: MODEL21, MODEL22, MODEL23, MODEL24
-@group(0) @binding(0) var t_MODEL21 : texture_2d<f32>;
-@group(0) @binding(1) var t_MODEL22 : texture_2d<f32>;
-@group(0) @binding(2) var t_MODEL23 : texture_2d<f32>;
-@group(0) @binding(3) var t_MODEL24 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(0.158087745, -0.217670292, -0.0185317881, 0.178050697);
-  res += mat4x4f(0.0758518130, -0.113779150, 0.102624997, -0.0431579761, 0.0134656997, 0.0188449845, 0.334608525, 0.265728772, 0.231672302, -0.363515675, -0.00363430008, -0.0814866871, 0.197622746, 0.0928352699, 0.0974389687, -0.494667560) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.0148363980, 0.0151116624, 0.183584869, -0.0803946704, 0.494173229, -0.219392106, 0.0727688074, -0.192429453, 0.213936955, -0.0531866960, -0.00638529612, -0.0368750319, -0.00913846493, -0.200858846, -0.286211580, 0.00610290421) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.0982755646, -0.292356431, 0.0563820191, 0.167575866, 0.124246731, 0.122740589, -0.205697805, 0.486336917, 0.0935971513, 0.0494479276, -0.0209939219, 0.303610086, -0.0827917606, -0.383236259, -0.349517792, 0.0460925885) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.00981499441, -0.0256606154, 0.00312965061, 0.245655909, -0.155399010, 0.536309063, -0.0236739889, -0.395325273, -0.0588347055, 0.0442368686, 0.00391616905, 0.199660346, 0.0536432192, 0.174382478, -0.164256185, -0.0355202667) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.192788184, 0.0835899711, -0.144200176, -0.0547327846, 0.168349415, 0.00103965309, 0.215653509, -0.0541883521, -0.111369468, 0.122669205, 0.0908218771, -0.107457489, 0.143596098, -0.307335883, 0.175501227, 0.271327674) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.162023857, -0.251206517, 0.313284516, -0.258374125, 0.0321965329, -0.556311667, 0.159410179, 0.0853305310, -0.658686221, 0.0352494307, 0.0276314653, -0.126371577, -0.225816265, -0.353337049, 0.0310660750, 0.337131619) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.157109186, -0.249636292, -0.0945196524, 0.316130161, -0.217629880, 0.106567860, 0.0521435365, -0.182382852, -0.0392202102, 0.271507829, -0.0342833474, 0.495645136, -0.297990412, -0.221037760, 0.0422198698, -0.776360452) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.0275207348, -0.0308967829, 0.401726604, 0.129528612, -0.192256823, -0.0559794530, -0.708667278, -1.59105790, 0.0430152044, -0.147676691, -0.111629561, 0.120787837, -0.0980392322, 0.284834146, -0.000243679679, 0.118942596) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.0207033008, 0.149664447, 0.0267391670, -0.277195424, 0.0581342354, -0.403647155, 0.134941444, 0.0302642509, 0.140457243, -0.101696678, 0.140541583, 0.345201880, 0.0257042646, -0.0820260942, 0.0924930573, 0.0344888605) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.112005882, -0.478638083, -0.0252110790, -0.199648514, -0.0515367128, -0.132232293, -0.0246379729, 0.0996418893, -0.0301403217, -0.359231502, 0.178156257, 0.544205248, -0.181823626, -0.0687229484, -0.207405493, 0.0137702813) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.149241239, -0.00923625100, 0.154316396, 0.105800740, 0.0174587574, 0.0395568050, -0.466292620, -0.274452657, -0.498193651, -0.120071515, 0.122510701, 0.679168582, 0.0702651441, 0.210203215, -0.544557035, 0.0449331477) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.158731788, -0.0408732444, 0.0423479974, -0.648659885, -0.180765778, -0.385271609, 0.0135432165, 0.159972340, -0.137690380, 0.260266721, -0.0769964829, -0.129068464, -0.129299566, 0.160617352, -0.148824796, -0.179424956) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.0659455135, -0.0597113371, -0.00961060356, 0.126402944, 0.301557392, -0.538212001, 0.436588258, -0.00641876040, -0.0185977183, 0.520063639, 0.0127102882, 0.0191303436, 0.311721116, -0.128285751, -0.0724509656, -0.875764012) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.0788446665, 0.547816336, 0.124608047, -0.0260977671, -0.389977366, 0.412411302, 0.0988227352, -0.0345606655, 0.0417100750, -0.178595707, 0.324086756, 0.110345468, 0.0626829714, -0.281902343, 0.0914943218, 0.336143553) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.288655221, 0.152807727, 0.00319523388, 0.0769772008, 0.0762256533, -0.402751863, 0.234273180, -0.141063303, 0.0349377804, -0.204442367, 0.0722359568, -0.0117119579, -0.353283823, 0.345741749, -0.0999976993, 0.0623140484) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.215656206, -0.421708196, 0.0148333451, 0.244726181, 0.123496190, 0.0706226230, 0.317195982, -0.233533591, 0.0368134156, 0.123567857, 0.172551751, 0.131921917, 0.228407443, -0.146562979, -0.159726024, 0.0387904234) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.380630851, 0.259044170, -0.210395247, -0.868260622, 0.144500434, 0.0764837787, -0.197641581, -0.352129489, 0.160760775, -0.132254153, -0.161003903, -0.511525631, 0.207092255, -0.433206320, 0.224460423, 0.558750689) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.207927540, 0.267902613, -0.260160774, 0.494130373, -0.0635280982, 0.192028478, 0.0600927807, 0.203646138, 0.119588807, 0.552412748, -0.449367881, -0.348824561, -0.132829383, -0.349508613, -0.283326030, 0.859655738) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.336516500, 0.914927185, -0.733778656, 0.139035210, 0.190529510, 0.461891502, 0.0111933984, -0.347969800, 0.0248175580, -0.271928579, -0.395186633, 0.405206531, -0.0805231631, -0.000248462602, -0.0278216042, -0.741676748) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.718325853, 0.539203346, -0.727627635, -0.102679193, 0.169578910, -1.10283864, 0.363999397, 0.0960472673, 0.432068229, -0.522640526, -0.200746372, -0.334342629, 0.558139443, 0.495950133, 0.0353215672, -0.728135049) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.0147131542, -0.179802462, -0.316113114, -0.656521797, 0.150614530, -0.227226540, 0.000356920646, 0.297847092, -0.223475367, -0.428102255, -0.935433984, -0.301660359, 0.0245078411, -0.126998842, -0.391571462, 0.167170450) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.538100839, 0.108946241, -0.00288127852, 0.359585106, 0.0233569834, 0.424352199, 0.552241623, 0.518014848, -0.814990640, 0.194540054, -0.453173578, 0.124625437, -0.151831970, -0.244771808, 0.0947361887, -0.217241079) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.0379735194, -0.366714865, -0.342851132, 0.213122487, 0.161416948, 0.133909225, 0.368729681, -0.0680588484, -0.633139789, 0.397390604, -0.0327995308, 1.05216455, -0.107963659, 0.630932271, 0.0156747643, -0.170154139) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.00807945617, 0.579570234, -0.593471289, -0.152876034, -0.0444745161, 0.109187841, 0.126212791, 0.254768938, 0.0639310703, -0.338509947, 0.00866647810, -0.272189111, -0.0635209456, -0.0986849070, 0.399850965, -0.0991764218) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.321549743, 0.284391612, 0.000183066586, 0.138860777, 0.164297789, 0.233269840, 0.00734401355, 0.193550840, -0.0479794219, -0.275656074, -0.271113485, -0.0586766042, 0.145435736, -0.156424895, -0.103915751, -0.324024945) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.305641115, -0.0167108756, 0.112621024, -0.388399422, -0.142245010, -0.0917421430, -0.206675097, 0.121608667, 0.0444707647, 0.208484560, -0.201448753, 0.0125682056, -0.0517526045, 0.282039136, -0.344411492, 0.213600278) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.215879217, -0.00807237998, 0.0734426230, 0.0744809434, -0.281421810, -0.174450606, 0.169023171, 0.833174169, -0.0279896799, 0.364031821, 0.0297581423, 0.155773088, 0.0824381560, -0.0858014226, 0.157814562, -0.00697151618) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.0818758979, -0.0402573049, -0.0228873957, 0.146798491, 0.0251613930, -0.276449800, -0.134703726, -0.0540369339, -0.0473155230, 0.0234754551, -0.194871828, 0.126841873, -0.0349094309, -0.366443038, -0.128102034, 0.131769761) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.763333261, 0.541316211, -0.382454604, -0.155554444, 0.0351129845, 0.190435812, 0.00845936686, 0.252534688, -0.106657177, 0.446621209, 0.518409967, 0.102423824, 0.352751523, -0.0765509978, 0.0959176272, -0.672018945) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.0475903153, -0.105472103, 0.0830030218, 0.781636059, 0.240821198, -0.0781749487, -0.152628705, 0.366326392, 0.181214392, -0.328735560, 0.240291148, -0.00875178538, -0.198805332, 0.310335040, 0.508988500, 0.187245265) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.329795122, -0.502660573, 0.280768365, 0.161289647, -0.666686833, -0.570792735, 0.634160995, 0.687343836, 0.210676283, -0.0787819773, 0.147462457, -0.350691289, -0.111427106, -0.142066240, 0.323447973, 0.120485649) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.227969259, 0.306807518, 0.220705986, 0.0417111889, 0.0166445244, 0.115744799, -0.181724682, -0.201503426, 0.244625837, -0.584081888, 0.175364375, 0.0218477603, 0.141558692, 0.103898004, 0.509752274, 0.388390005) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.212711886, 0.181127742, -0.0768692046, -0.0542910583, 0.182266384, -0.0611174330, 0.263522774, 0.267140090, 0.0882956684, 0.760578334, -0.0483694598, 0.0867225304, 0.163057804, 0.0809839219, 0.0631096587, -0.337883532) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.279900283, 0.802447081, -0.384167731, 0.278266311, -0.218218863, -0.245423377, -0.0930702463, 0.166026309, 0.0517829433, -0.0227586571, -0.220730841, 0.385023475, -0.117128626, -0.180658326, -0.0782627538, 0.284781724) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.0362303704, -0.0382465124, 0.343953192, -0.381216973, -0.0538652129, 0.0830318630, -0.435496807, 0.162039906, -0.181431860, -0.323400855, 0.407768190, -0.359344304, -0.183018029, -0.257758945, -0.169801965, -0.0285135601) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.0694794133, -0.492161185, 0.314448476, -0.0573691763, 0.130215973, 0.248296872, -0.118987828, -0.0855955705, -0.0442915075, -0.0522340871, 0.288049519, 0.206530824, -0.0121621527, -0.936735153, 0.163094848, 0.0247595031) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL24)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(0.402112663, 0.144628376, 0.339708269, -0.00770804705) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass24 : mapping_2_3 ====
-// ---- PASS 24: mapping 2_3 (save=MODEL3, comps=4) ----
-// binds: MODEL21, MODEL22, MODEL23, MODEL24
-@group(0) @binding(0) var t_MODEL21 : texture_2d<f32>;
-@group(0) @binding(1) var t_MODEL22 : texture_2d<f32>;
-@group(0) @binding(2) var t_MODEL23 : texture_2d<f32>;
-@group(0) @binding(3) var t_MODEL24 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.0437118821, 0.194246843, 0.0128156664, -0.0726023018);
-  res += mat4x4f(-0.323029250, -0.247575983, -0.133309186, 0.0912710130, 0.0112034371, -0.181695148, -0.446441799, -0.290555120, -0.0443161204, -0.0160919651, -0.233726695, 0.679009199, 0.00850418210, -0.00792086031, 0.0585588440, -0.480883747) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.0855776593, 0.0242188927, 0.0666023195, 0.151919559, -0.169288665, -0.221793726, -0.145008832, -0.339883983, -0.175370961, 0.0712879747, 0.494584233, 0.450556934, -0.165505931, -0.100188412, 0.153608099, 0.318080515) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.177492067, 0.0814234242, 0.180881068, 0.758887470, -0.0778874978, -0.0944764093, -0.0280988272, -0.733959556, 0.0940898284, -0.135041356, 0.0827919692, -0.0729855895, 0.00106701499, 0.181467265, 0.285802484, 0.314166069) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.0701537952, -0.381072223, 0.244678438, 0.0292017870, -0.140685856, 0.00244180602, -0.292611390, 0.638532877, 0.0327618271, -0.0595934130, 0.0853318349, 0.122237012, -0.0531855039, 0.0882121846, 0.0491881929, -1.15587294) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.113171495, -0.139187187, 0.00119329069, -0.615951002, 0.397127479, 0.317650169, -0.299365312, -0.137942851, -0.0318069644, 0.290340364, 0.234868199, -0.620033026, -0.367349267, -0.218544587, 0.0371004418, -0.213607088) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.272250324, 0.204431683, 0.104629487, -0.0442763157, -0.230449885, 0.374218404, -0.00202594581, 0.307116002, 0.207980841, 0.172930449, 0.388228834, -0.964850128, -0.336314976, 0.165841058, 0.115896255, -0.216905668) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.128262296, -0.282802939, 0.104591668, -0.289028555, 0.151274472, 0.291079223, -0.112665944, 0.771332860, 0.0145233264, -0.362457424, 0.0545686632, 0.238299236, -0.259442300, -0.210903421, -0.0509569272, -0.0687488392) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.122629516, 0.188457310, -0.0369512737, -0.148085192, -0.137434334, 0.532746375, 0.00770634273, 0.417097837, 0.304522008, -0.185627222, 0.216567516, -0.257803053, 0.136812359, 0.150924176, -0.0509892553, 0.468368649) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.226842135, -0.335077614, 0.0984120071, 0.345264763, -0.0649627000, 0.0351359099, -0.396623015, 0.0723531023, -0.135889038, -0.242378458, -0.0462488383, -0.183279470, -0.122266643, -0.154255196, 0.112024687, -0.0815230235) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.0971643850, 0.212683782, -0.144751281, -0.188877732, 0.0917355940, 0.203227922, -0.0136252530, -0.0488306396, 0.130684957, 0.214469105, -0.0588203333, -0.242550746, -0.177160904, -0.119227566, -0.0227932297, -0.258650988) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.00272111851, -0.229161873, -0.0906480923, 0.132799342, -0.0698363334, -0.0910998881, 0.114770465, -0.278882056, -0.107160538, -0.282859117, -0.127834201, 0.239960551, 0.143427357, 0.0918311179, 0.0449577682, 0.0694138855) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.309209704, -0.0271725897, -0.0278133955, 0.350299478, -0.0546866693, -0.399190873, 0.118435472, 0.0591981150, 0.140508279, 0.0697252676, -0.163661942, 0.279905617, 0.200742945, 0.332952321, -0.00881751813, -0.315338761) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.100151129, -0.0478802063, -0.0808711201, -0.138616145, -0.229255036, -0.0543208495, -0.443864822, -0.126730502, -0.0183197167, -0.0870011747, -0.0856353790, -1.74269736, 0.100305863, 0.105104677, 0.497006357, -0.337380528) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.113868743, 0.182828948, -0.155013129, -0.271417856, 0.358062536, -0.136509374, 0.323676318, 0.295881003, 0.0226396248, -0.0597026460, -1.00068235, 0.213753790, 0.0258392412, -0.157618761, -0.273684084, -0.158925101) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.162114412, 0.136261761, -0.0813228935, -0.513298929, -0.889911294, 0.186534256, 0.140812591, 0.794954360, 0.0147611210, -0.00325846788, 0.124246076, 0.149153501, 0.313748926, 0.214997530, 0.220826045, -0.361353964) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.0430859402, -0.151088879, -0.194155410, 0.157847002, -0.0754416659, 0.0689400360, 0.439295202, 0.0138610583, 0.0682737902, -0.0744250864, -0.157480448, -0.589437187, -0.176680356, -0.134439453, 0.213318080, -0.495924741) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(1.11661458, -0.0825700387, 0.453697473, -0.330348790, 0.0353471711, 0.0303132404, -0.0693502575, -0.321715117, 0.615285039, 0.146835566, -0.00211754697, 1.57723415, 0.151368693, -0.287347943, -0.115277655, -0.259399742) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.0273721050, -0.0815369934, -0.0480703935, -0.187034130, 0.199408337, 0.572071552, 0.127470449, 0.0227673911, -0.0990702957, -0.311540306, 0.0566441789, -0.421649307, 0.0951363072, 0.0859929547, -0.0905423239, -0.114018813) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.189249456, -0.428328931, 0.599468112, -0.252710819, -1.19862151, -0.777328014, -0.400072813, -0.545503795, 0.0131718097, -0.250829726, -0.513843715, 0.151161686, 0.122950904, 0.0861333832, -0.207191780, -0.124175861) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.270926625, 0.139488086, -0.0142653696, -0.299038529, 0.177133441, -0.0569531843, -0.304682344, -0.0400999747, -0.451927572, -0.0832879171, 0.0471361019, -0.151694208, -1.26211810, -0.309205294, -0.230636388, 0.863987923) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.0805909336, 0.119068742, -0.319470644, 0.0578039102, 0.0713174418, -0.173203841, -0.216338709, -0.154665515, 0.701565087, 0.569967628, 0.122575685, 0.226546824, 0.0434436500, 0.353150159, 0.0325606987, 0.0801580027) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.149065405, 0.0425965637, 0.0763090253, -0.239301801, -0.242733613, -0.611327946, 0.101718232, -0.184668720, 0.121490739, -0.330357492, -0.0553641729, -0.0508278012, 0.160769030, 0.182655022, 0.246597916, 0.340958774) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.365563452, 0.590382695, -0.226651207, 0.106215119, -0.190444082, -0.0756283998, 0.0660094470, -0.0412472896, -0.369518518, 0.0983791277, 0.102034062, 0.355537504, -0.283400416, -0.0562513582, -0.0214648023, 0.149789557) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.313734144, -0.436394632, 0.114102386, -0.150150687, 0.157109171, -0.102591820, 0.190984681, 0.0821657181, -0.348457605, 0.0331038460, 0.0509421639, 0.0321286172, -0.650490344, -0.0932162032, 0.212955996, 0.0894164369) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.117819808, -0.146537334, -0.263683707, 0.254547983, -0.00390222459, -0.00688400306, -0.191185996, -0.325384766, -0.225397035, 0.334209770, 0.383068979, 0.901309073, -0.0518234260, -0.0462697372, -0.817751288, -0.240131944) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.0110800453, 0.333300501, 0.148081452, -0.0280445591, 0.0636819154, -0.0741630048, -0.242662713, -0.371692419, -0.0342182629, 0.0261592008, -0.153377831, 0.338916063, 0.0249342043, 0.0676959977, 0.00370294158, 0.0720434636) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.00503178686, -0.0268377773, -0.711569309, 0.223792106, 0.726627827, 0.314594775, -0.479378164, 0.650277257, 0.0658533424, -0.0170795228, 0.0930861682, -0.113245666, -0.0376508683, -0.0799458846, -0.133799925, 0.216020167) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.132307366, -0.154495999, -0.255311877, 0.0289862528, -0.0322874784, 0.0767913014, 0.149008989, 0.0217660517, 0.0471800417, 0.0449854098, -0.0320553072, 0.104897216, 0.0380371846, 0.0364584550, 0.438484132, -0.0955494791) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.210055187, 0.173254579, 0.393345535, -0.288728148, 0.0921343714, 0.0256949943, -0.110666826, 0.0305762049, -0.471047133, 0.469547808, 0.387519568, 0.0170489401, 0.171562597, 0.0455772132, 0.215246588, -0.0888530761) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.376324505, -0.261219472, 0.0257211942, 0.360696018, -0.0321826637, -0.148095116, 0.0659326762, 0.582747638, -0.0228238925, 0.414201081, -0.533506393, -0.315740526, 0.205265358, 0.187730879, 0.0482796505, 0.252923310) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.181703329, 0.473493069, 0.215135366, 0.121500283, 0.577278972, -0.199966744, 0.282297373, -0.182563394, -0.0885683298, -0.0937873051, 0.430278957, 0.00625065435, -0.0748812780, 0.165004745, 0.0951160640, 0.121515192) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.0708426386, 0.179255098, 0.0391567349, -0.217699453, -0.0349266008, -0.0358481929, 0.149756178, 0.452197015, 0.000281843822, -0.100339741, -0.394091815, -0.135328278, -0.0379910171, 0.135998100, -0.765549242, 0.235231489) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.0101982672, -0.173217729, -0.0692929998, 0.602739036, -0.119460747, 0.00698501850, -0.185224265, -0.357153744, -0.527469754, 0.406016141, -0.209980398, 0.185895160, 0.0696008354, 0.100297906, 0.0265705120, 0.00509216310) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.409750700, 0.263692558, -0.0883946717, 0.0813397914, 0.0963926762, 0.0361901522, -0.0818329528, -0.253445178, -0.0836983100, -0.0530808270, 0.455613375, 0.0414288118, -0.0299449656, 0.115298472, 0.0348126739, -0.123949252) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.209843591, 0.131768137, -0.0609731078, 0.0614244007, -0.0208266396, -0.254472256, -0.0226087812, 0.237720847, 0.174121082, -0.0304947048, 0.0579334982, 0.173447296, 0.0398322567, 0.0218857490, -0.113801345, 0.0982917622) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.0428558737, 0.00113213062, 0.0476621352, 0.150674090, -0.0297738519, -0.0487425812, 0.0417745784, -0.0723789483, 0.105959110, 0.0626191944, 0.231815323, -0.0677862242, 0.0403730422, 0.0569714047, 0.0272651464, -0.450160861) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL24)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(-0.235638186, 0.659242213, -0.282750160, 0.263559550) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass25 : mapping_2_4 ====
-// ---- PASS 25: mapping 2_4 (save=MODEL4, comps=4) ----
-// binds: MODEL21, MODEL22, MODEL23, MODEL24
-@group(0) @binding(0) var t_MODEL21 : texture_2d<f32>;
-@group(0) @binding(1) var t_MODEL22 : texture_2d<f32>;
-@group(0) @binding(2) var t_MODEL23 : texture_2d<f32>;
-@group(0) @binding(3) var t_MODEL24 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.0303955469, 0.201563209, 0.0437620506, -0.0141638964);
-  res += mat4x4f(-0.0667589530, 0.0209166408, -0.0216323137, -0.200380266, 0.143753141, -0.107280619, -0.263049781, -0.130669490, -0.0261451583, -0.103710815, 0.0659391806, -0.00690280180, -0.0774880722, 0.112573512, -0.0122106140, 0.0000412972149) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.112013258, 0.0516928248, -0.0570916943, -0.0214779750, -0.146276370, -0.105500259, -0.0531550124, -0.249965966, -0.0905289277, -0.144243181, -0.114532173, -0.184350342, -0.135555536, 0.0457401909, -0.141957253, -0.262147099) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.150451809, 0.122323520, -0.0978632495, 0.158709481, 0.0171791166, 0.0421967506, -0.251131117, 0.0326796807, 0.0593249723, -0.000630756724, -0.0807336047, -0.0323874615, -0.0488985889, -0.0551405735, 0.0295012947, 0.160799503) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.000909763563, -0.0724434927, 0.130506277, -0.224027827, 0.184146568, 0.117212377, -0.234848961, -0.142528653, -0.0103214718, 0.110819682, 0.0175036136, -0.0858234167, -0.0187783353, 0.0972649008, -0.0906015635, 0.0228448194) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.0979330912, -0.00816372037, -0.00596653577, -0.0395792462, 0.00490844529, -0.0651048198, -0.586637735, 0.240477920, 0.0857089162, -0.0375097096, -0.0627164841, 0.000515135936, 0.0694690272, 0.0679881349, 0.202464938, 0.0942003131) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.0352474451, -0.0893747583, -0.0403917655, 0.105668657, 0.0701703429, -0.286412865, -0.172884002, 0.275183290, -0.0524543822, 0.0683100522, 0.0547600165, 0.263183206, 0.0138548510, 0.0146845672, -0.329381585, 0.0350433849) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.0336256027, -0.0831023604, -0.0876121521, 0.00337866438, -0.0748877078, 0.0402043127, -0.0311859529, -0.0686156154, -0.00364425872, 0.120979510, -0.323586017, 0.00846117549, 0.283711076, 0.170825928, 0.421870053, -0.180501685) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.0574039668, 0.212727532, -0.0351213068, -0.00677043619, -0.735068619, -0.329479426, -0.642558873, 0.384992003, -0.0841991156, -0.0379965194, 0.0900074542, 0.125034198, -0.00688477745, -0.0180521905, -0.103654861, -0.0837774426) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.0936342478, -0.00672549009, 0.0264367219, -0.0811590180, -0.0272533242, -0.0208273083, -0.155570418, 0.185601398, -0.0513577238, 0.111981936, 0.0326709412, -0.211505458, 0.124932468, -0.0196474269, 0.0567213967, 0.0433844104) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.0294500757, -0.0191813949, 0.0179435462, 0.148324043, 0.0524716340, 0.0661004409, 0.0317584984, 0.103249274, 0.0577552095, 0.126259685, -0.113582186, 0.147203729, 0.0205466505, 0.000988957821, 0.000190891602, 0.127915859) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.0930388197, 0.0322104730, 0.102207407, 0.0344291702, -0.00113098591, 0.0120503996, -0.150565654, -0.0367717929, -0.0218038466, 0.0120550077, 0.178752512, 0.0763662830, -0.0497464389, 0.0937457159, -0.131992131, 0.0255596638) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.189755633, 0.0426325165, 0.144489348, 0.249678373, 0.0947311893, -0.0813194290, -0.0344269983, -0.170217589, 0.0538561083, -0.0520456694, 0.0441573672, 0.0926737115, -0.0748392045, 0.0390739217, 0.0977431759, 0.149658427) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.0397297367, 0.0373724401, -0.0807831064, -0.306839138, -0.125598863, 0.141315609, -0.566622138, -0.0785946697, 0.0378893204, 0.218563542, -0.0623355247, 0.0306292512, -0.214357689, 0.0974943936, 0.0766930878, 0.0393112376) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.0955866873, 0.0785619393, -0.354306668, 0.0832059830, 0.148141712, 0.438446403, 0.539023876, 0.651431024, 0.0571308695, 0.0874798149, -0.177566469, -0.0419887155, 0.0579366758, 0.183846503, 0.0320719443, -0.0344846919) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.174361765, -0.404606193, -0.398691595, -0.282677621, -0.281819195, -0.339538425, 0.168553546, 0.458485484, -0.0648436099, -0.0859934837, -0.0433097333, 0.0652618408, 0.0598178990, -0.927949965, -0.0809326172, 0.781793475) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.116124712, 0.0430893414, -0.665520251, -0.459981769, 0.0415058210, 0.0807111189, 0.152996570, -0.141051859, -0.00544618256, 0.272704124, -0.100073487, -0.0459178574, -0.106998250, -0.0810241997, 0.246626034, 0.210621417) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.0333369747, -0.206449345, 0.0448732376, 0.242240891, -0.603703558, 0.198817551, -0.0269553605, 0.394803464, -0.435626179, -0.182589829, -0.0982087329, 0.492326498, 0.549033642, 0.101384841, 0.542699099, -0.435862571) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.181465402, -0.00776301743, -0.0124984598, -0.0561078005, -0.249499813, -0.379236549, 0.282422662, -0.277934074, -0.108878903, -0.700110257, 0.187556326, -0.336244792, -0.100084618, -0.0236940756, -0.205573276, -0.303434163) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.372722030, -0.0329274833, -0.0902572870, 0.291478187, 0.698240757, 0.200051054, -0.313120306, -0.661873579, 0.0153729059, 0.475333840, -0.141268745, 0.181995884, 0.692888260, 0.0546943061, -0.188026667, -0.569726825) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.417888075, 0.192739412, 0.781854331, 0.605859518, -0.297861695, -0.0978207067, 0.361457288, 0.0725513175, -0.128160790, 0.0618986711, 0.290863901, -0.265455335, -0.100235268, 0.205134928, 0.0786664188, -0.107056409) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.0409481712, -0.00409667846, -0.0890772566, 0.0154823652, -0.223843560, 0.0134049701, -0.471667975, -0.0110686664, 0.181639716, 0.0332541727, -0.157452568, -0.428738385, -0.0450064875, 0.0327890441, 0.129336938, 0.0146531817) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.101653539, 0.0202420875, 0.0141676599, 0.0293209590, 0.209483027, 0.110053271, -0.0963812768, -0.469133139, 0.487402409, 0.273975611, -0.403546751, -0.00452237809, 0.0145254554, -0.0419193953, -0.156867683, -0.0300646368) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.0726586729, 0.0417683683, -0.159771442, 0.000668616558, -0.0648637339, 0.0817920417, 0.121129766, 0.152028859, 0.0500994511, -0.333075792, -0.0601371080, -0.464114338, -0.0185838528, -0.0163494162, -0.0284210742, 0.0556352586) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.102177188, 0.0335704125, -0.00679367268, -0.104534261, 0.0945395529, 0.00303337676, 0.0852787942, -0.00375555689, 0.262895137, -0.184408545, 0.0746503696, 0.0900722370, 0.170400739, 0.0308361314, 0.131652534, -0.128792197) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.0645278692, -0.0933916643, -0.304705352, -0.646853447, 0.0489573926, 0.133807585, 0.126682997, 0.636297703, 0.176486701, -0.0801815912, 0.775591671, 0.0248163268, -0.0749760419, 0.125393048, 0.0541929379, -0.274325132) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.119067073, 0.123708166, -0.299019605, -0.226076767, -0.0119430888, 0.166574612, -0.297658205, 0.192281067, 0.0785633400, 0.125478551, 0.472177088, 0.114918001, -0.0141243050, 0.0548106842, 0.120137163, 0.346168935) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.0853072330, -0.0104635293, 0.143734038, -0.0258291773, -0.00709682889, -0.488314152, -0.176483899, 0.128728271, -0.0126310848, 0.0366743207, -0.0575351343, -0.119483702, -0.0878940523, -0.227109835, -0.166777030, -0.462304085) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.0768179297, -0.00775831146, 0.0915486589, 0.144421294, 0.0287299994, 0.0293593034, 0.0728936866, 0.0763161704, -0.0504233651, 0.150258064, 0.0878539532, 0.144627124, 0.00184350205, -0.0606416725, 0.347231477, 0.550140142) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.0238226186, -0.103029296, -0.159463629, 0.850730777, 0.0466986857, -0.0562582575, 0.0468065701, 0.0841991901, 0.229025155, -0.464508563, 0.567123830, 0.848021328, -0.0162730534, 0.0472584218, 0.0411714837, 0.0259669255) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.0489539318, 0.100513361, 0.251379997, -0.0759835616, 0.0906446949, -0.101084791, -0.0583164208, -0.357055277, -0.139577806, -0.226348743, 0.148912683, -0.196813300, -0.0588962473, 0.0488139316, -0.120516479, -0.0221864283) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.100154988, -0.0588116497, -0.0506838635, 0.0870432407, 0.294220656, 0.133877471, 0.00266087032, 0.0961047560, -0.0181901995, -0.105160311, 0.121307209, 0.163472205, 0.0138130262, 0.0497021526, -0.223268136, 0.0108398013) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.0406886488, -0.110190041, -0.208071962, -0.289967924, 0.0680289268, -0.0678939074, 0.254351079, -0.0478861742, -0.0431461185, 0.0915185362, 0.110771298, -0.122303493, 0.0773058757, -0.0825007781, -0.147427157, -0.913571060) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.193363428, -0.0407752171, -0.286442667, -0.558365107, 0.0191058274, -0.0780073851, -0.375264019, -0.0937453210, -0.352852553, 0.0949706957, -0.676124752, -0.261909515, 0.0906684473, 0.0195423178, -0.0481604151, 0.0729462430) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.0621955283, -0.0853136331, 0.223355159, 0.244856164, -0.108102180, -0.0255489480, -0.00969137065, 0.152172580, 0.186231747, 0.0832419097, 0.128079042, -0.0789105296, 0.101724647, -0.0259300452, -0.171243444, -0.235362232) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.252465308, -0.0488679148, -0.386708021, -0.150221318, 0.111612454, -0.0442849994, 0.251085550, -0.0455915965, 0.00371269719, -0.0921158791, 0.0633169562, 0.0267816354, -0.0956005603, 0.0286383685, 0.0729528144, 0.109328710) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.0846854076, 0.0738482028, -0.0754574016, -0.00512834964, -0.00327017088, -0.0189708732, 0.0296214782, -0.0995842293, 0.126283765, -0.0722080916, -0.114579067, 0.0271917991, 0.282355666, 0.109921657, 0.259030432, 0.370958835) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL24)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(-0.400748461, -0.611179352, 0.848138571, 0.0703102425) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass26 : mapping_3_1 ====
-// ---- PASS 26: mapping 3_1 (save=MODEL21, comps=4) ----
+//==== ENTRY pass7 : fused_MODEL21_MODEL22_MODEL23_MODEL24 ====
+// ---- PASS 7: mapping 3_1 + mapping 3_2 + mapping 3_3 + mapping 3_4 (saves=MODEL21,MODEL22,MODEL23,MODEL24) ----
 // binds: MODEL1, MODEL2, MODEL3, MODEL4
+// Fused: 4 upstream hooks sharing one set of input fetches.
 @group(0) @binding(0) var t_MODEL1 : texture_2d<f32>;
 @group(0) @binding(1) var t_MODEL2 : texture_2d<f32>;
 @group(0) @binding(2) var t_MODEL3 : texture_2d<f32>;
 @group(0) @binding(3) var t_MODEL4 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(4) var out_MODEL21 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(5) var out_MODEL22 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(6) var out_MODEL23 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(7) var out_MODEL24 : texture_storage_2d<rgba16float, write>;
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
+  let dims = textureDimensions(out_MODEL21);
   if (gid.x >= dims.x || gid.y >= dims.y) { return; }
   let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(0.156161651, -0.335874796, -0.176343217, -0.0262083206);
-  res += mat4x4f(0.0703750178, -0.0271107107, -0.0662064180, 0.332650512, 0.227576077, -0.302601725, -0.0163477659, -0.0208509397, -0.114661776, 0.0401906408, 0.131722540, -0.0753812343, 0.0955534875, 0.0290259421, -0.0355315842, -0.00918721966) * textureLoad(t_MODEL1, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(-0.0265402012, -0.111470886, 0.127557099, -0.0750365406, -0.0226262063, 0.116945378, -0.106882945, -0.210221335, 0.133153141, 0.0370831899, 0.213304281, 0.226988569, -0.0357505046, -0.0479809009, 0.0366531760, -0.0157112405) * textureLoad(t_MODEL2, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(0.0934196711, -0.135077089, 0.137717128, -0.119127609, -0.140757412, -0.0532059297, 0.0448001884, 0.0822927654, -0.0276801642, 0.0473372787, -0.163199216, -0.177508503, -0.0619204864, 0.0853836834, -0.134498760, 0.0597611405) * textureLoad(t_MODEL3, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(0.129688650, 0.107457973, 0.0521960817, -0.0854158998, -0.0523297340, -0.124924444, -0.0558522493, 0.0835623518, -0.00480992207, 0.0161724128, 0.106617205, 0.160171464, 0.128354728, 0.251917988, -0.101444744, -0.109732591) * textureLoad(t_MODEL4, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(0.228134364, 0.00198301952, -0.136176765, 0.138770148, 0.192902088, -0.319540173, -0.367334634, -0.0276853070, -0.102265842, 0.121629588, 0.165145591, -0.171592116, 0.00770986313, -0.000797790708, 0.162554443, -0.0553227477) * textureLoad(t_MODEL1, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(0.0385498367, -0.0890077427, -0.206582263, 0.237061292, 0.00388358720, 0.172232032, -0.0104143806, -0.00109828939, -0.0600124449, 0.0762347877, -0.312320769, 0.00815875549, -0.140004635, 0.0859977007, -0.178777337, -0.0294598956) * textureLoad(t_MODEL2, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(-0.00831446797, -0.0340852439, -0.0132184997, -0.137969345, -0.144927874, 0.0679700524, -0.338836938, -0.148981035, -0.0579226241, -0.0411133431, -0.134416953, -0.228766575, 0.0347120725, 0.188858435, 0.0365840420, -0.0728861466) * textureLoad(t_MODEL3, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(0.158797532, 0.0752523839, 0.395982623, -0.0356542058, 0.159080356, 0.219926655, -0.0618315153, 0.0593655184, -0.0167248975, 0.0521489121, -0.169040024, 0.0437679067, 0.148427844, 0.0336748101, 0.0792394057, -0.169196889) * textureLoad(t_MODEL4, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(0.0883424729, -0.178717956, 0.0202672500, 0.0261629503, 0.270253390, -0.245383665, 0.109995767, -0.0144042354, -0.00150978065, -0.136266857, -0.0347330607, -0.198951051, -0.00424231961, -0.0167449955, 0.0216285791, 0.0892831087) * textureLoad(t_MODEL1, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(0.205131009, 0.00278983917, -0.000176391884, 0.0100249220, 0.0993037149, -0.136776030, 0.0291450191, -0.0933028311, 0.0177953281, 0.0170221291, 0.227314398, 0.128454864, -0.0512523726, 0.0499597341, 0.0128368801, 0.0484962948) * textureLoad(t_MODEL2, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(0.0107047688, 0.119289786, -0.0651094019, -0.108735323, -0.111308344, 0.0828913376, 0.184072480, -0.00940539315, 0.0167252813, -0.138248980, -0.0630832016, -0.147348225, -0.111463510, -0.0518594310, -0.0235241186, -0.0126351453) * textureLoad(t_MODEL3, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(0.0296659078, -0.205670908, -0.109857880, 0.0998752043, -0.0812627226, 0.0543943830, -0.0703363717, -0.0318221636, -0.0998558849, -0.0660875961, 0.105945431, -0.295343578, 0.139764041, -0.0678325891, 0.342914730, 0.0489608161) * textureLoad(t_MODEL4, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(-0.336536914, 0.0269370563, -0.115210086, -0.372437090, 0.203369558, 0.130190328, 0.0531136990, -0.164231673, -0.354403108, 0.0362125188, 0.0826834813, -0.174146369, 0.165872678, -0.187331319, -0.168918341, 0.121304661) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(0.119626403, 0.466803908, 0.227422446, 0.259528577, -0.235677332, 0.202206448, -0.104101665, -0.0850432888, 0.0704552233, 0.105197527, 0.0309862755, 0.0541171916, 0.104884960, -0.273356974, 0.303316206, 0.207328558) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(-0.0281020477, -0.0613350049, -0.143639892, -0.134603992, -0.00422419561, 0.226635799, 0.268048674, 0.216597453, -0.0555742607, -0.0408427902, -0.0233180206, -0.113782346, -0.0279302541, 0.0471737087, 0.0101841716, 0.0843950137) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(0.146775380, -0.156459168, -0.111650147, 0.0660525560, -0.0331849232, 0.391808629, -0.173366055, -0.147903621, -0.0903246999, 0.148764089, 0.148792595, 0.00350276637, 0.151574031, -0.0187088847, -0.292543769, 0.0182543509) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(-0.748110294, 0.0489503145, 0.427738905, 0.111069866, -0.118037321, -0.0640169755, -0.403623760, 0.375040770, -0.267498910, 0.260645717, 0.0579213575, -0.165416434, 0.0741627961, -0.118381761, 0.0677053258, 0.315340400) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(-0.0130001446, -0.315608889, -0.381821036, -0.373437375, -0.192997336, 0.273160726, -0.112896383, -0.0901952311, -0.0860874429, -0.115055278, -0.553917050, 0.221996322, 0.151981100, 0.118759505, -0.264627010, 0.158900544) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(-0.352697313, 0.101351298, 0.327634811, 0.0325730219, 0.0108129727, -0.0772381797, -0.363429666, -0.0984633192, -0.0579161346, -0.166528508, -0.180538416, 0.0421487242, -0.0370754339, 0.277795792, -0.172365293, 0.0774719939) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(0.251663059, 0.0711611360, 0.415025800, -0.0530782640, 0.0453773364, 0.713111460, 0.0896560848, -0.211987421, -0.0365835615, -0.360109627, -0.420382529, -0.317866057, -0.00483016530, 0.0448410437, 0.201038286, 0.0743545741) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(-0.0448845588, -0.112696730, -0.283877015, -0.0265006851, -0.150301039, -0.0848507732, 0.429030776, 0.239991561, -0.186482385, -0.155172929, -0.0276475288, -0.127603024, 0.0956413150, 0.102240413, 0.00719772372, 0.399983555) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(0.0565520637, 0.112318181, 0.0360258929, -0.0212583803, -0.000391958951, -0.201372117, -0.0591056868, 0.0514196530, -0.114988752, 0.00304416986, 0.0375107229, 0.114885181, 0.0638940632, 0.0283860806, -0.282462031, -0.0156587586) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(-0.142763823, 0.100269414, -0.431696922, 0.0643749684, -0.0387519374, 0.0991181806, 0.0756435767, 0.0365159921, -0.384602338, -0.159922898, 0.0590971746, 0.0721985325, -0.0267400332, -0.160908848, 0.499050945, -0.210925743) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(0.0641359761, -0.255058557, 0.218360856, 0.0179848317, -0.167615995, 0.0911817178, -0.265403539, 0.205452263, 0.103074215, -0.00854690745, 0.405958891, -0.227261692, 0.154394671, -0.0373913646, -0.184481576, 0.390266925) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(-0.120884061, 0.229542151, -0.0729679465, -0.153977498, -0.0351462401, 0.142748237, 0.117233612, 0.0642383397, -0.490822017, -0.187049925, -0.164958954, -0.0877780467, 0.0205509886, -0.137177378, -0.126215264, 0.0980261713) * textureLoad(t_MODEL1, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(0.0122987190, 0.409207195, -0.0637070015, -0.190065518, -0.203169256, 0.0677686110, 0.0819948986, -0.0646794513, -0.188636020, 0.0552973486, 0.0529354811, 0.242713571, 0.187809616, -0.794109881, 0.247365445, -0.0461769402) * textureLoad(t_MODEL2, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(-0.267048329, -0.0464731641, 0.134817973, 0.128787905, 0.176280797, 0.176373959, 0.0628014505, -0.185169533, -0.0731830969, -0.0602063686, -0.0992482603, -0.180794761, -0.145028293, 0.425267428, -0.0464306772, 0.106198370) * textureLoad(t_MODEL3, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(-0.0942721665, -0.186917230, -0.227349639, 0.0405284576, 0.0341044404, -0.336920589, -0.129394725, -0.00546347583, -0.159205854, -0.0815855339, -0.0179458652, 0.00901293848, 0.256413221, 0.0864854008, -0.269566774, 0.0918219909) * textureLoad(t_MODEL4, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(-0.119901180, -0.0161753539, -0.0373340733, -0.0703703016, -0.0785313174, -0.169023514, -0.0517011099, -0.0624188855, -0.362318456, 0.127442822, 0.0721982047, -0.176727757, -0.0581622906, -0.210335538, 0.120827474, 0.153122142) * textureLoad(t_MODEL1, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(0.458713740, -0.300644428, 0.249414667, 0.0363893062, -0.385347754, -0.0604551062, 0.0552791581, 0.147776216, -0.0710941106, -0.106361821, 0.0123918448, 0.170738816, 0.287663907, 0.0564418621, -0.166192636, -0.230343729) * textureLoad(t_MODEL2, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(-0.244237393, -0.0331413448, -0.264933079, -0.0761973485, -0.0481170006, -0.169751376, -0.100391991, -0.0970193744, -0.118598118, 0.292230517, -0.161012828, -0.151254341, -0.156680644, 0.244944632, -0.0870491490, 0.136338517) * textureLoad(t_MODEL3, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(0.0129548348, 0.161991879, 0.120721363, 0.497036785, -0.113446392, 0.285163522, 0.0270063542, -0.158059686, -0.134835348, -0.472182542, -0.0158271194, 0.0824347287, 0.213587493, 0.301721394, -0.418061763, 0.208586395) * textureLoad(t_MODEL4, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(-0.0410069376, -0.0597496331, -0.0622259118, 0.0466900021, -0.0118705733, -0.0377093926, 0.127166003, 0.153821215, -0.197293371, -0.214565620, -0.00605822075, -0.0900964066, -0.0699201524, 0.200085804, -0.0382570773, 0.227874026) * textureLoad(t_MODEL1, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(0.149149373, -0.280798256, 0.216768101, -0.0374836586, -0.0681022108, -0.0591772385, 0.126615703, 0.0385273024, -0.178536519, -0.0184984356, -0.101863168, 0.124985270, 0.0229612999, 0.0210885461, -0.0232779421, -0.126470372) * textureLoad(t_MODEL2, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(-0.104823835, 0.00712815486, 0.0773067102, 0.0486025997, -0.00349882548, -0.0338730142, 0.232025892, 0.0304228216, -0.0949344113, -0.218598828, 0.0429854318, 0.0297597684, -0.144933313, 0.229813725, 0.605539739, 0.263890833) * textureLoad(t_MODEL3, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(0.298398823, -0.251210630, 0.0851805583, 0.289151967, 0.168629631, 0.0317935050, 0.256312937, -0.142854661, -0.0726076365, 0.408355504, -0.0977859944, 0.0766079947, 0.227638796, -0.161679178, -0.0643424541, 0.402057022) * textureLoad(t_MODEL4, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL4)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(-0.00153300073, -0.0585773289, 0.0112670418, 0.111214258) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
+  let d_MODEL1 = textureDimensions(t_MODEL1);
+  let d_MODEL2 = textureDimensions(t_MODEL2);
+  let d_MODEL3 = textureDimensions(t_MODEL3);
+  let d_MODEL4 = textureDimensions(t_MODEL4);
+  var res0 = vec4f(0.156161651, -0.335874796, -0.176343217, -0.0262083206);
+  res0 += mat4x4f(0.0703750178, -0.0271107107, -0.0662064180, 0.332650512, 0.227576077, -0.302601725, -0.0163477659, -0.0208509397, -0.114661776, 0.0401906408, 0.131722540, -0.0753812343, 0.0955534875, 0.0290259421, -0.0355315842, -0.00918721966) * textureLoad(t_MODEL1, clampCoord(p + vec2i(-1, -1), d_MODEL1), 0);
+  res0 += mat4x4f(-0.0265402012, -0.111470886, 0.127557099, -0.0750365406, -0.0226262063, 0.116945378, -0.106882945, -0.210221335, 0.133153141, 0.0370831899, 0.213304281, 0.226988569, -0.0357505046, -0.0479809009, 0.0366531760, -0.0157112405) * textureLoad(t_MODEL2, clampCoord(p + vec2i(-1, -1), d_MODEL2), 0);
+  res0 += mat4x4f(0.0934196711, -0.135077089, 0.137717128, -0.119127609, -0.140757412, -0.0532059297, 0.0448001884, 0.0822927654, -0.0276801642, 0.0473372787, -0.163199216, -0.177508503, -0.0619204864, 0.0853836834, -0.134498760, 0.0597611405) * textureLoad(t_MODEL3, clampCoord(p + vec2i(-1, -1), d_MODEL3), 0);
+  res0 += mat4x4f(0.129688650, 0.107457973, 0.0521960817, -0.0854158998, -0.0523297340, -0.124924444, -0.0558522493, 0.0835623518, -0.00480992207, 0.0161724128, 0.106617205, 0.160171464, 0.128354728, 0.251917988, -0.101444744, -0.109732591) * textureLoad(t_MODEL4, clampCoord(p + vec2i(-1, -1), d_MODEL4), 0);
+  res0 += mat4x4f(0.228134364, 0.00198301952, -0.136176765, 0.138770148, 0.192902088, -0.319540173, -0.367334634, -0.0276853070, -0.102265842, 0.121629588, 0.165145591, -0.171592116, 0.00770986313, -0.000797790708, 0.162554443, -0.0553227477) * textureLoad(t_MODEL1, clampCoord(p + vec2i(-1, 0), d_MODEL1), 0);
+  res0 += mat4x4f(0.0385498367, -0.0890077427, -0.206582263, 0.237061292, 0.00388358720, 0.172232032, -0.0104143806, -0.00109828939, -0.0600124449, 0.0762347877, -0.312320769, 0.00815875549, -0.140004635, 0.0859977007, -0.178777337, -0.0294598956) * textureLoad(t_MODEL2, clampCoord(p + vec2i(-1, 0), d_MODEL2), 0);
+  res0 += mat4x4f(-0.00831446797, -0.0340852439, -0.0132184997, -0.137969345, -0.144927874, 0.0679700524, -0.338836938, -0.148981035, -0.0579226241, -0.0411133431, -0.134416953, -0.228766575, 0.0347120725, 0.188858435, 0.0365840420, -0.0728861466) * textureLoad(t_MODEL3, clampCoord(p + vec2i(-1, 0), d_MODEL3), 0);
+  res0 += mat4x4f(0.158797532, 0.0752523839, 0.395982623, -0.0356542058, 0.159080356, 0.219926655, -0.0618315153, 0.0593655184, -0.0167248975, 0.0521489121, -0.169040024, 0.0437679067, 0.148427844, 0.0336748101, 0.0792394057, -0.169196889) * textureLoad(t_MODEL4, clampCoord(p + vec2i(-1, 0), d_MODEL4), 0);
+  res0 += mat4x4f(0.0883424729, -0.178717956, 0.0202672500, 0.0261629503, 0.270253390, -0.245383665, 0.109995767, -0.0144042354, -0.00150978065, -0.136266857, -0.0347330607, -0.198951051, -0.00424231961, -0.0167449955, 0.0216285791, 0.0892831087) * textureLoad(t_MODEL1, clampCoord(p + vec2i(-1, 1), d_MODEL1), 0);
+  res0 += mat4x4f(0.205131009, 0.00278983917, -0.000176391884, 0.0100249220, 0.0993037149, -0.136776030, 0.0291450191, -0.0933028311, 0.0177953281, 0.0170221291, 0.227314398, 0.128454864, -0.0512523726, 0.0499597341, 0.0128368801, 0.0484962948) * textureLoad(t_MODEL2, clampCoord(p + vec2i(-1, 1), d_MODEL2), 0);
+  res0 += mat4x4f(0.0107047688, 0.119289786, -0.0651094019, -0.108735323, -0.111308344, 0.0828913376, 0.184072480, -0.00940539315, 0.0167252813, -0.138248980, -0.0630832016, -0.147348225, -0.111463510, -0.0518594310, -0.0235241186, -0.0126351453) * textureLoad(t_MODEL3, clampCoord(p + vec2i(-1, 1), d_MODEL3), 0);
+  res0 += mat4x4f(0.0296659078, -0.205670908, -0.109857880, 0.0998752043, -0.0812627226, 0.0543943830, -0.0703363717, -0.0318221636, -0.0998558849, -0.0660875961, 0.105945431, -0.295343578, 0.139764041, -0.0678325891, 0.342914730, 0.0489608161) * textureLoad(t_MODEL4, clampCoord(p + vec2i(-1, 1), d_MODEL4), 0);
+  res0 += mat4x4f(-0.336536914, 0.0269370563, -0.115210086, -0.372437090, 0.203369558, 0.130190328, 0.0531136990, -0.164231673, -0.354403108, 0.0362125188, 0.0826834813, -0.174146369, 0.165872678, -0.187331319, -0.168918341, 0.121304661) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, -1), d_MODEL1), 0);
+  res0 += mat4x4f(0.119626403, 0.466803908, 0.227422446, 0.259528577, -0.235677332, 0.202206448, -0.104101665, -0.0850432888, 0.0704552233, 0.105197527, 0.0309862755, 0.0541171916, 0.104884960, -0.273356974, 0.303316206, 0.207328558) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, -1), d_MODEL2), 0);
+  res0 += mat4x4f(-0.0281020477, -0.0613350049, -0.143639892, -0.134603992, -0.00422419561, 0.226635799, 0.268048674, 0.216597453, -0.0555742607, -0.0408427902, -0.0233180206, -0.113782346, -0.0279302541, 0.0471737087, 0.0101841716, 0.0843950137) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, -1), d_MODEL3), 0);
+  res0 += mat4x4f(0.146775380, -0.156459168, -0.111650147, 0.0660525560, -0.0331849232, 0.391808629, -0.173366055, -0.147903621, -0.0903246999, 0.148764089, 0.148792595, 0.00350276637, 0.151574031, -0.0187088847, -0.292543769, 0.0182543509) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, -1), d_MODEL4), 0);
+  res0 += mat4x4f(-0.748110294, 0.0489503145, 0.427738905, 0.111069866, -0.118037321, -0.0640169755, -0.403623760, 0.375040770, -0.267498910, 0.260645717, 0.0579213575, -0.165416434, 0.0741627961, -0.118381761, 0.0677053258, 0.315340400) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, 0), d_MODEL1), 0);
+  res0 += mat4x4f(-0.0130001446, -0.315608889, -0.381821036, -0.373437375, -0.192997336, 0.273160726, -0.112896383, -0.0901952311, -0.0860874429, -0.115055278, -0.553917050, 0.221996322, 0.151981100, 0.118759505, -0.264627010, 0.158900544) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, 0), d_MODEL2), 0);
+  res0 += mat4x4f(-0.352697313, 0.101351298, 0.327634811, 0.0325730219, 0.0108129727, -0.0772381797, -0.363429666, -0.0984633192, -0.0579161346, -0.166528508, -0.180538416, 0.0421487242, -0.0370754339, 0.277795792, -0.172365293, 0.0774719939) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, 0), d_MODEL3), 0);
+  res0 += mat4x4f(0.251663059, 0.0711611360, 0.415025800, -0.0530782640, 0.0453773364, 0.713111460, 0.0896560848, -0.211987421, -0.0365835615, -0.360109627, -0.420382529, -0.317866057, -0.00483016530, 0.0448410437, 0.201038286, 0.0743545741) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, 0), d_MODEL4), 0);
+  res0 += mat4x4f(-0.0448845588, -0.112696730, -0.283877015, -0.0265006851, -0.150301039, -0.0848507732, 0.429030776, 0.239991561, -0.186482385, -0.155172929, -0.0276475288, -0.127603024, 0.0956413150, 0.102240413, 0.00719772372, 0.399983555) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, 1), d_MODEL1), 0);
+  res0 += mat4x4f(0.0565520637, 0.112318181, 0.0360258929, -0.0212583803, -0.000391958951, -0.201372117, -0.0591056868, 0.0514196530, -0.114988752, 0.00304416986, 0.0375107229, 0.114885181, 0.0638940632, 0.0283860806, -0.282462031, -0.0156587586) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, 1), d_MODEL2), 0);
+  res0 += mat4x4f(-0.142763823, 0.100269414, -0.431696922, 0.0643749684, -0.0387519374, 0.0991181806, 0.0756435767, 0.0365159921, -0.384602338, -0.159922898, 0.0590971746, 0.0721985325, -0.0267400332, -0.160908848, 0.499050945, -0.210925743) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, 1), d_MODEL3), 0);
+  res0 += mat4x4f(0.0641359761, -0.255058557, 0.218360856, 0.0179848317, -0.167615995, 0.0911817178, -0.265403539, 0.205452263, 0.103074215, -0.00854690745, 0.405958891, -0.227261692, 0.154394671, -0.0373913646, -0.184481576, 0.390266925) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, 1), d_MODEL4), 0);
+  res0 += mat4x4f(-0.120884061, 0.229542151, -0.0729679465, -0.153977498, -0.0351462401, 0.142748237, 0.117233612, 0.0642383397, -0.490822017, -0.187049925, -0.164958954, -0.0877780467, 0.0205509886, -0.137177378, -0.126215264, 0.0980261713) * textureLoad(t_MODEL1, clampCoord(p + vec2i(1, -1), d_MODEL1), 0);
+  res0 += mat4x4f(0.0122987190, 0.409207195, -0.0637070015, -0.190065518, -0.203169256, 0.0677686110, 0.0819948986, -0.0646794513, -0.188636020, 0.0552973486, 0.0529354811, 0.242713571, 0.187809616, -0.794109881, 0.247365445, -0.0461769402) * textureLoad(t_MODEL2, clampCoord(p + vec2i(1, -1), d_MODEL2), 0);
+  res0 += mat4x4f(-0.267048329, -0.0464731641, 0.134817973, 0.128787905, 0.176280797, 0.176373959, 0.0628014505, -0.185169533, -0.0731830969, -0.0602063686, -0.0992482603, -0.180794761, -0.145028293, 0.425267428, -0.0464306772, 0.106198370) * textureLoad(t_MODEL3, clampCoord(p + vec2i(1, -1), d_MODEL3), 0);
+  res0 += mat4x4f(-0.0942721665, -0.186917230, -0.227349639, 0.0405284576, 0.0341044404, -0.336920589, -0.129394725, -0.00546347583, -0.159205854, -0.0815855339, -0.0179458652, 0.00901293848, 0.256413221, 0.0864854008, -0.269566774, 0.0918219909) * textureLoad(t_MODEL4, clampCoord(p + vec2i(1, -1), d_MODEL4), 0);
+  res0 += mat4x4f(-0.119901180, -0.0161753539, -0.0373340733, -0.0703703016, -0.0785313174, -0.169023514, -0.0517011099, -0.0624188855, -0.362318456, 0.127442822, 0.0721982047, -0.176727757, -0.0581622906, -0.210335538, 0.120827474, 0.153122142) * textureLoad(t_MODEL1, clampCoord(p + vec2i(1, 0), d_MODEL1), 0);
+  res0 += mat4x4f(0.458713740, -0.300644428, 0.249414667, 0.0363893062, -0.385347754, -0.0604551062, 0.0552791581, 0.147776216, -0.0710941106, -0.106361821, 0.0123918448, 0.170738816, 0.287663907, 0.0564418621, -0.166192636, -0.230343729) * textureLoad(t_MODEL2, clampCoord(p + vec2i(1, 0), d_MODEL2), 0);
+  res0 += mat4x4f(-0.244237393, -0.0331413448, -0.264933079, -0.0761973485, -0.0481170006, -0.169751376, -0.100391991, -0.0970193744, -0.118598118, 0.292230517, -0.161012828, -0.151254341, -0.156680644, 0.244944632, -0.0870491490, 0.136338517) * textureLoad(t_MODEL3, clampCoord(p + vec2i(1, 0), d_MODEL3), 0);
+  res0 += mat4x4f(0.0129548348, 0.161991879, 0.120721363, 0.497036785, -0.113446392, 0.285163522, 0.0270063542, -0.158059686, -0.134835348, -0.472182542, -0.0158271194, 0.0824347287, 0.213587493, 0.301721394, -0.418061763, 0.208586395) * textureLoad(t_MODEL4, clampCoord(p + vec2i(1, 0), d_MODEL4), 0);
+  res0 += mat4x4f(-0.0410069376, -0.0597496331, -0.0622259118, 0.0466900021, -0.0118705733, -0.0377093926, 0.127166003, 0.153821215, -0.197293371, -0.214565620, -0.00605822075, -0.0900964066, -0.0699201524, 0.200085804, -0.0382570773, 0.227874026) * textureLoad(t_MODEL1, clampCoord(p + vec2i(1, 1), d_MODEL1), 0);
+  res0 += mat4x4f(0.149149373, -0.280798256, 0.216768101, -0.0374836586, -0.0681022108, -0.0591772385, 0.126615703, 0.0385273024, -0.178536519, -0.0184984356, -0.101863168, 0.124985270, 0.0229612999, 0.0210885461, -0.0232779421, -0.126470372) * textureLoad(t_MODEL2, clampCoord(p + vec2i(1, 1), d_MODEL2), 0);
+  res0 += mat4x4f(-0.104823835, 0.00712815486, 0.0773067102, 0.0486025997, -0.00349882548, -0.0338730142, 0.232025892, 0.0304228216, -0.0949344113, -0.218598828, 0.0429854318, 0.0297597684, -0.144933313, 0.229813725, 0.605539739, 0.263890833) * textureLoad(t_MODEL3, clampCoord(p + vec2i(1, 1), d_MODEL3), 0);
+  res0 += mat4x4f(0.298398823, -0.251210630, 0.0851805583, 0.289151967, 0.168629631, 0.0317935050, 0.256312937, -0.142854661, -0.0726076365, 0.408355504, -0.0977859944, 0.0766079947, 0.227638796, -0.161679178, -0.0643424541, 0.402057022) * textureLoad(t_MODEL4, clampCoord(p + vec2i(1, 1), d_MODEL4), 0);
+  res0 = max(res0, vec4f(0.0)) + vec4f(-0.00153300073, -0.0585773289, 0.0112670418, 0.111214258) * min(res0, vec4f(0.0));
+  var res1 = vec4f(-0.176714972, 0.225721851, -0.138351575, -0.291682690);
+  res1 += mat4x4f(-0.175428212, -0.0640487745, -0.223278269, 0.549416363, -0.196556225, -0.0482466929, 0.135236785, -0.272126198, 0.0204668418, -0.157552779, -0.324321032, 0.105090678, -0.152684480, 0.0896622613, -0.194278419, 0.00363874994) * textureLoad(t_MODEL1, clampCoord(p + vec2i(-1, -1), d_MODEL1), 0);
+  res1 += mat4x4f(0.0181384720, -0.118744008, -0.0267405864, -0.161155492, -0.0329059139, 0.240135089, -0.0495584235, -0.113938302, -0.0526812859, 0.0859406665, 0.490905583, -0.0732303858, 0.0345768593, 0.264905810, -0.270722270, 0.151002839) * textureLoad(t_MODEL2, clampCoord(p + vec2i(-1, -1), d_MODEL2), 0);
+  res1 += mat4x4f(0.0512693711, 0.0136214532, -0.193583295, -0.0718121454, 0.00323891686, 0.343102425, -0.0560407974, 0.0969550535, 0.00663984567, 0.111976430, -0.408821732, -0.161791116, -0.0671737865, 0.0322841033, 0.128913566, -0.224194512) * textureLoad(t_MODEL3, clampCoord(p + vec2i(-1, -1), d_MODEL3), 0);
+  res1 += mat4x4f(-0.137257978, 0.0351543576, -0.612927616, -0.240607262, -0.126267180, 0.128049478, 0.163453519, -0.140500933, 0.237803921, -0.0370434821, -0.227967486, -0.0350629799, -0.146883696, -0.0997415707, -0.201027900, -0.150292173) * textureLoad(t_MODEL4, clampCoord(p + vec2i(-1, -1), d_MODEL4), 0);
+  res1 += mat4x4f(0.533226907, 0.121487632, 0.507609785, -0.265472412, -0.169364095, -0.282745957, 0.220514506, -0.192291141, 0.251093328, -0.148343489, -0.162413090, -0.306567371, 0.0826613307, 0.0204477403, -0.175339207, -0.0139353722) * textureLoad(t_MODEL1, clampCoord(p + vec2i(-1, 0), d_MODEL1), 0);
+  res1 += mat4x4f(0.0375358686, -0.0390642993, 0.423223972, 0.262092561, 0.0665049702, 0.0639635921, -0.0700181797, 0.0199310128, -0.258838773, -0.0602690354, -0.0155711956, 0.158765197, 0.225980401, -0.0203945450, -0.262334675, 0.000711371889) * textureLoad(t_MODEL2, clampCoord(p + vec2i(-1, 0), d_MODEL2), 0);
+  res1 += mat4x4f(-0.209801957, 0.0398645438, -0.261742920, -0.0730624348, 0.329254717, -0.136017859, -0.157679692, -0.0147541501, 0.310237736, -0.313554257, -0.0800373256, -0.399707228, 0.0546451248, -0.214441121, -0.0680508018, -0.0928944945) * textureLoad(t_MODEL3, clampCoord(p + vec2i(-1, 0), d_MODEL3), 0);
+  res1 += mat4x4f(-0.0415387973, -0.241158947, -0.232918665, -0.274416387, -0.0174303092, -0.0790314376, -0.290574610, 0.293306798, 0.00299809221, 0.256360024, 0.0680465251, 0.150038660, -0.311571181, -0.166789576, -0.0532996990, -0.0403415896) * textureLoad(t_MODEL4, clampCoord(p + vec2i(-1, 0), d_MODEL4), 0);
+  res1 += mat4x4f(-0.515786707, -0.125723079, -0.0276640002, -0.112900227, -0.0544854552, -0.203629807, 0.124751270, -0.167528749, 0.114768974, -0.231171861, -0.00770762516, -0.0366553999, -0.0367025509, -0.130429104, -0.260383546, 0.0688019022) * textureLoad(t_MODEL1, clampCoord(p + vec2i(-1, 1), d_MODEL1), 0);
+  res1 += mat4x4f(-0.133373067, -0.136365652, -0.137520790, -0.0326237008, 0.258307397, -0.0777554810, 0.0828678459, 0.177212998, 0.0863732100, -0.0846362859, 0.106096335, 0.200919151, 0.0916598216, 0.0174890738, -0.0627240017, 0.0938308164) * textureLoad(t_MODEL2, clampCoord(p + vec2i(-1, 1), d_MODEL2), 0);
+  res1 += mat4x4f(0.0515131503, -0.0246101841, 0.0594219603, 0.0275556203, -0.0526091903, -0.0537406094, -0.149997294, -0.0610638522, 0.291033119, -0.543305457, -0.201086313, -0.0154245691, 0.120887607, -0.169028446, -0.260717213, 0.310338378) * textureLoad(t_MODEL3, clampCoord(p + vec2i(-1, 1), d_MODEL3), 0);
+  res1 += mat4x4f(-0.162899122, 0.0569596253, -0.0890088752, 0.0673800558, -0.0530322306, -0.0750334635, -0.189099506, -0.0400865898, 0.247732088, 0.164375752, -0.380486399, -0.231584743, -0.286308616, -0.219510704, 0.0625069216, 0.246844456) * textureLoad(t_MODEL4, clampCoord(p + vec2i(-1, 1), d_MODEL4), 0);
+  res1 += mat4x4f(0.0148719447, 0.339872926, -0.221072227, 0.0612546578, -0.491573036, -0.0490909629, -0.196416169, -0.489345789, 0.112264097, -0.495983094, -0.197727799, 0.193634167, 0.00380225899, 0.180490553, -0.188057512, -0.223052338) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, -1), d_MODEL1), 0);
+  res1 += mat4x4f(-0.336022198, 0.337666392, -0.105366550, 0.309983194, -0.101832367, 0.187713936, -0.158764645, 0.129697621, 0.192297742, 0.00269711716, 0.0273411684, -0.256355315, -0.122324094, 0.0425319560, -0.309817880, 0.244948387) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, -1), d_MODEL2), 0);
+  res1 += mat4x4f(0.152961537, 0.118447267, -0.0629943907, -0.477126747, -0.530194998, -0.292282164, 0.335502326, 0.461031765, -0.0245477855, 0.168276548, -0.0473954827, -0.0251504593, 0.00130570738, 0.00830622390, -0.0705754310, -0.0470471382) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, -1), d_MODEL3), 0);
+  res1 += mat4x4f(-0.0618043132, -0.178471029, -0.350879282, -0.579203725, 0.105295233, 0.233780399, -0.128251463, -0.145277843, -0.0312706791, -0.0178345777, 0.0687921271, -0.00371515309, 0.188526124, -0.0608044565, 0.196214855, -0.0830752105) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, -1), d_MODEL4), 0);
+  res1 += mat4x4f(-0.196142495, -0.300803721, 0.154855415, 0.229683489, -0.301907867, 0.0556159839, -0.0890107900, 0.487705678, 0.275797486, -0.429589599, -0.363212377, -0.174390480, -0.0416484810, -0.0328906998, -0.205942079, 0.126734823) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, 0), d_MODEL1), 0);
+  res1 += mat4x4f(0.441927522, -0.0374487750, 0.0709252134, -0.166817576, 0.372951627, -0.0426788107, 0.187133431, -0.172425568, -0.00898170192, 0.113834478, -0.229112238, 0.281765044, -0.524590969, 0.256639212, 0.104181588, -0.109347194) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, 0), d_MODEL2), 0);
+  res1 += mat4x4f(-0.437643617, -0.106944665, 0.186795041, 0.311629474, 0.161423564, 0.143537760, 0.110599063, -0.266773075, 0.167917445, -0.102736682, -0.0170106832, -0.286794990, 0.0119254645, 0.177121788, -0.139145702, -0.0943097696) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, 0), d_MODEL3), 0);
+  res1 += mat4x4f(0.249174401, -0.525974154, 0.0856871009, 0.461635470, -0.0619653799, -0.711167216, -0.846485019, 0.442337900, 0.0801284388, -0.0830942467, 0.703074753, -0.0908020362, -0.0177753679, -0.227350593, 0.314854115, 0.432262003) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, 0), d_MODEL4), 0);
+  res1 += mat4x4f(-0.187503591, 0.110821903, -0.469428480, -0.285065264, 0.0208335649, 0.289894372, 0.379477084, -0.300681055, -0.0658355057, -0.232617885, 0.0747204572, 0.0632973164, -0.158877805, -0.0851954296, 0.0266543385, -0.149784401) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, 1), d_MODEL1), 0);
+  res1 += mat4x4f(-0.203004658, 0.131945938, 0.260273963, -0.411855489, -0.0554966107, -0.0866691470, 0.168037623, -0.0292228702, -0.159028247, 0.270236075, -0.0257863943, 0.0185152795, 0.134615943, -0.0314050280, -0.0648399517, -0.0144325579) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, 1), d_MODEL2), 0);
+  res1 += mat4x4f(0.246747851, 0.268851250, -0.151099682, -0.0220587831, 0.316410422, 0.312466443, 0.346934199, -0.187258959, 0.00984855741, -0.135969520, -0.0409514196, 0.0175130386, 0.345637321, -0.0378544480, 0.0436994769, -0.0117167784) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, 1), d_MODEL3), 0);
+  res1 += mat4x4f(-0.252843529, -0.515580356, -0.214344904, 0.350921243, 0.463373303, 0.0251211058, -0.578787565, 0.561872661, -0.199377030, 0.107695654, -0.102540553, -0.356310219, 0.332634330, -0.204083204, 0.0804789737, 0.249126226) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, 1), d_MODEL4), 0);
+  res1 += mat4x4f(0.261753947, -0.0497161485, 0.238549441, 0.0154465092, -0.247756615, -0.233778477, -0.156327039, -0.159642741, 0.196147636, -0.0837223306, 0.00998097844, -0.0457590707, -0.0191341098, 0.126339689, -0.203018650, -0.0467233919) * textureLoad(t_MODEL1, clampCoord(p + vec2i(1, -1), d_MODEL1), 0);
+  res1 += mat4x4f(-0.222638518, -0.111264624, -0.418708354, 0.183552578, -0.170834169, 0.220631972, -0.124648497, 0.133865774, 0.131550580, 0.0422743931, -0.0618249215, -0.0575906225, -0.114017531, -0.00397455273, -0.252096295, 0.187250376) * textureLoad(t_MODEL2, clampCoord(p + vec2i(1, -1), d_MODEL2), 0);
+  res1 += mat4x4f(-0.174102306, 0.0545387492, 0.0209121685, -0.000842769630, 0.0132224066, -0.0871341974, -0.137203842, 0.113607273, 0.0538884737, 0.106003784, 0.0458776020, -0.241419300, 0.0656121075, -0.181051433, -0.152383357, -0.116352834) * textureLoad(t_MODEL3, clampCoord(p + vec2i(1, -1), d_MODEL3), 0);
+  res1 += mat4x4f(0.115702689, 0.297492117, -0.342757821, -0.0434873551, 0.0661409199, 0.0182205625, 0.183874145, -0.290800661, 0.158999920, 0.127456516, 0.364971995, 0.0228158962, -0.0672520325, 0.0945007801, 0.00612316327, -0.0791581199) * textureLoad(t_MODEL4, clampCoord(p + vec2i(1, -1), d_MODEL4), 0);
+  res1 += mat4x4f(-0.408570170, 0.294380248, -0.0944574177, 0.167041495, 0.0958840549, -0.00497465162, 0.149087086, 0.131047115, -0.0550372750, -0.117202297, -0.0289764125, 0.0238115471, -0.129452631, 0.120697416, -0.0858745947, -0.00641291775) * textureLoad(t_MODEL1, clampCoord(p + vec2i(1, 0), d_MODEL1), 0);
+  res1 += mat4x4f(0.348366708, 0.0325152390, 0.119700707, -0.166623816, 0.134272054, 0.0702574402, 0.330101550, -0.0153884282, -0.356607705, 0.0690796077, -0.0349858142, 0.165911928, -0.785821915, 0.0152845392, 0.0926921144, -0.119569935) * textureLoad(t_MODEL2, clampCoord(p + vec2i(1, 0), d_MODEL2), 0);
+  res1 += mat4x4f(0.220732793, 0.0877295509, -0.177476853, -0.289748132, -0.112589322, -0.0837229490, -0.260690004, 0.0727790147, 0.0371558145, -0.0430961996, 0.164474264, -0.194649234, 0.0951662958, 0.266978592, 0.362205178, 0.146567479) * textureLoad(t_MODEL3, clampCoord(p + vec2i(1, 0), d_MODEL3), 0);
+  res1 += mat4x4f(0.326886356, -0.281720459, 0.0819929764, 0.309942454, -0.225303516, -0.137770891, -0.220139265, 0.218297914, -0.155883521, 0.457748771, 0.296573609, -0.274867624, -0.116673060, -0.132393658, -0.235738754, 0.296377689) * textureLoad(t_MODEL4, clampCoord(p + vec2i(1, 0), d_MODEL4), 0);
+  res1 += mat4x4f(0.0405509509, -0.0727522895, 0.0350635089, -0.0855552554, 0.342244655, 0.220847666, 0.0853927583, -0.0960095227, 0.0472080149, -0.0501071997, 0.0873082429, -0.0667047650, 0.153413802, -0.0156011824, 0.0801621675, -0.310112268) * textureLoad(t_MODEL1, clampCoord(p + vec2i(1, 1), d_MODEL1), 0);
+  res1 += mat4x4f(0.0743533224, -0.138067856, 0.0123444265, 0.141994342, -0.156972960, 0.172139555, 0.279344529, 0.100601539, 0.0391495265, 0.225586519, 0.0955501571, 0.0505405329, 0.0482249148, 0.139281049, -0.195740864, 0.0875623673) * textureLoad(t_MODEL2, clampCoord(p + vec2i(1, 1), d_MODEL2), 0);
+  res1 += mat4x4f(-0.0427126437, 0.0903814808, 0.663285434, 0.298146784, 0.173149407, -0.0806558058, 0.343431622, -0.170438051, 0.218377963, 0.0928960592, 0.0947442353, -0.168678239, 0.695224524, -0.336797506, 0.350171059, -0.0145992013) * textureLoad(t_MODEL3, clampCoord(p + vec2i(1, 1), d_MODEL3), 0);
+  res1 += mat4x4f(-0.246856064, 0.0232017636, -0.199434832, 0.00968632381, -0.0834095255, -0.0807790756, -0.313649058, 0.00905006006, 0.0341969617, 0.0550205149, 0.0474779271, -0.139764264, -0.0780577511, -0.252842128, -0.0348786116, 0.537635088) * textureLoad(t_MODEL4, clampCoord(p + vec2i(1, 1), d_MODEL4), 0);
+  res1 = max(res1, vec4f(0.0)) + vec4f(-0.124575287, 0.364329070, 0.190113008, 0.00739230914) * min(res1, vec4f(0.0));
+  var res2 = vec4f(0.101635456, -0.153031781, -0.174981847, 0.152127951);
+  res2 += mat4x4f(0.147343412, -0.455880642, -0.175908267, -0.400685102, 0.107397258, 0.0621286295, -0.0730420351, 0.151924297, 0.107514702, -0.0827682838, -0.164071247, -0.300441384, 0.00594713306, 0.199556500, -0.0160447620, -0.371467620) * textureLoad(t_MODEL1, clampCoord(p + vec2i(-1, -1), d_MODEL1), 0);
+  res2 += mat4x4f(0.0884312242, 0.104394481, 0.146991193, 0.260911107, -0.381955743, 0.527054965, 0.332485080, 0.246398792, -0.235866591, 0.205344528, -0.157208666, -0.171465740, 0.0584659614, 0.0401430093, 0.0553648397, 0.226035386) * textureLoad(t_MODEL2, clampCoord(p + vec2i(-1, -1), d_MODEL2), 0);
+  res2 += mat4x4f(-0.522591352, 0.353103191, 0.236721352, -0.408201516, -0.136172801, 0.0731211603, -0.0396234542, 0.386673361, 0.223266467, 0.00256111729, -0.235832840, 0.0795662478, 0.0125049483, 0.0187654719, 0.000538517488, 0.0846320838) * textureLoad(t_MODEL3, clampCoord(p + vec2i(-1, -1), d_MODEL3), 0);
+  res2 += mat4x4f(-0.104036219, 0.269360483, -0.0940428078, 0.169395432, 0.0739339367, -0.105121911, 0.0362323485, -0.0757801831, 0.112019308, 0.0620613657, 0.0865028203, -0.0684785694, 0.0646895319, -0.150571436, 0.0343389548, 0.176712647) * textureLoad(t_MODEL4, clampCoord(p + vec2i(-1, -1), d_MODEL4), 0);
+  res2 += mat4x4f(0.0150846746, -0.480569720, 0.177226797, -0.765438676, -0.288162380, 0.173303381, -0.140258417, 0.00248674746, -0.0213660337, 0.226787984, -0.110912099, -0.270507097, -0.577491581, 0.161442354, 0.182679936, -0.200947672) * textureLoad(t_MODEL1, clampCoord(p + vec2i(-1, 0), d_MODEL1), 0);
+  res2 += mat4x4f(0.0633900315, -0.481414735, -0.0238071699, 0.0920804217, -0.204260409, 0.156137705, -0.236707211, 0.124568455, -0.165608644, 0.121560946, -0.0863509253, 0.134944916, 0.0135538271, 0.0475430302, 0.0763533637, 0.444737703) * textureLoad(t_MODEL2, clampCoord(p + vec2i(-1, 0), d_MODEL2), 0);
+  res2 += mat4x4f(-0.528523564, 0.387112379, -0.00604526093, -0.481567025, -0.0583270751, 0.177752331, 0.0506286658, -0.00848128833, -0.0212140996, 0.0280311238, -0.0138057619, 0.279621124, 0.0939560831, 0.0935739949, 0.0925302655, -0.184044257) * textureLoad(t_MODEL3, clampCoord(p + vec2i(-1, 0), d_MODEL3), 0);
+  res2 += mat4x4f(-0.103760570, 0.0655618459, 0.200499490, -0.0232605990, 0.0914396122, 0.0338065363, 0.0521776974, -0.189799577, 0.0171369407, -0.344841927, -0.0108155180, -0.0271220133, 0.00638917880, -0.0381838307, 0.295065701, 0.0945822522) * textureLoad(t_MODEL4, clampCoord(p + vec2i(-1, 0), d_MODEL4), 0);
+  res2 += mat4x4f(0.0397421867, -0.0987438858, -0.263872594, 0.0493840128, -0.294419587, 0.395605087, -0.0816108137, -0.194646016, 0.0813066885, 0.123545922, -0.261982232, -0.120171636, -0.336172134, 0.135131806, -0.0945885479, -0.441062152) * textureLoad(t_MODEL1, clampCoord(p + vec2i(-1, 1), d_MODEL1), 0);
+  res2 += mat4x4f(-0.0298395324, -0.0747138709, -0.0180589817, 0.0988917574, -0.201992899, 0.130357549, 0.0268392339, -0.179573432, -0.238916412, 0.0457861982, 0.219491661, -0.368251115, -0.0387273803, 0.00721998792, 0.0207549371, 0.0625136569) * textureLoad(t_MODEL2, clampCoord(p + vec2i(-1, 1), d_MODEL2), 0);
+  res2 += mat4x4f(-0.121015333, 0.172022521, -0.0276323352, -0.301792443, -0.0354458354, -0.187404156, 0.131595731, 0.0776325464, 0.109839007, -0.00647760555, -0.203858539, 0.201901495, 0.108709484, -0.0355601199, 0.222222835, 0.00239015347) * textureLoad(t_MODEL3, clampCoord(p + vec2i(-1, 1), d_MODEL3), 0);
+  res2 += mat4x4f(0.133422628, -0.118434608, -0.0418117568, -0.0296531413, 0.100005284, 0.0413352773, -0.108167149, -0.0742605850, 0.141722366, -0.0446009189, -0.156996816, 0.410691351, -0.108423918, 0.0323132724, 0.530873597, -0.115526915) * textureLoad(t_MODEL4, clampCoord(p + vec2i(-1, 1), d_MODEL4), 0);
+  res2 += mat4x4f(-0.687959909, 0.0580945425, 0.102455907, 0.224624038, -0.0824696273, 0.216067791, -0.289245337, -0.0363973789, 0.0157172363, -0.395315707, -0.0660421774, 0.158483908, -0.0193123240, 0.0975903943, -0.00959130004, -0.294408619) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, -1), d_MODEL1), 0);
+  res2 += mat4x4f(-0.281575650, 0.539033771, 0.143258438, -0.195744455, -0.146026224, 0.00770876464, 0.117521651, -0.00506497640, -0.251944631, -0.261741757, 0.000658104022, -0.0316984169, 0.143283173, 0.0257870443, -0.0851346403, 0.115703754) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, -1), d_MODEL2), 0);
+  res2 += mat4x4f(-0.404243261, 0.189003304, 0.104796767, 0.0465086140, 0.408880174, -0.169283241, -0.389750630, -0.692264736, 0.456755489, -0.0864791349, -0.222480193, 0.207503632, 0.0903301910, 0.0484518148, -0.00598114356, 0.0811143368) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, -1), d_MODEL3), 0);
+  res2 += mat4x4f(0.150768936, -0.0316028558, 0.444945842, -0.236736521, 0.251005739, -0.0373110361, 0.337041706, 0.144792154, -0.0861464813, -0.205736294, -0.129392296, -0.129462019, -0.0184429418, 0.0910128802, 0.236875162, 0.427511513) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, -1), d_MODEL4), 0);
+  res2 += mat4x4f(0.154143617, 0.164059773, -0.270043045, 0.414152622, -0.0219941996, 0.264028311, -0.165051728, 0.413102597, -0.00269243238, 0.0413628928, 0.00680454308, -0.158305660, -0.381016761, 0.151207030, 0.0209162999, -0.0469518863) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, 0), d_MODEL1), 0);
+  res2 += mat4x4f(-0.417702675, 0.856799662, -0.517077982, -0.0214160886, -0.304188550, 0.125741005, 0.152191699, 0.0519398302, -0.117588386, -0.157890797, -0.258429557, 0.281886280, 0.137609646, -0.0194527768, -0.472714573, -0.333584607) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, 0), d_MODEL2), 0);
+  res2 += mat4x4f(-0.479984611, 0.239899442, -0.0590831526, -0.225296333, 0.136907563, -0.549087822, -0.0305930283, 0.000855579798, 0.352190018, 0.288837045, 0.317254990, 0.463771552, -0.254596025, 0.528649926, 0.124463215, -0.0261280667) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, 0), d_MODEL3), 0);
+  res2 += mat4x4f(-0.129854724, -0.0000664651670, 0.624610841, -0.310754836, 0.194645062, -0.394672126, -0.222775698, -0.00200344995, 0.393187851, 0.312916458, -0.274613380, 0.356204361, -0.0153379356, 0.0342406407, 0.0751883835, 0.402420640) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, 0), d_MODEL4), 0);
+  res2 += mat4x4f(-0.148866698, 0.0103566218, 0.160642713, -0.0313186236, 0.0520499684, 0.141400680, 0.277621329, 0.0310483910, 0.0704717338, -0.119820505, -0.255748391, 0.169775814, -0.309432447, -0.0717520192, 0.0230279621, -0.589804113) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, 1), d_MODEL1), 0);
+  res2 += mat4x4f(0.142189801, 0.0374483354, 0.0112043787, -0.00390012283, -0.168303430, 0.150562614, -0.184263319, -0.100311793, -0.142053142, -0.0362337418, 0.281173348, -0.0288809296, 0.0152386874, 0.0392694212, -0.0628641769, 0.312470078) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, 1), d_MODEL2), 0);
+  res2 += mat4x4f(-0.207993805, 0.0376941934, -0.0679711029, -0.166458577, -0.125660375, 0.0984069332, 0.242221117, -0.0968302712, 0.276696920, 0.174327731, -0.167726040, 0.307142675, 0.167813748, 0.0846147165, 0.0859014466, 0.346145421) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, 1), d_MODEL3), 0);
+  res2 += mat4x4f(0.0790206045, 0.0509988442, -0.455673873, 0.152874067, -0.0155931953, -0.0566701442, 0.0769117549, -0.0638501495, -0.269048899, 0.215401724, 0.452846378, -0.171253145, 0.000741234864, -0.272610664, 0.176144689, 0.184686586) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, 1), d_MODEL4), 0);
+  res2 += mat4x4f(0.114891768, -0.200908050, 0.154958621, 0.0899196640, 0.181734845, -0.100774921, -0.134664074, 0.243429020, -0.000431531080, 0.126825035, 0.0646733567, 0.0652357936, -0.0193509273, -0.159064308, 0.0506249852, -0.180228353) * textureLoad(t_MODEL1, clampCoord(p + vec2i(1, -1), d_MODEL1), 0);
+  res2 += mat4x4f(0.401778042, -0.272553235, -0.0580149963, -0.0476737730, -0.0581136681, -0.0276057720, -0.0544528179, 0.102788374, -0.234638751, -0.135726288, -0.0221323054, 0.0964788124, -0.134305790, 0.0407694615, -0.0181987807, -0.101114012) * textureLoad(t_MODEL2, clampCoord(p + vec2i(1, -1), d_MODEL2), 0);
+  res2 += mat4x4f(0.330088764, -0.261146158, -0.0255855005, 0.0981464013, -0.273588985, 0.192817822, -0.116823107, -0.149038821, 0.284331769, -0.0590819567, -0.101958312, 0.0421028435, 0.253892362, -0.0348960087, 0.0195158105, -0.0320624299) * textureLoad(t_MODEL3, clampCoord(p + vec2i(1, -1), d_MODEL3), 0);
+  res2 += mat4x4f(0.103795625, -0.261613846, 0.170230612, -0.115242265, -0.224040374, 0.114566065, 0.106427841, -0.0331612714, -0.176230431, 0.0199808087, -0.108429126, 0.0868252590, -0.168084860, -0.0360631272, 0.0382235125, 0.0750489533) * textureLoad(t_MODEL4, clampCoord(p + vec2i(1, -1), d_MODEL4), 0);
+  res2 += mat4x4f(0.108111106, -0.192297563, -0.255385876, 0.0139266634, 0.186369389, -0.265356690, -0.140024811, 0.240339667, 0.00672330847, 0.128773570, -0.134309784, 0.124104299, -0.373569697, -0.113624066, 0.0248115566, -0.124176398) * textureLoad(t_MODEL1, clampCoord(p + vec2i(1, 0), d_MODEL1), 0);
+  res2 += mat4x4f(0.0469136052, -0.322492272, 0.335425705, -0.101803236, -0.00110130396, -0.234990016, 0.104941592, 0.136652231, -0.0232238900, -0.109906301, -0.163267076, 0.250137925, -0.0178619977, 0.0265830643, -0.155177668, -0.150642961) * textureLoad(t_MODEL2, clampCoord(p + vec2i(1, 0), d_MODEL2), 0);
+  res2 += mat4x4f(-0.132961646, -0.178837791, 0.302467495, -0.152054593, -0.183202237, 0.454310447, 0.0677530393, -0.146860868, 0.188802794, -0.0781471208, 0.0232728980, 0.190924719, 0.198299453, -0.330781817, 0.119270101, 0.155561179) * textureLoad(t_MODEL3, clampCoord(p + vec2i(1, 0), d_MODEL3), 0);
+  res2 += mat4x4f(0.185940489, 0.0511839464, 0.286878586, 0.243158549, 0.00126560777, 0.227988064, 0.0972112119, -0.0821371526, 0.0214439090, -0.0104474397, -0.0398251079, 0.181268349, 0.0785572678, -0.203659192, 0.0364167690, 0.164393887) * textureLoad(t_MODEL4, clampCoord(p + vec2i(1, 0), d_MODEL4), 0);
+  res2 += mat4x4f(0.0285829380, 0.121712141, 0.225807920, -0.0930762962, 0.209578350, -0.225327909, 0.155193433, 0.107599013, 0.0112149296, -0.113873519, -0.217269957, 0.0335465148, -0.0644401908, -0.0897581130, -0.114717424, -0.109581172) * textureLoad(t_MODEL1, clampCoord(p + vec2i(1, 1), d_MODEL1), 0);
+  res2 += mat4x4f(-0.000658918405, -0.106662974, -0.0669803694, -0.0998276770, 0.178125277, -0.164586231, 0.0795369893, 0.0781258866, 0.102448016, -0.204948038, 0.0935370103, 0.130310237, -0.0217412226, 0.0945260823, -0.0765803978, 0.170768082) * textureLoad(t_MODEL2, clampCoord(p + vec2i(1, 1), d_MODEL2), 0);
+  res2 += mat4x4f(0.407388806, -0.0854969919, -0.280812085, -0.0772521049, -0.119624518, 0.0743409693, 0.0316687264, -0.198717058, 0.129037470, -0.157716125, -0.0699282214, 0.0393987149, 0.114039063, -0.289903134, 0.432766110, -0.130722538) * textureLoad(t_MODEL3, clampCoord(p + vec2i(1, 1), d_MODEL3), 0);
+  res2 += mat4x4f(-0.0985425040, 0.0774698257, -0.221371949, 0.233700097, -0.181305647, -0.176084161, -0.262095332, -0.0825021863, -0.0288784802, -0.0289288610, 0.105598107, 0.0333829448, 0.0148072392, 0.0568773597, 0.230345488, 0.253203779) * textureLoad(t_MODEL4, clampCoord(p + vec2i(1, 1), d_MODEL4), 0);
+  res2 = max(res2, vec4f(0.0)) + vec4f(0.321198404, -0.00961962063, 0.144877195, 0.228538662) * min(res2, vec4f(0.0));
+  var res3 = vec4f(0.216479778, 0.218647853, -0.126427174, 0.387908876);
+  res3 += mat4x4f(-0.778423309, 0.0964963883, 0.0406105705, -0.150418699, 0.0404485315, 0.227525949, 0.266931444, 0.207153901, -0.0458457544, 0.122927688, 0.221256271, -0.154565826, -0.0412118062, -0.298458695, -0.284954250, -0.0111933071) * textureLoad(t_MODEL1, clampCoord(p + vec2i(-1, -1), d_MODEL1), 0);
+  res3 += mat4x4f(0.0703924745, -0.124331042, -0.180901840, 0.0169417504, -0.0168837570, -0.0160804037, 0.00130592566, 0.0457558334, 0.0668417215, -0.00982459728, 0.0449443161, 0.00886234548, -0.183518752, -0.0459909886, -0.0810904875, -0.0355421826) * textureLoad(t_MODEL2, clampCoord(p + vec2i(-1, -1), d_MODEL2), 0);
+  res3 += mat4x4f(0.0625497550, -0.00365359010, -0.115712285, 0.154281870, -0.0218650661, -0.0669604614, -0.164162979, -0.0276148301, 0.108939603, 0.0568578318, 0.136059254, -0.377438366, 0.102134719, -0.0803352669, 0.0208037458, -0.0624132007) * textureLoad(t_MODEL3, clampCoord(p + vec2i(-1, -1), d_MODEL3), 0);
+  res3 += mat4x4f(0.316379368, -0.0961430967, -0.339843184, -0.0917795748, 0.151739001, -0.190514058, -0.0462918617, -0.137407675, -0.0554907434, 0.187517762, 0.0437539071, 0.154247940, 0.139266223, -0.189159527, -0.0192147624, -0.0150711713) * textureLoad(t_MODEL4, clampCoord(p + vec2i(-1, -1), d_MODEL4), 0);
+  res3 += mat4x4f(0.0419459045, 0.339507520, 0.578116059, 0.0430268832, 0.0484689772, 0.0981225222, -0.104073666, 0.158585802, 0.222702920, 0.193457365, 0.0896076187, -0.111212693, 0.0185421351, -0.232583731, -0.247171342, 0.0280076638) * textureLoad(t_MODEL1, clampCoord(p + vec2i(-1, 0), d_MODEL1), 0);
+  res3 += mat4x4f(-0.0713554174, -0.0140217915, 0.272087187, -0.0220302884, 0.167724416, 0.131540209, -0.0978711322, 0.0122576067, -0.0911244154, -0.159806788, -0.144792750, 0.0460615940, 0.0472860262, -0.114686847, -0.135818407, -0.0851917788) * textureLoad(t_MODEL2, clampCoord(p + vec2i(-1, 0), d_MODEL2), 0);
+  res3 += mat4x4f(0.0520689972, -0.0518252254, 0.132307351, 0.141272724, -0.0888060406, -0.00570949772, -0.261993736, 0.0308545232, 0.153964713, 0.207580388, 0.191904366, -0.210462347, 0.00900452677, -0.213582665, 0.0184372179, -0.0688401163) * textureLoad(t_MODEL3, clampCoord(p + vec2i(-1, 0), d_MODEL3), 0);
+  res3 += mat4x4f(0.304630965, 0.131538182, -0.0159425493, 0.0283278506, -0.0785060227, -0.143316135, -0.119867779, 0.0382769965, -0.0179564487, 0.138229311, 0.108348683, -0.0558261871, -0.183166623, -0.278649807, -0.154730633, -0.232549846) * textureLoad(t_MODEL4, clampCoord(p + vec2i(-1, 0), d_MODEL4), 0);
+  res3 += mat4x4f(-0.0631354451, -0.129767597, -0.147707105, 0.0431493148, 0.247143224, 0.176767364, -0.201483145, 0.184422374, 0.0586437434, 0.183612421, 0.0339101218, 0.0509290211, -0.137288496, -0.128640711, -0.285149604, 0.212982804) * textureLoad(t_MODEL1, clampCoord(p + vec2i(-1, 1), d_MODEL1), 0);
+  res3 += mat4x4f(-0.0152224600, -0.000681284291, -0.0674540028, 0.00317051611, 0.170402765, -0.0152205452, 0.0756266266, -0.0632313564, 0.0788889006, 0.0689719021, 0.0737476051, -0.148340955, -0.0742759779, 0.0275777318, -0.00129213440, -0.0134791136) * textureLoad(t_MODEL2, clampCoord(p + vec2i(-1, 1), d_MODEL2), 0);
+  res3 += mat4x4f(0.260816783, 0.131596833, 0.0379529707, 0.00728442147, 0.0605543070, -0.0647211447, 0.0336707868, -0.0244141128, -0.0437598564, 0.192497566, -0.297797501, -0.0239447802, -0.0842330083, 0.0237630643, 0.0250030328, 0.0195505377) * textureLoad(t_MODEL3, clampCoord(p + vec2i(-1, 1), d_MODEL3), 0);
+  res3 += mat4x4f(-0.0285255294, -0.00477146264, -0.0713122413, 0.0470465869, 0.0102318870, -0.150864035, -0.235353112, -0.0220687427, 0.126896039, -0.123787023, -0.348004073, 0.00947123393, -0.0440313667, 0.0741765797, 0.256831735, 0.0477430038) * textureLoad(t_MODEL4, clampCoord(p + vec2i(-1, 1), d_MODEL4), 0);
+  res3 += mat4x4f(-0.0299913958, -0.225745067, 0.207701221, 0.241253883, -0.137707472, 0.0453908369, -0.261945158, 0.217319444, 0.101935573, 0.121530972, 0.279084414, -0.179911807, -0.207227230, -0.383970529, -0.0465862378, -0.0495832488) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, -1), d_MODEL1), 0);
+  res3 += mat4x4f(0.253767848, 0.130106002, -0.0621768795, -0.482448608, -0.427014738, 0.0640869141, 0.154991552, -0.153452411, -0.457558692, -0.278475225, -0.0870324075, -0.0923935324, 0.176094085, 0.301361680, -0.199986458, 0.119816221) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, -1), d_MODEL2), 0);
+  res3 += mat4x4f(-0.479924470, -0.196713477, 0.122954659, 0.0430404581, -0.279922694, 0.271082759, -0.0436119623, -0.400982946, 0.153766111, 0.0803229213, 0.157426849, -0.335161805, 0.0942971110, -0.0621219911, -0.0476725474, -0.132228419) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, -1), d_MODEL3), 0);
+  res3 += mat4x4f(0.00556939095, -0.796188891, 0.384409845, 0.106169477, 0.0408158414, -0.327096075, 0.110409915, -0.433209628, -0.0639774576, 0.296527505, -0.134186313, -0.00446928712, 0.00603333162, -0.295415729, 0.151125386, 0.00688044075) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, -1), d_MODEL4), 0);
+  res3 += mat4x4f(0.0591128431, -0.0913535357, 0.356691033, 0.126150355, -0.149318412, -0.0543770306, 0.0248770881, 0.121557690, -0.0225666352, 0.183140025, 0.226289883, -0.232718736, -0.247435257, -0.254517466, -0.0728304014, 0.0696325153) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, 0), d_MODEL1), 0);
+  res3 += mat4x4f(0.335427642, 0.357368678, -0.709923208, 0.446015716, -0.419054359, -0.0360968821, 0.193730503, 0.136673167, -0.614030838, -0.0917613953, -0.0920449197, 0.168409735, 0.120895341, 0.0248468537, -0.177931309, 0.0134866200) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, 0), d_MODEL2), 0);
+  res3 += mat4x4f(-0.465440094, -0.0759833977, 0.249852613, -0.135402784, -0.0489640944, -0.0959460810, 0.0991929471, 0.0340771824, -0.0665086880, 0.254234463, 0.186065257, -0.264320701, 0.236274555, 0.129979283, -0.137471631, -0.266104430) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, 0), d_MODEL3), 0);
+  res3 += mat4x4f(-0.194785327, -0.0406366587, 0.0831122249, -0.455654323, 0.00905367546, -0.00216542301, -0.456080943, -0.962005079, 0.247523203, -0.262907058, -0.219102532, 0.166233972, -0.0391623899, -0.508352220, 0.300246775, -0.263447672) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, 0), d_MODEL4), 0);
+  res3 += mat4x4f(0.0351298563, -0.00434906315, 0.0436077379, -0.0336665809, 0.0398318283, 0.173803642, 0.470027983, -0.00308074988, -0.0238225963, 0.220340952, 0.207570389, -0.0444039777, -0.373759091, -0.141165107, -0.150507510, 0.0991062596) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, 1), d_MODEL1), 0);
+  res3 += mat4x4f(0.0494003557, 0.0283478256, -0.0869850367, 0.0813379809, -0.0285900161, 0.00595112704, 0.163938224, -0.0116085010, -0.194566697, 0.0101124058, 0.0840267688, 0.0155397197, 0.0622943528, 0.00716901803, -0.0801681355, -0.0573073775) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, 1), d_MODEL2), 0);
+  res3 += mat4x4f(0.0554455593, 0.101516344, -0.0704886019, 0.0706921443, -0.0618575029, 0.00307462853, 0.00802937988, -0.0436237082, -0.00178940652, 0.244584575, 0.0323911607, 0.102882586, 0.114556238, 0.188203245, -0.325007528, -0.106454670) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, 1), d_MODEL3), 0);
+  res3 += mat4x4f(0.0564795136, 0.136098072, -0.233148322, 0.139455408, -0.0319384448, -0.192821071, 0.178847030, -0.308224797, 0.0928225219, -0.0323428884, 0.215150431, -0.0411406755, 0.156009674, 0.127001211, -0.181102440, 0.136322066) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, 1), d_MODEL4), 0);
+  res3 += mat4x4f(-0.320228457, 0.135758057, -0.196171135, 0.209761962, 0.0173539389, 0.0233441442, 0.0824134946, 0.0837832764, 0.0616062097, 0.175169617, 0.371367157, -0.0198932812, -0.324114293, -0.267045379, -0.142455354, 0.0661178008) * textureLoad(t_MODEL1, clampCoord(p + vec2i(1, -1), d_MODEL1), 0);
+  res3 += mat4x4f(0.0412821099, -0.264480680, 0.218267247, -0.241422281, -0.244193971, -0.127129778, 0.177544981, 0.0169632547, -0.474157661, 0.0421337374, 0.165487975, 0.0985475779, 0.137469769, 0.0432278104, 0.0761567801, -0.0502400808) * textureLoad(t_MODEL2, clampCoord(p + vec2i(1, -1), d_MODEL2), 0);
+  res3 += mat4x4f(-0.501981974, 0.0380680151, -0.0587110929, -0.197121829, 0.258312017, -0.0662950501, -0.0380338468, -0.0720125511, 0.174662516, 0.130468339, -0.0336093567, -0.159547821, 0.127290934, 0.0334938243, 0.0315515362, -0.00473412592) * textureLoad(t_MODEL3, clampCoord(p + vec2i(1, -1), d_MODEL3), 0);
+  res3 += mat4x4f(0.0604034401, -0.0919101238, -0.302572787, 0.0383348316, 0.0465947911, 0.0248891972, 0.0346862786, -0.00225264207, -0.146781936, 0.0534276403, 0.148380518, 0.128538013, -0.0527829081, -0.204568475, -0.192070290, -0.0201729070) * textureLoad(t_MODEL4, clampCoord(p + vec2i(1, -1), d_MODEL4), 0);
+  res3 += mat4x4f(-0.0734970421, -0.0347715057, -0.189417928, -0.0519670360, -0.0179339629, -0.128657907, -0.0420528278, 0.00782749895, -0.00429451466, 0.180777386, 0.415222377, -0.0360077359, -0.517591536, -0.184690148, -0.260787785, 0.0935417786) * textureLoad(t_MODEL1, clampCoord(p + vec2i(1, 0), d_MODEL1), 0);
+  res3 += mat4x4f(-0.0490238518, -0.0219222829, -0.0207869820, -0.126144052, -0.428614944, 0.0151500236, 0.144016057, 0.213352278, -0.271881729, 0.0558813177, 0.193903551, 0.200106606, -0.0986362621, -0.0291622244, -0.192286611, -0.0148852291) * textureLoad(t_MODEL2, clampCoord(p + vec2i(1, 0), d_MODEL2), 0);
+  res3 += mat4x4f(-0.629384160, 0.110216215, 0.270946711, 0.0143273408, 0.185995221, -0.258336693, 0.107231997, -0.0124007938, 0.00253613340, 0.116977215, -0.154939383, -0.0851879939, 0.0391547345, -0.100684144, 0.122174837, -0.421362817) * textureLoad(t_MODEL3, clampCoord(p + vec2i(1, 0), d_MODEL3), 0);
+  res3 += mat4x4f(0.0447954945, 0.0125556504, -0.132757023, -0.0852859691, 0.188076124, -0.0881063789, 0.250025153, -0.134322166, -0.0370226093, 0.332709342, 0.00349589274, 0.307847440, -0.0614179298, -0.420974165, -0.177834854, -0.210446462) * textureLoad(t_MODEL4, clampCoord(p + vec2i(1, 0), d_MODEL4), 0);
+  res3 += mat4x4f(-0.141127288, 0.0907157436, -0.100356273, 0.0824048743, -0.166620865, 0.0335716270, -0.0445267372, 0.0433323532, 0.106341504, 0.199418142, 0.257587820, -0.0180915613, -0.601217210, -0.118775688, -0.0131392051, 0.108266741) * textureLoad(t_MODEL1, clampCoord(p + vec2i(1, 1), d_MODEL1), 0);
+  res3 += mat4x4f(0.0314557403, -0.0186210647, -0.214866593, 0.0692434162, -0.111175291, -0.0630384013, 0.0395353287, 0.0942072049, -0.177377060, -0.00906116609, 0.00797043554, 0.0452859364, 0.0207476858, -0.0644825846, -0.0521413051, 0.0270901155) * textureLoad(t_MODEL2, clampCoord(p + vec2i(1, 1), d_MODEL2), 0);
+  res3 += mat4x4f(-0.214935377, 0.0712376535, -0.207637861, 0.272963226, -0.0461982973, 0.0317177065, 0.162619993, -0.0294462778, 0.0860204324, 0.177824676, -0.0359076895, 0.0831172168, -0.180304080, 0.147779226, 0.209338903, 0.0580916330) * textureLoad(t_MODEL3, clampCoord(p + vec2i(1, 1), d_MODEL3), 0);
+  res3 += mat4x4f(0.257400721, 0.0753778592, 0.0383686535, 0.151583076, -0.149252355, -0.119784705, 0.0308660716, -0.0360168219, -0.175336510, 0.0386907645, 0.141139120, -0.0445399657, 0.0346784629, -0.164659962, -0.0883049294, 0.101449952) * textureLoad(t_MODEL4, clampCoord(p + vec2i(1, 1), d_MODEL4), 0);
+  res3 = max(res3, vec4f(0.0)) + vec4f(0.127989098, 0.0264652800, 0.134366423, 0.364997894) * min(res3, vec4f(0.0));
+  textureStore(out_MODEL21, p, res0);
+  textureStore(out_MODEL22, p, res1);
+  textureStore(out_MODEL23, p, res2);
+  textureStore(out_MODEL24, p, res3);
 }
 
-//==== ENTRY pass27 : mapping_3_2 ====
-// ---- PASS 27: mapping 3_2 (save=MODEL22, comps=4) ----
-// binds: MODEL1, MODEL2, MODEL3, MODEL4
-@group(0) @binding(0) var t_MODEL1 : texture_2d<f32>;
-@group(0) @binding(1) var t_MODEL2 : texture_2d<f32>;
-@group(0) @binding(2) var t_MODEL3 : texture_2d<f32>;
-@group(0) @binding(3) var t_MODEL4 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.176714972, 0.225721851, -0.138351575, -0.291682690);
-  res += mat4x4f(-0.175428212, -0.0640487745, -0.223278269, 0.549416363, -0.196556225, -0.0482466929, 0.135236785, -0.272126198, 0.0204668418, -0.157552779, -0.324321032, 0.105090678, -0.152684480, 0.0896622613, -0.194278419, 0.00363874994) * textureLoad(t_MODEL1, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(0.0181384720, -0.118744008, -0.0267405864, -0.161155492, -0.0329059139, 0.240135089, -0.0495584235, -0.113938302, -0.0526812859, 0.0859406665, 0.490905583, -0.0732303858, 0.0345768593, 0.264905810, -0.270722270, 0.151002839) * textureLoad(t_MODEL2, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(0.0512693711, 0.0136214532, -0.193583295, -0.0718121454, 0.00323891686, 0.343102425, -0.0560407974, 0.0969550535, 0.00663984567, 0.111976430, -0.408821732, -0.161791116, -0.0671737865, 0.0322841033, 0.128913566, -0.224194512) * textureLoad(t_MODEL3, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(-0.137257978, 0.0351543576, -0.612927616, -0.240607262, -0.126267180, 0.128049478, 0.163453519, -0.140500933, 0.237803921, -0.0370434821, -0.227967486, -0.0350629799, -0.146883696, -0.0997415707, -0.201027900, -0.150292173) * textureLoad(t_MODEL4, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(0.533226907, 0.121487632, 0.507609785, -0.265472412, -0.169364095, -0.282745957, 0.220514506, -0.192291141, 0.251093328, -0.148343489, -0.162413090, -0.306567371, 0.0826613307, 0.0204477403, -0.175339207, -0.0139353722) * textureLoad(t_MODEL1, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(0.0375358686, -0.0390642993, 0.423223972, 0.262092561, 0.0665049702, 0.0639635921, -0.0700181797, 0.0199310128, -0.258838773, -0.0602690354, -0.0155711956, 0.158765197, 0.225980401, -0.0203945450, -0.262334675, 0.000711371889) * textureLoad(t_MODEL2, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(-0.209801957, 0.0398645438, -0.261742920, -0.0730624348, 0.329254717, -0.136017859, -0.157679692, -0.0147541501, 0.310237736, -0.313554257, -0.0800373256, -0.399707228, 0.0546451248, -0.214441121, -0.0680508018, -0.0928944945) * textureLoad(t_MODEL3, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(-0.0415387973, -0.241158947, -0.232918665, -0.274416387, -0.0174303092, -0.0790314376, -0.290574610, 0.293306798, 0.00299809221, 0.256360024, 0.0680465251, 0.150038660, -0.311571181, -0.166789576, -0.0532996990, -0.0403415896) * textureLoad(t_MODEL4, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(-0.515786707, -0.125723079, -0.0276640002, -0.112900227, -0.0544854552, -0.203629807, 0.124751270, -0.167528749, 0.114768974, -0.231171861, -0.00770762516, -0.0366553999, -0.0367025509, -0.130429104, -0.260383546, 0.0688019022) * textureLoad(t_MODEL1, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(-0.133373067, -0.136365652, -0.137520790, -0.0326237008, 0.258307397, -0.0777554810, 0.0828678459, 0.177212998, 0.0863732100, -0.0846362859, 0.106096335, 0.200919151, 0.0916598216, 0.0174890738, -0.0627240017, 0.0938308164) * textureLoad(t_MODEL2, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(0.0515131503, -0.0246101841, 0.0594219603, 0.0275556203, -0.0526091903, -0.0537406094, -0.149997294, -0.0610638522, 0.291033119, -0.543305457, -0.201086313, -0.0154245691, 0.120887607, -0.169028446, -0.260717213, 0.310338378) * textureLoad(t_MODEL3, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(-0.162899122, 0.0569596253, -0.0890088752, 0.0673800558, -0.0530322306, -0.0750334635, -0.189099506, -0.0400865898, 0.247732088, 0.164375752, -0.380486399, -0.231584743, -0.286308616, -0.219510704, 0.0625069216, 0.246844456) * textureLoad(t_MODEL4, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(0.0148719447, 0.339872926, -0.221072227, 0.0612546578, -0.491573036, -0.0490909629, -0.196416169, -0.489345789, 0.112264097, -0.495983094, -0.197727799, 0.193634167, 0.00380225899, 0.180490553, -0.188057512, -0.223052338) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(-0.336022198, 0.337666392, -0.105366550, 0.309983194, -0.101832367, 0.187713936, -0.158764645, 0.129697621, 0.192297742, 0.00269711716, 0.0273411684, -0.256355315, -0.122324094, 0.0425319560, -0.309817880, 0.244948387) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(0.152961537, 0.118447267, -0.0629943907, -0.477126747, -0.530194998, -0.292282164, 0.335502326, 0.461031765, -0.0245477855, 0.168276548, -0.0473954827, -0.0251504593, 0.00130570738, 0.00830622390, -0.0705754310, -0.0470471382) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(-0.0618043132, -0.178471029, -0.350879282, -0.579203725, 0.105295233, 0.233780399, -0.128251463, -0.145277843, -0.0312706791, -0.0178345777, 0.0687921271, -0.00371515309, 0.188526124, -0.0608044565, 0.196214855, -0.0830752105) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(-0.196142495, -0.300803721, 0.154855415, 0.229683489, -0.301907867, 0.0556159839, -0.0890107900, 0.487705678, 0.275797486, -0.429589599, -0.363212377, -0.174390480, -0.0416484810, -0.0328906998, -0.205942079, 0.126734823) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(0.441927522, -0.0374487750, 0.0709252134, -0.166817576, 0.372951627, -0.0426788107, 0.187133431, -0.172425568, -0.00898170192, 0.113834478, -0.229112238, 0.281765044, -0.524590969, 0.256639212, 0.104181588, -0.109347194) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(-0.437643617, -0.106944665, 0.186795041, 0.311629474, 0.161423564, 0.143537760, 0.110599063, -0.266773075, 0.167917445, -0.102736682, -0.0170106832, -0.286794990, 0.0119254645, 0.177121788, -0.139145702, -0.0943097696) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(0.249174401, -0.525974154, 0.0856871009, 0.461635470, -0.0619653799, -0.711167216, -0.846485019, 0.442337900, 0.0801284388, -0.0830942467, 0.703074753, -0.0908020362, -0.0177753679, -0.227350593, 0.314854115, 0.432262003) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(-0.187503591, 0.110821903, -0.469428480, -0.285065264, 0.0208335649, 0.289894372, 0.379477084, -0.300681055, -0.0658355057, -0.232617885, 0.0747204572, 0.0632973164, -0.158877805, -0.0851954296, 0.0266543385, -0.149784401) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(-0.203004658, 0.131945938, 0.260273963, -0.411855489, -0.0554966107, -0.0866691470, 0.168037623, -0.0292228702, -0.159028247, 0.270236075, -0.0257863943, 0.0185152795, 0.134615943, -0.0314050280, -0.0648399517, -0.0144325579) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(0.246747851, 0.268851250, -0.151099682, -0.0220587831, 0.316410422, 0.312466443, 0.346934199, -0.187258959, 0.00984855741, -0.135969520, -0.0409514196, 0.0175130386, 0.345637321, -0.0378544480, 0.0436994769, -0.0117167784) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(-0.252843529, -0.515580356, -0.214344904, 0.350921243, 0.463373303, 0.0251211058, -0.578787565, 0.561872661, -0.199377030, 0.107695654, -0.102540553, -0.356310219, 0.332634330, -0.204083204, 0.0804789737, 0.249126226) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(0.261753947, -0.0497161485, 0.238549441, 0.0154465092, -0.247756615, -0.233778477, -0.156327039, -0.159642741, 0.196147636, -0.0837223306, 0.00998097844, -0.0457590707, -0.0191341098, 0.126339689, -0.203018650, -0.0467233919) * textureLoad(t_MODEL1, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(-0.222638518, -0.111264624, -0.418708354, 0.183552578, -0.170834169, 0.220631972, -0.124648497, 0.133865774, 0.131550580, 0.0422743931, -0.0618249215, -0.0575906225, -0.114017531, -0.00397455273, -0.252096295, 0.187250376) * textureLoad(t_MODEL2, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(-0.174102306, 0.0545387492, 0.0209121685, -0.000842769630, 0.0132224066, -0.0871341974, -0.137203842, 0.113607273, 0.0538884737, 0.106003784, 0.0458776020, -0.241419300, 0.0656121075, -0.181051433, -0.152383357, -0.116352834) * textureLoad(t_MODEL3, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(0.115702689, 0.297492117, -0.342757821, -0.0434873551, 0.0661409199, 0.0182205625, 0.183874145, -0.290800661, 0.158999920, 0.127456516, 0.364971995, 0.0228158962, -0.0672520325, 0.0945007801, 0.00612316327, -0.0791581199) * textureLoad(t_MODEL4, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(-0.408570170, 0.294380248, -0.0944574177, 0.167041495, 0.0958840549, -0.00497465162, 0.149087086, 0.131047115, -0.0550372750, -0.117202297, -0.0289764125, 0.0238115471, -0.129452631, 0.120697416, -0.0858745947, -0.00641291775) * textureLoad(t_MODEL1, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(0.348366708, 0.0325152390, 0.119700707, -0.166623816, 0.134272054, 0.0702574402, 0.330101550, -0.0153884282, -0.356607705, 0.0690796077, -0.0349858142, 0.165911928, -0.785821915, 0.0152845392, 0.0926921144, -0.119569935) * textureLoad(t_MODEL2, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(0.220732793, 0.0877295509, -0.177476853, -0.289748132, -0.112589322, -0.0837229490, -0.260690004, 0.0727790147, 0.0371558145, -0.0430961996, 0.164474264, -0.194649234, 0.0951662958, 0.266978592, 0.362205178, 0.146567479) * textureLoad(t_MODEL3, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(0.326886356, -0.281720459, 0.0819929764, 0.309942454, -0.225303516, -0.137770891, -0.220139265, 0.218297914, -0.155883521, 0.457748771, 0.296573609, -0.274867624, -0.116673060, -0.132393658, -0.235738754, 0.296377689) * textureLoad(t_MODEL4, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(0.0405509509, -0.0727522895, 0.0350635089, -0.0855552554, 0.342244655, 0.220847666, 0.0853927583, -0.0960095227, 0.0472080149, -0.0501071997, 0.0873082429, -0.0667047650, 0.153413802, -0.0156011824, 0.0801621675, -0.310112268) * textureLoad(t_MODEL1, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(0.0743533224, -0.138067856, 0.0123444265, 0.141994342, -0.156972960, 0.172139555, 0.279344529, 0.100601539, 0.0391495265, 0.225586519, 0.0955501571, 0.0505405329, 0.0482249148, 0.139281049, -0.195740864, 0.0875623673) * textureLoad(t_MODEL2, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(-0.0427126437, 0.0903814808, 0.663285434, 0.298146784, 0.173149407, -0.0806558058, 0.343431622, -0.170438051, 0.218377963, 0.0928960592, 0.0947442353, -0.168678239, 0.695224524, -0.336797506, 0.350171059, -0.0145992013) * textureLoad(t_MODEL3, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(-0.246856064, 0.0232017636, -0.199434832, 0.00968632381, -0.0834095255, -0.0807790756, -0.313649058, 0.00905006006, 0.0341969617, 0.0550205149, 0.0474779271, -0.139764264, -0.0780577511, -0.252842128, -0.0348786116, 0.537635088) * textureLoad(t_MODEL4, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL4)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(-0.124575287, 0.364329070, 0.190113008, 0.00739230914) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass28 : mapping_3_3 ====
-// ---- PASS 28: mapping 3_3 (save=MODEL23, comps=4) ----
-// binds: MODEL1, MODEL2, MODEL3, MODEL4
-@group(0) @binding(0) var t_MODEL1 : texture_2d<f32>;
-@group(0) @binding(1) var t_MODEL2 : texture_2d<f32>;
-@group(0) @binding(2) var t_MODEL3 : texture_2d<f32>;
-@group(0) @binding(3) var t_MODEL4 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(0.101635456, -0.153031781, -0.174981847, 0.152127951);
-  res += mat4x4f(0.147343412, -0.455880642, -0.175908267, -0.400685102, 0.107397258, 0.0621286295, -0.0730420351, 0.151924297, 0.107514702, -0.0827682838, -0.164071247, -0.300441384, 0.00594713306, 0.199556500, -0.0160447620, -0.371467620) * textureLoad(t_MODEL1, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(0.0884312242, 0.104394481, 0.146991193, 0.260911107, -0.381955743, 0.527054965, 0.332485080, 0.246398792, -0.235866591, 0.205344528, -0.157208666, -0.171465740, 0.0584659614, 0.0401430093, 0.0553648397, 0.226035386) * textureLoad(t_MODEL2, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(-0.522591352, 0.353103191, 0.236721352, -0.408201516, -0.136172801, 0.0731211603, -0.0396234542, 0.386673361, 0.223266467, 0.00256111729, -0.235832840, 0.0795662478, 0.0125049483, 0.0187654719, 0.000538517488, 0.0846320838) * textureLoad(t_MODEL3, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(-0.104036219, 0.269360483, -0.0940428078, 0.169395432, 0.0739339367, -0.105121911, 0.0362323485, -0.0757801831, 0.112019308, 0.0620613657, 0.0865028203, -0.0684785694, 0.0646895319, -0.150571436, 0.0343389548, 0.176712647) * textureLoad(t_MODEL4, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(0.0150846746, -0.480569720, 0.177226797, -0.765438676, -0.288162380, 0.173303381, -0.140258417, 0.00248674746, -0.0213660337, 0.226787984, -0.110912099, -0.270507097, -0.577491581, 0.161442354, 0.182679936, -0.200947672) * textureLoad(t_MODEL1, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(0.0633900315, -0.481414735, -0.0238071699, 0.0920804217, -0.204260409, 0.156137705, -0.236707211, 0.124568455, -0.165608644, 0.121560946, -0.0863509253, 0.134944916, 0.0135538271, 0.0475430302, 0.0763533637, 0.444737703) * textureLoad(t_MODEL2, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(-0.528523564, 0.387112379, -0.00604526093, -0.481567025, -0.0583270751, 0.177752331, 0.0506286658, -0.00848128833, -0.0212140996, 0.0280311238, -0.0138057619, 0.279621124, 0.0939560831, 0.0935739949, 0.0925302655, -0.184044257) * textureLoad(t_MODEL3, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(-0.103760570, 0.0655618459, 0.200499490, -0.0232605990, 0.0914396122, 0.0338065363, 0.0521776974, -0.189799577, 0.0171369407, -0.344841927, -0.0108155180, -0.0271220133, 0.00638917880, -0.0381838307, 0.295065701, 0.0945822522) * textureLoad(t_MODEL4, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(0.0397421867, -0.0987438858, -0.263872594, 0.0493840128, -0.294419587, 0.395605087, -0.0816108137, -0.194646016, 0.0813066885, 0.123545922, -0.261982232, -0.120171636, -0.336172134, 0.135131806, -0.0945885479, -0.441062152) * textureLoad(t_MODEL1, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(-0.0298395324, -0.0747138709, -0.0180589817, 0.0988917574, -0.201992899, 0.130357549, 0.0268392339, -0.179573432, -0.238916412, 0.0457861982, 0.219491661, -0.368251115, -0.0387273803, 0.00721998792, 0.0207549371, 0.0625136569) * textureLoad(t_MODEL2, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(-0.121015333, 0.172022521, -0.0276323352, -0.301792443, -0.0354458354, -0.187404156, 0.131595731, 0.0776325464, 0.109839007, -0.00647760555, -0.203858539, 0.201901495, 0.108709484, -0.0355601199, 0.222222835, 0.00239015347) * textureLoad(t_MODEL3, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(0.133422628, -0.118434608, -0.0418117568, -0.0296531413, 0.100005284, 0.0413352773, -0.108167149, -0.0742605850, 0.141722366, -0.0446009189, -0.156996816, 0.410691351, -0.108423918, 0.0323132724, 0.530873597, -0.115526915) * textureLoad(t_MODEL4, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(-0.687959909, 0.0580945425, 0.102455907, 0.224624038, -0.0824696273, 0.216067791, -0.289245337, -0.0363973789, 0.0157172363, -0.395315707, -0.0660421774, 0.158483908, -0.0193123240, 0.0975903943, -0.00959130004, -0.294408619) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(-0.281575650, 0.539033771, 0.143258438, -0.195744455, -0.146026224, 0.00770876464, 0.117521651, -0.00506497640, -0.251944631, -0.261741757, 0.000658104022, -0.0316984169, 0.143283173, 0.0257870443, -0.0851346403, 0.115703754) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(-0.404243261, 0.189003304, 0.104796767, 0.0465086140, 0.408880174, -0.169283241, -0.389750630, -0.692264736, 0.456755489, -0.0864791349, -0.222480193, 0.207503632, 0.0903301910, 0.0484518148, -0.00598114356, 0.0811143368) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(0.150768936, -0.0316028558, 0.444945842, -0.236736521, 0.251005739, -0.0373110361, 0.337041706, 0.144792154, -0.0861464813, -0.205736294, -0.129392296, -0.129462019, -0.0184429418, 0.0910128802, 0.236875162, 0.427511513) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(0.154143617, 0.164059773, -0.270043045, 0.414152622, -0.0219941996, 0.264028311, -0.165051728, 0.413102597, -0.00269243238, 0.0413628928, 0.00680454308, -0.158305660, -0.381016761, 0.151207030, 0.0209162999, -0.0469518863) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(-0.417702675, 0.856799662, -0.517077982, -0.0214160886, -0.304188550, 0.125741005, 0.152191699, 0.0519398302, -0.117588386, -0.157890797, -0.258429557, 0.281886280, 0.137609646, -0.0194527768, -0.472714573, -0.333584607) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(-0.479984611, 0.239899442, -0.0590831526, -0.225296333, 0.136907563, -0.549087822, -0.0305930283, 0.000855579798, 0.352190018, 0.288837045, 0.317254990, 0.463771552, -0.254596025, 0.528649926, 0.124463215, -0.0261280667) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(-0.129854724, -0.0000664651670, 0.624610841, -0.310754836, 0.194645062, -0.394672126, -0.222775698, -0.00200344995, 0.393187851, 0.312916458, -0.274613380, 0.356204361, -0.0153379356, 0.0342406407, 0.0751883835, 0.402420640) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(-0.148866698, 0.0103566218, 0.160642713, -0.0313186236, 0.0520499684, 0.141400680, 0.277621329, 0.0310483910, 0.0704717338, -0.119820505, -0.255748391, 0.169775814, -0.309432447, -0.0717520192, 0.0230279621, -0.589804113) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(0.142189801, 0.0374483354, 0.0112043787, -0.00390012283, -0.168303430, 0.150562614, -0.184263319, -0.100311793, -0.142053142, -0.0362337418, 0.281173348, -0.0288809296, 0.0152386874, 0.0392694212, -0.0628641769, 0.312470078) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(-0.207993805, 0.0376941934, -0.0679711029, -0.166458577, -0.125660375, 0.0984069332, 0.242221117, -0.0968302712, 0.276696920, 0.174327731, -0.167726040, 0.307142675, 0.167813748, 0.0846147165, 0.0859014466, 0.346145421) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(0.0790206045, 0.0509988442, -0.455673873, 0.152874067, -0.0155931953, -0.0566701442, 0.0769117549, -0.0638501495, -0.269048899, 0.215401724, 0.452846378, -0.171253145, 0.000741234864, -0.272610664, 0.176144689, 0.184686586) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(0.114891768, -0.200908050, 0.154958621, 0.0899196640, 0.181734845, -0.100774921, -0.134664074, 0.243429020, -0.000431531080, 0.126825035, 0.0646733567, 0.0652357936, -0.0193509273, -0.159064308, 0.0506249852, -0.180228353) * textureLoad(t_MODEL1, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(0.401778042, -0.272553235, -0.0580149963, -0.0476737730, -0.0581136681, -0.0276057720, -0.0544528179, 0.102788374, -0.234638751, -0.135726288, -0.0221323054, 0.0964788124, -0.134305790, 0.0407694615, -0.0181987807, -0.101114012) * textureLoad(t_MODEL2, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(0.330088764, -0.261146158, -0.0255855005, 0.0981464013, -0.273588985, 0.192817822, -0.116823107, -0.149038821, 0.284331769, -0.0590819567, -0.101958312, 0.0421028435, 0.253892362, -0.0348960087, 0.0195158105, -0.0320624299) * textureLoad(t_MODEL3, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(0.103795625, -0.261613846, 0.170230612, -0.115242265, -0.224040374, 0.114566065, 0.106427841, -0.0331612714, -0.176230431, 0.0199808087, -0.108429126, 0.0868252590, -0.168084860, -0.0360631272, 0.0382235125, 0.0750489533) * textureLoad(t_MODEL4, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(0.108111106, -0.192297563, -0.255385876, 0.0139266634, 0.186369389, -0.265356690, -0.140024811, 0.240339667, 0.00672330847, 0.128773570, -0.134309784, 0.124104299, -0.373569697, -0.113624066, 0.0248115566, -0.124176398) * textureLoad(t_MODEL1, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(0.0469136052, -0.322492272, 0.335425705, -0.101803236, -0.00110130396, -0.234990016, 0.104941592, 0.136652231, -0.0232238900, -0.109906301, -0.163267076, 0.250137925, -0.0178619977, 0.0265830643, -0.155177668, -0.150642961) * textureLoad(t_MODEL2, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(-0.132961646, -0.178837791, 0.302467495, -0.152054593, -0.183202237, 0.454310447, 0.0677530393, -0.146860868, 0.188802794, -0.0781471208, 0.0232728980, 0.190924719, 0.198299453, -0.330781817, 0.119270101, 0.155561179) * textureLoad(t_MODEL3, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(0.185940489, 0.0511839464, 0.286878586, 0.243158549, 0.00126560777, 0.227988064, 0.0972112119, -0.0821371526, 0.0214439090, -0.0104474397, -0.0398251079, 0.181268349, 0.0785572678, -0.203659192, 0.0364167690, 0.164393887) * textureLoad(t_MODEL4, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(0.0285829380, 0.121712141, 0.225807920, -0.0930762962, 0.209578350, -0.225327909, 0.155193433, 0.107599013, 0.0112149296, -0.113873519, -0.217269957, 0.0335465148, -0.0644401908, -0.0897581130, -0.114717424, -0.109581172) * textureLoad(t_MODEL1, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(-0.000658918405, -0.106662974, -0.0669803694, -0.0998276770, 0.178125277, -0.164586231, 0.0795369893, 0.0781258866, 0.102448016, -0.204948038, 0.0935370103, 0.130310237, -0.0217412226, 0.0945260823, -0.0765803978, 0.170768082) * textureLoad(t_MODEL2, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(0.407388806, -0.0854969919, -0.280812085, -0.0772521049, -0.119624518, 0.0743409693, 0.0316687264, -0.198717058, 0.129037470, -0.157716125, -0.0699282214, 0.0393987149, 0.114039063, -0.289903134, 0.432766110, -0.130722538) * textureLoad(t_MODEL3, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(-0.0985425040, 0.0774698257, -0.221371949, 0.233700097, -0.181305647, -0.176084161, -0.262095332, -0.0825021863, -0.0288784802, -0.0289288610, 0.105598107, 0.0333829448, 0.0148072392, 0.0568773597, 0.230345488, 0.253203779) * textureLoad(t_MODEL4, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL4)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(0.321198404, -0.00961962063, 0.144877195, 0.228538662) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass29 : mapping_3_4 ====
-// ---- PASS 29: mapping 3_4 (save=MODEL24, comps=4) ----
-// binds: MODEL1, MODEL2, MODEL3, MODEL4
-@group(0) @binding(0) var t_MODEL1 : texture_2d<f32>;
-@group(0) @binding(1) var t_MODEL2 : texture_2d<f32>;
-@group(0) @binding(2) var t_MODEL3 : texture_2d<f32>;
-@group(0) @binding(3) var t_MODEL4 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(0.216479778, 0.218647853, -0.126427174, 0.387908876);
-  res += mat4x4f(-0.778423309, 0.0964963883, 0.0406105705, -0.150418699, 0.0404485315, 0.227525949, 0.266931444, 0.207153901, -0.0458457544, 0.122927688, 0.221256271, -0.154565826, -0.0412118062, -0.298458695, -0.284954250, -0.0111933071) * textureLoad(t_MODEL1, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(0.0703924745, -0.124331042, -0.180901840, 0.0169417504, -0.0168837570, -0.0160804037, 0.00130592566, 0.0457558334, 0.0668417215, -0.00982459728, 0.0449443161, 0.00886234548, -0.183518752, -0.0459909886, -0.0810904875, -0.0355421826) * textureLoad(t_MODEL2, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(0.0625497550, -0.00365359010, -0.115712285, 0.154281870, -0.0218650661, -0.0669604614, -0.164162979, -0.0276148301, 0.108939603, 0.0568578318, 0.136059254, -0.377438366, 0.102134719, -0.0803352669, 0.0208037458, -0.0624132007) * textureLoad(t_MODEL3, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(0.316379368, -0.0961430967, -0.339843184, -0.0917795748, 0.151739001, -0.190514058, -0.0462918617, -0.137407675, -0.0554907434, 0.187517762, 0.0437539071, 0.154247940, 0.139266223, -0.189159527, -0.0192147624, -0.0150711713) * textureLoad(t_MODEL4, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(0.0419459045, 0.339507520, 0.578116059, 0.0430268832, 0.0484689772, 0.0981225222, -0.104073666, 0.158585802, 0.222702920, 0.193457365, 0.0896076187, -0.111212693, 0.0185421351, -0.232583731, -0.247171342, 0.0280076638) * textureLoad(t_MODEL1, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(-0.0713554174, -0.0140217915, 0.272087187, -0.0220302884, 0.167724416, 0.131540209, -0.0978711322, 0.0122576067, -0.0911244154, -0.159806788, -0.144792750, 0.0460615940, 0.0472860262, -0.114686847, -0.135818407, -0.0851917788) * textureLoad(t_MODEL2, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(0.0520689972, -0.0518252254, 0.132307351, 0.141272724, -0.0888060406, -0.00570949772, -0.261993736, 0.0308545232, 0.153964713, 0.207580388, 0.191904366, -0.210462347, 0.00900452677, -0.213582665, 0.0184372179, -0.0688401163) * textureLoad(t_MODEL3, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(0.304630965, 0.131538182, -0.0159425493, 0.0283278506, -0.0785060227, -0.143316135, -0.119867779, 0.0382769965, -0.0179564487, 0.138229311, 0.108348683, -0.0558261871, -0.183166623, -0.278649807, -0.154730633, -0.232549846) * textureLoad(t_MODEL4, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(-0.0631354451, -0.129767597, -0.147707105, 0.0431493148, 0.247143224, 0.176767364, -0.201483145, 0.184422374, 0.0586437434, 0.183612421, 0.0339101218, 0.0509290211, -0.137288496, -0.128640711, -0.285149604, 0.212982804) * textureLoad(t_MODEL1, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(-0.0152224600, -0.000681284291, -0.0674540028, 0.00317051611, 0.170402765, -0.0152205452, 0.0756266266, -0.0632313564, 0.0788889006, 0.0689719021, 0.0737476051, -0.148340955, -0.0742759779, 0.0275777318, -0.00129213440, -0.0134791136) * textureLoad(t_MODEL2, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(0.260816783, 0.131596833, 0.0379529707, 0.00728442147, 0.0605543070, -0.0647211447, 0.0336707868, -0.0244141128, -0.0437598564, 0.192497566, -0.297797501, -0.0239447802, -0.0842330083, 0.0237630643, 0.0250030328, 0.0195505377) * textureLoad(t_MODEL3, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(-0.0285255294, -0.00477146264, -0.0713122413, 0.0470465869, 0.0102318870, -0.150864035, -0.235353112, -0.0220687427, 0.126896039, -0.123787023, -0.348004073, 0.00947123393, -0.0440313667, 0.0741765797, 0.256831735, 0.0477430038) * textureLoad(t_MODEL4, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(-0.0299913958, -0.225745067, 0.207701221, 0.241253883, -0.137707472, 0.0453908369, -0.261945158, 0.217319444, 0.101935573, 0.121530972, 0.279084414, -0.179911807, -0.207227230, -0.383970529, -0.0465862378, -0.0495832488) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(0.253767848, 0.130106002, -0.0621768795, -0.482448608, -0.427014738, 0.0640869141, 0.154991552, -0.153452411, -0.457558692, -0.278475225, -0.0870324075, -0.0923935324, 0.176094085, 0.301361680, -0.199986458, 0.119816221) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(-0.479924470, -0.196713477, 0.122954659, 0.0430404581, -0.279922694, 0.271082759, -0.0436119623, -0.400982946, 0.153766111, 0.0803229213, 0.157426849, -0.335161805, 0.0942971110, -0.0621219911, -0.0476725474, -0.132228419) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(0.00556939095, -0.796188891, 0.384409845, 0.106169477, 0.0408158414, -0.327096075, 0.110409915, -0.433209628, -0.0639774576, 0.296527505, -0.134186313, -0.00446928712, 0.00603333162, -0.295415729, 0.151125386, 0.00688044075) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(0.0591128431, -0.0913535357, 0.356691033, 0.126150355, -0.149318412, -0.0543770306, 0.0248770881, 0.121557690, -0.0225666352, 0.183140025, 0.226289883, -0.232718736, -0.247435257, -0.254517466, -0.0728304014, 0.0696325153) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(0.335427642, 0.357368678, -0.709923208, 0.446015716, -0.419054359, -0.0360968821, 0.193730503, 0.136673167, -0.614030838, -0.0917613953, -0.0920449197, 0.168409735, 0.120895341, 0.0248468537, -0.177931309, 0.0134866200) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(-0.465440094, -0.0759833977, 0.249852613, -0.135402784, -0.0489640944, -0.0959460810, 0.0991929471, 0.0340771824, -0.0665086880, 0.254234463, 0.186065257, -0.264320701, 0.236274555, 0.129979283, -0.137471631, -0.266104430) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(-0.194785327, -0.0406366587, 0.0831122249, -0.455654323, 0.00905367546, -0.00216542301, -0.456080943, -0.962005079, 0.247523203, -0.262907058, -0.219102532, 0.166233972, -0.0391623899, -0.508352220, 0.300246775, -0.263447672) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(0.0351298563, -0.00434906315, 0.0436077379, -0.0336665809, 0.0398318283, 0.173803642, 0.470027983, -0.00308074988, -0.0238225963, 0.220340952, 0.207570389, -0.0444039777, -0.373759091, -0.141165107, -0.150507510, 0.0991062596) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(0.0494003557, 0.0283478256, -0.0869850367, 0.0813379809, -0.0285900161, 0.00595112704, 0.163938224, -0.0116085010, -0.194566697, 0.0101124058, 0.0840267688, 0.0155397197, 0.0622943528, 0.00716901803, -0.0801681355, -0.0573073775) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(0.0554455593, 0.101516344, -0.0704886019, 0.0706921443, -0.0618575029, 0.00307462853, 0.00802937988, -0.0436237082, -0.00178940652, 0.244584575, 0.0323911607, 0.102882586, 0.114556238, 0.188203245, -0.325007528, -0.106454670) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(0.0564795136, 0.136098072, -0.233148322, 0.139455408, -0.0319384448, -0.192821071, 0.178847030, -0.308224797, 0.0928225219, -0.0323428884, 0.215150431, -0.0411406755, 0.156009674, 0.127001211, -0.181102440, 0.136322066) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(-0.320228457, 0.135758057, -0.196171135, 0.209761962, 0.0173539389, 0.0233441442, 0.0824134946, 0.0837832764, 0.0616062097, 0.175169617, 0.371367157, -0.0198932812, -0.324114293, -0.267045379, -0.142455354, 0.0661178008) * textureLoad(t_MODEL1, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(0.0412821099, -0.264480680, 0.218267247, -0.241422281, -0.244193971, -0.127129778, 0.177544981, 0.0169632547, -0.474157661, 0.0421337374, 0.165487975, 0.0985475779, 0.137469769, 0.0432278104, 0.0761567801, -0.0502400808) * textureLoad(t_MODEL2, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(-0.501981974, 0.0380680151, -0.0587110929, -0.197121829, 0.258312017, -0.0662950501, -0.0380338468, -0.0720125511, 0.174662516, 0.130468339, -0.0336093567, -0.159547821, 0.127290934, 0.0334938243, 0.0315515362, -0.00473412592) * textureLoad(t_MODEL3, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(0.0604034401, -0.0919101238, -0.302572787, 0.0383348316, 0.0465947911, 0.0248891972, 0.0346862786, -0.00225264207, -0.146781936, 0.0534276403, 0.148380518, 0.128538013, -0.0527829081, -0.204568475, -0.192070290, -0.0201729070) * textureLoad(t_MODEL4, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(-0.0734970421, -0.0347715057, -0.189417928, -0.0519670360, -0.0179339629, -0.128657907, -0.0420528278, 0.00782749895, -0.00429451466, 0.180777386, 0.415222377, -0.0360077359, -0.517591536, -0.184690148, -0.260787785, 0.0935417786) * textureLoad(t_MODEL1, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(-0.0490238518, -0.0219222829, -0.0207869820, -0.126144052, -0.428614944, 0.0151500236, 0.144016057, 0.213352278, -0.271881729, 0.0558813177, 0.193903551, 0.200106606, -0.0986362621, -0.0291622244, -0.192286611, -0.0148852291) * textureLoad(t_MODEL2, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(-0.629384160, 0.110216215, 0.270946711, 0.0143273408, 0.185995221, -0.258336693, 0.107231997, -0.0124007938, 0.00253613340, 0.116977215, -0.154939383, -0.0851879939, 0.0391547345, -0.100684144, 0.122174837, -0.421362817) * textureLoad(t_MODEL3, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(0.0447954945, 0.0125556504, -0.132757023, -0.0852859691, 0.188076124, -0.0881063789, 0.250025153, -0.134322166, -0.0370226093, 0.332709342, 0.00349589274, 0.307847440, -0.0614179298, -0.420974165, -0.177834854, -0.210446462) * textureLoad(t_MODEL4, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL4)), 0);
-  res += mat4x4f(-0.141127288, 0.0907157436, -0.100356273, 0.0824048743, -0.166620865, 0.0335716270, -0.0445267372, 0.0433323532, 0.106341504, 0.199418142, 0.257587820, -0.0180915613, -0.601217210, -0.118775688, -0.0131392051, 0.108266741) * textureLoad(t_MODEL1, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(0.0314557403, -0.0186210647, -0.214866593, 0.0692434162, -0.111175291, -0.0630384013, 0.0395353287, 0.0942072049, -0.177377060, -0.00906116609, 0.00797043554, 0.0452859364, 0.0207476858, -0.0644825846, -0.0521413051, 0.0270901155) * textureLoad(t_MODEL2, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(-0.214935377, 0.0712376535, -0.207637861, 0.272963226, -0.0461982973, 0.0317177065, 0.162619993, -0.0294462778, 0.0860204324, 0.177824676, -0.0359076895, 0.0831172168, -0.180304080, 0.147779226, 0.209338903, 0.0580916330) * textureLoad(t_MODEL3, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(0.257400721, 0.0753778592, 0.0383686535, 0.151583076, -0.149252355, -0.119784705, 0.0308660716, -0.0360168219, -0.175336510, 0.0386907645, 0.141139120, -0.0445399657, 0.0346784629, -0.164659962, -0.0883049294, 0.101449952) * textureLoad(t_MODEL4, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL4)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(0.127989098, 0.0264652800, 0.134366423, 0.364997894) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass30 : mapping_4_1 ====
-// ---- PASS 30: mapping 4_1 (save=MODEL1, comps=4) ----
+//==== ENTRY pass8 : fused_MODEL1_MODEL2_MODEL3_MODEL4 ====
+// ---- PASS 8: mapping 4_1 + mapping 4_2 + mapping 4_3 + mapping 4_4 (saves=MODEL1,MODEL2,MODEL3,MODEL4) ----
 // binds: MODEL21, MODEL22, MODEL23, MODEL24
+// Fused: 4 upstream hooks sharing one set of input fetches.
 @group(0) @binding(0) var t_MODEL21 : texture_2d<f32>;
 @group(0) @binding(1) var t_MODEL22 : texture_2d<f32>;
 @group(0) @binding(2) var t_MODEL23 : texture_2d<f32>;
 @group(0) @binding(3) var t_MODEL24 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(4) var out_MODEL1 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(5) var out_MODEL2 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(6) var out_MODEL3 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(7) var out_MODEL4 : texture_storage_2d<rgba16float, write>;
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
+  let dims = textureDimensions(out_MODEL1);
   if (gid.x >= dims.x || gid.y >= dims.y) { return; }
   let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.0913535208, -0.0118702790, 0.0520768538, -0.00401062984);
-  res += mat4x4f(-0.00796797778, -0.0892239138, 0.0172284860, -0.282922447, -0.0365913287, 0.0441824161, -0.0535985231, 0.140059426, 0.0752917156, -0.0101506263, 0.103302799, 0.00190797413, 0.173880622, -0.0704469830, -0.0327399038, -0.235934362) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.121326931, 0.114898294, 0.0112899840, 0.0425971821, 0.158372715, 0.0212890897, -0.108197197, -0.148315802, -0.0313677229, -0.0744015649, 0.173293367, 0.371599048, -0.0582064092, 0.0807931051, 0.0271971207, -0.302610338) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.0434402674, 0.0732112005, 0.0242302436, 0.258922070, 0.0627128854, 0.0239066873, -0.0523287021, -0.0760783106, -0.00478949910, 0.163329899, -0.111009605, -0.231172308, -0.0633602813, 0.144310251, 0.0652351305, 0.0622534528) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.000892509939, 0.00793743785, -0.0677523613, 0.235390991, -0.257047683, -0.0662807450, -0.0674656257, -0.140577987, -0.105046198, -0.139433205, -0.0428328216, -0.0701708794, 0.0513699204, -0.0117710326, 0.0459931977, 0.122452378) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.0884563699, -0.160363033, -0.0208715573, -0.217286766, 0.0346806385, -0.147772580, -0.151207417, 0.0888653919, -0.0884413347, 0.183090955, 0.0242120270, -0.158121750, 0.291027009, -0.234938636, -0.559732378, -0.235398740) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.127658978, -0.00308748218, 0.195018813, 0.148675472, -0.155456305, -0.0948472992, -0.112319678, -0.0944644660, 0.396402568, -0.199274898, 0.213953972, -0.329204142, 0.00484685414, -0.0754112825, -0.108262666, -0.327119559) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.151456550, -0.238460049, -0.141419426, -0.121654294, 0.00507768895, -0.0259401985, -0.104804531, -0.0310482457, 0.179187179, -0.0225138944, 0.0951751694, 0.114030525, 0.121941343, 0.230220690, 0.109937482, -0.0682381094) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.138199478, -0.0830600783, 0.366416454, 0.0608927310, -0.172052354, 0.206060603, -0.219879866, -0.0269463826, -0.178709894, -0.215711758, -0.219979331, -0.0499579608, -0.0326510519, 0.0558257066, -0.120200336, -0.598202527) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.110944375, 0.112344548, -0.375194699, 0.0488792546, -0.222494930, 0.101249740, -0.848302960, -0.301754028, -0.0605254769, 0.0577943176, 0.0925195366, 0.0612986460, 0.124019690, 0.0120255901, -0.699208677, 0.0417696275) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.104136474, 0.0163628682, -1.30527353, -0.0420986786, -0.251211017, 0.166495159, -0.0536676049, -0.112337999, 0.379463047, -0.0279611275, 0.903061926, 0.286154181, 0.0141180074, 0.0593903027, -0.173248321, -0.0786208361) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.324934959, 0.0357063189, -0.133934438, 0.103635825, -0.0298920684, 0.00964370184, -0.142296821, 0.0332837477, 0.196284205, 0.118723772, -0.0892938301, -0.0718955696, 0.0799493194, 0.0798296183, 0.487407118, 0.164204255) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.127855867, -0.0484751575, -0.345837921, 0.0820265040, -0.120201483, 0.0631299987, -0.239942566, -0.0234256461, -0.231999114, -0.0241902005, -0.412378490, 0.122082718, 0.199822903, 0.144347966, -0.0230234545, 0.175215706) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.123799391, -0.300921023, -0.0337948948, -0.164894268, -0.115021668, -0.0363592729, -0.0571842454, -0.0215468574, -0.00147085055, 0.186561853, 0.0290017556, 0.270507663, 0.0590086989, -0.0560485348, 0.0379319414, -0.0378056429) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.180645719, 0.00718436018, -0.0623573363, 0.00553019019, 0.219012558, 0.0924859792, -0.00281506381, -0.0797967762, 0.273152649, 0.0177146904, 0.0784471184, 0.296517104, 0.104601495, 0.0410522334, 0.0848866105, 0.0240739360) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.0328482985, 0.0228259359, 0.0866515487, 0.0316843018, -0.0640158877, 0.158941135, 0.0561759397, -0.0185791999, 0.137442321, -0.141763285, 0.0331367664, -0.232862309, 0.0563976802, 0.0113518126, -0.151053429, -0.0930655450) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.284408629, -0.142447054, -0.0408440977, 0.00561210606, -0.256345153, -0.0429139510, -0.0418903641, -0.0715321153, -0.447353661, 0.125024483, -0.176186025, 0.0204116292, 0.272974223, 0.0134389559, -0.0801286697, 0.316879302) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.0933172107, -0.183296889, -0.0418406799, -0.0224960372, -0.0222065840, 0.238041192, 0.00750997942, 0.0432496630, -0.0651237294, -0.000897594902, 0.00460905675, -0.0307526626, 0.0100282710, 0.224332035, -0.148526356, -0.151337028) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.591518879, -0.0256558396, 0.283096820, 0.130609289, 0.365952402, 0.0755571723, 0.0187994204, 0.133172214, -0.323932767, 0.237884596, 0.294952035, -0.210312381, 0.127818108, -0.131687462, 0.0284493174, -0.268953234) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.171424091, 0.0121198799, -0.247907773, -0.0687721670, 0.0281512178, 0.496881485, 0.135222778, -0.238535568, -0.0893596113, 0.172000811, 0.174451455, 0.212932423, 0.171500564, -0.155129194, 0.165731594, 0.0392294377) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.0565146282, -0.175479546, 0.121002302, 0.226646766, 0.0151840253, -0.217991829, -0.169763058, -0.129569173, 0.0883510262, 0.222938836, -0.116387539, 0.123726964, 0.0324913524, -0.124769114, 0.0729148462, -0.106963225) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.0623862632, 0.0736076981, -0.314074993, -0.363276988, -0.101304002, -0.184374079, -0.0996706039, -0.0516288579, -0.0794840828, 0.0559839755, 0.0370744206, -0.0652012900, 0.129874289, -0.0130338622, 0.0458043851, 0.0672830716) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.149731144, 0.0217700023, -0.0538115688, -0.0265375525, 0.265694141, 0.0215768181, -0.144211218, -0.247956008, -0.101442374, 0.0961619765, 0.399681091, 0.746589959, -0.105316065, 0.0292155389, 0.0288980231, -0.160949796) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.199679434, 0.107163027, 0.0100385994, 0.171550110, -0.0756596029, 0.0772829130, 0.0856642872, 0.115933999, 0.139173776, -0.0685500577, 0.0331350230, -0.141655266, -0.414765000, -0.00302983099, 0.0662077740, -0.0602528676) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.106548317, -0.0917267799, 0.0350920036, 0.0487638228, 0.0270521920, -0.0501094386, -0.462586075, -0.234585762, -0.0493644625, 0.0890613273, -0.0933851451, -0.0853883028, -0.0176305734, -0.227158099, -0.0180635490, -0.292613208) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.00765313534, 0.133634120, 0.0316063389, -0.279187739, -0.0252366234, 0.0292710382, -0.0348101631, -0.142563537, 0.00688346103, 0.0177228600, 0.0799519420, 0.158737466, 0.204957470, -0.0449021570, 0.0109482910, 0.0544685572) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.203856245, -0.0215473846, -0.102223009, 0.0304324497, -0.0540611148, 0.132429525, 0.0642501041, 0.243538290, 0.184167489, 0.176525176, 0.118747205, 0.0769019127, -0.198791414, 0.0752541050, 0.0328134783, -0.118809238) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.124146454, 0.0873760730, -0.0302017070, 0.0351694860, -0.0304135159, 0.122748017, 0.0124722766, -0.0421798192, -0.133662850, 0.135589957, 0.0316320695, -0.179968953, 0.161196098, -0.0634225905, 0.0237214938, 0.00305540534) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.253697693, 0.0248123892, -0.0466357507, 0.0974411741, -0.235545233, 0.0300937723, 0.0739511773, 0.0992507786, -0.175314173, -0.0133983186, 0.0271663759, -0.0487023741, -0.172803238, 0.0122724120, 0.0599639788, -0.218771234) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.253130764, 0.0251407884, 0.0216546487, -0.175381005, -0.000535731320, 0.0909922868, 0.0429097936, 0.111155346, 0.0436230749, 0.0646614581, -0.0651462674, -0.144788265, -0.110219508, -0.122969851, 0.0155531019, 0.329577506) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.0950167030, -0.0100850333, 0.104052871, 0.250589728, -0.0622067414, 0.0122408168, -0.0813210085, -0.0222475734, 0.166887492, 0.364725828, 0.220442519, 0.415116638, -0.195184529, 0.0974688604, 0.0751966089, -0.581183970) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.0199761502, -0.0458455868, -0.172394186, -0.161984295, -0.0252164472, 0.127235606, -0.0265266355, -0.101637624, 0.0743162856, 0.0681364238, 0.154379725, -0.0205966141, 0.00598833151, 0.0676967874, -0.0578748137, -0.0126147885) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.0224607512, -0.230445936, 0.000880631618, 0.356594235, -0.399764508, 0.0361814052, 0.0181284659, -0.258167803, -0.0712353811, -0.101505563, -0.111758247, 0.0873303935, 0.0464229472, -0.0764898509, -0.0256024413, 0.0368508175) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.107946478, 0.100045703, 0.123380370, -0.501847744, -0.119314559, 0.0207738597, 0.0482294708, -0.00983094797, 0.125252753, 0.0727847740, 0.103390738, 0.132443517, 0.115975395, -0.0786511675, -0.0160292517, -0.129566208) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.0232839510, 0.00151808059, -0.0886609703, 0.104183286, 0.0402990542, -0.113652818, 0.00835288875, -0.166538954, 0.129188433, 0.157239839, 0.0958524346, -0.155049473, 0.0484609380, 0.0840019882, -0.0652701259, -0.267224759) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.0957566351, 0.0513249412, 0.0744566992, 0.273993850, 0.100669235, 0.0702868998, -0.00870692544, -0.298753560, -0.0157948844, 0.0616818964, -0.0196142774, 0.282299995, 0.0176282879, -0.0282614026, 0.137214512, -0.144296810) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.0430518501, -0.0700614750, 0.0819199830, -0.0664579272, -0.242504433, 0.0343484469, -0.149726331, 0.0585697480, -0.138398364, -0.0174559038, 0.136145994, -0.0271734018, 0.103584871, 0.142444104, 0.157026723, -0.100211062) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL24)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(0.144464120, 0.401343286, -0.0676336735, 0.0675036088) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
+  let d_MODEL21 = textureDimensions(t_MODEL21);
+  let d_MODEL22 = textureDimensions(t_MODEL22);
+  let d_MODEL23 = textureDimensions(t_MODEL23);
+  let d_MODEL24 = textureDimensions(t_MODEL24);
+  var res0 = vec4f(-0.0913535208, -0.0118702790, 0.0520768538, -0.00401062984);
+  res0 += mat4x4f(-0.00796797778, -0.0892239138, 0.0172284860, -0.282922447, -0.0365913287, 0.0441824161, -0.0535985231, 0.140059426, 0.0752917156, -0.0101506263, 0.103302799, 0.00190797413, 0.173880622, -0.0704469830, -0.0327399038, -0.235934362) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, -1), d_MODEL21), 0);
+  res0 += mat4x4f(-0.121326931, 0.114898294, 0.0112899840, 0.0425971821, 0.158372715, 0.0212890897, -0.108197197, -0.148315802, -0.0313677229, -0.0744015649, 0.173293367, 0.371599048, -0.0582064092, 0.0807931051, 0.0271971207, -0.302610338) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, -1), d_MODEL22), 0);
+  res0 += mat4x4f(0.0434402674, 0.0732112005, 0.0242302436, 0.258922070, 0.0627128854, 0.0239066873, -0.0523287021, -0.0760783106, -0.00478949910, 0.163329899, -0.111009605, -0.231172308, -0.0633602813, 0.144310251, 0.0652351305, 0.0622534528) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, -1), d_MODEL23), 0);
+  res0 += mat4x4f(0.000892509939, 0.00793743785, -0.0677523613, 0.235390991, -0.257047683, -0.0662807450, -0.0674656257, -0.140577987, -0.105046198, -0.139433205, -0.0428328216, -0.0701708794, 0.0513699204, -0.0117710326, 0.0459931977, 0.122452378) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, -1), d_MODEL24), 0);
+  res0 += mat4x4f(-0.0884563699, -0.160363033, -0.0208715573, -0.217286766, 0.0346806385, -0.147772580, -0.151207417, 0.0888653919, -0.0884413347, 0.183090955, 0.0242120270, -0.158121750, 0.291027009, -0.234938636, -0.559732378, -0.235398740) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 0), d_MODEL21), 0);
+  res0 += mat4x4f(0.127658978, -0.00308748218, 0.195018813, 0.148675472, -0.155456305, -0.0948472992, -0.112319678, -0.0944644660, 0.396402568, -0.199274898, 0.213953972, -0.329204142, 0.00484685414, -0.0754112825, -0.108262666, -0.327119559) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 0), d_MODEL22), 0);
+  res0 += mat4x4f(-0.151456550, -0.238460049, -0.141419426, -0.121654294, 0.00507768895, -0.0259401985, -0.104804531, -0.0310482457, 0.179187179, -0.0225138944, 0.0951751694, 0.114030525, 0.121941343, 0.230220690, 0.109937482, -0.0682381094) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 0), d_MODEL23), 0);
+  res0 += mat4x4f(0.138199478, -0.0830600783, 0.366416454, 0.0608927310, -0.172052354, 0.206060603, -0.219879866, -0.0269463826, -0.178709894, -0.215711758, -0.219979331, -0.0499579608, -0.0326510519, 0.0558257066, -0.120200336, -0.598202527) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 0), d_MODEL24), 0);
+  res0 += mat4x4f(-0.110944375, 0.112344548, -0.375194699, 0.0488792546, -0.222494930, 0.101249740, -0.848302960, -0.301754028, -0.0605254769, 0.0577943176, 0.0925195366, 0.0612986460, 0.124019690, 0.0120255901, -0.699208677, 0.0417696275) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 1), d_MODEL21), 0);
+  res0 += mat4x4f(0.104136474, 0.0163628682, -1.30527353, -0.0420986786, -0.251211017, 0.166495159, -0.0536676049, -0.112337999, 0.379463047, -0.0279611275, 0.903061926, 0.286154181, 0.0141180074, 0.0593903027, -0.173248321, -0.0786208361) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 1), d_MODEL22), 0);
+  res0 += mat4x4f(-0.324934959, 0.0357063189, -0.133934438, 0.103635825, -0.0298920684, 0.00964370184, -0.142296821, 0.0332837477, 0.196284205, 0.118723772, -0.0892938301, -0.0718955696, 0.0799493194, 0.0798296183, 0.487407118, 0.164204255) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 1), d_MODEL23), 0);
+  res0 += mat4x4f(0.127855867, -0.0484751575, -0.345837921, 0.0820265040, -0.120201483, 0.0631299987, -0.239942566, -0.0234256461, -0.231999114, -0.0241902005, -0.412378490, 0.122082718, 0.199822903, 0.144347966, -0.0230234545, 0.175215706) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 1), d_MODEL24), 0);
+  res0 += mat4x4f(0.123799391, -0.300921023, -0.0337948948, -0.164894268, -0.115021668, -0.0363592729, -0.0571842454, -0.0215468574, -0.00147085055, 0.186561853, 0.0290017556, 0.270507663, 0.0590086989, -0.0560485348, 0.0379319414, -0.0378056429) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, -1), d_MODEL21), 0);
+  res0 += mat4x4f(-0.180645719, 0.00718436018, -0.0623573363, 0.00553019019, 0.219012558, 0.0924859792, -0.00281506381, -0.0797967762, 0.273152649, 0.0177146904, 0.0784471184, 0.296517104, 0.104601495, 0.0410522334, 0.0848866105, 0.0240739360) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, -1), d_MODEL22), 0);
+  res0 += mat4x4f(0.0328482985, 0.0228259359, 0.0866515487, 0.0316843018, -0.0640158877, 0.158941135, 0.0561759397, -0.0185791999, 0.137442321, -0.141763285, 0.0331367664, -0.232862309, 0.0563976802, 0.0113518126, -0.151053429, -0.0930655450) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, -1), d_MODEL23), 0);
+  res0 += mat4x4f(-0.284408629, -0.142447054, -0.0408440977, 0.00561210606, -0.256345153, -0.0429139510, -0.0418903641, -0.0715321153, -0.447353661, 0.125024483, -0.176186025, 0.0204116292, 0.272974223, 0.0134389559, -0.0801286697, 0.316879302) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, -1), d_MODEL24), 0);
+  res0 += mat4x4f(-0.0933172107, -0.183296889, -0.0418406799, -0.0224960372, -0.0222065840, 0.238041192, 0.00750997942, 0.0432496630, -0.0651237294, -0.000897594902, 0.00460905675, -0.0307526626, 0.0100282710, 0.224332035, -0.148526356, -0.151337028) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 0), d_MODEL21), 0);
+  res0 += mat4x4f(-0.591518879, -0.0256558396, 0.283096820, 0.130609289, 0.365952402, 0.0755571723, 0.0187994204, 0.133172214, -0.323932767, 0.237884596, 0.294952035, -0.210312381, 0.127818108, -0.131687462, 0.0284493174, -0.268953234) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 0), d_MODEL22), 0);
+  res0 += mat4x4f(-0.171424091, 0.0121198799, -0.247907773, -0.0687721670, 0.0281512178, 0.496881485, 0.135222778, -0.238535568, -0.0893596113, 0.172000811, 0.174451455, 0.212932423, 0.171500564, -0.155129194, 0.165731594, 0.0392294377) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 0), d_MODEL23), 0);
+  res0 += mat4x4f(0.0565146282, -0.175479546, 0.121002302, 0.226646766, 0.0151840253, -0.217991829, -0.169763058, -0.129569173, 0.0883510262, 0.222938836, -0.116387539, 0.123726964, 0.0324913524, -0.124769114, 0.0729148462, -0.106963225) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 0), d_MODEL24), 0);
+  res0 += mat4x4f(0.0623862632, 0.0736076981, -0.314074993, -0.363276988, -0.101304002, -0.184374079, -0.0996706039, -0.0516288579, -0.0794840828, 0.0559839755, 0.0370744206, -0.0652012900, 0.129874289, -0.0130338622, 0.0458043851, 0.0672830716) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 1), d_MODEL21), 0);
+  res0 += mat4x4f(0.149731144, 0.0217700023, -0.0538115688, -0.0265375525, 0.265694141, 0.0215768181, -0.144211218, -0.247956008, -0.101442374, 0.0961619765, 0.399681091, 0.746589959, -0.105316065, 0.0292155389, 0.0288980231, -0.160949796) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 1), d_MODEL22), 0);
+  res0 += mat4x4f(-0.199679434, 0.107163027, 0.0100385994, 0.171550110, -0.0756596029, 0.0772829130, 0.0856642872, 0.115933999, 0.139173776, -0.0685500577, 0.0331350230, -0.141655266, -0.414765000, -0.00302983099, 0.0662077740, -0.0602528676) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 1), d_MODEL23), 0);
+  res0 += mat4x4f(0.106548317, -0.0917267799, 0.0350920036, 0.0487638228, 0.0270521920, -0.0501094386, -0.462586075, -0.234585762, -0.0493644625, 0.0890613273, -0.0933851451, -0.0853883028, -0.0176305734, -0.227158099, -0.0180635490, -0.292613208) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 1), d_MODEL24), 0);
+  res0 += mat4x4f(0.00765313534, 0.133634120, 0.0316063389, -0.279187739, -0.0252366234, 0.0292710382, -0.0348101631, -0.142563537, 0.00688346103, 0.0177228600, 0.0799519420, 0.158737466, 0.204957470, -0.0449021570, 0.0109482910, 0.0544685572) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, -1), d_MODEL21), 0);
+  res0 += mat4x4f(0.203856245, -0.0215473846, -0.102223009, 0.0304324497, -0.0540611148, 0.132429525, 0.0642501041, 0.243538290, 0.184167489, 0.176525176, 0.118747205, 0.0769019127, -0.198791414, 0.0752541050, 0.0328134783, -0.118809238) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, -1), d_MODEL22), 0);
+  res0 += mat4x4f(-0.124146454, 0.0873760730, -0.0302017070, 0.0351694860, -0.0304135159, 0.122748017, 0.0124722766, -0.0421798192, -0.133662850, 0.135589957, 0.0316320695, -0.179968953, 0.161196098, -0.0634225905, 0.0237214938, 0.00305540534) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, -1), d_MODEL23), 0);
+  res0 += mat4x4f(-0.253697693, 0.0248123892, -0.0466357507, 0.0974411741, -0.235545233, 0.0300937723, 0.0739511773, 0.0992507786, -0.175314173, -0.0133983186, 0.0271663759, -0.0487023741, -0.172803238, 0.0122724120, 0.0599639788, -0.218771234) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, -1), d_MODEL24), 0);
+  res0 += mat4x4f(0.253130764, 0.0251407884, 0.0216546487, -0.175381005, -0.000535731320, 0.0909922868, 0.0429097936, 0.111155346, 0.0436230749, 0.0646614581, -0.0651462674, -0.144788265, -0.110219508, -0.122969851, 0.0155531019, 0.329577506) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 0), d_MODEL21), 0);
+  res0 += mat4x4f(0.0950167030, -0.0100850333, 0.104052871, 0.250589728, -0.0622067414, 0.0122408168, -0.0813210085, -0.0222475734, 0.166887492, 0.364725828, 0.220442519, 0.415116638, -0.195184529, 0.0974688604, 0.0751966089, -0.581183970) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 0), d_MODEL22), 0);
+  res0 += mat4x4f(-0.0199761502, -0.0458455868, -0.172394186, -0.161984295, -0.0252164472, 0.127235606, -0.0265266355, -0.101637624, 0.0743162856, 0.0681364238, 0.154379725, -0.0205966141, 0.00598833151, 0.0676967874, -0.0578748137, -0.0126147885) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 0), d_MODEL23), 0);
+  res0 += mat4x4f(0.0224607512, -0.230445936, 0.000880631618, 0.356594235, -0.399764508, 0.0361814052, 0.0181284659, -0.258167803, -0.0712353811, -0.101505563, -0.111758247, 0.0873303935, 0.0464229472, -0.0764898509, -0.0256024413, 0.0368508175) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 0), d_MODEL24), 0);
+  res0 += mat4x4f(-0.107946478, 0.100045703, 0.123380370, -0.501847744, -0.119314559, 0.0207738597, 0.0482294708, -0.00983094797, 0.125252753, 0.0727847740, 0.103390738, 0.132443517, 0.115975395, -0.0786511675, -0.0160292517, -0.129566208) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 1), d_MODEL21), 0);
+  res0 += mat4x4f(-0.0232839510, 0.00151808059, -0.0886609703, 0.104183286, 0.0402990542, -0.113652818, 0.00835288875, -0.166538954, 0.129188433, 0.157239839, 0.0958524346, -0.155049473, 0.0484609380, 0.0840019882, -0.0652701259, -0.267224759) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 1), d_MODEL22), 0);
+  res0 += mat4x4f(-0.0957566351, 0.0513249412, 0.0744566992, 0.273993850, 0.100669235, 0.0702868998, -0.00870692544, -0.298753560, -0.0157948844, 0.0616818964, -0.0196142774, 0.282299995, 0.0176282879, -0.0282614026, 0.137214512, -0.144296810) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 1), d_MODEL23), 0);
+  res0 += mat4x4f(-0.0430518501, -0.0700614750, 0.0819199830, -0.0664579272, -0.242504433, 0.0343484469, -0.149726331, 0.0585697480, -0.138398364, -0.0174559038, 0.136145994, -0.0271734018, 0.103584871, 0.142444104, 0.157026723, -0.100211062) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 1), d_MODEL24), 0);
+  res0 = max(res0, vec4f(0.0)) + vec4f(0.144464120, 0.401343286, -0.0676336735, 0.0675036088) * min(res0, vec4f(0.0));
+  var res1 = vec4f(-0.0991896093, -0.00472254446, 0.00357209286, 0.0819422975);
+  res1 += mat4x4f(-0.0380190387, -0.0884913802, -0.126745820, 0.172354415, -0.0593389645, 0.306143701, 0.0192551222, 0.0741774365, 0.122897632, 0.0747476146, 0.0964794978, 0.0990022793, -0.116857506, 0.0100324228, -0.0642290711, -0.119175114) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, -1), d_MODEL21), 0);
+  res1 += mat4x4f(0.00436656643, 0.154086769, -0.103860483, 0.00535283377, 0.00887967274, 0.107458375, -0.114447854, 0.0237479955, -0.115698777, 0.621600688, -0.100223891, 0.257537484, 0.0789604634, -0.0846121609, 0.0474234149, 0.182430074) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, -1), d_MODEL22), 0);
+  res1 += mat4x4f(-0.00718104094, 0.220836431, -0.0170815550, -0.0962337852, 0.0158046558, 0.120023124, 0.00710446434, -0.0740649626, -0.185756803, 0.195417926, 0.106255472, -0.0291975252, -0.115447104, -0.110559620, 0.0245274045, -0.0304168630) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, -1), d_MODEL23), 0);
+  res1 += mat4x4f(0.00957471039, 0.138806358, -0.0319742635, 0.173728943, 0.0845888779, -0.116530232, -0.0673375800, -0.231241658, 0.0442777425, -0.131038263, -0.00161333650, 0.0204247423, 0.0843573660, 0.244916409, -0.0256777108, -0.100250445) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, -1), d_MODEL24), 0);
+  res1 += mat4x4f(-0.0413010307, -0.137327418, -0.0322713628, -0.132463366, 0.283802807, -0.157632604, 0.148240015, 0.0485119373, -0.0150071913, 0.105713449, 0.0111875059, -0.200263292, 0.00582603179, -0.0388580598, 0.0570992678, -0.0772859603) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 0), d_MODEL21), 0);
+  res1 += mat4x4f(0.0897591114, 0.0683292374, -0.134958848, -0.176552743, -0.0753203556, -0.161457404, -0.00481741270, -0.00408832962, 0.179504439, -0.503339648, -0.0325125456, 0.461009115, -0.0966292322, 0.152655855, -0.0736563578, -0.00168102083) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 0), d_MODEL22), 0);
+  res1 += mat4x4f(0.142000750, 0.00444432069, -0.0830735341, 0.0700985789, -0.0639962554, 0.0118486267, 0.0515093878, -0.218903556, 0.214702129, -0.0758977979, -0.00104652427, 0.244561464, 0.101097509, 0.0700496063, 0.0711700544, -0.0864670053) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 0), d_MODEL23), 0);
+  res1 += mat4x4f(0.0923858806, -0.262436748, -0.0331083611, -0.109227024, -0.196751401, -0.181234077, -0.165196627, -0.239298001, -0.101126209, 0.0672860518, 0.0317962021, -0.460326880, 0.0724031031, -0.251677305, 0.0171416532, 0.226615518) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 0), d_MODEL24), 0);
+  res1 += mat4x4f(-0.0170726143, -0.122678921, 0.117466599, 0.186816081, 0.125503048, 0.0284713153, 0.109902285, 0.208116651, -0.0319004543, -0.0759563148, -0.111384727, -0.0698537454, -0.0680371970, 0.0132136373, -0.000662404520, -0.0540980548) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 1), d_MODEL21), 0);
+  res1 += mat4x4f(-0.00159992580, 0.0449712947, 0.118484303, 0.0292720981, 0.0926468074, -0.206712887, 0.113429151, -0.0417718515, -0.166947380, 0.341547281, 0.216719016, -0.102355734, -0.0202438664, -0.105771430, -0.0861233920, -0.00312731555) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 1), d_MODEL22), 0);
+  res1 += mat4x4f(-0.0125396643, 0.0218314417, 0.0813134164, -0.170652196, 0.0933994278, 0.112098306, 0.0536424965, -0.152728334, -0.0517943017, 0.0562526733, -0.0982668698, 0.273246586, 0.0342057943, 0.0910349116, -0.00590611156, -0.101422839) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 1), d_MODEL23), 0);
+  res1 += mat4x4f(-0.00829181634, 0.205623761, -0.0217953995, 0.230104223, -0.134523422, -0.0609100796, 0.0684884414, -0.231531352, 0.0901160464, -0.0239519868, 0.0499840155, 0.157180995, -0.204105347, -0.0100172367, -0.104070641, -0.173898861) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 1), d_MODEL24), 0);
+  res1 += mat4x4f(-0.151434630, 0.0120855086, -0.127304956, 0.273817182, -0.130811602, 0.134043977, 0.0329061411, 0.0624048635, 0.0758236349, 0.0715983659, 0.0456249081, 0.186503798, 0.0600282177, -0.182891801, -0.0966372862, -0.0571064614) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, -1), d_MODEL21), 0);
+  res1 += mat4x4f(0.0553282946, 0.0799614415, 0.0110344021, -0.231545821, 0.0284111649, 0.166401461, -0.0644062012, 0.132525951, 0.112751611, 0.0504527278, -0.0275884029, -0.0839753523, 0.364711583, -0.0814514309, 0.0538439378, 0.164418876) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, -1), d_MODEL22), 0);
+  res1 += mat4x4f(-0.0128630856, 0.124575853, 0.0118986620, -0.150429308, 0.0128695210, 0.0376702808, 0.105005309, -0.113053240, -0.206437066, 0.292539775, 0.0146817900, 0.108190782, 0.126075730, -0.0832374319, 0.100447848, 0.138654366) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, -1), d_MODEL23), 0);
+  res1 += mat4x4f(0.0894327909, 0.0868441090, -0.0520112775, -0.0102606267, 0.130593896, -0.128780127, -0.0605239570, -0.335149497, -0.211162627, 0.0402063057, -0.00481276773, 0.229918703, -0.282130957, 0.364004552, -0.188319176, 0.261291057) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, -1), d_MODEL24), 0);
+  res1 += mat4x4f(-0.0912509561, -0.293523908, -0.120061994, -0.214267641, 0.404353648, -0.0287502650, 0.0357749350, 0.122142650, -0.0264495444, 0.301438361, -0.0652015209, -0.108067587, -0.142892495, -0.000304980495, 0.0160919502, 0.0463701412) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 0), d_MODEL21), 0);
+  res1 += mat4x4f(0.188941121, -0.0574711673, -0.112179413, -0.0224437602, -0.0876167342, -0.234048113, 0.00248161005, -0.466827065, 0.408240885, -0.148106575, 0.307497680, 0.520966649, -0.168968335, -0.0358258151, 0.142640188, -0.0337978005) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 0), d_MODEL22), 0);
+  res1 += mat4x4f(-0.103144884, -0.0617680550, -0.101590455, 0.141610548, 0.0384433679, 0.00155784271, 0.0676670223, -0.00752291316, 0.231463641, -0.0673299432, -0.0215778407, 0.108160593, -0.119492114, 0.220063418, 0.100279368, -0.0682497397) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 0), d_MODEL23), 0);
+  res1 += mat4x4f(0.0470921881, -0.0954615995, 0.00746042794, -0.0136689954, -0.306487948, -0.130695984, -0.316892922, -0.124658771, 0.0780362561, 0.0299714115, -0.0237665623, -0.261999846, 0.264717519, -0.484839797, 0.237801999, -0.265314728) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 0), d_MODEL24), 0);
+  res1 += mat4x4f(-0.0583629981, 0.00741915172, 0.104121841, 0.0434512794, 0.144667447, 0.0957187340, 0.196353287, -0.194490522, 0.155532300, 0.125743687, -0.196724728, -0.0903815255, 0.0199056696, 0.0778653249, 0.00295394193, -0.264089078) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 1), d_MODEL21), 0);
+  res1 += mat4x4f(-0.0317657106, -0.00797503721, 0.166089311, -0.00864127744, -0.123130739, 0.0243458617, 0.238493606, -0.0612945035, -0.217892483, 0.203044489, 0.0695837662, -0.00800850615, 0.165777162, 0.0925740302, -0.495387554, 0.132268891) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 1), d_MODEL22), 0);
+  res1 += mat4x4f(0.100910470, -0.110610738, 0.122296110, -0.0699491426, -0.00815630984, 0.0945507661, -0.00270597707, -0.262523770, -0.213723823, 0.251312971, -0.0948525071, -0.125801414, 0.0795770437, 0.0315405019, -0.229651019, 0.0686025918) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 1), d_MODEL23), 0);
+  res1 += mat4x4f(0.0387504287, -0.0467330515, 0.0133309746, 0.161070496, -0.0797555894, -0.196661189, 0.0176688842, -0.0903798938, 0.00716472790, -0.103000164, 0.0373288020, 0.214240640, -0.00267672841, 0.00276078098, -0.319551289, -0.0486195609) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 1), d_MODEL24), 0);
+  res1 += mat4x4f(0.0640689656, 0.111312173, -0.00172512594, 0.0673166290, -0.164699703, 0.0711791590, 0.0553938001, -0.0735845044, -0.0260426272, 0.176646233, 0.141134471, -0.263029099, -0.00638149586, -0.0153673235, -0.0733464807, -0.126422808) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, -1), d_MODEL21), 0);
+  res1 += mat4x4f(0.0752491653, 0.0128895100, 0.0174870733, -0.157734290, 0.153085321, 0.104321234, 0.0563468523, -0.181801289, -0.0376915522, 0.363884240, -0.0559341349, 0.173496380, 0.108040795, 0.0754701495, 0.00939266570, 0.0643255934) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, -1), d_MODEL22), 0);
+  res1 += mat4x4f(0.00985950045, -0.0396545939, 0.0325624719, -0.243570298, 0.0704944432, -0.0244267024, 0.0512526445, -0.141721696, -0.0719320700, 0.144767269, 0.0634209588, 0.310112417, -0.0615677722, -0.0347471945, -0.0183569919, 0.0533208102) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, -1), d_MODEL23), 0);
+  res1 += mat4x4f(0.169827506, -0.205891743, -0.0280930027, -0.0306543298, -0.00969664007, 0.0249507502, -0.0382731073, -0.265381724, 0.0281007979, -0.0306842159, 0.0100932904, 0.0278935991, 0.172914103, 0.110643066, 0.0186091587, 0.188541919) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, -1), d_MODEL24), 0);
+  res1 += mat4x4f(-0.0251549240, -0.271390259, -0.0312789306, 0.237331316, 0.231593996, -0.0543602258, 0.0966722220, 0.0927598551, 0.0688628927, 0.199716747, -0.195837513, -0.0681344420, -0.0690400973, -0.0777378902, -0.0129774073, 0.108956225) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 0), d_MODEL21), 0);
+  res1 += mat4x4f(0.0856535509, -0.0222543050, -0.0150528736, -0.101461776, 0.0161766279, 0.0919908434, 0.0648574829, 0.0224477872, 0.0470670573, -0.112872064, 0.226215616, 0.136185661, -0.0203462671, 0.118015610, -0.100743756, 0.0793768167) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 0), d_MODEL22), 0);
+  res1 += mat4x4f(0.000865701411, -0.0360523276, -0.0823347047, 0.145642146, 0.0310277510, 0.0716044828, -0.0396692753, -0.282687128, 0.163143262, 0.0482421294, -0.0371613801, 0.242226094, 0.0569886379, 0.0875107571, 0.0177102201, 0.170472726) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 0), d_MODEL23), 0);
+  res1 += mat4x4f(-0.0695749074, 0.342486054, 0.0987365618, 0.0601931177, -0.00678482186, -0.103926085, -0.0187755451, -0.363064975, -0.00356973591, -0.0620217770, 0.00695639988, -0.0899526104, -0.0823357254, -0.0589070953, -0.0484197326, -0.219209820) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 0), d_MODEL24), 0);
+  res1 += mat4x4f(0.00770679815, 0.0620760731, 0.114846386, 0.0478768907, 0.0381874442, 0.0667551085, 0.0589149483, 0.0235365722, 0.0364533998, -0.103975423, -0.0391746759, 0.00683945743, -0.0259671472, 0.0161498338, -0.0506454818, -0.0787553340) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 1), d_MODEL21), 0);
+  res1 += mat4x4f(0.0143946772, 0.00981067028, 0.0904853791, -0.126734346, 0.0119137643, 0.0567776747, 0.133968458, -0.234794483, 0.223480821, 0.236578315, -0.0324130319, 0.289850384, 0.0243124329, 0.0268469620, -0.228095517, 0.112643644) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 1), d_MODEL22), 0);
+  res1 += mat4x4f(0.0346071646, 0.0825288147, 0.0999464393, -0.213813111, 0.0416383147, 0.150631934, -0.0177689474, -0.143269762, -0.0556432009, -0.0485255793, 0.0584800057, 0.172314093, 0.0637319833, 0.0115256095, -0.0235497858, 0.0168594979) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 1), d_MODEL23), 0);
+  res1 += mat4x4f(0.147192299, -0.189933166, -0.0428512879, 0.106786877, -0.127032176, -0.137300789, -0.0114319744, -0.216911092, 0.0109026600, -0.0300728660, 0.0468915589, 0.108405031, -0.0489151254, -0.0904822350, -0.0544468313, 0.336790919) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 1), d_MODEL24), 0);
+  res1 = max(res1, vec4f(0.0)) + vec4f(0.375690550, 0.127589241, 0.0525643602, 0.115772530) * min(res1, vec4f(0.0));
+  var res2 = vec4f(-0.0117932213, -0.0852003768, -0.0504262671, 0.0137193818);
+  res2 += mat4x4f(0.0112112835, 0.00588930864, -0.0468564555, 0.0751408190, 0.179470137, 0.172225013, -0.0640610680, -0.0649492666, -0.171853259, 0.0761079192, 0.0696709454, 0.0618347339, -0.0695063770, 0.0745311603, -0.00919324625, -0.392009825) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, -1), d_MODEL21), 0);
+  res2 += mat4x4f(-0.0542192720, -0.00999550149, -0.00595364021, 0.0299703758, -0.115267545, 0.111631870, 0.0118522085, 0.206580862, 0.422147125, 0.183509737, -0.0302199181, -0.0949825421, -0.0555740632, -0.0866851807, 0.0972548723, 0.0177556016) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, -1), d_MODEL22), 0);
+  res2 += mat4x4f(0.120661110, 0.227956623, 0.0160129257, 0.0415454470, 0.0387251414, 0.0284958240, 0.0591143332, -0.0385173336, 0.398746789, 0.217509747, -0.0972099304, 0.0660759583, 0.152872726, -0.0732620955, 0.00525061740, 0.0346986912) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, -1), d_MODEL23), 0);
+  res2 += mat4x4f(-0.134793520, 0.0832944214, 0.00163107144, -0.0195755474, -0.187383205, 0.000629028480, -0.00450645806, 0.158109382, -0.0311029423, -0.0507792681, 0.0557559878, 0.0631903559, 0.0506596304, 0.232316956, -0.0959613919, -0.0664682910) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, -1), d_MODEL24), 0);
+  res2 += mat4x4f(0.0383313894, -0.0759664774, -0.118800677, 0.00875924621, 0.0337149873, 0.215897724, 0.0323493406, -0.249307007, -0.0205631889, 0.168641374, -0.00483500119, 0.131330445, 0.246618375, 0.142970219, -0.0718742982, -0.0710290670) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 0), d_MODEL21), 0);
+  res2 += mat4x4f(0.131015852, -0.162555411, 0.0615582839, 0.0256019440, -0.00431260467, 0.297843367, -0.155555606, 0.134212837, -0.0976906642, 0.0875031054, 0.115328185, -0.0826536417, 0.101264581, 0.137233853, -0.0300141927, -0.120595500) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 0), d_MODEL22), 0);
+  res2 += mat4x4f(-0.134457573, 0.200105757, -0.173713475, -0.191556051, -0.0252517164, 0.176553473, 0.0109406188, -0.0968099460, 0.234487861, -0.136701062, 0.0281144120, -0.201864496, -0.136135697, -0.198316529, 0.191238999, 0.0489123613) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 0), d_MODEL23), 0);
+  res2 += mat4x4f(0.0749946833, -0.322304368, 0.0786451548, 0.0980033055, -0.0674646795, -0.00928246696, -0.0915826708, 0.183233395, 0.0132881943, 0.257183492, -0.0516687557, 0.100336589, -0.384108394, 0.174416974, -0.0629576370, -0.0924765244) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 0), d_MODEL24), 0);
+  res2 += mat4x4f(0.0520496182, -0.159677222, 0.0496818684, 0.0205408446, 0.00982852187, -0.0550027080, -0.0317922570, -0.00564769143, 0.00950370822, 0.0314978324, 0.0271269828, -0.0662950575, -0.167583868, 0.306536734, -0.0386010557, -0.254791647) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 1), d_MODEL21), 0);
+  res2 += mat4x4f(-0.303716570, 0.155837551, -0.0562161915, -0.0419319868, 0.168834239, -0.0249239076, -0.0785823762, 0.0554304644, -0.134359047, 0.0647118017, -0.0565219261, -0.0165286232, 0.112320445, -0.0708304122, 0.0348288231, -0.00466710655) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 1), d_MODEL22), 0);
+  res2 += mat4x4f(0.0483209491, 0.297005385, -0.116035782, 0.0150335254, -0.0533888005, 0.0478715114, 0.0187946800, -0.0546247624, -0.0919935703, 0.138620824, 0.0351676717, 0.0733243674, 0.0161025133, -0.0609417334, 0.0434286855, -0.0405526124) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 1), d_MODEL23), 0);
+  res2 += mat4x4f(-0.0273460038, 0.0442499034, 0.00579966791, -0.0135830808, 0.0781872272, -0.130316257, -0.000390210887, 0.121486023, 0.116389222, 0.00356695987, 0.0118661420, 0.0879361406, 0.191487163, -0.0521862842, 0.0304289516, -0.0580463484) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 1), d_MODEL24), 0);
+  res2 += mat4x4f(-0.0587105453, -0.104891494, 0.0489171594, -0.234852910, 0.105835170, -0.129934058, -0.000387777895, 0.0755771399, -0.00767729944, -0.0247162972, -0.0253778882, -0.00711831776, -0.105153151, 0.0751071796, -0.224226952, -0.0117140068) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, -1), d_MODEL21), 0);
+  res2 += mat4x4f(0.0390238166, -0.123552002, 0.0103298677, 0.0106901582, -0.142283842, 0.0581533089, 0.0988415703, -0.0859429240, 0.208386615, -0.128368258, -0.178166419, 0.157499760, -0.0632908195, 0.251622826, 0.0397905186, -0.0932899415) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, -1), d_MODEL22), 0);
+  res2 += mat4x4f(0.121165588, -0.00621907553, -0.125860929, -0.0985775888, 0.146137968, -0.0670591667, 0.0985298529, -0.0215042308, 0.0847968683, -0.131383136, 0.0353770778, -0.113982573, 0.132463336, 0.0218106601, -0.00286275707, 0.0580644235) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, -1), d_MODEL23), 0);
+  res2 += mat4x4f(-0.139203221, -0.256581753, -0.143059805, -0.0633795932, -0.107807994, -0.0354298837, 0.0138104772, 0.121171534, 0.122080535, -0.109561995, 0.0462413505, 0.0751900449, 0.102041759, 0.0485459864, -0.0500509553, 0.0342015326) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, -1), d_MODEL24), 0);
+  res2 += mat4x4f(0.0887445807, -0.0741733164, 0.122836024, 0.113426760, 0.0528047830, 0.0153573267, -0.0378739350, 0.111965373, -0.165158957, -0.0239083841, 0.107223369, 0.0797950849, -0.00408625603, -0.116807155, -0.0465493277, 0.172151685) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 0), d_MODEL21), 0);
+  res2 += mat4x4f(0.0122625669, 0.163391143, 0.0196295660, -0.0747645050, -0.0643606260, -0.120427571, 0.142713800, -0.107193887, -0.0255390722, -0.0832675397, -0.134646520, 0.434121817, -0.0398248062, -0.195199326, -0.0532498807, -0.00196884922) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 0), d_MODEL22), 0);
+  res2 += mat4x4f(-0.0567380190, -0.301975727, -0.214874014, -0.0864987597, -0.0508455820, 0.0156056965, 0.0365634076, -0.0758148655, 0.188622788, 0.0519360974, 0.0259183217, 0.0587069765, -0.0104947416, 0.263370514, 0.0548821278, 0.0253250152) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 0), d_MODEL23), 0);
+  res2 += mat4x4f(-0.0285410937, -0.355462492, -0.175801292, -0.118684091, -0.199645758, -0.286107749, 0.155458927, -0.102104589, 0.0708900541, -0.0213058200, 0.0737403110, -0.0818078667, -0.250909448, -0.232062146, -0.156812072, -0.0313629583) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 0), d_MODEL24), 0);
+  res2 += mat4x4f(0.00622860296, 0.0443460606, 0.0842798650, -0.199181333, 0.102024309, 0.0758358240, -0.00864734314, -0.0521513708, 0.0769603476, 0.0403546430, 0.0258750562, 0.0271765012, 0.0446455032, 0.136816174, -0.264311731, 0.0875905529) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 1), d_MODEL21), 0);
+  res2 += mat4x4f(-0.171303585, 0.0382734016, -0.0664242059, -0.114957236, 0.0692079812, 0.0138157029, 0.0501571931, 0.0822055116, 0.0208357777, 0.0502132364, 0.0563012213, 0.271881372, 0.0930417925, 0.00711877970, 0.0261604283, 0.0480932109) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 1), d_MODEL22), 0);
+  res2 += mat4x4f(0.170508340, -0.0937409550, 0.0216275621, -0.0247236639, 0.0234030169, 0.0379170589, 0.0294753201, 0.142450929, -0.0489575267, -0.0159711335, -0.0381312333, -0.368272930, 0.0279697459, 0.149477124, 0.00234488957, 0.0917155370) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 1), d_MODEL23), 0);
+  res2 += mat4x4f(0.0200283378, -0.172526523, -0.0241785571, -0.0851662904, 0.138311490, -0.159533054, 0.160668045, -0.145600840, -0.165102050, -0.0678079426, 0.104331993, 0.139081091, 0.179053769, 0.0885414779, 0.0113023510, -0.0228599552) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 1), d_MODEL24), 0);
+  res2 += mat4x4f(0.132741421, -0.0412675403, -0.0423263721, -0.0243640002, 0.141850293, -0.00191112922, 0.0866055116, 0.0560528710, 0.0628734007, 0.232873186, 0.0268647112, 0.0300555304, -0.0883759037, -0.0965502039, -0.0762238279, -0.0864997953) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, -1), d_MODEL21), 0);
+  res2 += mat4x4f(-0.108513415, 0.107931018, -0.0412508920, -0.0257291775, 0.00486483378, 0.250381649, -0.0220929831, 0.0992434248, 0.0597101711, 0.0882344916, 0.217677861, 0.156696826, -0.00267654541, 0.0230696332, -0.0159868468, -0.0331993476) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, -1), d_MODEL22), 0);
+  res2 += mat4x4f(0.0138508426, 0.0446042977, -0.00371277495, -0.00578347174, 0.0163419060, 0.177753091, 0.0164033361, 0.0862997398, 0.215983674, 0.00536790397, 0.0851715207, 0.125768840, 0.100953043, -0.129363641, 0.0668921322, 0.0733864158) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, -1), d_MODEL23), 0);
+  res2 += mat4x4f(-0.0765210167, 0.00643213280, 0.145769775, -0.0516032837, -0.0183412544, -0.0922658741, 0.129948199, -0.0184310339, 0.0207739770, -0.0657567456, 0.0496552922, 0.0699774846, -0.0116059147, 0.00558471167, 0.0548470132, -0.0278639644) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, -1), d_MODEL24), 0);
+  res2 += mat4x4f(-0.0602527708, -0.0609879680, -0.0551532730, -0.119377524, 0.0474125259, 0.135381281, 0.0998515934, 0.0371043980, -0.166771442, 0.0975681692, -0.0422563367, -0.0337482803, 0.0595393740, 0.0362954177, 0.0802152157, -0.00480562076) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 0), d_MODEL21), 0);
+  res2 += mat4x4f(-0.0000264553637, -0.0459957421, -0.0941860527, 0.0220439676, -0.0198998600, 0.176948950, -0.137509346, 0.0537276864, 0.264049292, 0.0485161804, 0.419686466, -0.00439915759, 0.0122142788, -0.00351273455, 0.0950794667, -0.0669325814) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 0), d_MODEL22), 0);
+  res2 += mat4x4f(-0.106056303, -0.0225659348, -0.0995059609, -0.0247227792, 0.0467923917, 0.240795940, 0.184889540, 0.0862970650, -0.00642416719, 0.0380647071, -0.0850700587, 0.0144663285, -0.0125651956, 0.128551036, -0.218732685, 0.0820218399) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 0), d_MODEL23), 0);
+  res2 += mat4x4f(0.0168828443, -0.0451845676, 0.109705232, 0.111292832, -0.226901785, -0.123570308, -0.0974780619, -0.0966577381, 0.0419933349, 0.147635922, 0.109735772, 0.121847898, -0.0783153400, -0.00574173545, 0.141758963, 0.0538525805) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 0), d_MODEL24), 0);
+  res2 += mat4x4f(0.158968225, -0.000172667744, 0.0500472486, -0.121384352, 0.0291863941, -0.0120916013, 0.0239683744, -0.0552296750, 0.0796050504, 0.176541716, 0.000276842795, -0.0393445976, -0.0134454854, -0.0539750196, -0.0184004512, -0.0893379599) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 1), d_MODEL21), 0);
+  res2 += mat4x4f(-0.00943762809, 0.0378321037, 0.0614445321, 0.0219446346, 0.231774420, 0.0465556122, -0.0751787797, 0.165644363, 0.0305528715, 0.0534701347, 0.441664219, -0.100934245, 0.0177952778, 0.0110808806, 0.0789348483, -0.000240509427) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 1), d_MODEL22), 0);
+  res2 += mat4x4f(0.0856890008, -0.0978699028, -0.0578258522, 0.0815093517, -0.0507306978, 0.0554993972, 0.0395951159, -0.0536016338, -0.0121915583, 0.0131961685, 0.0833177194, 0.156222165, -0.0184562355, 0.0166213177, 0.00478948932, -0.0110267056) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 1), d_MODEL23), 0);
+  res2 += mat4x4f(0.0632273778, 0.124840967, 0.203922018, -0.0937588662, -0.133366466, -0.167506620, -0.0576224364, 0.144043788, 0.0280676745, -0.0226038303, 0.0976722240, 0.0410982110, -0.0111301225, -0.0306359250, 0.0470183305, 0.00736187305) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 1), d_MODEL24), 0);
+  res2 = max(res2, vec4f(0.0)) + vec4f(0.161274642, 0.257291079, 0.123620518, -0.156501785) * min(res2, vec4f(0.0));
+  var res3 = vec4f(0.0256498847, -0.175850764, -0.152644947, -0.582531571);
+  res3 += mat4x4f(-0.171506226, -0.0124799525, -0.000235421074, 0.271971524, -0.0152563807, -0.143159911, -0.146660700, 0.0710605532, 0.103932202, -0.0129540609, -0.0152933449, -0.176844820, 0.0657171085, -0.0448599495, -0.0554537512, 0.115675561) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, -1), d_MODEL21), 0);
+  res3 += mat4x4f(0.0334990434, -0.395662278, -0.0944451317, 0.127073944, 0.0894948021, 0.0157263298, 0.0219981894, -0.0687539279, -0.0946803614, 0.498021066, -0.0960009471, 0.462549090, -0.0247161835, 0.0637527108, -0.0271187164, -0.0641391203) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, -1), d_MODEL22), 0);
+  res3 += mat4x4f(-0.0892388895, 0.0179832838, 0.109711044, -0.00804708246, 0.0340525471, -0.0433088914, 0.0691811517, -0.208493918, -0.195607319, -0.364609927, 0.0384964831, -0.208913177, -0.0698218867, -0.215995267, -0.0229017809, -0.284749120) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, -1), d_MODEL23), 0);
+  res3 += mat4x4f(-0.000791864528, 0.0472425856, -0.123094410, 0.254943579, -0.0195151884, -0.00975743402, 0.101273790, -0.302372098, 0.0769527331, 0.0276169628, -0.126602858, -0.138769761, 0.0342433900, -0.0757663995, 0.100047752, -0.239273280) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, -1), d_MODEL24), 0);
+  res3 += mat4x4f(-0.174199805, -0.359846562, 0.0726791546, -0.226673648, -0.0287555177, -0.00385906803, 0.0523435026, -0.599664807, -0.0329196043, -0.317879856, -0.0363875367, 0.0181075521, 0.159868583, 0.385145485, -0.0379597507, 0.154625744) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 0), d_MODEL21), 0);
+  res3 += mat4x4f(0.0253671464, -0.0919343531, -0.0756900534, -0.361970723, -0.110117130, -0.0646928623, -0.0353329107, -0.188107416, 0.0807526708, 0.542420089, 0.118072391, 0.843219399, -0.174642220, -0.249682128, 0.0227480475, -0.199260607) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 0), d_MODEL22), 0);
+  res3 += mat4x4f(-0.000752257183, 0.323437393, 0.0543834157, 0.205402583, 0.0720991120, -0.126689121, 0.0463201478, -0.0364669934, 0.166846260, 0.0810504034, -0.0127423396, 0.106697679, 0.0374130756, -0.227438226, 0.0561882220, -0.173215628) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 0), d_MODEL23), 0);
+  res3 += mat4x4f(0.106710181, -0.194585890, -0.0308089294, -0.169728667, -0.252297729, -0.300611943, 0.0586081930, 0.110329300, 0.0851859301, 0.0728785694, -0.140150890, -0.306876302, -0.240178153, -0.227550328, 0.0928036869, -0.377968699) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 0), d_MODEL24), 0);
+  res3 += mat4x4f(-0.00616056100, -0.0540391691, -0.0339254849, -0.480503917, 0.00179605209, 0.0795701146, 0.0853843018, 0.114693701, 0.00402365206, -0.175735399, -0.0262703709, 0.0419315211, -0.0622340515, -0.345335871, 0.0325239114, -0.465622485) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 1), d_MODEL21), 0);
+  res3 += mat4x4f(-0.0512260459, -0.0732728168, -0.112474672, -0.121563926, -0.00392790325, 0.0675664172, -0.343680352, 0.270295084, 0.142277896, 0.467946708, 0.299239963, 0.221603662, -0.0467141010, 0.127404049, -0.0329688787, 0.117489584) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 1), d_MODEL22), 0);
+  res3 += mat4x4f(0.0330807343, -0.0535013117, 0.0142061301, -0.0803043544, 0.0461846329, -0.233847320, 0.0548140183, -0.211084187, -0.0216791946, 0.214501828, 0.137783036, -0.0228163525, -0.0749364868, -0.307053417, 0.206164584, -0.456108570) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 1), d_MODEL23), 0);
+  res3 += mat4x4f(-0.0536117405, 0.0222912617, -0.0101589635, -0.118194014, -0.0186886471, 0.0325100720, -0.0645664930, -0.0635692328, -0.0250724964, -0.0675408319, -0.0789683014, 0.00674191257, -0.105749495, 0.0447103754, -0.0300524533, 0.276989043) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 1), d_MODEL24), 0);
+  res3 += mat4x4f(-0.0513655432, 0.115843356, 0.152125686, 0.234002545, 0.0982542634, -0.231546059, -0.135127485, -0.0466809981, -0.00133625616, -0.0982226580, 0.137752563, 0.281057864, -0.0737399310, 0.243669987, 0.0784294233, -0.0195862129) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, -1), d_MODEL21), 0);
+  res3 += mat4x4f(0.00819668081, -0.267843336, -0.0762300491, -0.949680686, 0.0190249197, 0.0717642680, -0.230076790, -0.150441080, 0.175258115, 0.332804620, -0.107199199, 0.564246118, -0.0580651164, 0.105713062, 0.243359476, -0.0773820281) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, -1), d_MODEL22), 0);
+  res3 += mat4x4f(-0.214065060, -0.200196400, 0.177394703, -0.0700276941, -0.00653795339, -0.284634292, 0.0826464966, -0.0256936233, 0.132085428, -0.352824807, -0.179422915, -0.472281814, -0.123917788, -0.263130933, 0.132729724, -0.455090821) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, -1), d_MODEL23), 0);
+  res3 += mat4x4f(-0.0892223790, -0.107840396, -0.0195128005, -0.275682837, 0.0511822589, 0.0232047234, 0.155946687, 0.269745111, 0.0541849658, -0.198547542, -0.217475355, 0.175893858, -0.0845093057, -0.382076770, 0.0315073840, -0.118020326) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, -1), d_MODEL24), 0);
+  res3 += mat4x4f(0.0696316883, -0.116694130, -0.0877009258, 0.770754099, -0.0518527068, -0.546891034, -0.0442974046, -0.751343191, -0.0697786659, -0.560339272, 0.122512043, -0.941173851, -0.301853895, -0.372655123, -0.123683810, -0.381850898) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 0), d_MODEL21), 0);
+  res3 += mat4x4f(0.0526516028, -0.177944779, -0.248935431, 0.393328071, -0.0688008144, -0.223405004, -0.0562367514, -0.481186777, 0.135009155, 0.321323544, 0.275545806, 0.294570386, 0.0897865221, -0.173458055, 0.0784721598, -0.178638145) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 0), d_MODEL22), 0);
+  res3 += mat4x4f(-0.424930185, -0.242026836, -0.0979759917, 0.357025087, 0.163553685, -0.227489740, 0.0299436245, -0.0905121192, 0.0316478088, -0.365876079, -0.0425814539, -0.479810297, 0.148878679, -0.380952090, 0.358369440, -0.488971174) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 0), d_MODEL23), 0);
+  res3 += mat4x4f(-0.376431972, -0.534655213, 0.0997260213, -0.476083130, 0.231526777, 0.269407779, -0.269619703, 0.656738758, 0.0300056450, 0.212305948, 0.00814757124, -0.604584873, -0.396678567, -0.425829679, 0.267809838, -0.270604968) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 0), d_MODEL24), 0);
+  res3 += mat4x4f(0.144323081, 0.0200556330, 0.0281556919, -0.451671600, -0.00186893530, 0.0387121029, 0.0667942166, 0.362586468, -0.00909281895, -0.130640790, -0.0665350407, 0.0461975001, -0.130201906, 0.187683299, 0.00554816099, 0.342274904) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 1), d_MODEL21), 0);
+  res3 += mat4x4f(0.0546463355, 0.0932167694, -0.0254806951, -0.165860921, -0.161694944, -0.232252449, -0.146298110, 0.126017287, 0.207152620, 0.144310191, -0.0222837683, 0.609331012, -0.0389290303, -0.219796166, -0.0828467160, -0.0930992290) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 1), d_MODEL22), 0);
+  res3 += mat4x4f(-0.279344440, 0.242831379, -0.0818681493, -0.132139787, 0.0438279398, -0.328226268, 0.0836004913, -0.120124646, 0.162197143, 0.208788425, 0.201578632, 0.125288099, -0.0219178516, -0.371454269, 0.181996927, 0.122289799) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 1), d_MODEL23), 0);
+  res3 += mat4x4f(-0.181827903, -0.207504869, -0.100282006, -0.257392406, -0.122191943, -0.317139089, 0.114516184, -0.169001147, 0.0377161056, -0.0693067685, -0.0921232924, -0.265827119, 0.0299147666, -0.224271521, -0.232442811, 0.0471098684) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 1), d_MODEL24), 0);
+  res3 += mat4x4f(0.157831147, -0.0578857958, 0.144137010, -0.338670939, -0.00874056388, -0.146343082, -0.0120968670, 0.0961729735, 0.000362742459, 0.0955420062, 0.120040543, 0.154050469, 0.0247534383, 0.00125362992, 0.00926969759, -0.00683268812) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, -1), d_MODEL21), 0);
+  res3 += mat4x4f(0.0134717049, -0.0866649076, -0.0476377457, -0.0257667582, -0.00987244397, -0.108199969, -0.0357361920, -0.0623027980, 0.0515195504, 0.0233818833, -0.0245748591, 0.168663859, 0.0489006303, -0.00429288065, 0.0362420492, -0.143873289) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, -1), d_MODEL22), 0);
+  res3 += mat4x4f(-0.00326685957, -0.208259016, 0.106703676, -0.0739380121, 0.0117629347, -0.206555471, -0.0307555702, -0.365377635, 0.0804428160, 0.160054207, -0.00749482634, 0.124480121, 0.00196452043, -0.335529178, 0.0255405381, -0.206526816) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, -1), d_MODEL23), 0);
+  res3 += mat4x4f(0.163881958, -0.105845787, 0.0177807398, -0.305811614, 0.0859749690, -0.00749888131, 0.0571143329, -0.0939002931, -0.0963800251, -0.0920022875, -0.121256173, -0.216962129, 0.0694883838, 0.0556588471, 0.148248747, -0.0581124797) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, -1), d_MODEL24), 0);
+  res3 += mat4x4f(0.0812976584, -0.0697164610, -0.0433903374, -0.340609401, 0.0425828621, -0.340219587, 0.00409195945, -0.446231842, 0.0573688857, -0.208047614, -0.000782483432, -0.416348338, -0.198342606, -0.0547835194, 0.0220455844, 0.0158856492) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 0), d_MODEL21), 0);
+  res3 += mat4x4f(0.0787735730, -0.0602469072, -0.0753148124, -0.231777415, -0.126704559, 0.0231386181, -0.0544530042, 0.165847778, 0.0498485863, 0.443381041, 0.155375138, 0.633692861, -0.000781049253, -0.0434414037, -0.0115945730, 0.109166943) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 0), d_MODEL22), 0);
+  res3 += mat4x4f(-0.129067495, -0.210567832, -0.0833480209, -0.127729714, 0.0469322726, -0.289192259, -0.0819209516, -0.680862546, 0.168080285, 0.0785239339, -0.0172515903, -0.269797444, -0.0701773912, -0.101069659, 0.149874702, 0.166669339) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 0), d_MODEL23), 0);
+  res3 += mat4x4f(0.0431484543, -0.0107382182, 0.0342667699, 0.103084579, 0.0652010441, 0.136783987, 0.0273701493, -0.0699966326, -0.145418391, -0.0899015740, -0.127684712, 0.0301503818, 0.314425349, -0.302197516, -0.0421724804, -0.322358251) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 0), d_MODEL24), 0);
+  res3 += mat4x4f(0.0718253180, -0.0142508959, 0.0440319479, -0.0593165122, -0.0361185037, -0.158640772, 0.0512792952, 0.0726224110, 0.0281563420, -0.180518270, 0.0205481201, -0.00100369053, -0.104712270, -0.347248435, 0.00393235404, -0.128771111) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 1), d_MODEL21), 0);
+  res3 += mat4x4f(0.0305646788, 0.0657112598, -0.0994846299, 0.0801630318, -0.0788805038, -0.215272829, -0.0300334450, -0.0996543989, -0.0107620163, 0.528052747, 0.0604169145, 0.234334931, 0.0253978893, -0.101517066, 0.00553691434, -0.150263116) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 1), d_MODEL22), 0);
+  res3 += mat4x4f(-0.0436003916, -0.204167306, -0.0208519623, 0.122421511, 0.0100479703, -0.110263065, 0.0701912642, -0.366026193, -0.0312662497, 0.0841278508, 0.0303990114, 0.0623973347, -0.0151691064, -0.238739952, 0.124626718, -0.0804257467) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 1), d_MODEL23), 0);
+  res3 += mat4x4f(0.0557537824, -0.522922993, -0.0809354186, -0.0357813463, 0.0957364440, 0.0565887503, 0.0485079028, -0.602261305, 0.00361112365, 0.0484908819, -0.0666448250, -0.0677179769, 0.114675015, -0.162380338, 0.0664341375, -0.272964090) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 1), d_MODEL24), 0);
+  res3 = max(res3, vec4f(0.0)) + vec4f(0.344353050, 0.107197963, -0.0737798661, 0.0355689898) * min(res3, vec4f(0.0));
+  textureStore(out_MODEL1, p, res0);
+  textureStore(out_MODEL2, p, res1);
+  textureStore(out_MODEL3, p, res2);
+  textureStore(out_MODEL4, p, res3);
 }
 
-//==== ENTRY pass31 : mapping_4_2 ====
-// ---- PASS 31: mapping 4_2 (save=MODEL2, comps=4) ----
-// binds: MODEL21, MODEL22, MODEL23, MODEL24
-@group(0) @binding(0) var t_MODEL21 : texture_2d<f32>;
-@group(0) @binding(1) var t_MODEL22 : texture_2d<f32>;
-@group(0) @binding(2) var t_MODEL23 : texture_2d<f32>;
-@group(0) @binding(3) var t_MODEL24 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.0991896093, -0.00472254446, 0.00357209286, 0.0819422975);
-  res += mat4x4f(-0.0380190387, -0.0884913802, -0.126745820, 0.172354415, -0.0593389645, 0.306143701, 0.0192551222, 0.0741774365, 0.122897632, 0.0747476146, 0.0964794978, 0.0990022793, -0.116857506, 0.0100324228, -0.0642290711, -0.119175114) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.00436656643, 0.154086769, -0.103860483, 0.00535283377, 0.00887967274, 0.107458375, -0.114447854, 0.0237479955, -0.115698777, 0.621600688, -0.100223891, 0.257537484, 0.0789604634, -0.0846121609, 0.0474234149, 0.182430074) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.00718104094, 0.220836431, -0.0170815550, -0.0962337852, 0.0158046558, 0.120023124, 0.00710446434, -0.0740649626, -0.185756803, 0.195417926, 0.106255472, -0.0291975252, -0.115447104, -0.110559620, 0.0245274045, -0.0304168630) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.00957471039, 0.138806358, -0.0319742635, 0.173728943, 0.0845888779, -0.116530232, -0.0673375800, -0.231241658, 0.0442777425, -0.131038263, -0.00161333650, 0.0204247423, 0.0843573660, 0.244916409, -0.0256777108, -0.100250445) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.0413010307, -0.137327418, -0.0322713628, -0.132463366, 0.283802807, -0.157632604, 0.148240015, 0.0485119373, -0.0150071913, 0.105713449, 0.0111875059, -0.200263292, 0.00582603179, -0.0388580598, 0.0570992678, -0.0772859603) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.0897591114, 0.0683292374, -0.134958848, -0.176552743, -0.0753203556, -0.161457404, -0.00481741270, -0.00408832962, 0.179504439, -0.503339648, -0.0325125456, 0.461009115, -0.0966292322, 0.152655855, -0.0736563578, -0.00168102083) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.142000750, 0.00444432069, -0.0830735341, 0.0700985789, -0.0639962554, 0.0118486267, 0.0515093878, -0.218903556, 0.214702129, -0.0758977979, -0.00104652427, 0.244561464, 0.101097509, 0.0700496063, 0.0711700544, -0.0864670053) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.0923858806, -0.262436748, -0.0331083611, -0.109227024, -0.196751401, -0.181234077, -0.165196627, -0.239298001, -0.101126209, 0.0672860518, 0.0317962021, -0.460326880, 0.0724031031, -0.251677305, 0.0171416532, 0.226615518) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.0170726143, -0.122678921, 0.117466599, 0.186816081, 0.125503048, 0.0284713153, 0.109902285, 0.208116651, -0.0319004543, -0.0759563148, -0.111384727, -0.0698537454, -0.0680371970, 0.0132136373, -0.000662404520, -0.0540980548) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.00159992580, 0.0449712947, 0.118484303, 0.0292720981, 0.0926468074, -0.206712887, 0.113429151, -0.0417718515, -0.166947380, 0.341547281, 0.216719016, -0.102355734, -0.0202438664, -0.105771430, -0.0861233920, -0.00312731555) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.0125396643, 0.0218314417, 0.0813134164, -0.170652196, 0.0933994278, 0.112098306, 0.0536424965, -0.152728334, -0.0517943017, 0.0562526733, -0.0982668698, 0.273246586, 0.0342057943, 0.0910349116, -0.00590611156, -0.101422839) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.00829181634, 0.205623761, -0.0217953995, 0.230104223, -0.134523422, -0.0609100796, 0.0684884414, -0.231531352, 0.0901160464, -0.0239519868, 0.0499840155, 0.157180995, -0.204105347, -0.0100172367, -0.104070641, -0.173898861) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.151434630, 0.0120855086, -0.127304956, 0.273817182, -0.130811602, 0.134043977, 0.0329061411, 0.0624048635, 0.0758236349, 0.0715983659, 0.0456249081, 0.186503798, 0.0600282177, -0.182891801, -0.0966372862, -0.0571064614) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.0553282946, 0.0799614415, 0.0110344021, -0.231545821, 0.0284111649, 0.166401461, -0.0644062012, 0.132525951, 0.112751611, 0.0504527278, -0.0275884029, -0.0839753523, 0.364711583, -0.0814514309, 0.0538439378, 0.164418876) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.0128630856, 0.124575853, 0.0118986620, -0.150429308, 0.0128695210, 0.0376702808, 0.105005309, -0.113053240, -0.206437066, 0.292539775, 0.0146817900, 0.108190782, 0.126075730, -0.0832374319, 0.100447848, 0.138654366) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.0894327909, 0.0868441090, -0.0520112775, -0.0102606267, 0.130593896, -0.128780127, -0.0605239570, -0.335149497, -0.211162627, 0.0402063057, -0.00481276773, 0.229918703, -0.282130957, 0.364004552, -0.188319176, 0.261291057) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.0912509561, -0.293523908, -0.120061994, -0.214267641, 0.404353648, -0.0287502650, 0.0357749350, 0.122142650, -0.0264495444, 0.301438361, -0.0652015209, -0.108067587, -0.142892495, -0.000304980495, 0.0160919502, 0.0463701412) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.188941121, -0.0574711673, -0.112179413, -0.0224437602, -0.0876167342, -0.234048113, 0.00248161005, -0.466827065, 0.408240885, -0.148106575, 0.307497680, 0.520966649, -0.168968335, -0.0358258151, 0.142640188, -0.0337978005) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.103144884, -0.0617680550, -0.101590455, 0.141610548, 0.0384433679, 0.00155784271, 0.0676670223, -0.00752291316, 0.231463641, -0.0673299432, -0.0215778407, 0.108160593, -0.119492114, 0.220063418, 0.100279368, -0.0682497397) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.0470921881, -0.0954615995, 0.00746042794, -0.0136689954, -0.306487948, -0.130695984, -0.316892922, -0.124658771, 0.0780362561, 0.0299714115, -0.0237665623, -0.261999846, 0.264717519, -0.484839797, 0.237801999, -0.265314728) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.0583629981, 0.00741915172, 0.104121841, 0.0434512794, 0.144667447, 0.0957187340, 0.196353287, -0.194490522, 0.155532300, 0.125743687, -0.196724728, -0.0903815255, 0.0199056696, 0.0778653249, 0.00295394193, -0.264089078) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.0317657106, -0.00797503721, 0.166089311, -0.00864127744, -0.123130739, 0.0243458617, 0.238493606, -0.0612945035, -0.217892483, 0.203044489, 0.0695837662, -0.00800850615, 0.165777162, 0.0925740302, -0.495387554, 0.132268891) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.100910470, -0.110610738, 0.122296110, -0.0699491426, -0.00815630984, 0.0945507661, -0.00270597707, -0.262523770, -0.213723823, 0.251312971, -0.0948525071, -0.125801414, 0.0795770437, 0.0315405019, -0.229651019, 0.0686025918) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.0387504287, -0.0467330515, 0.0133309746, 0.161070496, -0.0797555894, -0.196661189, 0.0176688842, -0.0903798938, 0.00716472790, -0.103000164, 0.0373288020, 0.214240640, -0.00267672841, 0.00276078098, -0.319551289, -0.0486195609) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.0640689656, 0.111312173, -0.00172512594, 0.0673166290, -0.164699703, 0.0711791590, 0.0553938001, -0.0735845044, -0.0260426272, 0.176646233, 0.141134471, -0.263029099, -0.00638149586, -0.0153673235, -0.0733464807, -0.126422808) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.0752491653, 0.0128895100, 0.0174870733, -0.157734290, 0.153085321, 0.104321234, 0.0563468523, -0.181801289, -0.0376915522, 0.363884240, -0.0559341349, 0.173496380, 0.108040795, 0.0754701495, 0.00939266570, 0.0643255934) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.00985950045, -0.0396545939, 0.0325624719, -0.243570298, 0.0704944432, -0.0244267024, 0.0512526445, -0.141721696, -0.0719320700, 0.144767269, 0.0634209588, 0.310112417, -0.0615677722, -0.0347471945, -0.0183569919, 0.0533208102) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.169827506, -0.205891743, -0.0280930027, -0.0306543298, -0.00969664007, 0.0249507502, -0.0382731073, -0.265381724, 0.0281007979, -0.0306842159, 0.0100932904, 0.0278935991, 0.172914103, 0.110643066, 0.0186091587, 0.188541919) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.0251549240, -0.271390259, -0.0312789306, 0.237331316, 0.231593996, -0.0543602258, 0.0966722220, 0.0927598551, 0.0688628927, 0.199716747, -0.195837513, -0.0681344420, -0.0690400973, -0.0777378902, -0.0129774073, 0.108956225) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.0856535509, -0.0222543050, -0.0150528736, -0.101461776, 0.0161766279, 0.0919908434, 0.0648574829, 0.0224477872, 0.0470670573, -0.112872064, 0.226215616, 0.136185661, -0.0203462671, 0.118015610, -0.100743756, 0.0793768167) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.000865701411, -0.0360523276, -0.0823347047, 0.145642146, 0.0310277510, 0.0716044828, -0.0396692753, -0.282687128, 0.163143262, 0.0482421294, -0.0371613801, 0.242226094, 0.0569886379, 0.0875107571, 0.0177102201, 0.170472726) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.0695749074, 0.342486054, 0.0987365618, 0.0601931177, -0.00678482186, -0.103926085, -0.0187755451, -0.363064975, -0.00356973591, -0.0620217770, 0.00695639988, -0.0899526104, -0.0823357254, -0.0589070953, -0.0484197326, -0.219209820) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.00770679815, 0.0620760731, 0.114846386, 0.0478768907, 0.0381874442, 0.0667551085, 0.0589149483, 0.0235365722, 0.0364533998, -0.103975423, -0.0391746759, 0.00683945743, -0.0259671472, 0.0161498338, -0.0506454818, -0.0787553340) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.0143946772, 0.00981067028, 0.0904853791, -0.126734346, 0.0119137643, 0.0567776747, 0.133968458, -0.234794483, 0.223480821, 0.236578315, -0.0324130319, 0.289850384, 0.0243124329, 0.0268469620, -0.228095517, 0.112643644) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.0346071646, 0.0825288147, 0.0999464393, -0.213813111, 0.0416383147, 0.150631934, -0.0177689474, -0.143269762, -0.0556432009, -0.0485255793, 0.0584800057, 0.172314093, 0.0637319833, 0.0115256095, -0.0235497858, 0.0168594979) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.147192299, -0.189933166, -0.0428512879, 0.106786877, -0.127032176, -0.137300789, -0.0114319744, -0.216911092, 0.0109026600, -0.0300728660, 0.0468915589, 0.108405031, -0.0489151254, -0.0904822350, -0.0544468313, 0.336790919) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL24)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(0.375690550, 0.127589241, 0.0525643602, 0.115772530) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass32 : mapping_4_3 ====
-// ---- PASS 32: mapping 4_3 (save=MODEL3, comps=4) ----
-// binds: MODEL21, MODEL22, MODEL23, MODEL24
-@group(0) @binding(0) var t_MODEL21 : texture_2d<f32>;
-@group(0) @binding(1) var t_MODEL22 : texture_2d<f32>;
-@group(0) @binding(2) var t_MODEL23 : texture_2d<f32>;
-@group(0) @binding(3) var t_MODEL24 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.0117932213, -0.0852003768, -0.0504262671, 0.0137193818);
-  res += mat4x4f(0.0112112835, 0.00588930864, -0.0468564555, 0.0751408190, 0.179470137, 0.172225013, -0.0640610680, -0.0649492666, -0.171853259, 0.0761079192, 0.0696709454, 0.0618347339, -0.0695063770, 0.0745311603, -0.00919324625, -0.392009825) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.0542192720, -0.00999550149, -0.00595364021, 0.0299703758, -0.115267545, 0.111631870, 0.0118522085, 0.206580862, 0.422147125, 0.183509737, -0.0302199181, -0.0949825421, -0.0555740632, -0.0866851807, 0.0972548723, 0.0177556016) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.120661110, 0.227956623, 0.0160129257, 0.0415454470, 0.0387251414, 0.0284958240, 0.0591143332, -0.0385173336, 0.398746789, 0.217509747, -0.0972099304, 0.0660759583, 0.152872726, -0.0732620955, 0.00525061740, 0.0346986912) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.134793520, 0.0832944214, 0.00163107144, -0.0195755474, -0.187383205, 0.000629028480, -0.00450645806, 0.158109382, -0.0311029423, -0.0507792681, 0.0557559878, 0.0631903559, 0.0506596304, 0.232316956, -0.0959613919, -0.0664682910) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.0383313894, -0.0759664774, -0.118800677, 0.00875924621, 0.0337149873, 0.215897724, 0.0323493406, -0.249307007, -0.0205631889, 0.168641374, -0.00483500119, 0.131330445, 0.246618375, 0.142970219, -0.0718742982, -0.0710290670) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.131015852, -0.162555411, 0.0615582839, 0.0256019440, -0.00431260467, 0.297843367, -0.155555606, 0.134212837, -0.0976906642, 0.0875031054, 0.115328185, -0.0826536417, 0.101264581, 0.137233853, -0.0300141927, -0.120595500) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.134457573, 0.200105757, -0.173713475, -0.191556051, -0.0252517164, 0.176553473, 0.0109406188, -0.0968099460, 0.234487861, -0.136701062, 0.0281144120, -0.201864496, -0.136135697, -0.198316529, 0.191238999, 0.0489123613) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.0749946833, -0.322304368, 0.0786451548, 0.0980033055, -0.0674646795, -0.00928246696, -0.0915826708, 0.183233395, 0.0132881943, 0.257183492, -0.0516687557, 0.100336589, -0.384108394, 0.174416974, -0.0629576370, -0.0924765244) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.0520496182, -0.159677222, 0.0496818684, 0.0205408446, 0.00982852187, -0.0550027080, -0.0317922570, -0.00564769143, 0.00950370822, 0.0314978324, 0.0271269828, -0.0662950575, -0.167583868, 0.306536734, -0.0386010557, -0.254791647) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.303716570, 0.155837551, -0.0562161915, -0.0419319868, 0.168834239, -0.0249239076, -0.0785823762, 0.0554304644, -0.134359047, 0.0647118017, -0.0565219261, -0.0165286232, 0.112320445, -0.0708304122, 0.0348288231, -0.00466710655) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.0483209491, 0.297005385, -0.116035782, 0.0150335254, -0.0533888005, 0.0478715114, 0.0187946800, -0.0546247624, -0.0919935703, 0.138620824, 0.0351676717, 0.0733243674, 0.0161025133, -0.0609417334, 0.0434286855, -0.0405526124) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.0273460038, 0.0442499034, 0.00579966791, -0.0135830808, 0.0781872272, -0.130316257, -0.000390210887, 0.121486023, 0.116389222, 0.00356695987, 0.0118661420, 0.0879361406, 0.191487163, -0.0521862842, 0.0304289516, -0.0580463484) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.0587105453, -0.104891494, 0.0489171594, -0.234852910, 0.105835170, -0.129934058, -0.000387777895, 0.0755771399, -0.00767729944, -0.0247162972, -0.0253778882, -0.00711831776, -0.105153151, 0.0751071796, -0.224226952, -0.0117140068) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.0390238166, -0.123552002, 0.0103298677, 0.0106901582, -0.142283842, 0.0581533089, 0.0988415703, -0.0859429240, 0.208386615, -0.128368258, -0.178166419, 0.157499760, -0.0632908195, 0.251622826, 0.0397905186, -0.0932899415) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.121165588, -0.00621907553, -0.125860929, -0.0985775888, 0.146137968, -0.0670591667, 0.0985298529, -0.0215042308, 0.0847968683, -0.131383136, 0.0353770778, -0.113982573, 0.132463336, 0.0218106601, -0.00286275707, 0.0580644235) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.139203221, -0.256581753, -0.143059805, -0.0633795932, -0.107807994, -0.0354298837, 0.0138104772, 0.121171534, 0.122080535, -0.109561995, 0.0462413505, 0.0751900449, 0.102041759, 0.0485459864, -0.0500509553, 0.0342015326) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.0887445807, -0.0741733164, 0.122836024, 0.113426760, 0.0528047830, 0.0153573267, -0.0378739350, 0.111965373, -0.165158957, -0.0239083841, 0.107223369, 0.0797950849, -0.00408625603, -0.116807155, -0.0465493277, 0.172151685) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.0122625669, 0.163391143, 0.0196295660, -0.0747645050, -0.0643606260, -0.120427571, 0.142713800, -0.107193887, -0.0255390722, -0.0832675397, -0.134646520, 0.434121817, -0.0398248062, -0.195199326, -0.0532498807, -0.00196884922) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.0567380190, -0.301975727, -0.214874014, -0.0864987597, -0.0508455820, 0.0156056965, 0.0365634076, -0.0758148655, 0.188622788, 0.0519360974, 0.0259183217, 0.0587069765, -0.0104947416, 0.263370514, 0.0548821278, 0.0253250152) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.0285410937, -0.355462492, -0.175801292, -0.118684091, -0.199645758, -0.286107749, 0.155458927, -0.102104589, 0.0708900541, -0.0213058200, 0.0737403110, -0.0818078667, -0.250909448, -0.232062146, -0.156812072, -0.0313629583) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.00622860296, 0.0443460606, 0.0842798650, -0.199181333, 0.102024309, 0.0758358240, -0.00864734314, -0.0521513708, 0.0769603476, 0.0403546430, 0.0258750562, 0.0271765012, 0.0446455032, 0.136816174, -0.264311731, 0.0875905529) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.171303585, 0.0382734016, -0.0664242059, -0.114957236, 0.0692079812, 0.0138157029, 0.0501571931, 0.0822055116, 0.0208357777, 0.0502132364, 0.0563012213, 0.271881372, 0.0930417925, 0.00711877970, 0.0261604283, 0.0480932109) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.170508340, -0.0937409550, 0.0216275621, -0.0247236639, 0.0234030169, 0.0379170589, 0.0294753201, 0.142450929, -0.0489575267, -0.0159711335, -0.0381312333, -0.368272930, 0.0279697459, 0.149477124, 0.00234488957, 0.0917155370) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.0200283378, -0.172526523, -0.0241785571, -0.0851662904, 0.138311490, -0.159533054, 0.160668045, -0.145600840, -0.165102050, -0.0678079426, 0.104331993, 0.139081091, 0.179053769, 0.0885414779, 0.0113023510, -0.0228599552) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.132741421, -0.0412675403, -0.0423263721, -0.0243640002, 0.141850293, -0.00191112922, 0.0866055116, 0.0560528710, 0.0628734007, 0.232873186, 0.0268647112, 0.0300555304, -0.0883759037, -0.0965502039, -0.0762238279, -0.0864997953) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.108513415, 0.107931018, -0.0412508920, -0.0257291775, 0.00486483378, 0.250381649, -0.0220929831, 0.0992434248, 0.0597101711, 0.0882344916, 0.217677861, 0.156696826, -0.00267654541, 0.0230696332, -0.0159868468, -0.0331993476) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.0138508426, 0.0446042977, -0.00371277495, -0.00578347174, 0.0163419060, 0.177753091, 0.0164033361, 0.0862997398, 0.215983674, 0.00536790397, 0.0851715207, 0.125768840, 0.100953043, -0.129363641, 0.0668921322, 0.0733864158) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.0765210167, 0.00643213280, 0.145769775, -0.0516032837, -0.0183412544, -0.0922658741, 0.129948199, -0.0184310339, 0.0207739770, -0.0657567456, 0.0496552922, 0.0699774846, -0.0116059147, 0.00558471167, 0.0548470132, -0.0278639644) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.0602527708, -0.0609879680, -0.0551532730, -0.119377524, 0.0474125259, 0.135381281, 0.0998515934, 0.0371043980, -0.166771442, 0.0975681692, -0.0422563367, -0.0337482803, 0.0595393740, 0.0362954177, 0.0802152157, -0.00480562076) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.0000264553637, -0.0459957421, -0.0941860527, 0.0220439676, -0.0198998600, 0.176948950, -0.137509346, 0.0537276864, 0.264049292, 0.0485161804, 0.419686466, -0.00439915759, 0.0122142788, -0.00351273455, 0.0950794667, -0.0669325814) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.106056303, -0.0225659348, -0.0995059609, -0.0247227792, 0.0467923917, 0.240795940, 0.184889540, 0.0862970650, -0.00642416719, 0.0380647071, -0.0850700587, 0.0144663285, -0.0125651956, 0.128551036, -0.218732685, 0.0820218399) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.0168828443, -0.0451845676, 0.109705232, 0.111292832, -0.226901785, -0.123570308, -0.0974780619, -0.0966577381, 0.0419933349, 0.147635922, 0.109735772, 0.121847898, -0.0783153400, -0.00574173545, 0.141758963, 0.0538525805) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.158968225, -0.000172667744, 0.0500472486, -0.121384352, 0.0291863941, -0.0120916013, 0.0239683744, -0.0552296750, 0.0796050504, 0.176541716, 0.000276842795, -0.0393445976, -0.0134454854, -0.0539750196, -0.0184004512, -0.0893379599) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.00943762809, 0.0378321037, 0.0614445321, 0.0219446346, 0.231774420, 0.0465556122, -0.0751787797, 0.165644363, 0.0305528715, 0.0534701347, 0.441664219, -0.100934245, 0.0177952778, 0.0110808806, 0.0789348483, -0.000240509427) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.0856890008, -0.0978699028, -0.0578258522, 0.0815093517, -0.0507306978, 0.0554993972, 0.0395951159, -0.0536016338, -0.0121915583, 0.0131961685, 0.0833177194, 0.156222165, -0.0184562355, 0.0166213177, 0.00478948932, -0.0110267056) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.0632273778, 0.124840967, 0.203922018, -0.0937588662, -0.133366466, -0.167506620, -0.0576224364, 0.144043788, 0.0280676745, -0.0226038303, 0.0976722240, 0.0410982110, -0.0111301225, -0.0306359250, 0.0470183305, 0.00736187305) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL24)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(0.161274642, 0.257291079, 0.123620518, -0.156501785) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass33 : mapping_4_4 ====
-// ---- PASS 33: mapping 4_4 (save=MODEL4, comps=4) ----
-// binds: MODEL21, MODEL22, MODEL23, MODEL24
-@group(0) @binding(0) var t_MODEL21 : texture_2d<f32>;
-@group(0) @binding(1) var t_MODEL22 : texture_2d<f32>;
-@group(0) @binding(2) var t_MODEL23 : texture_2d<f32>;
-@group(0) @binding(3) var t_MODEL24 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(0.0256498847, -0.175850764, -0.152644947, -0.582531571);
-  res += mat4x4f(-0.171506226, -0.0124799525, -0.000235421074, 0.271971524, -0.0152563807, -0.143159911, -0.146660700, 0.0710605532, 0.103932202, -0.0129540609, -0.0152933449, -0.176844820, 0.0657171085, -0.0448599495, -0.0554537512, 0.115675561) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.0334990434, -0.395662278, -0.0944451317, 0.127073944, 0.0894948021, 0.0157263298, 0.0219981894, -0.0687539279, -0.0946803614, 0.498021066, -0.0960009471, 0.462549090, -0.0247161835, 0.0637527108, -0.0271187164, -0.0641391203) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.0892388895, 0.0179832838, 0.109711044, -0.00804708246, 0.0340525471, -0.0433088914, 0.0691811517, -0.208493918, -0.195607319, -0.364609927, 0.0384964831, -0.208913177, -0.0698218867, -0.215995267, -0.0229017809, -0.284749120) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.000791864528, 0.0472425856, -0.123094410, 0.254943579, -0.0195151884, -0.00975743402, 0.101273790, -0.302372098, 0.0769527331, 0.0276169628, -0.126602858, -0.138769761, 0.0342433900, -0.0757663995, 0.100047752, -0.239273280) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, -1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.174199805, -0.359846562, 0.0726791546, -0.226673648, -0.0287555177, -0.00385906803, 0.0523435026, -0.599664807, -0.0329196043, -0.317879856, -0.0363875367, 0.0181075521, 0.159868583, 0.385145485, -0.0379597507, 0.154625744) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.0253671464, -0.0919343531, -0.0756900534, -0.361970723, -0.110117130, -0.0646928623, -0.0353329107, -0.188107416, 0.0807526708, 0.542420089, 0.118072391, 0.843219399, -0.174642220, -0.249682128, 0.0227480475, -0.199260607) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.000752257183, 0.323437393, 0.0543834157, 0.205402583, 0.0720991120, -0.126689121, 0.0463201478, -0.0364669934, 0.166846260, 0.0810504034, -0.0127423396, 0.106697679, 0.0374130756, -0.227438226, 0.0561882220, -0.173215628) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.106710181, -0.194585890, -0.0308089294, -0.169728667, -0.252297729, -0.300611943, 0.0586081930, 0.110329300, 0.0851859301, 0.0728785694, -0.140150890, -0.306876302, -0.240178153, -0.227550328, 0.0928036869, -0.377968699) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 0), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.00616056100, -0.0540391691, -0.0339254849, -0.480503917, 0.00179605209, 0.0795701146, 0.0853843018, 0.114693701, 0.00402365206, -0.175735399, -0.0262703709, 0.0419315211, -0.0622340515, -0.345335871, 0.0325239114, -0.465622485) * textureLoad(t_MODEL21, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(-0.0512260459, -0.0732728168, -0.112474672, -0.121563926, -0.00392790325, 0.0675664172, -0.343680352, 0.270295084, 0.142277896, 0.467946708, 0.299239963, 0.221603662, -0.0467141010, 0.127404049, -0.0329688787, 0.117489584) * textureLoad(t_MODEL22, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(0.0330807343, -0.0535013117, 0.0142061301, -0.0803043544, 0.0461846329, -0.233847320, 0.0548140183, -0.211084187, -0.0216791946, 0.214501828, 0.137783036, -0.0228163525, -0.0749364868, -0.307053417, 0.206164584, -0.456108570) * textureLoad(t_MODEL23, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.0536117405, 0.0222912617, -0.0101589635, -0.118194014, -0.0186886471, 0.0325100720, -0.0645664930, -0.0635692328, -0.0250724964, -0.0675408319, -0.0789683014, 0.00674191257, -0.105749495, 0.0447103754, -0.0300524533, 0.276989043) * textureLoad(t_MODEL24, clampCoord(p + vec2i(-1, 1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(-0.0513655432, 0.115843356, 0.152125686, 0.234002545, 0.0982542634, -0.231546059, -0.135127485, -0.0466809981, -0.00133625616, -0.0982226580, 0.137752563, 0.281057864, -0.0737399310, 0.243669987, 0.0784294233, -0.0195862129) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.00819668081, -0.267843336, -0.0762300491, -0.949680686, 0.0190249197, 0.0717642680, -0.230076790, -0.150441080, 0.175258115, 0.332804620, -0.107199199, 0.564246118, -0.0580651164, 0.105713062, 0.243359476, -0.0773820281) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.214065060, -0.200196400, 0.177394703, -0.0700276941, -0.00653795339, -0.284634292, 0.0826464966, -0.0256936233, 0.132085428, -0.352824807, -0.179422915, -0.472281814, -0.123917788, -0.263130933, 0.132729724, -0.455090821) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.0892223790, -0.107840396, -0.0195128005, -0.275682837, 0.0511822589, 0.0232047234, 0.155946687, 0.269745111, 0.0541849658, -0.198547542, -0.217475355, 0.175893858, -0.0845093057, -0.382076770, 0.0315073840, -0.118020326) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, -1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.0696316883, -0.116694130, -0.0877009258, 0.770754099, -0.0518527068, -0.546891034, -0.0442974046, -0.751343191, -0.0697786659, -0.560339272, 0.122512043, -0.941173851, -0.301853895, -0.372655123, -0.123683810, -0.381850898) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.0526516028, -0.177944779, -0.248935431, 0.393328071, -0.0688008144, -0.223405004, -0.0562367514, -0.481186777, 0.135009155, 0.321323544, 0.275545806, 0.294570386, 0.0897865221, -0.173458055, 0.0784721598, -0.178638145) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.424930185, -0.242026836, -0.0979759917, 0.357025087, 0.163553685, -0.227489740, 0.0299436245, -0.0905121192, 0.0316478088, -0.365876079, -0.0425814539, -0.479810297, 0.148878679, -0.380952090, 0.358369440, -0.488971174) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.376431972, -0.534655213, 0.0997260213, -0.476083130, 0.231526777, 0.269407779, -0.269619703, 0.656738758, 0.0300056450, 0.212305948, 0.00814757124, -0.604584873, -0.396678567, -0.425829679, 0.267809838, -0.270604968) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.144323081, 0.0200556330, 0.0281556919, -0.451671600, -0.00186893530, 0.0387121029, 0.0667942166, 0.362586468, -0.00909281895, -0.130640790, -0.0665350407, 0.0461975001, -0.130201906, 0.187683299, 0.00554816099, 0.342274904) * textureLoad(t_MODEL21, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.0546463355, 0.0932167694, -0.0254806951, -0.165860921, -0.161694944, -0.232252449, -0.146298110, 0.126017287, 0.207152620, 0.144310191, -0.0222837683, 0.609331012, -0.0389290303, -0.219796166, -0.0828467160, -0.0930992290) * textureLoad(t_MODEL22, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.279344440, 0.242831379, -0.0818681493, -0.132139787, 0.0438279398, -0.328226268, 0.0836004913, -0.120124646, 0.162197143, 0.208788425, 0.201578632, 0.125288099, -0.0219178516, -0.371454269, 0.181996927, 0.122289799) * textureLoad(t_MODEL23, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(-0.181827903, -0.207504869, -0.100282006, -0.257392406, -0.122191943, -0.317139089, 0.114516184, -0.169001147, 0.0377161056, -0.0693067685, -0.0921232924, -0.265827119, 0.0299147666, -0.224271521, -0.232442811, 0.0471098684) * textureLoad(t_MODEL24, clampCoord(p + vec2i(0, 1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.157831147, -0.0578857958, 0.144137010, -0.338670939, -0.00874056388, -0.146343082, -0.0120968670, 0.0961729735, 0.000362742459, 0.0955420062, 0.120040543, 0.154050469, 0.0247534383, 0.00125362992, 0.00926969759, -0.00683268812) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.0134717049, -0.0866649076, -0.0476377457, -0.0257667582, -0.00987244397, -0.108199969, -0.0357361920, -0.0623027980, 0.0515195504, 0.0233818833, -0.0245748591, 0.168663859, 0.0489006303, -0.00429288065, 0.0362420492, -0.143873289) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.00326685957, -0.208259016, 0.106703676, -0.0739380121, 0.0117629347, -0.206555471, -0.0307555702, -0.365377635, 0.0804428160, 0.160054207, -0.00749482634, 0.124480121, 0.00196452043, -0.335529178, 0.0255405381, -0.206526816) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.163881958, -0.105845787, 0.0177807398, -0.305811614, 0.0859749690, -0.00749888131, 0.0571143329, -0.0939002931, -0.0963800251, -0.0920022875, -0.121256173, -0.216962129, 0.0694883838, 0.0556588471, 0.148248747, -0.0581124797) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, -1), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.0812976584, -0.0697164610, -0.0433903374, -0.340609401, 0.0425828621, -0.340219587, 0.00409195945, -0.446231842, 0.0573688857, -0.208047614, -0.000782483432, -0.416348338, -0.198342606, -0.0547835194, 0.0220455844, 0.0158856492) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.0787735730, -0.0602469072, -0.0753148124, -0.231777415, -0.126704559, 0.0231386181, -0.0544530042, 0.165847778, 0.0498485863, 0.443381041, 0.155375138, 0.633692861, -0.000781049253, -0.0434414037, -0.0115945730, 0.109166943) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.129067495, -0.210567832, -0.0833480209, -0.127729714, 0.0469322726, -0.289192259, -0.0819209516, -0.680862546, 0.168080285, 0.0785239339, -0.0172515903, -0.269797444, -0.0701773912, -0.101069659, 0.149874702, 0.166669339) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.0431484543, -0.0107382182, 0.0342667699, 0.103084579, 0.0652010441, 0.136783987, 0.0273701493, -0.0699966326, -0.145418391, -0.0899015740, -0.127684712, 0.0301503818, 0.314425349, -0.302197516, -0.0421724804, -0.322358251) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 0), textureDimensions(t_MODEL24)), 0);
-  res += mat4x4f(0.0718253180, -0.0142508959, 0.0440319479, -0.0593165122, -0.0361185037, -0.158640772, 0.0512792952, 0.0726224110, 0.0281563420, -0.180518270, 0.0205481201, -0.00100369053, -0.104712270, -0.347248435, 0.00393235404, -0.128771111) * textureLoad(t_MODEL21, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL21)), 0);
-  res += mat4x4f(0.0305646788, 0.0657112598, -0.0994846299, 0.0801630318, -0.0788805038, -0.215272829, -0.0300334450, -0.0996543989, -0.0107620163, 0.528052747, 0.0604169145, 0.234334931, 0.0253978893, -0.101517066, 0.00553691434, -0.150263116) * textureLoad(t_MODEL22, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL22)), 0);
-  res += mat4x4f(-0.0436003916, -0.204167306, -0.0208519623, 0.122421511, 0.0100479703, -0.110263065, 0.0701912642, -0.366026193, -0.0312662497, 0.0841278508, 0.0303990114, 0.0623973347, -0.0151691064, -0.238739952, 0.124626718, -0.0804257467) * textureLoad(t_MODEL23, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL23)), 0);
-  res += mat4x4f(0.0557537824, -0.522922993, -0.0809354186, -0.0357813463, 0.0957364440, 0.0565887503, 0.0485079028, -0.602261305, 0.00361112365, 0.0484908819, -0.0666448250, -0.0677179769, 0.114675015, -0.162380338, 0.0664341375, -0.272964090) * textureLoad(t_MODEL24, clampCoord(p + vec2i(1, 1), textureDimensions(t_MODEL24)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(0.344353050, 0.107197963, -0.0737798661, 0.0355689898) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass34 : sub_band_residuals_1 ====
-// ---- PASS 34: sub-band residuals 1 (save=RES1, comps=4) ----
-// binds: MODEL1, MODEL2, MODEL3, MODEL4, SHRINKED1
+//==== ENTRY pass9 : fused_RES1_RES2_RES3_RES4 ====
+// ---- PASS 9: sub-band residuals 1 + sub-band residuals 2 + sub-band residuals 3 + sub-band residuals 4 (saves=RES1,RES2,RES3,RES4) ----
+// binds: MODEL1, MODEL2, MODEL3, MODEL4, SHRINKED1, SHRINKED2, SHRINKED3, SHRINKED4
+// Fused: 4 upstream hooks sharing one set of input fetches.
 @group(0) @binding(0) var t_MODEL1 : texture_2d<f32>;
 @group(0) @binding(1) var t_MODEL2 : texture_2d<f32>;
 @group(0) @binding(2) var t_MODEL3 : texture_2d<f32>;
 @group(0) @binding(3) var t_MODEL4 : texture_2d<f32>;
 @group(0) @binding(4) var t_SHRINKED1 : texture_2d<f32>;
-@group(0) @binding(5) var outTex : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(5) var t_SHRINKED2 : texture_2d<f32>;
+@group(0) @binding(6) var t_SHRINKED3 : texture_2d<f32>;
+@group(0) @binding(7) var t_SHRINKED4 : texture_2d<f32>;
+@group(0) @binding(8) var out_RES1 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(9) var out_RES2 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(10) var out_RES3 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(11) var out_RES4 : texture_storage_2d<rgba16float, write>;
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
+  let dims = textureDimensions(out_RES1);
   if (gid.x >= dims.x || gid.y >= dims.y) { return; }
   let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.00967478380, -0.0511372834, -0.0520200878, -0.209306687);
-  res += mat4x4f(-0.0160771068, -0.125381887, 0.0682031810, -0.416800469, -0.0558021031, -0.0495812856, -0.0763088167, -0.0388525985, -0.0874553621, -0.0210602283, -0.414982021, -0.325678825, 0.0176602732, 0.172710627, 0.178443015, -0.0557378642) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(0.0203745887, 0.0518829450, 0.00279596006, 0.0271308646, -0.00876686350, -0.0187958516, 0.151705444, 0.0196189247, -0.0318063460, 0.123489305, 0.290653020, -0.291006833, -0.00263292436, 0.0321425647, 0.0445907786, -0.410165250) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(0.0474377647, -0.117254093, -0.145967439, -0.0945768729, 0.0284794718, -0.0770485997, 0.0688510165, 0.0200226195, 0.0588191971, -0.114356473, 0.0575460345, 0.0563202500, -0.0278263148, -0.0958978981, -0.0269047301, -0.206538573) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(-0.0133014619, 0.209382296, -0.531216443, -0.432461053, -0.0339506380, -0.705272436, -0.575133085, 1.20519471, -0.0623176247, -0.0875078887, 0.102153346, -0.00380741036, -0.111950248, 0.848176301, 0.930301368, 0.652237058) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL4)), 0);
-  res += textureLoad(t_SHRINKED1, clampCoord(p + vec2i(0, 0), textureDimensions(t_SHRINKED1)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(1.00127256, 1.07315135, 0.274724841, 0.0721928477) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
+  let d_MODEL1 = textureDimensions(t_MODEL1);
+  let d_MODEL2 = textureDimensions(t_MODEL2);
+  let d_MODEL3 = textureDimensions(t_MODEL3);
+  let d_MODEL4 = textureDimensions(t_MODEL4);
+  let d_SHRINKED1 = textureDimensions(t_SHRINKED1);
+  let d_SHRINKED2 = textureDimensions(t_SHRINKED2);
+  let d_SHRINKED3 = textureDimensions(t_SHRINKED3);
+  let d_SHRINKED4 = textureDimensions(t_SHRINKED4);
+  var res0 = vec4f(-0.00967478380, -0.0511372834, -0.0520200878, -0.209306687);
+  res0 += mat4x4f(-0.0160771068, -0.125381887, 0.0682031810, -0.416800469, -0.0558021031, -0.0495812856, -0.0763088167, -0.0388525985, -0.0874553621, -0.0210602283, -0.414982021, -0.325678825, 0.0176602732, 0.172710627, 0.178443015, -0.0557378642) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, 0), d_MODEL1), 0);
+  res0 += mat4x4f(0.0203745887, 0.0518829450, 0.00279596006, 0.0271308646, -0.00876686350, -0.0187958516, 0.151705444, 0.0196189247, -0.0318063460, 0.123489305, 0.290653020, -0.291006833, -0.00263292436, 0.0321425647, 0.0445907786, -0.410165250) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, 0), d_MODEL2), 0);
+  res0 += mat4x4f(0.0474377647, -0.117254093, -0.145967439, -0.0945768729, 0.0284794718, -0.0770485997, 0.0688510165, 0.0200226195, 0.0588191971, -0.114356473, 0.0575460345, 0.0563202500, -0.0278263148, -0.0958978981, -0.0269047301, -0.206538573) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, 0), d_MODEL3), 0);
+  res0 += mat4x4f(-0.0133014619, 0.209382296, -0.531216443, -0.432461053, -0.0339506380, -0.705272436, -0.575133085, 1.20519471, -0.0623176247, -0.0875078887, 0.102153346, -0.00380741036, -0.111950248, 0.848176301, 0.930301368, 0.652237058) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, 0), d_MODEL4), 0);
+  res0 += textureLoad(t_SHRINKED1, clampCoord(p + vec2i(0, 0), d_SHRINKED1), 0);
+  res0 = max(res0, vec4f(0.0)) + vec4f(1.00127256, 1.07315135, 0.274724841, 0.0721928477) * min(res0, vec4f(0.0));
+  var res1 = vec4f(0.00613432750, -0.0802675560, -0.0289028082, 0.0765716657);
+  res1 += mat4x4f(-0.594730437, 0.0365710147, -0.0763404518, 0.0704366639, 0.0129365651, 0.0570308156, -0.00494381133, -0.0613853373, 0.00673103239, 0.203094155, -0.0244700275, 0.135256752, -0.00568606798, -0.169328153, -0.0510395542, 0.00575467478) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, 0), d_MODEL1), 0);
+  res1 += mat4x4f(0.0221730024, 0.153736934, -0.0145860529, -0.00285223755, -0.00946817733, -0.140364096, 0.00263708201, -0.0282086395, -0.138825342, -0.201559216, -0.0170906149, 0.0161919836, -0.0676140711, -0.128254473, -0.0314305685, 0.0194023401) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, 0), d_MODEL2), 0);
+  res1 += mat4x4f(-0.0359066986, 0.181161180, -0.00282237004, 0.0144808702, -0.140766039, 0.0304934066, 0.113066077, -0.0178734288, 0.0740351155, 0.0510291047, 0.153666899, -0.0266298130, 0.0434636846, 0.0291233398, -0.0714455768, 0.0562154837) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, 0), d_MODEL3), 0);
+  res1 += mat4x4f(-0.0188606698, -0.0635570660, -0.0656877384, 0.0471099913, 0.760011494, -0.0209006090, 0.0541749969, 0.260026515, -0.0602670200, 0.209631592, 0.0373205915, -0.0743212327, -0.449559063, 0.206552401, -0.0628834665, -0.0782155171) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, 0), d_MODEL4), 0);
+  res1 += textureLoad(t_SHRINKED2, clampCoord(p + vec2i(0, 0), d_SHRINKED2), 0);
+  res1 = max(res1, vec4f(0.0)) + vec4f(0.144722700, 0.789703429, 0.784534454, 0.873967469) * min(res1, vec4f(0.0));
+  var res2 = vec4f(0.0447939672, 0.00301022502, -0.117316201, -0.0694659576);
+  res2 += mat4x4f(0.0866702497, -0.0233871061, -0.0161036532, -0.00997206941, -0.0413573794, -0.0594449565, 0.0131347608, -0.0178947207, 0.0379877165, 0.00176106917, -0.210639387, -0.00342145702, 0.0443391278, 0.0395940244, 0.0341541283, -0.0263653975) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, 0), d_MODEL1), 0);
+  res2 += mat4x4f(0.0717719123, 0.0259694532, -0.115096472, -0.00808103010, -0.0531607792, -0.0128834099, 0.0115260277, -0.0147574916, 0.0302923080, -0.0236207731, 0.0627922267, -0.0265494678, -0.00228562974, -0.0142150866, 0.0250650607, -0.0468553305) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, 0), d_MODEL2), 0);
+  res2 += mat4x4f(0.0125107802, 0.00502120703, -0.0497801453, -0.0234949365, -0.110965095, -0.000616128906, 0.0346526057, 0.00130746304, -0.111217998, 0.00372563815, 0.00772712100, -0.0101080434, 0.0857265517, -0.0331020877, -0.00288431928, -0.0174026918) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, 0), d_MODEL3), 0);
+  res2 += mat4x4f(0.0367006809, 0.0196562670, -0.0369643345, -0.00480831880, 0.160558835, 0.0562557615, -0.225688964, -0.0246908721, -0.0920079425, -0.0723170340, -0.0772580355, 0.0465410799, -0.0567496754, 0.161930040, -0.133368745, -0.111318909) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, 0), d_MODEL4), 0);
+  res2 += textureLoad(t_SHRINKED3, clampCoord(p + vec2i(0, 0), d_SHRINKED3), 0);
+  res2 = max(res2, vec4f(0.0)) + vec4f(0.987534165, 1.00513077, -0.280008763, -0.220915705) * min(res2, vec4f(0.0));
+  var res3 = vec4f(0.0678529143, -0.00897982903, -0.00489551667, -0.0849570557);
+  res3 += mat4x4f(0.0754630417, -0.0128642842, 0.0804883465, -0.117720097, 0.178542897, 0.116194166, 0.137590796, 0.189929083, 0.0484347939, -0.0708816200, -0.0833006501, -0.709039330, 0.0193880480, -0.0471653379, -0.0358891189, -0.0637515262) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, 0), d_MODEL1), 0);
+  res3 += mat4x4f(-0.0438530892, -0.0261082370, -0.00312798680, 0.0890246630, -0.0545331724, 0.0401952639, 0.0549060851, 0.220755532, 0.00162830867, 0.0289982222, -0.0192272067, 0.0728904009, -0.0438931212, 0.00968342368, 0.0268544946, 0.00611421512) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, 0), d_MODEL2), 0);
+  res3 += mat4x4f(-0.0222773366, -0.0328175426, -0.0130779101, -0.246807829, -0.00484438334, 0.00553567568, -0.148749962, 0.0763694569, -0.0556936264, -0.0120482780, -0.281002134, -0.293888062, 0.154009685, 0.0194614809, 0.124775112, -0.0183126740) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, 0), d_MODEL3), 0);
+  res3 += mat4x4f(-0.0394413918, -0.0401576497, -0.0218068101, -0.228586420, 0.280951113, -0.171359882, -0.0622866042, 0.981581330, -0.0604553521, 0.0612370856, 0.0523392446, -0.922857225, 0.0371253453, 0.101872914, 0.112128988, 0.471438706) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, 0), d_MODEL4), 0);
+  res3 += textureLoad(t_SHRINKED4, clampCoord(p + vec2i(0, 0), d_SHRINKED4), 0);
+  res3 = max(res3, vec4f(0.0)) + vec4f(0.294937819, 0.983871102, 0.722908676, 0.0838276148) * min(res3, vec4f(0.0));
+  textureStore(out_RES1, p, res0);
+  textureStore(out_RES2, p, res1);
+  textureStore(out_RES3, p, res2);
+  textureStore(out_RES4, p, res3);
 }
 
-//==== ENTRY pass35 : sub_band_residuals_2 ====
-// ---- PASS 35: sub-band residuals 2 (save=RES2, comps=4) ----
-// binds: MODEL1, MODEL2, MODEL3, MODEL4, SHRINKED2
-@group(0) @binding(0) var t_MODEL1 : texture_2d<f32>;
-@group(0) @binding(1) var t_MODEL2 : texture_2d<f32>;
-@group(0) @binding(2) var t_MODEL3 : texture_2d<f32>;
-@group(0) @binding(3) var t_MODEL4 : texture_2d<f32>;
-@group(0) @binding(4) var t_SHRINKED2 : texture_2d<f32>;
-@group(0) @binding(5) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(0.00613432750, -0.0802675560, -0.0289028082, 0.0765716657);
-  res += mat4x4f(-0.594730437, 0.0365710147, -0.0763404518, 0.0704366639, 0.0129365651, 0.0570308156, -0.00494381133, -0.0613853373, 0.00673103239, 0.203094155, -0.0244700275, 0.135256752, -0.00568606798, -0.169328153, -0.0510395542, 0.00575467478) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(0.0221730024, 0.153736934, -0.0145860529, -0.00285223755, -0.00946817733, -0.140364096, 0.00263708201, -0.0282086395, -0.138825342, -0.201559216, -0.0170906149, 0.0161919836, -0.0676140711, -0.128254473, -0.0314305685, 0.0194023401) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(-0.0359066986, 0.181161180, -0.00282237004, 0.0144808702, -0.140766039, 0.0304934066, 0.113066077, -0.0178734288, 0.0740351155, 0.0510291047, 0.153666899, -0.0266298130, 0.0434636846, 0.0291233398, -0.0714455768, 0.0562154837) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(-0.0188606698, -0.0635570660, -0.0656877384, 0.0471099913, 0.760011494, -0.0209006090, 0.0541749969, 0.260026515, -0.0602670200, 0.209631592, 0.0373205915, -0.0743212327, -0.449559063, 0.206552401, -0.0628834665, -0.0782155171) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL4)), 0);
-  res += textureLoad(t_SHRINKED2, clampCoord(p + vec2i(0, 0), textureDimensions(t_SHRINKED2)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(0.144722700, 0.789703429, 0.784534454, 0.873967469) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass36 : sub_band_residuals_3 ====
-// ---- PASS 36: sub-band residuals 3 (save=RES3, comps=4) ----
-// binds: MODEL1, MODEL2, MODEL3, MODEL4, SHRINKED3
-@group(0) @binding(0) var t_MODEL1 : texture_2d<f32>;
-@group(0) @binding(1) var t_MODEL2 : texture_2d<f32>;
-@group(0) @binding(2) var t_MODEL3 : texture_2d<f32>;
-@group(0) @binding(3) var t_MODEL4 : texture_2d<f32>;
-@group(0) @binding(4) var t_SHRINKED3 : texture_2d<f32>;
-@group(0) @binding(5) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(0.0447939672, 0.00301022502, -0.117316201, -0.0694659576);
-  res += mat4x4f(0.0866702497, -0.0233871061, -0.0161036532, -0.00997206941, -0.0413573794, -0.0594449565, 0.0131347608, -0.0178947207, 0.0379877165, 0.00176106917, -0.210639387, -0.00342145702, 0.0443391278, 0.0395940244, 0.0341541283, -0.0263653975) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(0.0717719123, 0.0259694532, -0.115096472, -0.00808103010, -0.0531607792, -0.0128834099, 0.0115260277, -0.0147574916, 0.0302923080, -0.0236207731, 0.0627922267, -0.0265494678, -0.00228562974, -0.0142150866, 0.0250650607, -0.0468553305) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(0.0125107802, 0.00502120703, -0.0497801453, -0.0234949365, -0.110965095, -0.000616128906, 0.0346526057, 0.00130746304, -0.111217998, 0.00372563815, 0.00772712100, -0.0101080434, 0.0857265517, -0.0331020877, -0.00288431928, -0.0174026918) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(0.0367006809, 0.0196562670, -0.0369643345, -0.00480831880, 0.160558835, 0.0562557615, -0.225688964, -0.0246908721, -0.0920079425, -0.0723170340, -0.0772580355, 0.0465410799, -0.0567496754, 0.161930040, -0.133368745, -0.111318909) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL4)), 0);
-  res += textureLoad(t_SHRINKED3, clampCoord(p + vec2i(0, 0), textureDimensions(t_SHRINKED3)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(0.987534165, 1.00513077, -0.280008763, -0.220915705) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass37 : sub_band_residuals_4 ====
-// ---- PASS 37: sub-band residuals 4 (save=RES4, comps=4) ----
-// binds: MODEL1, MODEL2, MODEL3, MODEL4, SHRINKED4
-@group(0) @binding(0) var t_MODEL1 : texture_2d<f32>;
-@group(0) @binding(1) var t_MODEL2 : texture_2d<f32>;
-@group(0) @binding(2) var t_MODEL3 : texture_2d<f32>;
-@group(0) @binding(3) var t_MODEL4 : texture_2d<f32>;
-@group(0) @binding(4) var t_SHRINKED4 : texture_2d<f32>;
-@group(0) @binding(5) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(0.0678529143, -0.00897982903, -0.00489551667, -0.0849570557);
-  res += mat4x4f(0.0754630417, -0.0128642842, 0.0804883465, -0.117720097, 0.178542897, 0.116194166, 0.137590796, 0.189929083, 0.0484347939, -0.0708816200, -0.0833006501, -0.709039330, 0.0193880480, -0.0471653379, -0.0358891189, -0.0637515262) * textureLoad(t_MODEL1, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL1)), 0);
-  res += mat4x4f(-0.0438530892, -0.0261082370, -0.00312798680, 0.0890246630, -0.0545331724, 0.0401952639, 0.0549060851, 0.220755532, 0.00162830867, 0.0289982222, -0.0192272067, 0.0728904009, -0.0438931212, 0.00968342368, 0.0268544946, 0.00611421512) * textureLoad(t_MODEL2, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL2)), 0);
-  res += mat4x4f(-0.0222773366, -0.0328175426, -0.0130779101, -0.246807829, -0.00484438334, 0.00553567568, -0.148749962, 0.0763694569, -0.0556936264, -0.0120482780, -0.281002134, -0.293888062, 0.154009685, 0.0194614809, 0.124775112, -0.0183126740) * textureLoad(t_MODEL3, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL3)), 0);
-  res += mat4x4f(-0.0394413918, -0.0401576497, -0.0218068101, -0.228586420, 0.280951113, -0.171359882, -0.0622866042, 0.981581330, -0.0604553521, 0.0612370856, 0.0523392446, -0.922857225, 0.0371253453, 0.101872914, 0.112128988, 0.471438706) * textureLoad(t_MODEL4, clampCoord(p + vec2i(0, 0), textureDimensions(t_MODEL4)), 0);
-  res += textureLoad(t_SHRINKED4, clampCoord(p + vec2i(0, 0), textureDimensions(t_SHRINKED4)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(0.294937819, 0.983871102, 0.722908676, 0.0838276148) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass38 : expanding_1 ====
-// ---- PASS 38: expanding 1 (save=EXPANDED1, comps=4) ----
+//==== ENTRY pass10 : fused_EXPANDED1_EXPANDED2_EXPANDED3_EXPANDED4 ====
+// ---- PASS 10: expanding 1 + expanding 2 + expanding 3 + expanding 4 (saves=EXPANDED1,EXPANDED2,EXPANDED3,EXPANDED4) ----
 // binds: RES1, RES2, RES3, RES4
+// Fused: 4 upstream hooks sharing one set of input fetches.
 @group(0) @binding(0) var t_RES1 : texture_2d<f32>;
 @group(0) @binding(1) var t_RES2 : texture_2d<f32>;
 @group(0) @binding(2) var t_RES3 : texture_2d<f32>;
 @group(0) @binding(3) var t_RES4 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(4) var out_EXPANDED1 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(5) var out_EXPANDED2 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(6) var out_EXPANDED3 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(7) var out_EXPANDED4 : texture_storage_2d<rgba16float, write>;
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
+  let dims = textureDimensions(out_EXPANDED1);
   if (gid.x >= dims.x || gid.y >= dims.y) { return; }
   let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.127240330, -0.0221294388, -0.0218687486, 0.0241665859);
-  res += mat4x4f(0.359458029, 0.0944442973, -0.0705014467, -0.134722054, 0.0583034195, 0.101973385, -0.00353280595, 0.225500420, 0.0386345424, -0.0504170619, -0.158276305, -0.0577636436, 0.0808038861, 0.505596280, 0.298830152, 0.977688551) * textureLoad(t_RES1, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES1)), 0);
-  res += mat4x4f(-0.0186444502, -0.0960623473, 0.294596791, -0.0573539063, -0.178419873, -0.134312898, 0.0322145000, 0.202228397, 0.233155504, 0.335666656, -0.0509597026, 0.165691197, -0.130768433, 0.0295401942, -0.0837105513, 0.186125249) * textureLoad(t_RES2, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES2)), 0);
-  res += mat4x4f(-0.150578275, -0.250324547, -0.131976202, 0.0234381706, -0.409514606, -0.222656921, 0.0108012808, -0.110154495, 0.0723223165, -0.301387310, -0.169272110, -0.0643895864, -0.0236153174, -0.285081923, -0.274469405, -0.0989616811) * textureLoad(t_RES3, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES3)), 0);
-  res += mat4x4f(-0.112857610, -0.0859804899, 0.146933883, -0.0181155317, -0.311315030, -0.142065600, 0.0544950850, 0.190761253, 0.133599028, -0.0175719690, 0.103789374, -0.102474943, -0.582730234, 0.118748866, 0.0638729036, 0.361352742) * textureLoad(t_RES4, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES4)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(-0.0351837054, -0.00270042755, 0.0770261213, 0.0574132726) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
+  let d_RES1 = textureDimensions(t_RES1);
+  let d_RES2 = textureDimensions(t_RES2);
+  let d_RES3 = textureDimensions(t_RES3);
+  let d_RES4 = textureDimensions(t_RES4);
+  var res0 = vec4f(-0.127240330, -0.0221294388, -0.0218687486, 0.0241665859);
+  res0 += mat4x4f(0.359458029, 0.0944442973, -0.0705014467, -0.134722054, 0.0583034195, 0.101973385, -0.00353280595, 0.225500420, 0.0386345424, -0.0504170619, -0.158276305, -0.0577636436, 0.0808038861, 0.505596280, 0.298830152, 0.977688551) * textureLoad(t_RES1, clampCoord(p + vec2i(0, 0), d_RES1), 0);
+  res0 += mat4x4f(-0.0186444502, -0.0960623473, 0.294596791, -0.0573539063, -0.178419873, -0.134312898, 0.0322145000, 0.202228397, 0.233155504, 0.335666656, -0.0509597026, 0.165691197, -0.130768433, 0.0295401942, -0.0837105513, 0.186125249) * textureLoad(t_RES2, clampCoord(p + vec2i(0, 0), d_RES2), 0);
+  res0 += mat4x4f(-0.150578275, -0.250324547, -0.131976202, 0.0234381706, -0.409514606, -0.222656921, 0.0108012808, -0.110154495, 0.0723223165, -0.301387310, -0.169272110, -0.0643895864, -0.0236153174, -0.285081923, -0.274469405, -0.0989616811) * textureLoad(t_RES3, clampCoord(p + vec2i(0, 0), d_RES3), 0);
+  res0 += mat4x4f(-0.112857610, -0.0859804899, 0.146933883, -0.0181155317, -0.311315030, -0.142065600, 0.0544950850, 0.190761253, 0.133599028, -0.0175719690, 0.103789374, -0.102474943, -0.582730234, 0.118748866, 0.0638729036, 0.361352742) * textureLoad(t_RES4, clampCoord(p + vec2i(0, 0), d_RES4), 0);
+  res0 = max(res0, vec4f(0.0)) + vec4f(-0.0351837054, -0.00270042755, 0.0770261213, 0.0574132726) * min(res0, vec4f(0.0));
+  var res1 = vec4f(-0.0377134196, -0.0517786965, -0.0113843028, -0.0423722118);
+  res1 += mat4x4f(-0.187383190, -0.333807141, -0.0114170993, -0.0592875108, -0.0389103703, -0.161589369, -0.167758495, 0.0640004128, -0.135003522, -0.0460649580, -0.195274860, -0.0192385316, 0.115299493, -0.405843705, 0.543796718, -0.0200934485) * textureLoad(t_RES1, clampCoord(p + vec2i(0, 0), d_RES1), 0);
+  res1 += mat4x4f(-0.0530273430, -0.232353508, -0.268049091, -0.0742441788, 0.0642315075, 0.103317387, 0.141605496, 0.0365463607, -0.109832600, -0.199020311, 0.348489344, 0.225071490, 0.0416567065, 0.166481614, -0.175169885, -0.127450749) * textureLoad(t_RES2, clampCoord(p + vec2i(0, 0), d_RES2), 0);
+  res1 += mat4x4f(-0.242088154, -0.323947698, 0.0217796937, -0.191137895, 0.143606365, 0.187603027, -0.0202596635, -0.196978867, 0.105991006, 0.0426782705, 0.132612273, -0.246117011, -0.0437954813, -0.163393959, -0.362672061, -0.272816956) * textureLoad(t_RES3, clampCoord(p + vec2i(0, 0), d_RES3), 0);
+  res1 += mat4x4f(-0.105675928, -0.125587150, -0.188549042, -0.146962419, -0.0915907472, -0.0619574301, -0.259782106, -0.140794769, -0.108058728, 0.0940156803, 0.0841127783, 0.314880252, 0.751866579, 0.775285602, 0.246066943, -0.597694337) * textureLoad(t_RES4, clampCoord(p + vec2i(0, 0), d_RES4), 0);
+  res1 = max(res1, vec4f(0.0)) + vec4f(-0.119815454, -0.120660640, -0.0409885980, 0.0807723850) * min(res1, vec4f(0.0));
+  var res2 = vec4f(0.00473005371, -0.0188851897, -0.0324485004, -0.00994708017);
+  res2 += mat4x4f(-0.205701202, 0.00865237787, -0.554857969, -0.0596910305, 0.0385442935, -0.110781640, 0.115855575, -0.159211606, -0.0230446327, -0.139518365, 0.0392309166, -0.253526092, 0.295104682, 0.0853005648, 0.234958202, 0.681002617) * textureLoad(t_RES1, clampCoord(p + vec2i(0, 0), d_RES1), 0);
+  res2 += mat4x4f(0.0562869161, -0.105723247, -0.268773109, -0.0789842308, 0.132220000, -0.114762381, -0.122579440, 0.143245071, -0.146336213, 0.389708221, 0.315811902, 0.107521720, -0.192060247, -0.122540168, -0.000247504649, 0.102350049) * textureLoad(t_RES2, clampCoord(p + vec2i(0, 0), d_RES2), 0);
+  res2 += mat4x4f(0.0797604471, -0.165881634, 0.398010045, 0.0545672402, 0.0576023757, 0.0831098929, -0.0352460071, -0.000345827779, 0.0730285570, -0.254135251, -0.0850512385, 0.130703285, -0.119912177, -0.476996273, -0.260526925, -0.291009009) * textureLoad(t_RES3, clampCoord(p + vec2i(0, 0), d_RES3), 0);
+  res2 += mat4x4f(0.0966795683, -0.0551590659, 0.00360999489, -0.0895382315, 0.0851177573, -0.111695297, 0.394902587, -0.0177002046, -0.128413707, -0.230691448, -0.296555400, 0.0296702273, 0.471322328, -0.0378396064, 0.320274919, -0.384736389) * textureLoad(t_RES4, clampCoord(p + vec2i(0, 0), d_RES4), 0);
+  res2 = max(res2, vec4f(0.0)) + vec4f(0.280690432, -0.0303614773, -0.104330413, -0.0215405710) * min(res2, vec4f(0.0));
+  var res3 = vec4f(-0.0452238247, -0.0224991757, -0.0773735940, 0.0329718329);
+  res3 += mat4x4f(-0.182665855, 0.404169232, -0.0207749344, 0.147165060, -0.0351736993, 0.0257018302, -0.00920469407, -0.0552616566, -0.392081589, -0.0773863345, -0.223325208, -0.0215846673, 0.401892751, -0.531974435, -0.608919144, -0.318163693) * textureLoad(t_RES1, clampCoord(p + vec2i(0, 0), d_RES1), 0);
+  res3 += mat4x4f(-0.0921684951, -0.0296594594, -0.0716123655, -0.0429047681, -0.0263281837, 0.0227849167, -0.144490913, -0.162168592, -0.121807106, -0.215024889, -0.280008644, -0.150822937, -0.140144631, -0.0847510621, -0.105830483, -0.0152523722) * textureLoad(t_RES2, clampCoord(p + vec2i(0, 0), d_RES2), 0);
+  res3 += mat4x4f(-0.0255542453, -0.256263077, -0.0100293560, -0.161885187, 0.00861346070, -0.0798893720, -0.346336335, 0.777830184, -0.0411505736, 0.185045391, -0.271167040, -0.144774273, -0.210528284, -0.160897806, -0.306421727, -0.0617339909) * textureLoad(t_RES3, clampCoord(p + vec2i(0, 0), d_RES3), 0);
+  res3 += mat4x4f(0.217095688, -0.0262366831, 0.0453682132, -0.0553649664, 0.105030350, -0.153441414, 0.191897139, 0.666197836, 0.000354150281, 0.116054997, -0.127471209, -0.0148241622, -0.108346269, 0.421053618, 0.551768243, -0.567049980) * textureLoad(t_RES4, clampCoord(p + vec2i(0, 0), d_RES4), 0);
+  res3 = max(res3, vec4f(0.0)) + vec4f(-0.143431619, -0.0913475007, 0.0125499722, 0.996187091) * min(res3, vec4f(0.0));
+  textureStore(out_EXPANDED1, p, res0);
+  textureStore(out_EXPANDED2, p, res1);
+  textureStore(out_EXPANDED3, p, res2);
+  textureStore(out_EXPANDED4, p, res3);
 }
 
-//==== ENTRY pass39 : expanding_2 ====
-// ---- PASS 39: expanding 2 (save=EXPANDED2, comps=4) ----
+//==== ENTRY pass11 : fused_EXPANDED5_EXPANDED6_EXPANDED7_EXPANDED8 ====
+// ---- PASS 11: expanding 5 + expanding 6 + expanding 7 + expanding 8 (saves=EXPANDED5,EXPANDED6,EXPANDED7,EXPANDED8) ----
 // binds: RES1, RES2, RES3, RES4
+// Fused: 4 upstream hooks sharing one set of input fetches.
 @group(0) @binding(0) var t_RES1 : texture_2d<f32>;
 @group(0) @binding(1) var t_RES2 : texture_2d<f32>;
 @group(0) @binding(2) var t_RES3 : texture_2d<f32>;
 @group(0) @binding(3) var t_RES4 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(4) var out_EXPANDED5 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(5) var out_EXPANDED6 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(6) var out_EXPANDED7 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(7) var out_EXPANDED8 : texture_storage_2d<rgba16float, write>;
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
+  let dims = textureDimensions(out_EXPANDED5);
   if (gid.x >= dims.x || gid.y >= dims.y) { return; }
   let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.0377134196, -0.0517786965, -0.0113843028, -0.0423722118);
-  res += mat4x4f(-0.187383190, -0.333807141, -0.0114170993, -0.0592875108, -0.0389103703, -0.161589369, -0.167758495, 0.0640004128, -0.135003522, -0.0460649580, -0.195274860, -0.0192385316, 0.115299493, -0.405843705, 0.543796718, -0.0200934485) * textureLoad(t_RES1, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES1)), 0);
-  res += mat4x4f(-0.0530273430, -0.232353508, -0.268049091, -0.0742441788, 0.0642315075, 0.103317387, 0.141605496, 0.0365463607, -0.109832600, -0.199020311, 0.348489344, 0.225071490, 0.0416567065, 0.166481614, -0.175169885, -0.127450749) * textureLoad(t_RES2, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES2)), 0);
-  res += mat4x4f(-0.242088154, -0.323947698, 0.0217796937, -0.191137895, 0.143606365, 0.187603027, -0.0202596635, -0.196978867, 0.105991006, 0.0426782705, 0.132612273, -0.246117011, -0.0437954813, -0.163393959, -0.362672061, -0.272816956) * textureLoad(t_RES3, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES3)), 0);
-  res += mat4x4f(-0.105675928, -0.125587150, -0.188549042, -0.146962419, -0.0915907472, -0.0619574301, -0.259782106, -0.140794769, -0.108058728, 0.0940156803, 0.0841127783, 0.314880252, 0.751866579, 0.775285602, 0.246066943, -0.597694337) * textureLoad(t_RES4, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES4)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(-0.119815454, -0.120660640, -0.0409885980, 0.0807723850) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
+  let d_RES1 = textureDimensions(t_RES1);
+  let d_RES2 = textureDimensions(t_RES2);
+  let d_RES3 = textureDimensions(t_RES3);
+  let d_RES4 = textureDimensions(t_RES4);
+  var res0 = vec4f(-0.0585534126, 0.00955449510, 0.0171730686, 0.0245242380);
+  res0 += mat4x4f(0.0285691004, 0.182849780, 0.0965177342, -0.196125865, -0.0620458834, -0.0471961424, -0.0785254091, -0.118550122, -0.0537676699, -0.124393329, -0.278804660, 0.0608210042, -0.0710738972, 0.0238861479, 0.683581114, 0.263968855) * textureLoad(t_RES1, clampCoord(p + vec2i(0, 0), d_RES1), 0);
+  res0 += mat4x4f(0.0337702893, 0.208428711, -0.208179012, 0.228363648, -0.261437148, -0.0350741483, -0.107170075, 0.268401474, -0.0290314406, -0.0375133008, -0.0202263109, -0.238104060, 0.0781011805, -0.265779346, -0.437591970, 0.282729357) * textureLoad(t_RES2, clampCoord(p + vec2i(0, 0), d_RES2), 0);
+  res0 += mat4x4f(-0.0484304018, 0.223450840, 0.438829333, 0.215528160, -0.119020052, -0.0990377888, -0.289937615, 0.237319514, -0.0111539578, -0.134305775, -0.0929356515, 0.202597871, -0.179168940, -0.194618866, -0.156164512, 0.150881514) * textureLoad(t_RES3, clampCoord(p + vec2i(0, 0), d_RES3), 0);
+  res0 += mat4x4f(0.0105061186, -0.160478473, -0.119244635, -0.00892827567, 0.0921109244, 0.0703021362, 0.435257018, 0.227881983, -0.0106695546, -0.0954377875, -0.409800857, -0.215642080, -0.551408529, 0.367969453, -0.0488149412, 0.0396330766) * textureLoad(t_RES4, clampCoord(p + vec2i(0, 0), d_RES4), 0);
+  res0 = max(res0, vec4f(0.0)) + vec4f(0.0909879729, 0.0131117068, -0.105698422, 0.940532923) * min(res0, vec4f(0.0));
+  var res1 = vec4f(-0.0134924008, -0.430583566, -0.0293109529, -0.0809145048);
+  res1 += mat4x4f(-0.190718263, -0.192010030, -0.0319808200, 0.212319419, -0.0220523104, 0.0852921754, 0.0505689904, -0.0254862979, 0.0434665717, 0.0342058018, -0.0197751261, 0.0769303814, 0.260688603, -0.254515946, -0.259839326, 0.00475838035) * textureLoad(t_RES1, clampCoord(p + vec2i(0, 0), d_RES1), 0);
+  res1 += mat4x4f(-0.0367020890, -0.0336949416, -0.0762713030, 0.00902463682, 0.115059704, -0.0179201309, 0.208553568, 0.121236138, -0.00905703846, -0.248040587, -0.149557486, 0.351048529, 0.0683526993, 0.129581839, -0.472838372, -0.405600250) * textureLoad(t_RES2, clampCoord(p + vec2i(0, 0), d_RES2), 0);
+  res1 += mat4x4f(-0.245794818, -0.226952627, 0.134112135, 0.271371216, 0.180112720, 0.151286095, -0.183934733, -0.246931463, -0.0184488222, -0.157439262, -0.131341249, -0.00387569726, -0.0309323519, 0.0839342326, -0.0750480071, 0.0467521474) * textureLoad(t_RES3, clampCoord(p + vec2i(0, 0), d_RES3), 0);
+  res1 += mat4x4f(-0.121672064, 0.0647201464, 0.140631869, -0.173855409, -0.0827424973, 0.519667089, -0.0798234418, -0.361636519, -0.121546417, -0.0462094583, -0.0428794213, 0.158449605, 0.579937518, -0.539715350, 0.110158578, -0.619211495) * textureLoad(t_RES4, clampCoord(p + vec2i(0, 0), d_RES4), 0);
+  res1 = max(res1, vec4f(0.0)) + vec4f(0.248570234, -0.0182154234, -0.109949023, -0.0794833452) * min(res1, vec4f(0.0));
+  var res2 = vec4f(-0.455408812, -0.000777476816, -0.0397863388, 0.0208770912);
+  res2 += mat4x4f(-0.433514506, 0.0716734082, -0.0540421531, 0.190295026, 0.0483467653, 0.00876329653, 0.247921526, -0.0642298982, 0.0528932512, -0.100082986, -0.0111902859, -0.0642448664, -0.534053564, 0.676161289, 0.658313572, 0.231751561) * textureLoad(t_RES1, clampCoord(p + vec2i(0, 0), d_RES1), 0);
+  res2 += mat4x4f(0.0100528263, -0.189679414, -0.202709347, 0.0108456351, 0.287144631, -0.145223275, -0.215669915, -0.0755964816, -0.136488363, 0.00770093361, 0.136058107, 0.544652402, 0.144594610, -0.141540781, 0.192035511, 0.113448255) * textureLoad(t_RES2, clampCoord(p + vec2i(0, 0), d_RES2), 0);
+  res2 += mat4x4f(0.0196933020, 0.117948182, -0.266092777, 0.0150322998, 0.333279371, -0.0662502572, -0.146658584, 0.0224309955, -0.181358010, -0.0146621605, -0.110213324, 0.0343900099, -0.191395536, 0.0425196514, -0.291586637, -0.172237024) * textureLoad(t_RES3, clampCoord(p + vec2i(0, 0), d_RES3), 0);
+  res2 += mat4x4f(-0.0135618048, -0.204472542, -0.0461753607, -0.125870019, 0.465197086, 0.0821890309, 0.199804395, -0.216458187, -0.0571996234, -0.255835742, 0.105183251, 0.0964843333, -0.100950643, -0.437461615, -0.132977918, -0.209460601) * textureLoad(t_RES4, clampCoord(p + vec2i(0, 0), d_RES4), 0);
+  res2 = max(res2, vec4f(0.0)) + vec4f(0.00226240722, 0.177463576, -0.0901090950, 0.172798991) * min(res2, vec4f(0.0));
+  var res3 = vec4f(-0.0555483811, -0.0257621165, -0.00714900997, -0.427434176);
+  res3 += mat4x4f(-0.100073144, -0.0519597121, 0.243989766, -0.266989112, -0.0460190177, 0.0847471282, -0.0289036762, 0.0754454583, -0.323280454, -0.143391117, -0.00133673695, 0.0593008585, -0.0282611419, 0.425717264, 0.0596557707, -0.151089430) * textureLoad(t_RES1, clampCoord(p + vec2i(0, 0), d_RES1), 0);
+  res3 += mat4x4f(-0.794655979, -0.397842050, -0.0633477718, 0.00576993637, -0.0575334169, -0.0273398180, -0.0787692666, 0.0416557640, -0.0996755362, -0.387809545, 0.165536821, 0.225958347, 0.0418307707, -0.289853960, -0.300427318, 0.400307715) * textureLoad(t_RES2, clampCoord(p + vec2i(0, 0), d_RES2), 0);
+  res3 += mat4x4f(-0.0385675803, -0.0348785557, 0.0729648024, -0.198011190, 0.0381550565, -0.0894537643, -0.268907279, 0.333873570, 0.0186436176, -0.0323102698, -0.263399810, -0.270350963, -0.178106248, -0.319698960, -0.00000634881417, 0.224084854) * textureLoad(t_RES3, clampCoord(p + vec2i(0, 0), d_RES3), 0);
+  res3 += mat4x4f(0.0367681459, 0.292418212, -0.0254704580, -0.188981503, 0.0117503433, 0.220869675, -0.0745097548, 0.248285711, 0.108698845, -0.103064530, 0.0276679248, 0.0835002959, 0.639807165, 0.248613417, -0.145241097, -0.506057382) * textureLoad(t_RES4, clampCoord(p + vec2i(0, 0), d_RES4), 0);
+  res3 = max(res3, vec4f(0.0)) + vec4f(-0.0130243897, 0.255760342, -0.0861852467, -0.00486075040) * min(res3, vec4f(0.0));
+  textureStore(out_EXPANDED5, p, res0);
+  textureStore(out_EXPANDED6, p, res1);
+  textureStore(out_EXPANDED7, p, res2);
+  textureStore(out_EXPANDED8, p, res3);
 }
 
-//==== ENTRY pass40 : expanding_3 ====
-// ---- PASS 40: expanding 3 (save=EXPANDED3, comps=4) ----
+//==== ENTRY pass12 : fused_EXPANDED9_EXPANDED10_EXPANDED11_EXPANDED12 ====
+// ---- PASS 12: expanding 9 + expanding 10 + expanding 11 + expanding 12 (saves=EXPANDED9,EXPANDED10,EXPANDED11,EXPANDED12) ----
 // binds: RES1, RES2, RES3, RES4
+// Fused: 4 upstream hooks sharing one set of input fetches.
 @group(0) @binding(0) var t_RES1 : texture_2d<f32>;
 @group(0) @binding(1) var t_RES2 : texture_2d<f32>;
 @group(0) @binding(2) var t_RES3 : texture_2d<f32>;
 @group(0) @binding(3) var t_RES4 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(4) var out_EXPANDED9 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(5) var out_EXPANDED10 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(6) var out_EXPANDED11 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(7) var out_EXPANDED12 : texture_storage_2d<rgba16float, write>;
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
+  let dims = textureDimensions(out_EXPANDED9);
   if (gid.x >= dims.x || gid.y >= dims.y) { return; }
   let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(0.00473005371, -0.0188851897, -0.0324485004, -0.00994708017);
-  res += mat4x4f(-0.205701202, 0.00865237787, -0.554857969, -0.0596910305, 0.0385442935, -0.110781640, 0.115855575, -0.159211606, -0.0230446327, -0.139518365, 0.0392309166, -0.253526092, 0.295104682, 0.0853005648, 0.234958202, 0.681002617) * textureLoad(t_RES1, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES1)), 0);
-  res += mat4x4f(0.0562869161, -0.105723247, -0.268773109, -0.0789842308, 0.132220000, -0.114762381, -0.122579440, 0.143245071, -0.146336213, 0.389708221, 0.315811902, 0.107521720, -0.192060247, -0.122540168, -0.000247504649, 0.102350049) * textureLoad(t_RES2, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES2)), 0);
-  res += mat4x4f(0.0797604471, -0.165881634, 0.398010045, 0.0545672402, 0.0576023757, 0.0831098929, -0.0352460071, -0.000345827779, 0.0730285570, -0.254135251, -0.0850512385, 0.130703285, -0.119912177, -0.476996273, -0.260526925, -0.291009009) * textureLoad(t_RES3, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES3)), 0);
-  res += mat4x4f(0.0966795683, -0.0551590659, 0.00360999489, -0.0895382315, 0.0851177573, -0.111695297, 0.394902587, -0.0177002046, -0.128413707, -0.230691448, -0.296555400, 0.0296702273, 0.471322328, -0.0378396064, 0.320274919, -0.384736389) * textureLoad(t_RES4, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES4)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(0.280690432, -0.0303614773, -0.104330413, -0.0215405710) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
+  let d_RES1 = textureDimensions(t_RES1);
+  let d_RES2 = textureDimensions(t_RES2);
+  let d_RES3 = textureDimensions(t_RES3);
+  let d_RES4 = textureDimensions(t_RES4);
+  var res0 = vec4f(-0.342076749, -0.0292894058, -0.134116039, -0.0548278578);
+  res0 += mat4x4f(-0.208863378, 0.0310561303, -0.0233436823, 0.162628502, 0.101130262, 0.0166006722, 0.0491919555, -0.0537500009, 0.0282120183, -0.126852795, -0.0338383578, 0.0286468044, -0.514633238, 0.692670822, 0.131998122, -1.19396198) * textureLoad(t_RES1, clampCoord(p + vec2i(0, 0), d_RES1), 0);
+  res0 += mat4x4f(-0.0152657563, 0.171764225, 0.0476406552, 0.0258869883, 0.291317672, -0.177562028, 0.272318155, -0.245771185, 0.297363222, 0.0464197695, -0.00693707261, -0.0607092492, 0.0451576859, 0.00768187409, -0.884657025, -0.0855826363) * textureLoad(t_RES2, clampCoord(p + vec2i(0, 0), d_RES2), 0);
+  res0 += mat4x4f(-0.139445066, -0.167817488, 0.238471657, -0.114194736, 0.506105304, 0.0438360050, -0.486128330, -0.0967657343, -0.417803705, -0.163115069, 0.0739030167, -0.335960180, -0.102993488, -0.237524256, -0.187300697, -0.325950444) * textureLoad(t_RES3, clampCoord(p + vec2i(0, 0), d_RES3), 0);
+  res0 += mat4x4f(-0.126885638, -0.121609442, -0.170746014, -0.376361012, 0.0153043643, -0.0703697875, -0.190480039, 0.126787692, 0.0803136900, -0.0759697184, 0.00824088044, 0.104340352, -0.216779873, -0.684662163, 0.185171336, 1.28425801) * textureLoad(t_RES4, clampCoord(p + vec2i(0, 0), d_RES4), 0);
+  res0 = max(res0, vec4f(0.0)) + vec4f(-0.00475477101, 0.0823649541, -0.0160131454, -0.0785525367) * min(res0, vec4f(0.0));
+  var res1 = vec4f(-0.0444936343, 0.0199588165, -0.0350163616, -0.0123227211);
+  res1 += mat4x4f(-0.258558571, 0.138087526, 0.119842917, 0.280708253, 0.0863360912, 0.0659906045, 0.0129334461, 0.0701358169, -0.185208410, 0.0209135003, -0.0491142124, 0.0185904726, -0.224744156, 0.390827149, -0.396224916, 0.205150202) * textureLoad(t_RES1, clampCoord(p + vec2i(0, 0), d_RES1), 0);
+  res1 += mat4x4f(-0.0639962479, 0.0209234264, -0.0614769422, 0.126059026, 0.0945213363, 0.124186955, -0.104041457, -0.315331876, -0.303997427, -0.0735848099, -0.0437899567, -0.121412456, 0.00373229338, 0.228715003, -0.393183112, 0.186366484) * textureLoad(t_RES2, clampCoord(p + vec2i(0, 0), d_RES2), 0);
+  res1 += mat4x4f(-0.188814208, -0.0297952164, -0.235888436, -0.202971771, 0.0471164584, -0.201281250, 0.241115972, -0.197414190, -0.115232565, 0.0397068597, -0.0638035908, -0.0308154542, -0.191935748, 0.0314871110, -0.0113136210, -0.0892724469) * textureLoad(t_RES3, clampCoord(p + vec2i(0, 0), d_RES3), 0);
+  res1 += mat4x4f(-0.210005775, 0.000154635534, 0.00251258328, -0.0522724502, 0.0339385048, 0.0729734525, -0.291381449, 0.0238553640, -0.0885685906, -0.0373712927, 0.194332659, 0.0419086777, 0.369903743, 0.183629185, 0.183807656, 0.00833969191) * textureLoad(t_RES4, clampCoord(p + vec2i(0, 0), d_RES4), 0);
+  res1 = max(res1, vec4f(0.0)) + vec4f(0.115049534, 1.06053901, -0.0352337398, 0.133598462) * min(res1, vec4f(0.0));
+  var res2 = vec4f(-0.0618050657, 0.00250778371, -0.0304063670, -0.0253355242);
+  res2 += mat4x4f(0.248095945, 0.249115229, -0.328725666, -0.0703936592, 0.0223213304, -0.00138899824, -0.0418152176, 0.0710532144, -0.0306159351, -0.0791581869, -0.247332364, -0.281888545, -0.135672376, 0.315575927, 0.112203695, 0.118623510) * textureLoad(t_RES1, clampCoord(p + vec2i(0, 0), d_RES1), 0);
+  res2 += mat4x4f(-0.0454790704, -0.0438226759, -0.0707597882, -0.0616745055, -0.264085650, 0.110405773, 0.123379409, -0.0193307903, -0.0226256438, -0.136954039, 0.111152120, -0.288610816, -0.192554295, -0.0265127048, 0.351563126, -0.266828299) * textureLoad(t_RES2, clampCoord(p + vec2i(0, 0), d_RES2), 0);
+  res2 += mat4x4f(0.111376598, -0.131018907, 0.238617361, 0.197664350, -0.514314473, -0.00685970671, 0.112016983, -0.233284578, -0.268270671, 0.0172422044, -0.327477127, -0.0442661829, -0.147137746, -0.0250553824, -0.398271799, -0.133205771) * textureLoad(t_RES3, clampCoord(p + vec2i(0, 0), d_RES3), 0);
+  res2 += mat4x4f(-0.0350602418, -0.0156255122, -0.295147836, -0.0261163022, 0.150349095, -0.169258952, -0.0849871933, 0.271600932, -0.149080053, 0.114769742, 0.154530972, -0.146179363, -0.157918155, -0.0681356415, -0.404486209, 0.0642753914) * textureLoad(t_RES4, clampCoord(p + vec2i(0, 0), d_RES4), 0);
+  res2 = max(res2, vec4f(0.0)) + vec4f(0.00181433558, 0.413398981, -0.0309383757, -0.0114375129) * min(res2, vec4f(0.0));
+  var res3 = vec4f(-0.0367725492, 0.0297095925, -0.261486650, 0.0330366194);
+  res3 += mat4x4f(-0.0295132697, 0.129501075, -0.0137622766, 0.185057893, 0.0937492475, -0.123776421, 0.0542533472, -0.0749437287, -0.0301182847, -0.0187617913, 0.0483842008, -0.0482693464, -0.174734950, 0.191262901, -0.438484699, 0.809448361) * textureLoad(t_RES1, clampCoord(p + vec2i(0, 0), d_RES1), 0);
+  res3 += mat4x4f(-0.198123991, -0.0154642146, 0.00891554356, -0.0873039439, 0.218649447, -0.0844323412, -0.0543268658, 0.0317630470, 0.0142803090, 0.345948070, 0.283311903, 0.327520996, -0.348669648, -0.245578036, 0.329017818, -0.0843599960) * textureLoad(t_RES2, clampCoord(p + vec2i(0, 0), d_RES2), 0);
+  res3 += mat4x4f(0.0696560293, 0.160885215, -0.193558693, 0.245933577, 0.168946579, -0.163316950, 0.164317027, -0.144147247, 0.345013082, -0.0480607636, -0.184068814, 0.111782603, -0.276307672, -0.177228615, -0.408723593, -0.0822197124) * textureLoad(t_RES3, clampCoord(p + vec2i(0, 0), d_RES3), 0);
+  res3 += mat4x4f(0.0571454465, 0.0356414020, -0.187030688, -0.133048952, -0.155825809, 0.181779757, 0.0757509097, 0.0250610393, 0.00200078241, -0.160445765, 0.122955941, 0.263887495, 0.188722312, 0.281423509, -0.724367023, 0.0624093823) * textureLoad(t_RES4, clampCoord(p + vec2i(0, 0), d_RES4), 0);
+  res3 = max(res3, vec4f(0.0)) + vec4f(0.0484057181, -0.263155192, 0.000325654750, -0.0588769391) * min(res3, vec4f(0.0));
+  textureStore(out_EXPANDED9, p, res0);
+  textureStore(out_EXPANDED10, p, res1);
+  textureStore(out_EXPANDED11, p, res2);
+  textureStore(out_EXPANDED12, p, res3);
 }
 
-//==== ENTRY pass41 : expanding_4 ====
-// ---- PASS 41: expanding 4 (save=EXPANDED4, comps=4) ----
+//==== ENTRY pass13 : fused_EXPANDED13_EXPANDED14 ====
+// ---- PASS 13: expanding 13 + expanding 14 (saves=EXPANDED13,EXPANDED14) ----
 // binds: RES1, RES2, RES3, RES4
+// Fused: 2 upstream hooks sharing one set of input fetches.
 @group(0) @binding(0) var t_RES1 : texture_2d<f32>;
 @group(0) @binding(1) var t_RES2 : texture_2d<f32>;
 @group(0) @binding(2) var t_RES3 : texture_2d<f32>;
 @group(0) @binding(3) var t_RES4 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(4) var out_EXPANDED13 : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(5) var out_EXPANDED14 : texture_storage_2d<rgba16float, write>;
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
+  let dims = textureDimensions(out_EXPANDED13);
   if (gid.x >= dims.x || gid.y >= dims.y) { return; }
   let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.0452238247, -0.0224991757, -0.0773735940, 0.0329718329);
-  res += mat4x4f(-0.182665855, 0.404169232, -0.0207749344, 0.147165060, -0.0351736993, 0.0257018302, -0.00920469407, -0.0552616566, -0.392081589, -0.0773863345, -0.223325208, -0.0215846673, 0.401892751, -0.531974435, -0.608919144, -0.318163693) * textureLoad(t_RES1, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES1)), 0);
-  res += mat4x4f(-0.0921684951, -0.0296594594, -0.0716123655, -0.0429047681, -0.0263281837, 0.0227849167, -0.144490913, -0.162168592, -0.121807106, -0.215024889, -0.280008644, -0.150822937, -0.140144631, -0.0847510621, -0.105830483, -0.0152523722) * textureLoad(t_RES2, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES2)), 0);
-  res += mat4x4f(-0.0255542453, -0.256263077, -0.0100293560, -0.161885187, 0.00861346070, -0.0798893720, -0.346336335, 0.777830184, -0.0411505736, 0.185045391, -0.271167040, -0.144774273, -0.210528284, -0.160897806, -0.306421727, -0.0617339909) * textureLoad(t_RES3, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES3)), 0);
-  res += mat4x4f(0.217095688, -0.0262366831, 0.0453682132, -0.0553649664, 0.105030350, -0.153441414, 0.191897139, 0.666197836, 0.000354150281, 0.116054997, -0.127471209, -0.0148241622, -0.108346269, 0.421053618, 0.551768243, -0.567049980) * textureLoad(t_RES4, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES4)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(-0.143431619, -0.0913475007, 0.0125499722, 0.996187091) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
+  let d_RES1 = textureDimensions(t_RES1);
+  let d_RES2 = textureDimensions(t_RES2);
+  let d_RES3 = textureDimensions(t_RES3);
+  let d_RES4 = textureDimensions(t_RES4);
+  var res0 = vec4f(-0.0375194028, 0.00498494599, -0.0296996012, 0.0172721259);
+  res0 += mat4x4f(-0.103782326, -0.209091097, 0.0977440625, 0.108576700, -0.135068297, -0.00335335033, 0.134732082, 0.108028725, -0.168741569, -0.0556001402, 0.0192291271, -0.0366385654, -0.524281621, -0.0973284915, 0.244837865, 0.180339769) * textureLoad(t_RES1, clampCoord(p + vec2i(0, 0), d_RES1), 0);
+  res0 += mat4x4f(-0.140774101, -0.0701540485, 0.112067401, -0.139136583, -0.0694180727, 0.272562623, -0.332572401, 0.0356726944, -0.527696192, 0.207368895, 0.0275850818, 0.373546094, -0.0370581448, -0.230142102, -0.131501511, 0.334930539) * textureLoad(t_RES2, clampCoord(p + vec2i(0, 0), d_RES2), 0);
+  res0 += mat4x4f(-0.00298514846, 0.237418458, -0.173749626, 0.0402252078, -0.117065005, 0.268635452, 0.0876380056, 0.328671306, -0.0126608303, 0.125745595, -0.0288034994, 0.0602610111, -0.127148792, -0.138862953, -0.0728517547, -0.0896863788) * textureLoad(t_RES3, clampCoord(p + vec2i(0, 0), d_RES3), 0);
+  res0 += mat4x4f(0.115572631, -0.0489294082, -0.0225676075, 0.0433923341, 0.226363271, -0.223665014, -0.111732244, 0.187662467, -0.134473637, 0.0110210981, 0.0224010497, 0.223745272, 0.552177668, 0.320826352, 0.459622890, 0.0404529013) * textureLoad(t_RES4, clampCoord(p + vec2i(0, 0), d_RES4), 0);
+  res0 = max(res0, vec4f(0.0)) + vec4f(-0.130885243, 0.0670913532, -0.0278433170, 0.996376753) * min(res0, vec4f(0.0));
+  var res1 = vec4f(-0.0989004001, -0.0244861078, -0.0256052595, -0.0205684360);
+  res1 += mat4x4f(0.223029569, -0.133236706, -0.0849369615, 0.0607042313, -0.0319523998, 0.135560364, 0.0216345564, -0.0435814336, 0.0662411451, -0.124353774, -0.149963021, -0.0178027432, -0.0669042021, -0.509932160, 0.235976070, 0.110088192) * textureLoad(t_RES1, clampCoord(p + vec2i(0, 0), d_RES1), 0);
+  res1 += mat4x4f(0.0463832356, 0.0354107842, -0.0564240664, -0.0247205906, -0.0752996430, 0.0247233212, 0.184593394, -0.148842499, -0.298947543, 0.329718381, 0.109195001, -0.188488498, -0.412327707, 0.141102374, -0.392132103, 0.0560379699) * textureLoad(t_RES2, clampCoord(p + vec2i(0, 0), d_RES2), 0);
+  res1 += mat4x4f(0.149992675, -0.398099840, 0.0990773588, -0.0774550363, -0.521447659, 0.150564060, -0.0159742329, -0.0754789412, -0.0760962889, -0.0700559616, -0.150763363, -0.00287004793, 0.0472455584, -0.266288579, -0.155441269, -0.0972240493) * textureLoad(t_RES3, clampCoord(p + vec2i(0, 0), d_RES3), 0);
+  res1 += mat4x4f(-0.0457784496, -0.0683998242, -0.0543023311, -0.0386587232, 0.0598755218, -0.155651465, -0.210835606, 0.0600448549, 0.0370984748, 0.0641717836, 0.0519689284, -0.00450435746, -0.396661103, 0.363801599, 0.100632839, 0.0199289434) * textureLoad(t_RES4, clampCoord(p + vec2i(0, 0), d_RES4), 0);
+  res1 = max(res1, vec4f(0.0)) + vec4f(-0.0674505681, -0.168752059, 0.0256951842, 0.549540043) * min(res1, vec4f(0.0));
+  textureStore(out_EXPANDED13, p, res0);
+  textureStore(out_EXPANDED14, p, res1);
 }
 
-//==== ENTRY pass42 : expanding_5 ====
-// ---- PASS 42: expanding 5 (save=EXPANDED5, comps=4) ----
-// binds: RES1, RES2, RES3, RES4
-@group(0) @binding(0) var t_RES1 : texture_2d<f32>;
-@group(0) @binding(1) var t_RES2 : texture_2d<f32>;
-@group(0) @binding(2) var t_RES3 : texture_2d<f32>;
-@group(0) @binding(3) var t_RES4 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.0585534126, 0.00955449510, 0.0171730686, 0.0245242380);
-  res += mat4x4f(0.0285691004, 0.182849780, 0.0965177342, -0.196125865, -0.0620458834, -0.0471961424, -0.0785254091, -0.118550122, -0.0537676699, -0.124393329, -0.278804660, 0.0608210042, -0.0710738972, 0.0238861479, 0.683581114, 0.263968855) * textureLoad(t_RES1, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES1)), 0);
-  res += mat4x4f(0.0337702893, 0.208428711, -0.208179012, 0.228363648, -0.261437148, -0.0350741483, -0.107170075, 0.268401474, -0.0290314406, -0.0375133008, -0.0202263109, -0.238104060, 0.0781011805, -0.265779346, -0.437591970, 0.282729357) * textureLoad(t_RES2, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES2)), 0);
-  res += mat4x4f(-0.0484304018, 0.223450840, 0.438829333, 0.215528160, -0.119020052, -0.0990377888, -0.289937615, 0.237319514, -0.0111539578, -0.134305775, -0.0929356515, 0.202597871, -0.179168940, -0.194618866, -0.156164512, 0.150881514) * textureLoad(t_RES3, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES3)), 0);
-  res += mat4x4f(0.0105061186, -0.160478473, -0.119244635, -0.00892827567, 0.0921109244, 0.0703021362, 0.435257018, 0.227881983, -0.0106695546, -0.0954377875, -0.409800857, -0.215642080, -0.551408529, 0.367969453, -0.0488149412, 0.0396330766) * textureLoad(t_RES4, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES4)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(0.0909879729, 0.0131117068, -0.105698422, 0.940532923) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass43 : expanding_6 ====
-// ---- PASS 43: expanding 6 (save=EXPANDED6, comps=4) ----
-// binds: RES1, RES2, RES3, RES4
-@group(0) @binding(0) var t_RES1 : texture_2d<f32>;
-@group(0) @binding(1) var t_RES2 : texture_2d<f32>;
-@group(0) @binding(2) var t_RES3 : texture_2d<f32>;
-@group(0) @binding(3) var t_RES4 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.0134924008, -0.430583566, -0.0293109529, -0.0809145048);
-  res += mat4x4f(-0.190718263, -0.192010030, -0.0319808200, 0.212319419, -0.0220523104, 0.0852921754, 0.0505689904, -0.0254862979, 0.0434665717, 0.0342058018, -0.0197751261, 0.0769303814, 0.260688603, -0.254515946, -0.259839326, 0.00475838035) * textureLoad(t_RES1, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES1)), 0);
-  res += mat4x4f(-0.0367020890, -0.0336949416, -0.0762713030, 0.00902463682, 0.115059704, -0.0179201309, 0.208553568, 0.121236138, -0.00905703846, -0.248040587, -0.149557486, 0.351048529, 0.0683526993, 0.129581839, -0.472838372, -0.405600250) * textureLoad(t_RES2, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES2)), 0);
-  res += mat4x4f(-0.245794818, -0.226952627, 0.134112135, 0.271371216, 0.180112720, 0.151286095, -0.183934733, -0.246931463, -0.0184488222, -0.157439262, -0.131341249, -0.00387569726, -0.0309323519, 0.0839342326, -0.0750480071, 0.0467521474) * textureLoad(t_RES3, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES3)), 0);
-  res += mat4x4f(-0.121672064, 0.0647201464, 0.140631869, -0.173855409, -0.0827424973, 0.519667089, -0.0798234418, -0.361636519, -0.121546417, -0.0462094583, -0.0428794213, 0.158449605, 0.579937518, -0.539715350, 0.110158578, -0.619211495) * textureLoad(t_RES4, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES4)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(0.248570234, -0.0182154234, -0.109949023, -0.0794833452) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass44 : expanding_7 ====
-// ---- PASS 44: expanding 7 (save=EXPANDED7, comps=4) ----
-// binds: RES1, RES2, RES3, RES4
-@group(0) @binding(0) var t_RES1 : texture_2d<f32>;
-@group(0) @binding(1) var t_RES2 : texture_2d<f32>;
-@group(0) @binding(2) var t_RES3 : texture_2d<f32>;
-@group(0) @binding(3) var t_RES4 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.455408812, -0.000777476816, -0.0397863388, 0.0208770912);
-  res += mat4x4f(-0.433514506, 0.0716734082, -0.0540421531, 0.190295026, 0.0483467653, 0.00876329653, 0.247921526, -0.0642298982, 0.0528932512, -0.100082986, -0.0111902859, -0.0642448664, -0.534053564, 0.676161289, 0.658313572, 0.231751561) * textureLoad(t_RES1, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES1)), 0);
-  res += mat4x4f(0.0100528263, -0.189679414, -0.202709347, 0.0108456351, 0.287144631, -0.145223275, -0.215669915, -0.0755964816, -0.136488363, 0.00770093361, 0.136058107, 0.544652402, 0.144594610, -0.141540781, 0.192035511, 0.113448255) * textureLoad(t_RES2, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES2)), 0);
-  res += mat4x4f(0.0196933020, 0.117948182, -0.266092777, 0.0150322998, 0.333279371, -0.0662502572, -0.146658584, 0.0224309955, -0.181358010, -0.0146621605, -0.110213324, 0.0343900099, -0.191395536, 0.0425196514, -0.291586637, -0.172237024) * textureLoad(t_RES3, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES3)), 0);
-  res += mat4x4f(-0.0135618048, -0.204472542, -0.0461753607, -0.125870019, 0.465197086, 0.0821890309, 0.199804395, -0.216458187, -0.0571996234, -0.255835742, 0.105183251, 0.0964843333, -0.100950643, -0.437461615, -0.132977918, -0.209460601) * textureLoad(t_RES4, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES4)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(0.00226240722, 0.177463576, -0.0901090950, 0.172798991) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass45 : expanding_8 ====
-// ---- PASS 45: expanding 8 (save=EXPANDED8, comps=4) ----
-// binds: RES1, RES2, RES3, RES4
-@group(0) @binding(0) var t_RES1 : texture_2d<f32>;
-@group(0) @binding(1) var t_RES2 : texture_2d<f32>;
-@group(0) @binding(2) var t_RES3 : texture_2d<f32>;
-@group(0) @binding(3) var t_RES4 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.0555483811, -0.0257621165, -0.00714900997, -0.427434176);
-  res += mat4x4f(-0.100073144, -0.0519597121, 0.243989766, -0.266989112, -0.0460190177, 0.0847471282, -0.0289036762, 0.0754454583, -0.323280454, -0.143391117, -0.00133673695, 0.0593008585, -0.0282611419, 0.425717264, 0.0596557707, -0.151089430) * textureLoad(t_RES1, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES1)), 0);
-  res += mat4x4f(-0.794655979, -0.397842050, -0.0633477718, 0.00576993637, -0.0575334169, -0.0273398180, -0.0787692666, 0.0416557640, -0.0996755362, -0.387809545, 0.165536821, 0.225958347, 0.0418307707, -0.289853960, -0.300427318, 0.400307715) * textureLoad(t_RES2, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES2)), 0);
-  res += mat4x4f(-0.0385675803, -0.0348785557, 0.0729648024, -0.198011190, 0.0381550565, -0.0894537643, -0.268907279, 0.333873570, 0.0186436176, -0.0323102698, -0.263399810, -0.270350963, -0.178106248, -0.319698960, -0.00000634881417, 0.224084854) * textureLoad(t_RES3, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES3)), 0);
-  res += mat4x4f(0.0367681459, 0.292418212, -0.0254704580, -0.188981503, 0.0117503433, 0.220869675, -0.0745097548, 0.248285711, 0.108698845, -0.103064530, 0.0276679248, 0.0835002959, 0.639807165, 0.248613417, -0.145241097, -0.506057382) * textureLoad(t_RES4, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES4)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(-0.0130243897, 0.255760342, -0.0861852467, -0.00486075040) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass46 : expanding_9 ====
-// ---- PASS 46: expanding 9 (save=EXPANDED9, comps=4) ----
-// binds: RES1, RES2, RES3, RES4
-@group(0) @binding(0) var t_RES1 : texture_2d<f32>;
-@group(0) @binding(1) var t_RES2 : texture_2d<f32>;
-@group(0) @binding(2) var t_RES3 : texture_2d<f32>;
-@group(0) @binding(3) var t_RES4 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.342076749, -0.0292894058, -0.134116039, -0.0548278578);
-  res += mat4x4f(-0.208863378, 0.0310561303, -0.0233436823, 0.162628502, 0.101130262, 0.0166006722, 0.0491919555, -0.0537500009, 0.0282120183, -0.126852795, -0.0338383578, 0.0286468044, -0.514633238, 0.692670822, 0.131998122, -1.19396198) * textureLoad(t_RES1, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES1)), 0);
-  res += mat4x4f(-0.0152657563, 0.171764225, 0.0476406552, 0.0258869883, 0.291317672, -0.177562028, 0.272318155, -0.245771185, 0.297363222, 0.0464197695, -0.00693707261, -0.0607092492, 0.0451576859, 0.00768187409, -0.884657025, -0.0855826363) * textureLoad(t_RES2, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES2)), 0);
-  res += mat4x4f(-0.139445066, -0.167817488, 0.238471657, -0.114194736, 0.506105304, 0.0438360050, -0.486128330, -0.0967657343, -0.417803705, -0.163115069, 0.0739030167, -0.335960180, -0.102993488, -0.237524256, -0.187300697, -0.325950444) * textureLoad(t_RES3, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES3)), 0);
-  res += mat4x4f(-0.126885638, -0.121609442, -0.170746014, -0.376361012, 0.0153043643, -0.0703697875, -0.190480039, 0.126787692, 0.0803136900, -0.0759697184, 0.00824088044, 0.104340352, -0.216779873, -0.684662163, 0.185171336, 1.28425801) * textureLoad(t_RES4, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES4)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(-0.00475477101, 0.0823649541, -0.0160131454, -0.0785525367) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass47 : expanding_10 ====
-// ---- PASS 47: expanding 10 (save=EXPANDED10, comps=4) ----
-// binds: RES1, RES2, RES3, RES4
-@group(0) @binding(0) var t_RES1 : texture_2d<f32>;
-@group(0) @binding(1) var t_RES2 : texture_2d<f32>;
-@group(0) @binding(2) var t_RES3 : texture_2d<f32>;
-@group(0) @binding(3) var t_RES4 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.0444936343, 0.0199588165, -0.0350163616, -0.0123227211);
-  res += mat4x4f(-0.258558571, 0.138087526, 0.119842917, 0.280708253, 0.0863360912, 0.0659906045, 0.0129334461, 0.0701358169, -0.185208410, 0.0209135003, -0.0491142124, 0.0185904726, -0.224744156, 0.390827149, -0.396224916, 0.205150202) * textureLoad(t_RES1, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES1)), 0);
-  res += mat4x4f(-0.0639962479, 0.0209234264, -0.0614769422, 0.126059026, 0.0945213363, 0.124186955, -0.104041457, -0.315331876, -0.303997427, -0.0735848099, -0.0437899567, -0.121412456, 0.00373229338, 0.228715003, -0.393183112, 0.186366484) * textureLoad(t_RES2, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES2)), 0);
-  res += mat4x4f(-0.188814208, -0.0297952164, -0.235888436, -0.202971771, 0.0471164584, -0.201281250, 0.241115972, -0.197414190, -0.115232565, 0.0397068597, -0.0638035908, -0.0308154542, -0.191935748, 0.0314871110, -0.0113136210, -0.0892724469) * textureLoad(t_RES3, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES3)), 0);
-  res += mat4x4f(-0.210005775, 0.000154635534, 0.00251258328, -0.0522724502, 0.0339385048, 0.0729734525, -0.291381449, 0.0238553640, -0.0885685906, -0.0373712927, 0.194332659, 0.0419086777, 0.369903743, 0.183629185, 0.183807656, 0.00833969191) * textureLoad(t_RES4, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES4)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(0.115049534, 1.06053901, -0.0352337398, 0.133598462) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass48 : expanding_11 ====
-// ---- PASS 48: expanding 11 (save=EXPANDED11, comps=4) ----
-// binds: RES1, RES2, RES3, RES4
-@group(0) @binding(0) var t_RES1 : texture_2d<f32>;
-@group(0) @binding(1) var t_RES2 : texture_2d<f32>;
-@group(0) @binding(2) var t_RES3 : texture_2d<f32>;
-@group(0) @binding(3) var t_RES4 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.0618050657, 0.00250778371, -0.0304063670, -0.0253355242);
-  res += mat4x4f(0.248095945, 0.249115229, -0.328725666, -0.0703936592, 0.0223213304, -0.00138899824, -0.0418152176, 0.0710532144, -0.0306159351, -0.0791581869, -0.247332364, -0.281888545, -0.135672376, 0.315575927, 0.112203695, 0.118623510) * textureLoad(t_RES1, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES1)), 0);
-  res += mat4x4f(-0.0454790704, -0.0438226759, -0.0707597882, -0.0616745055, -0.264085650, 0.110405773, 0.123379409, -0.0193307903, -0.0226256438, -0.136954039, 0.111152120, -0.288610816, -0.192554295, -0.0265127048, 0.351563126, -0.266828299) * textureLoad(t_RES2, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES2)), 0);
-  res += mat4x4f(0.111376598, -0.131018907, 0.238617361, 0.197664350, -0.514314473, -0.00685970671, 0.112016983, -0.233284578, -0.268270671, 0.0172422044, -0.327477127, -0.0442661829, -0.147137746, -0.0250553824, -0.398271799, -0.133205771) * textureLoad(t_RES3, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES3)), 0);
-  res += mat4x4f(-0.0350602418, -0.0156255122, -0.295147836, -0.0261163022, 0.150349095, -0.169258952, -0.0849871933, 0.271600932, -0.149080053, 0.114769742, 0.154530972, -0.146179363, -0.157918155, -0.0681356415, -0.404486209, 0.0642753914) * textureLoad(t_RES4, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES4)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(0.00181433558, 0.413398981, -0.0309383757, -0.0114375129) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass49 : expanding_12 ====
-// ---- PASS 49: expanding 12 (save=EXPANDED12, comps=4) ----
-// binds: RES1, RES2, RES3, RES4
-@group(0) @binding(0) var t_RES1 : texture_2d<f32>;
-@group(0) @binding(1) var t_RES2 : texture_2d<f32>;
-@group(0) @binding(2) var t_RES3 : texture_2d<f32>;
-@group(0) @binding(3) var t_RES4 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.0367725492, 0.0297095925, -0.261486650, 0.0330366194);
-  res += mat4x4f(-0.0295132697, 0.129501075, -0.0137622766, 0.185057893, 0.0937492475, -0.123776421, 0.0542533472, -0.0749437287, -0.0301182847, -0.0187617913, 0.0483842008, -0.0482693464, -0.174734950, 0.191262901, -0.438484699, 0.809448361) * textureLoad(t_RES1, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES1)), 0);
-  res += mat4x4f(-0.198123991, -0.0154642146, 0.00891554356, -0.0873039439, 0.218649447, -0.0844323412, -0.0543268658, 0.0317630470, 0.0142803090, 0.345948070, 0.283311903, 0.327520996, -0.348669648, -0.245578036, 0.329017818, -0.0843599960) * textureLoad(t_RES2, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES2)), 0);
-  res += mat4x4f(0.0696560293, 0.160885215, -0.193558693, 0.245933577, 0.168946579, -0.163316950, 0.164317027, -0.144147247, 0.345013082, -0.0480607636, -0.184068814, 0.111782603, -0.276307672, -0.177228615, -0.408723593, -0.0822197124) * textureLoad(t_RES3, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES3)), 0);
-  res += mat4x4f(0.0571454465, 0.0356414020, -0.187030688, -0.133048952, -0.155825809, 0.181779757, 0.0757509097, 0.0250610393, 0.00200078241, -0.160445765, 0.122955941, 0.263887495, 0.188722312, 0.281423509, -0.724367023, 0.0624093823) * textureLoad(t_RES4, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES4)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(0.0484057181, -0.263155192, 0.000325654750, -0.0588769391) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass50 : expanding_13 ====
-// ---- PASS 50: expanding 13 (save=EXPANDED13, comps=4) ----
-// binds: RES1, RES2, RES3, RES4
-@group(0) @binding(0) var t_RES1 : texture_2d<f32>;
-@group(0) @binding(1) var t_RES2 : texture_2d<f32>;
-@group(0) @binding(2) var t_RES3 : texture_2d<f32>;
-@group(0) @binding(3) var t_RES4 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.0375194028, 0.00498494599, -0.0296996012, 0.0172721259);
-  res += mat4x4f(-0.103782326, -0.209091097, 0.0977440625, 0.108576700, -0.135068297, -0.00335335033, 0.134732082, 0.108028725, -0.168741569, -0.0556001402, 0.0192291271, -0.0366385654, -0.524281621, -0.0973284915, 0.244837865, 0.180339769) * textureLoad(t_RES1, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES1)), 0);
-  res += mat4x4f(-0.140774101, -0.0701540485, 0.112067401, -0.139136583, -0.0694180727, 0.272562623, -0.332572401, 0.0356726944, -0.527696192, 0.207368895, 0.0275850818, 0.373546094, -0.0370581448, -0.230142102, -0.131501511, 0.334930539) * textureLoad(t_RES2, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES2)), 0);
-  res += mat4x4f(-0.00298514846, 0.237418458, -0.173749626, 0.0402252078, -0.117065005, 0.268635452, 0.0876380056, 0.328671306, -0.0126608303, 0.125745595, -0.0288034994, 0.0602610111, -0.127148792, -0.138862953, -0.0728517547, -0.0896863788) * textureLoad(t_RES3, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES3)), 0);
-  res += mat4x4f(0.115572631, -0.0489294082, -0.0225676075, 0.0433923341, 0.226363271, -0.223665014, -0.111732244, 0.187662467, -0.134473637, 0.0110210981, 0.0224010497, 0.223745272, 0.552177668, 0.320826352, 0.459622890, 0.0404529013) * textureLoad(t_RES4, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES4)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(-0.130885243, 0.0670913532, -0.0278433170, 0.996376753) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass51 : expanding_14 ====
-// ---- PASS 51: expanding 14 (save=EXPANDED14, comps=4) ----
-// binds: RES1, RES2, RES3, RES4
-@group(0) @binding(0) var t_RES1 : texture_2d<f32>;
-@group(0) @binding(1) var t_RES2 : texture_2d<f32>;
-@group(0) @binding(2) var t_RES3 : texture_2d<f32>;
-@group(0) @binding(3) var t_RES4 : texture_2d<f32>;
-@group(0) @binding(4) var outTex : texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let dims = textureDimensions(outTex);
-  if (gid.x >= dims.x || gid.y >= dims.y) { return; }
-  let p = vec2i(i32(gid.x), i32(gid.y));
-  var res = vec4f(-0.0989004001, -0.0244861078, -0.0256052595, -0.0205684360);
-  res += mat4x4f(0.223029569, -0.133236706, -0.0849369615, 0.0607042313, -0.0319523998, 0.135560364, 0.0216345564, -0.0435814336, 0.0662411451, -0.124353774, -0.149963021, -0.0178027432, -0.0669042021, -0.509932160, 0.235976070, 0.110088192) * textureLoad(t_RES1, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES1)), 0);
-  res += mat4x4f(0.0463832356, 0.0354107842, -0.0564240664, -0.0247205906, -0.0752996430, 0.0247233212, 0.184593394, -0.148842499, -0.298947543, 0.329718381, 0.109195001, -0.188488498, -0.412327707, 0.141102374, -0.392132103, 0.0560379699) * textureLoad(t_RES2, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES2)), 0);
-  res += mat4x4f(0.149992675, -0.398099840, 0.0990773588, -0.0774550363, -0.521447659, 0.150564060, -0.0159742329, -0.0754789412, -0.0760962889, -0.0700559616, -0.150763363, -0.00287004793, 0.0472455584, -0.266288579, -0.155441269, -0.0972240493) * textureLoad(t_RES3, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES3)), 0);
-  res += mat4x4f(-0.0457784496, -0.0683998242, -0.0543023311, -0.0386587232, 0.0598755218, -0.155651465, -0.210835606, 0.0600448549, 0.0370984748, 0.0641717836, 0.0519689284, -0.00450435746, -0.396661103, 0.363801599, 0.100632839, 0.0199289434) * textureLoad(t_RES4, clampCoord(p + vec2i(0, 0), textureDimensions(t_RES4)), 0);
-  res = max(res, vec4f(0.0)) + vec4f(-0.0674505681, -0.168752059, 0.0256951842, 0.549540043) * min(res, vec4f(0.0));
-  textureStore(outTex, p, res);
-}
-
-//==== ENTRY pass52 : sub_pixel_convolution_1 ====
-// ---- PASS 52: sub-pixel convolution 1 (save=SUBCONV1, comps=4) ----
+//==== ENTRY pass14 : sub_pixel_convolution_1 ====
+// ---- PASS 14: sub-pixel convolution 1 (save=SUBCONV1, comps=4) ----
 // binds: EXPANDED1, EXPANDED2, EXPANDED3, EXPANDED4, EXPANDED5, EXPANDED6, EXPANDED7, EXPANDED8, EXPANDED9, EXPANDED10, EXPANDED11, EXPANDED12, EXPANDED13, EXPANDED14
 @group(0) @binding(0) var t_EXPANDED1 : texture_2d<f32>;
 @group(0) @binding(1) var t_EXPANDED2 : texture_2d<f32>;
@@ -2026,138 +1566,152 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let dims = textureDimensions(outTex);
   if (gid.x >= dims.x || gid.y >= dims.y) { return; }
   let p = vec2i(i32(gid.x), i32(gid.y));
+  let d_EXPANDED1 = textureDimensions(t_EXPANDED1);
+  let d_EXPANDED2 = textureDimensions(t_EXPANDED2);
+  let d_EXPANDED3 = textureDimensions(t_EXPANDED3);
+  let d_EXPANDED4 = textureDimensions(t_EXPANDED4);
+  let d_EXPANDED5 = textureDimensions(t_EXPANDED5);
+  let d_EXPANDED6 = textureDimensions(t_EXPANDED6);
+  let d_EXPANDED7 = textureDimensions(t_EXPANDED7);
+  let d_EXPANDED8 = textureDimensions(t_EXPANDED8);
+  let d_EXPANDED9 = textureDimensions(t_EXPANDED9);
+  let d_EXPANDED10 = textureDimensions(t_EXPANDED10);
+  let d_EXPANDED11 = textureDimensions(t_EXPANDED11);
+  let d_EXPANDED12 = textureDimensions(t_EXPANDED12);
+  let d_EXPANDED13 = textureDimensions(t_EXPANDED13);
+  let d_EXPANDED14 = textureDimensions(t_EXPANDED14);
   var res = vec4f(0.217430681, 0.219485730, 0.222105175, 0.226014957);
-  res += mat4x4f(-0.00845791865, -0.00382668059, 0.000939234800, 0.00277114683, 0.0575491972, -0.00133076287, -0.0186221693, 0.0134833492, -0.0917152241, 0.0115084937, 0.0138894748, -0.0292571466, 0.0301878508, -0.0494047925, -0.0157791302, -0.0292122159) * textureLoad(t_EXPANDED1, clampCoord(p + vec2i(-1, -1), textureDimensions(t_EXPANDED1)), 0);
-  res += mat4x4f(-0.0418097079, 0.0386713892, 0.0487923510, -0.00830261596, -0.0287191644, 0.00133977807, 0.0444803722, 0.00366554293, -0.0579890721, -0.00691598374, 0.0113183511, 0.0163729768, 0.0189570338, 0.0164324511, 0.0181374475, -0.00966223702) * textureLoad(t_EXPANDED2, clampCoord(p + vec2i(-1, -1), textureDimensions(t_EXPANDED2)), 0);
-  res += mat4x4f(0.0308923051, -0.0102507100, 0.00763784675, 0.0100745307, -0.0299408399, -0.00319610327, -0.0165354386, -0.0150921186, -0.0157683548, 0.00302207936, -0.00279551302, -0.00889727194, -0.0528509766, 0.0472248755, 0.0373144336, 0.0141834514) * textureLoad(t_EXPANDED3, clampCoord(p + vec2i(-1, -1), textureDimensions(t_EXPANDED3)), 0);
-  res += mat4x4f(0.0282710027, 0.0141655300, -0.00333618210, 0.0133147212, -0.00940948073, 0.00728658214, 0.00166168355, 0.000168018087, -0.0114940442, -0.000904774060, -0.0235649347, -0.00952380151, 0.00395541126, -0.00633725431, -0.0114066303, -0.0138765238) * textureLoad(t_EXPANDED4, clampCoord(p + vec2i(-1, -1), textureDimensions(t_EXPANDED4)), 0);
-  res += mat4x4f(0.0919740796, -0.0449555963, 0.0113128256, -0.0167054497, 0.0132541051, 0.00432338798, -0.00232769758, 0.0179720279, 0.00852896925, 0.00166366633, -0.0102329338, -0.00194233307, -0.0207794346, -0.000548564538, 0.00871098507, 0.00404870557) * textureLoad(t_EXPANDED5, clampCoord(p + vec2i(-1, -1), textureDimensions(t_EXPANDED5)), 0);
-  res += mat4x4f(0.0440304130, -0.0335848369, -0.0813063681, 0.0165831018, -0.00900261011, 0.00767699955, -0.00467581814, -0.00804609433, -0.0124670314, 0.00711616036, -0.00182728516, 0.00449472759, 0.00230902340, 0.00560098747, 0.00375599344, 0.00276506552) * textureLoad(t_EXPANDED6, clampCoord(p + vec2i(-1, -1), textureDimensions(t_EXPANDED6)), 0);
-  res += mat4x4f(0.00634891260, -0.00972907338, 0.00125662424, 0.00585811352, -0.00244843285, -0.000925859087, -0.00111691887, 0.00486593461, -0.00563807692, 0.0129827512, 0.00800446980, 0.00507297926, -0.00260802358, -0.00726787280, -0.0254334733, -0.00176032749) * textureLoad(t_EXPANDED7, clampCoord(p + vec2i(-1, -1), textureDimensions(t_EXPANDED7)), 0);
-  res += mat4x4f(0.0901929289, -0.0266965032, -0.0582166798, -0.0228525475, 0.0345232114, -0.0184003823, -0.0129962349, 0.00325224851, 0.0297258925, 0.0111841708, -0.00114619336, -0.00923748501, 0.0269716624, -0.0146893281, 0.000242271170, -0.0291120168) * textureLoad(t_EXPANDED8, clampCoord(p + vec2i(-1, -1), textureDimensions(t_EXPANDED8)), 0);
-  res += mat4x4f(0.000112551854, 0.0370316133, 0.00412115268, -0.00140058738, 0.0329671837, -0.00275029335, 0.0259870570, 0.0140932556, -0.0247148946, 0.00732354028, -0.00660198834, 0.00163678476, 0.0565780699, -0.00450152019, -0.00863267109, -0.000295074511) * textureLoad(t_EXPANDED9, clampCoord(p + vec2i(-1, -1), textureDimensions(t_EXPANDED9)), 0);
-  res += mat4x4f(0.0165178478, 0.00159655337, -0.0172380731, -0.0133005893, -0.00331197097, -0.0278938655, -0.0256247222, -0.0248877741, 0.0375293829, -0.00534664234, -0.0229313448, 0.0124236466, 0.00140813296, 0.0120270215, 0.00813171361, 0.00522069633) * textureLoad(t_EXPANDED10, clampCoord(p + vec2i(-1, -1), textureDimensions(t_EXPANDED10)), 0);
-  res += mat4x4f(-0.0278020948, -0.0103753256, 0.0209024921, 0.0129399663, 0.0209526103, -0.00468667457, 0.00925619435, 0.0176489260, 0.000235230473, -0.00321162539, -0.00643527135, -0.0131941289, 0.00379652018, -0.000259643624, 0.0184696745, 0.00882200990) * textureLoad(t_EXPANDED11, clampCoord(p + vec2i(-1, -1), textureDimensions(t_EXPANDED11)), 0);
-  res += mat4x4f(-0.0402455889, -0.00896959379, -0.0144632040, -0.0132053588, 0.0360528678, -0.00663749920, -0.0406562462, -0.00875978265, 0.0182064138, -0.0130765541, 0.00627799099, 0.000935965509, 0.00162287208, 0.0106634535, -0.0128378263, 0.0189062748) * textureLoad(t_EXPANDED12, clampCoord(p + vec2i(-1, -1), textureDimensions(t_EXPANDED12)), 0);
-  res += mat4x4f(0.00386915193, 0.00944172498, 0.0184059255, 0.00395154720, 0.0129235676, -0.0189460311, -0.0140396487, -0.00532634184, -0.115084693, 0.0475030467, -0.0465413816, 0.000165768593, -0.0000633919699, 0.00184084568, 0.0218909364, 0.0172406081) * textureLoad(t_EXPANDED13, clampCoord(p + vec2i(-1, -1), textureDimensions(t_EXPANDED13)), 0);
-  res += mat4x4f(-0.00239110040, -0.00328445411, 0.00268933107, 0.00503449934, -0.0183665752, -0.00673961686, -0.00556454528, -0.00391281210, 0.0648887828, -0.0318111107, -0.00697663287, -0.00655576354, -0.0509419218, 0.0318751559, 0.00500580762, 0.00983206928) * textureLoad(t_EXPANDED14, clampCoord(p + vec2i(-1, -1), textureDimensions(t_EXPANDED14)), 0);
-  res += mat4x4f(0.0192413852, -0.0479554161, -0.00116804917, 0.0288745631, 0.0198999215, 0.113121197, 0.00311861234, -0.0519252643, 0.0679928511, -0.0718355849, 0.00985423196, 0.0583435223, -0.0267040860, 0.0481388271, -0.0234255437, 0.00922221597) * textureLoad(t_EXPANDED1, clampCoord(p + vec2i(-1, 0), textureDimensions(t_EXPANDED1)), 0);
-  res += mat4x4f(-0.0978811830, -0.139989227, 0.130863339, 0.172891825, -0.0359813198, -0.0629157275, -0.0371208414, 0.00507582864, 0.0642571673, 0.00286665861, -0.00427530333, -0.0138711911, -0.00826845784, -0.0187218431, 0.0106125614, 0.0183942132) * textureLoad(t_EXPANDED2, clampCoord(p + vec2i(-1, 0), textureDimensions(t_EXPANDED2)), 0);
-  res += mat4x4f(-0.0799536631, -0.0514595024, 0.0323004089, 0.0297575817, -0.0639481172, -0.0951002464, 0.000433883863, 0.00911942404, -0.00114723912, -0.00562915346, 0.0138590941, -0.00412224839, 0.0563663170, -0.0890365914, 0.0144167515, -0.0241040997) * textureLoad(t_EXPANDED3, clampCoord(p + vec2i(-1, 0), textureDimensions(t_EXPANDED3)), 0);
-  res += mat4x4f(0.117959283, 0.0713051930, -0.0475016609, -0.0570210554, -0.0261360966, 0.0448227301, 0.0203539710, 0.0216044281, -0.0483759977, 0.0329126641, -0.0112956883, -0.0279412009, 0.0214761980, 0.0268824231, -0.00152943726, -0.00584161049) * textureLoad(t_EXPANDED4, clampCoord(p + vec2i(-1, 0), textureDimensions(t_EXPANDED4)), 0);
-  res += mat4x4f(-0.0178364031, 0.0177060496, -0.0164381787, 0.00792162959, 0.0703652278, 0.000946071290, 0.0140440101, 0.0112558426, 0.0138711911, 0.00770583889, -0.00288925297, -0.00508358330, 0.00981689151, 0.00235907757, 0.00653724698, 0.00542204129) * textureLoad(t_EXPANDED5, clampCoord(p + vec2i(-1, 0), textureDimensions(t_EXPANDED5)), 0);
-  res += mat4x4f(0.128602415, 0.219595179, -0.146460205, -0.289432913, 0.0439403690, -0.0222237166, -0.0502039641, -0.00802402198, 0.0293221921, -0.0242700763, -0.0319416039, -0.00386805809, -0.0426360257, 0.00467182463, 0.0152078196, 0.00917576812) * textureLoad(t_EXPANDED6, clampCoord(p + vec2i(-1, 0), textureDimensions(t_EXPANDED6)), 0);
-  res += mat4x4f(-0.0178382993, 0.0327081569, 0.00908473134, -0.0352359191, -0.0134735852, -0.0220241845, -0.0316121913, -0.0176051818, 0.00420018379, 0.0143017825, 0.0187756531, -0.0123716146, 0.112669155, 0.0914030373, -0.0502825342, -0.0489331670) * textureLoad(t_EXPANDED7, clampCoord(p + vec2i(-1, 0), textureDimensions(t_EXPANDED7)), 0);
-  res += mat4x4f(-0.0703412294, 0.100188084, 0.0720408410, 0.00806382205, 0.0389194265, 0.123964697, 0.0720871836, 0.0196087882, -0.0178751145, -0.0147012146, 0.0350220799, 0.0326307416, 0.0634997785, 0.102764010, -0.0277309772, -0.0290504675) * textureLoad(t_EXPANDED8, clampCoord(p + vec2i(-1, 0), textureDimensions(t_EXPANDED8)), 0);
-  res += mat4x4f(0.0264301971, -0.0248339362, 0.0235013925, 0.0206343029, -0.111851081, 0.0340601206, -0.00683973078, -0.0314202458, 0.0358117148, -0.0257524215, -0.0215573665, -0.0198947955, 0.0518256202, -0.0662014112, 0.0108054159, -0.0318648815) * textureLoad(t_EXPANDED9, clampCoord(p + vec2i(-1, 0), textureDimensions(t_EXPANDED9)), 0);
-  res += mat4x4f(-0.0218505077, -0.0260991734, -0.00944458134, 0.000928766036, -0.00214092992, 0.0246180315, 0.0187164862, 0.0951490924, 0.00649351627, -0.0170825925, 0.0478098355, -0.00657497253, 0.0315656438, 0.00894672330, -0.000351638795, -0.0145172402) * textureLoad(t_EXPANDED10, clampCoord(p + vec2i(-1, 0), textureDimensions(t_EXPANDED10)), 0);
-  res += mat4x4f(-0.0130883073, -0.0450729094, 0.0104909418, 0.0294497553, -0.0308215097, 0.0162216332, -0.0750420913, -0.0296699908, -0.00582634564, -0.00931788329, -0.00305738929, -0.000412969937, 0.00572475465, 0.0194812249, -0.0127659617, -0.0152707873) * textureLoad(t_EXPANDED11, clampCoord(p + vec2i(-1, 0), textureDimensions(t_EXPANDED11)), 0);
-  res += mat4x4f(-0.107818544, 0.115350798, -0.0286622103, 0.00621990720, 0.140006095, 0.165111542, -0.0681953803, -0.0713128299, -0.0442281514, -0.0457805023, 0.0519373193, 0.0431986004, -0.00278821844, -0.0129560139, 0.131876469, 0.0496316403) * textureLoad(t_EXPANDED12, clampCoord(p + vec2i(-1, 0), textureDimensions(t_EXPANDED12)), 0);
-  res += mat4x4f(-0.0407394730, -0.0329078399, 0.0106979720, 0.0233990550, -0.0102507388, 0.0145383319, -0.00745819323, -0.0114303846, 0.00738555938, 0.0600433983, -0.0589543879, 0.0869924054, -0.0413387679, -0.0294676311, 0.00300312554, 0.0147322426) * textureLoad(t_EXPANDED13, clampCoord(p + vec2i(-1, 0), textureDimensions(t_EXPANDED13)), 0);
-  res += mat4x4f(-0.0106398836, 0.0232375171, -0.00183451595, -0.0351459906, -0.0550653897, -0.0478023924, 0.00377742108, 0.00357048702, -0.0585955530, -0.00129847997, 0.0176964123, 0.0160206892, 0.0612036884, -0.181237862, -0.116116703, -0.0117453001) * textureLoad(t_EXPANDED14, clampCoord(p + vec2i(-1, 0), textureDimensions(t_EXPANDED14)), 0);
-  res += mat4x4f(-0.00536960736, 0.0110508287, -0.00442947447, -0.00999789499, 0.0143686254, -0.0243171751, -0.00372097082, -0.00665223133, -0.0132723255, 0.0404342972, -0.0180517063, -0.0223241337, -0.0157071929, 0.0281598289, -0.00747457799, 0.000559459324) * textureLoad(t_EXPANDED1, clampCoord(p + vec2i(-1, 1), textureDimensions(t_EXPANDED1)), 0);
-  res += mat4x4f(0.0185450390, 0.0195826348, 0.000873425452, 0.0232357364, -0.00602270477, 0.00300755142, 0.00419372506, 0.00816098321, -0.0124518843, 0.0102319056, 0.0176490787, -0.00104941940, 0.0253161173, 0.0225027241, 0.0103972815, 0.0327307209) * textureLoad(t_EXPANDED2, clampCoord(p + vec2i(-1, 1), textureDimensions(t_EXPANDED2)), 0);
-  res += mat4x4f(-0.000170976346, 0.00243840483, 0.00685358047, 0.0178426672, -0.0102559486, -0.00565136224, -0.0135684526, -0.0144804567, 0.0147307692, -0.0202700328, -0.0101689678, 0.00454006717, -0.0150295310, -0.0418834239, -0.0182976201, 0.0237848405) * textureLoad(t_EXPANDED3, clampCoord(p + vec2i(-1, 1), textureDimensions(t_EXPANDED3)), 0);
-  res += mat4x4f(0.0109567447, 0.0500781462, -0.0135678658, -0.0103647774, -0.0226638895, -0.00136768725, -0.00922444556, 0.0178915486, 0.0116386795, -0.00536854845, -0.00194151246, -0.0182786789, 0.00516170822, 0.000780894479, -0.00435365178, 0.00201090612) * textureLoad(t_EXPANDED4, clampCoord(p + vec2i(-1, 1), textureDimensions(t_EXPANDED4)), 0);
-  res += mat4x4f(0.0198764801, -0.0331307538, 0.000778020883, 0.0250247791, -0.00453234604, -0.00438058889, 0.00719010551, 0.00337885832, -0.00144215394, 0.0273085739, -0.00954424217, -0.00532586686, -0.00364370714, -0.00511671649, -0.00302959210, -0.00556591339) * textureLoad(t_EXPANDED5, clampCoord(p + vec2i(-1, 1), textureDimensions(t_EXPANDED5)), 0);
-  res += mat4x4f(-0.0114496881, -0.0461821854, -0.0173295811, -0.0203608405, 0.0119364718, 0.00928202830, -0.00468356768, -0.0215721093, -0.0119977109, -0.00248992024, 0.00151668396, -0.0103101842, -0.00156902382, -0.00713463826, 0.0122981211, 0.0110869128) * textureLoad(t_EXPANDED6, clampCoord(p + vec2i(-1, 1), textureDimensions(t_EXPANDED6)), 0);
-  res += mat4x4f(-0.00158135104, 0.0141248293, -0.00497283926, 0.00979664735, 0.00232256949, -0.0187237207, 0.0116074067, -0.00843894202, 0.00737329479, -0.0244456474, 0.00311246887, -0.00242810580, -0.0126258498, 0.0243344083, -0.00543325068, -0.0257614087) * textureLoad(t_EXPANDED7, clampCoord(p + vec2i(-1, 1), textureDimensions(t_EXPANDED7)), 0);
-  res += mat4x4f(0.00396241713, -0.0816341192, -0.0333665125, 0.00998898316, 0.00136507780, -0.0395455882, 0.0166947618, 0.0315072872, -0.00587365031, 0.00674030837, -0.0169018414, -0.00228100922, -0.0149331465, 0.0100655640, -0.0153225567, -0.00297246757) * textureLoad(t_EXPANDED8, clampCoord(p + vec2i(-1, 1), textureDimensions(t_EXPANDED8)), 0);
-  res += mat4x4f(0.0104102194, -0.0229700506, -0.00825588405, 0.0231874548, 0.0237333719, -0.0411732383, 0.0252905488, 0.0454767346, -0.00543887774, -0.00522213709, -0.00636110967, 0.00240463740, -0.0423299894, 0.0561911911, -0.0205518231, 0.0299595706) * textureLoad(t_EXPANDED9, clampCoord(p + vec2i(-1, 1), textureDimensions(t_EXPANDED9)), 0);
-  res += mat4x4f(-0.0109067587, 0.00500367722, -0.00514357956, -0.0207303669, 0.0284921583, -0.00199429551, 0.00422498956, 0.0156558994, 0.00222094287, 0.00378779927, 0.00110069453, 0.00529460562, -0.0227501690, -0.00238702679, -0.00206880062, -0.0191609431) * textureLoad(t_EXPANDED10, clampCoord(p + vec2i(-1, 1), textureDimensions(t_EXPANDED10)), 0);
-  res += mat4x4f(-0.0259114467, 0.00829590578, 0.00994539820, 0.00858911686, 0.0663686618, -0.0409342088, 0.00309032877, -0.0367947295, 0.00908362865, 0.0105582811, -0.0102113942, -0.00205962500, 0.0119886138, -0.00814658590, 0.00856595021, 0.00368244480) * textureLoad(t_EXPANDED11, clampCoord(p + vec2i(-1, 1), textureDimensions(t_EXPANDED11)), 0);
-  res += mat4x4f(0.0126900654, 0.0615716018, 0.00209017983, 0.00674351677, 0.000849056931, 0.0256354790, -0.00189609837, -0.0344506726, 0.000120657074, 0.0359271020, 0.00854431279, 0.0250126533, 0.0201439913, -0.00965338759, -0.0280496646, 0.0184719469) * textureLoad(t_EXPANDED12, clampCoord(p + vec2i(-1, 1), textureDimensions(t_EXPANDED12)), 0);
-  res += mat4x4f(0.00525650941, -0.00703383144, 0.00906703062, 0.0104125179, 0.0190774649, 0.00292311842, 0.00697412668, 0.000399773795, 0.0594259612, -0.0893695578, 0.0227510408, -0.00353631889, -0.00880323816, -0.0159376413, 0.00673482521, 0.0118979923) * textureLoad(t_EXPANDED13, clampCoord(p + vec2i(-1, 1), textureDimensions(t_EXPANDED13)), 0);
-  res += mat4x4f(0.0135554923, -0.00599034736, 0.00251518516, 0.00201052567, 0.00794826727, -0.0137567390, -0.00103741873, -0.00298650004, 0.00652743271, 0.0119257104, -0.00115847273, -0.00719900243, -0.0185654052, 0.0835020468, -0.0432207473, -0.0685475394) * textureLoad(t_EXPANDED14, clampCoord(p + vec2i(-1, 1), textureDimensions(t_EXPANDED14)), 0);
-  res += mat4x4f(0.00309772766, -0.0167831965, -0.0107046161, -0.0268401746, 0.100383721, -0.0219729468, -0.128658950, -0.0224073902, 0.000823354349, -0.0481482781, 0.0705501065, 0.0737544745, -0.0880446211, -0.0196331907, 0.0729970038, -0.0991751999) * textureLoad(t_EXPANDED1, clampCoord(p + vec2i(0, -1), textureDimensions(t_EXPANDED1)), 0);
-  res += mat4x4f(-0.0311617423, 0.00938033219, 0.0531129055, 0.00537741603, 0.0333479270, 0.00662772404, -0.0340002514, 0.00274531683, 0.0154044256, 0.00738463923, -0.0000563604408, -0.0266689342, 0.0201399848, 0.0208100304, 0.0242317580, 0.0356795937) * textureLoad(t_EXPANDED2, clampCoord(p + vec2i(0, -1), textureDimensions(t_EXPANDED2)), 0);
-  res += mat4x4f(-0.0154611720, -0.0459337309, 0.0199307874, -0.0448187627, -0.0793030560, -0.0144911772, 0.105712339, 0.00229093712, -0.00955981016, 0.0106537137, -0.0176209416, 0.0239937790, 0.101783000, -0.0636019036, -0.126366928, 0.0194826610) * textureLoad(t_EXPANDED3, clampCoord(p + vec2i(0, -1), textureDimensions(t_EXPANDED3)), 0);
-  res += mat4x4f(0.0608064830, 0.0278774388, -0.0559132472, -0.00888465717, 0.0348644443, -0.0179951210, 0.0376675352, 0.00637048157, -0.0797440112, -0.00452441489, 0.102527253, -0.0106769074, 0.00261408603, 0.0209568813, 0.0229888298, 0.0272161551) * textureLoad(t_EXPANDED4, clampCoord(p + vec2i(0, -1), textureDimensions(t_EXPANDED4)), 0);
-  res += mat4x4f(0.0157769397, -0.00188548258, 0.0649448931, -0.0181190129, 0.0772280693, -0.0174879860, 0.0178782269, 0.00891945884, -0.0519071706, -0.00897526089, 0.0309995152, 0.0157432407, 0.0438226536, -0.0123207029, -0.0262368955, -0.00836033281) * textureLoad(t_EXPANDED5, clampCoord(p + vec2i(0, -1), textureDimensions(t_EXPANDED5)), 0);
-  res += mat4x4f(-0.0698773488, -0.0204444267, 0.0824921876, -0.0310935620, -0.0106520159, -0.0403096043, -0.0294076223, 0.00621533906, -0.0149652520, -0.00244958862, -0.0304640196, 0.0220390093, -0.0137833487, 0.0143663408, -0.0120294541, 0.000560329936) * textureLoad(t_EXPANDED6, clampCoord(p + vec2i(0, -1), textureDimensions(t_EXPANDED6)), 0);
-  res += mat4x4f(0.0459703729, 0.00290106796, 0.0129441330, 0.00942931138, -0.0599747412, -0.0163903683, 0.0515003763, 0.00100902992, -0.0218271613, 0.0314828902, -0.0382377394, 0.0103039062, -0.00151429663, 0.00715212710, 0.0325446874, 0.0119517334) * textureLoad(t_EXPANDED7, clampCoord(p + vec2i(0, -1), textureDimensions(t_EXPANDED7)), 0);
-  res += mat4x4f(-0.0278179254, -0.0491713695, 0.0143709378, 0.0385062769, 0.0199799333, 0.0201750994, -0.0165301990, -0.0441017188, -0.0313355140, 0.0250282642, -0.0305537861, 0.00573369116, 0.0755715817, -0.0572116412, 0.125226572, -0.0850872919) * textureLoad(t_EXPANDED8, clampCoord(p + vec2i(0, -1), textureDimensions(t_EXPANDED8)), 0);
-  res += mat4x4f(0.000968733686, 0.0356939472, -0.109908171, 0.106769063, 0.0711468160, 0.0280735102, -0.106617324, -0.0481392145, -0.00988917425, 0.00117819034, -0.0300043486, 0.0265110359, 0.0723108128, 0.00458646240, 0.115539700, -0.0250482541) * textureLoad(t_EXPANDED9, clampCoord(p + vec2i(0, -1), textureDimensions(t_EXPANDED9)), 0);
-  res += mat4x4f(-0.00121852872, -0.00208086940, -0.0310122594, -0.0238042232, 0.0712311789, -0.0852747187, 0.0963311121, -0.0747845620, 0.0205409080, 0.0626615211, 0.0806915462, 0.00110128755, -0.0510443784, 0.0522621647, -0.0543311276, 0.0258967690) * textureLoad(t_EXPANDED10, clampCoord(p + vec2i(0, -1), textureDimensions(t_EXPANDED10)), 0);
-  res += mat4x4f(0.0926505998, -0.0170079656, -0.0130562466, -0.0338355228, -0.0506330207, 0.00765459472, -0.0652731508, -0.0365156569, -0.0185303520, -0.0151366508, -0.0207968280, 0.00440393109, -0.00827036705, -0.00300785364, 0.0148141365, 0.0286504198) * textureLoad(t_EXPANDED11, clampCoord(p + vec2i(0, -1), textureDimensions(t_EXPANDED11)), 0);
-  res += mat4x4f(-0.0986157283, -0.00646300567, -0.0900010914, 0.0128815062, -0.0134371668, 0.0172572900, -0.0102788061, -0.00534902140, -0.0481173061, 0.0392727517, 0.0268426798, -0.0142146619, 0.0377039574, 0.00282036257, 0.00389196328, -0.0202773437) * textureLoad(t_EXPANDED12, clampCoord(p + vec2i(0, -1), textureDimensions(t_EXPANDED12)), 0);
-  res += mat4x4f(-0.0209710766, 0.00288482755, -0.0324134417, 0.0112398146, 0.0240102690, -0.0234499667, 0.0642898604, -0.0400659107, 0.137523055, -0.0491282083, -0.0224918295, 0.0499754287, -0.0167578738, -0.0294696465, -0.0128111411, -0.0583304316) * textureLoad(t_EXPANDED13, clampCoord(p + vec2i(0, -1), textureDimensions(t_EXPANDED13)), 0);
-  res += mat4x4f(-0.0119691137, -0.00524020335, -0.00208808202, -0.0140769109, -0.0442097001, 0.0110711362, 0.0268030316, -0.00569909671, 0.114342809, -0.0394854881, 0.181453809, -0.0470916107, 0.00366966170, -0.0192557145, -0.0371073298, 0.0477632470) * textureLoad(t_EXPANDED14, clampCoord(p + vec2i(0, -1), textureDimensions(t_EXPANDED14)), 0);
-  res += mat4x4f(-0.0531748831, 0.147571757, -0.0667049661, -0.0547870062, -0.0714133233, 0.0686139166, 0.0206728335, -0.132465422, 0.0220339391, 0.111049399, -0.113177665, -0.0350927897, -0.0760946348, 0.125614181, -0.117097780, 0.140971318) * textureLoad(t_EXPANDED1, clampCoord(p + vec2i(0, 0), textureDimensions(t_EXPANDED1)), 0);
-  res += mat4x4f(-0.0894309953, -0.0789554715, 0.0849822760, 0.138721898, -0.0382876508, 0.0347646438, 0.118601196, 0.0436772630, 0.189810365, -0.0849920064, -0.142651081, 0.0490130410, -0.0981369838, -0.0616297200, -0.0772218704, -0.0830301642) * textureLoad(t_EXPANDED2, clampCoord(p + vec2i(0, 0), textureDimensions(t_EXPANDED2)), 0);
-  res += mat4x4f(0.0836789683, 0.257873386, -0.227908865, -0.00912429113, -0.200926185, -0.192271635, 0.159281343, 0.180288389, 0.152671531, -0.0497234985, 0.0976368710, -0.0168918166, -0.211716384, 0.109140247, 0.0717186332, 0.0593278557) * textureLoad(t_EXPANDED3, clampCoord(p + vec2i(0, 0), textureDimensions(t_EXPANDED3)), 0);
-  res += mat4x4f(0.118174687, 0.184238315, -0.112734795, -0.151961982, -0.105284028, -0.0648825318, -0.139711484, 0.0187385399, 0.0498556085, -0.187541887, -0.0727197379, 0.191520184, 0.468055338, 0.402735800, 0.409087479, 0.386983931) * textureLoad(t_EXPANDED4, clampCoord(p + vec2i(0, 0), textureDimensions(t_EXPANDED4)), 0);
-  res += mat4x4f(0.0967033282, -0.0718072802, 0.273594439, -0.219427764, -0.195341438, 0.00197830307, 0.0733269602, -0.137437761, -0.163918734, -0.156568602, 0.0217191242, 0.0474232212, 0.251248002, 0.391395926, 0.132610217, 0.180995956) * textureLoad(t_EXPANDED5, clampCoord(p + vec2i(0, 0), textureDimensions(t_EXPANDED5)), 0);
-  res += mat4x4f(-0.00866182800, -0.129888326, -0.0381872989, 0.149009004, -0.310921311, 0.160223052, 0.100475907, 0.0718154237, -0.0483913273, -0.0215625241, 0.138278440, -0.0244476497, 0.147033468, -0.0263777915, -0.0179095324, -0.0272326320) * textureLoad(t_EXPANDED6, clampCoord(p + vec2i(0, 0), textureDimensions(t_EXPANDED6)), 0);
-  res += mat4x4f(0.0710366294, -0.304024339, 0.0616992861, 0.103958786, 0.0715941787, 0.00470473524, 0.0870784670, 0.0655718520, 0.159178227, -0.156684428, 0.0492440909, 0.0364349149, -0.182722688, -0.141774267, 0.132108480, 0.0976375639) * textureLoad(t_EXPANDED7, clampCoord(p + vec2i(0, 0), textureDimensions(t_EXPANDED7)), 0);
-  res += mat4x4f(0.0320702754, 0.0799428076, -0.0101187555, -0.140690699, 0.312746823, 0.0850308463, -0.266279519, -0.170930311, 0.0704256892, 0.126581654, -0.0805993155, -0.0785026699, -0.0347617231, 0.0598682351, -0.202841431, -0.0724329054) * textureLoad(t_EXPANDED8, clampCoord(p + vec2i(0, 0), textureDimensions(t_EXPANDED8)), 0);
-  res += mat4x4f(0.0953889042, 0.0495167300, 0.176042959, -0.341011047, 0.0134755457, -0.135701954, 0.0662675053, 0.0700510740, 0.0298999324, -0.0221953765, 0.133442223, -0.0258115418, 0.149010599, -0.125192180, 0.114874132, -0.158402607) * textureLoad(t_EXPANDED9, clampCoord(p + vec2i(0, 0), textureDimensions(t_EXPANDED9)), 0);
-  res += mat4x4f(0.267625272, 0.168730959, -0.182677165, -0.186484352, 0.234280065, -0.316767782, 0.172944844, -0.274609119, 0.0962567851, -0.214574113, 0.0105733378, -0.112472855, 0.0760679021, -0.188600644, 0.120681442, -0.0895574540) * textureLoad(t_EXPANDED10, clampCoord(p + vec2i(0, 0), textureDimensions(t_EXPANDED10)), 0);
-  res += mat4x4f(-0.0592676327, -0.0114887040, -0.0680907220, 0.0582522340, -0.170684308, 0.119579688, -0.0505379662, 0.120116979, 0.0164414681, 0.0785249025, 0.0538194142, -0.0405557752, -0.153369710, -0.111842483, 0.0124645103, 0.00940106530) * textureLoad(t_EXPANDED11, clampCoord(p + vec2i(0, 0), textureDimensions(t_EXPANDED11)), 0);
-  res += mat4x4f(-0.240565553, 0.170359358, -0.310203344, 0.318568349, 0.0612700321, -0.0105084972, -0.142442107, -0.102361105, 0.127341926, 0.0357327014, -0.174286529, 0.0742380172, 0.0770005882, 0.0330595002, -0.134081796, -0.0432191379) * textureLoad(t_EXPANDED12, clampCoord(p + vec2i(0, 0), textureDimensions(t_EXPANDED12)), 0);
-  res += mat4x4f(0.0983620062, 0.0200136378, -0.0333007611, -0.0690235272, -0.166884467, 0.123758405, -0.0938762948, 0.180041790, 0.0268501863, -0.0747236460, 0.131167218, -0.0645589903, 0.192561150, 0.207865939, 0.410274595, 0.404128551) * textureLoad(t_EXPANDED13, clampCoord(p + vec2i(0, 0), textureDimensions(t_EXPANDED13)), 0);
-  res += mat4x4f(-0.0428101495, 0.00956358761, 0.0161744487, 0.166406691, 0.0900894403, -0.00518129952, 0.0398929194, 0.103933617, -0.0136766033, -0.120362096, -0.00249555777, -0.144752219, 0.274836630, 0.0984896794, 0.210725740, -0.388955355) * textureLoad(t_EXPANDED14, clampCoord(p + vec2i(0, 0), textureDimensions(t_EXPANDED14)), 0);
-  res += mat4x4f(0.0268049221, -0.0423703380, 0.000589119853, 0.000765480392, 0.00815617573, 0.0116128866, -0.0154728275, -0.0181998722, -0.0316719227, -0.0777811259, 0.0438630432, 0.0165820941, 0.00852827355, 0.00112629461, -0.00335321319, 0.0349446051) * textureLoad(t_EXPANDED1, clampCoord(p + vec2i(0, 1), textureDimensions(t_EXPANDED1)), 0);
-  res += mat4x4f(0.0218147188, -0.0209868513, -0.0253979675, 0.0100468677, 0.00396105088, -0.0313926488, 0.00676483987, 0.0355568677, -0.0302412435, 0.0889226347, -0.0100760246, -0.0449699573, 0.00836020242, -0.00429840013, 0.0117295804, 0.0163558796) * textureLoad(t_EXPANDED2, clampCoord(p + vec2i(0, 1), textureDimensions(t_EXPANDED2)), 0);
-  res += mat4x4f(-0.00833919644, -0.0576251484, 0.0299261231, -0.0409072787, -0.00985097047, -0.0825842023, 0.0245215129, 0.0840833038, -0.0497684106, -0.0559792221, -0.00518640736, -0.0733962953, 0.0211381596, 0.0595357232, 0.0223686639, -0.0661195889) * textureLoad(t_EXPANDED3, clampCoord(p + vec2i(0, 1), textureDimensions(t_EXPANDED3)), 0);
-  res += mat4x4f(0.0164041184, 0.0444185361, -0.0324126743, -0.0633065030, -0.0476480760, 0.225897983, -0.0125664268, 0.104383118, -0.0274278391, -0.0349201150, 0.00732075842, 0.0588813871, 0.00911436323, -0.0104056001, 0.0244308785, -0.0238681268) * textureLoad(t_EXPANDED4, clampCoord(p + vec2i(0, 1), textureDimensions(t_EXPANDED4)), 0);
-  res += mat4x4f(0.0171075836, -0.0812225342, -0.00871056411, -0.0502208956, 0.0220535379, 0.0635885522, -0.0262416564, 0.0940538049, 0.00871607941, -0.0440918356, 0.0278396122, 0.0160961840, 0.0240839310, 0.0314593911, 0.00423652073, 0.0196002424) * textureLoad(t_EXPANDED5, clampCoord(p + vec2i(0, 1), textureDimensions(t_EXPANDED5)), 0);
-  res += mat4x4f(-0.0194062125, -0.000711879460, 0.0349982902, -0.0375613794, 0.0584280454, -0.0692161620, 0.0242442004, 0.00378674502, -0.00712879701, -0.0193377268, -0.0275215600, 0.0380689912, -0.0170479063, 0.0209312905, -0.0127153220, -0.00909863692) * textureLoad(t_EXPANDED6, clampCoord(p + vec2i(0, 1), textureDimensions(t_EXPANDED6)), 0);
-  res += mat4x4f(-0.0634901226, 0.0649155900, -0.00651560631, -0.00995347556, -0.0324666686, -0.00401947973, -0.00606987998, 0.0632333905, -0.00865117926, -0.0405827574, 0.0312802121, -0.0850012973, 0.0279083177, -0.0514059477, -0.0107416091, 0.0196707081) * textureLoad(t_EXPANDED7, clampCoord(p + vec2i(0, 1), textureDimensions(t_EXPANDED7)), 0);
-  res += mat4x4f(-0.0343349688, -0.0673109666, 0.0735018775, 0.0943260714, 0.0195075367, 0.168859646, -0.0130262915, -0.101187438, 0.0248281993, -0.0362138934, 0.0182105284, -0.0397793390, -0.0186639503, 0.0615736246, -0.0594336987, 0.124481715) * textureLoad(t_EXPANDED8, clampCoord(p + vec2i(0, 1), textureDimensions(t_EXPANDED8)), 0);
-  res += mat4x4f(-0.00820623245, -0.0333479084, -0.0219082460, -0.00946887117, 0.0446647257, 0.124685116, -0.0784979984, -0.0901943892, -0.0130400108, 0.00355813862, -0.0139002362, -0.00188792078, 0.0419475175, -0.140570015, -0.0175112672, -0.0347191766) * textureLoad(t_EXPANDED9, clampCoord(p + vec2i(0, 1), textureDimensions(t_EXPANDED9)), 0);
-  res += mat4x4f(-0.0332411118, 0.0312420875, -0.00101272040, -0.0282025412, 0.0415192395, -0.0619867370, 0.0864597633, -0.0767755881, 0.00237678038, 0.0130821094, -0.0120015955, -0.0168173891, -0.0157891698, 0.105535582, -0.0448675118, 0.103769280) * textureLoad(t_EXPANDED10, clampCoord(p + vec2i(0, 1), textureDimensions(t_EXPANDED10)), 0);
-  res += mat4x4f(-0.00713205989, 0.0622181036, 0.000361528480, 0.0321116075, 0.271505982, -0.147329986, 0.214585692, -0.140340433, -0.0194639321, -0.0483060032, -0.0145738553, 0.0297232103, 0.00175656471, -0.0241506360, 0.00894977804, -0.00539694680) * textureLoad(t_EXPANDED11, clampCoord(p + vec2i(0, 1), textureDimensions(t_EXPANDED11)), 0);
-  res += mat4x4f(-0.00329170260, 0.0733954087, 0.0165697653, 0.109500386, 0.00234818435, 0.0329546370, 0.0162087381, -0.0403717682, 0.00923333690, 0.0125814099, 0.0430072881, -0.0227678269, -0.00831278134, 0.0564333871, 0.0295491926, -0.0497983843) * textureLoad(t_EXPANDED12, clampCoord(p + vec2i(0, 1), textureDimensions(t_EXPANDED12)), 0);
-  res += mat4x4f(-0.0132524967, 0.0519412756, -0.00474822894, 0.00789800938, 0.0317514166, -0.0785601214, 0.0248461049, -0.0656588823, -0.0406996459, -0.00701956032, 0.0685101375, -0.142654940, -0.0128538543, 0.0129879108, -0.0456236936, 0.0348501094) * textureLoad(t_EXPANDED13, clampCoord(p + vec2i(0, 1), textureDimensions(t_EXPANDED13)), 0);
-  res += mat4x4f(0.0145887258, -0.00577759184, 0.0225801375, -0.0375324339, -0.0167996138, 0.0235566106, 0.00568873994, -0.0298338067, -0.0530301034, 0.0518549830, -0.0542714894, 0.0800304040, -0.106656224, -0.139228195, -0.0996354371, 0.0349990204) * textureLoad(t_EXPANDED14, clampCoord(p + vec2i(0, 1), textureDimensions(t_EXPANDED14)), 0);
-  res += mat4x4f(-0.00706978748, 0.00300195510, -0.0101987068, -0.00484736124, -0.0483880118, -0.0168889519, 0.0531597137, -0.0127810733, 0.0450084023, 0.0206975546, -0.0770654008, 0.00992680155, -0.00742335105, -0.0254392084, -0.0463174097, 0.0235481001) * textureLoad(t_EXPANDED1, clampCoord(p + vec2i(1, -1), textureDimensions(t_EXPANDED1)), 0);
-  res += mat4x4f(0.00268344511, -0.00448853755, -0.0139462044, -0.0143479332, -0.00282976008, -0.0128172981, -0.00232236180, -0.00288416655, -0.0323711522, 0.0273925271, -0.00662265066, 0.00891441014, -0.00613935618, -0.0274170376, 0.0146901999, 0.00422018021) * textureLoad(t_EXPANDED2, clampCoord(p + vec2i(1, -1), textureDimensions(t_EXPANDED2)), 0);
-  res += mat4x4f(-0.0199026167, -0.000283252826, -0.0560650490, -0.00315929274, 0.0132478299, 0.00192523166, 0.0193919558, 0.0117233815, -0.00866307039, 0.00794270914, -0.00812837295, 0.00824669283, 0.00361283100, -0.00888843741, 0.0771531239, -0.0454563871) * textureLoad(t_EXPANDED3, clampCoord(p + vec2i(1, -1), textureDimensions(t_EXPANDED3)), 0);
-  res += mat4x4f(-0.0152000217, -0.000724083104, -0.0300575197, -0.00596836442, -0.00191949063, 0.00510493666, 0.0129455877, 0.0114760194, -0.00643577892, 0.0292864535, -0.0161660630, -0.0172564927, 0.00460064318, -0.00715680746, -0.00722053554, 0.00110043737) * textureLoad(t_EXPANDED4, clampCoord(p + vec2i(1, -1), textureDimensions(t_EXPANDED4)), 0);
-  res += mat4x4f(0.0362983644, -0.0296280589, -0.00181463023, -0.0459754430, -0.0399324857, 0.0233110320, 0.00628985837, -0.0143335136, -0.0345311873, -0.0128184864, 0.0423661806, 0.0171729308, -0.00308535714, -0.00226059323, 0.0285778213, -0.00319073931) * textureLoad(t_EXPANDED5, clampCoord(p + vec2i(1, -1), textureDimensions(t_EXPANDED5)), 0);
-  res += mat4x4f(0.0280922875, 0.0266403351, -0.0253026001, 0.0124862436, 0.0150751239, -0.00568647822, -0.0303287320, 0.00516283978, 0.00928262714, 0.00151874230, -0.00214368850, 0.00670123938, 0.00870109908, 0.00393278571, 0.00872233231, 0.000615393859) * textureLoad(t_EXPANDED6, clampCoord(p + vec2i(1, -1), textureDimensions(t_EXPANDED6)), 0);
-  res += mat4x4f(0.00173169200, -0.0112450533, 0.0603926443, -0.0203674678, 0.103013806, 0.00695313420, -0.0526113398, 0.0341072418, 0.00888459198, 0.00776630314, 0.0368823037, 0.0165299270, 0.0167778991, 0.00652740989, 0.00671379967, 0.0109969964) * textureLoad(t_EXPANDED7, clampCoord(p + vec2i(1, -1), textureDimensions(t_EXPANDED7)), 0);
-  res += mat4x4f(-0.0646061078, -0.0227786694, 0.0845427066, 0.0481221303, -0.000831399229, -0.00621418282, 0.0178107135, 0.0325539596, -0.00107387861, 0.00223290711, -0.0203583464, 0.00273415865, -0.00408771029, -0.0260962285, 0.0160613656, -0.00632541068) * textureLoad(t_EXPANDED8, clampCoord(p + vec2i(1, -1), textureDimensions(t_EXPANDED8)), 0);
-  res += mat4x4f(-0.0226741694, 0.0111043574, 0.00640034676, 0.0216565225, -0.105985157, -0.00909063686, 0.0833472386, -0.0445813239, -0.0101915132, -0.00285902875, -0.00301895360, -0.00777228130, -0.0175687615, 0.0295800418, -0.00756940106, 0.0298212003) * textureLoad(t_EXPANDED9, clampCoord(p + vec2i(1, -1), textureDimensions(t_EXPANDED9)), 0);
-  res += mat4x4f(-0.0176966935, 0.0122332163, -0.00597745087, 0.00896055624, -0.00630302588, -0.00903482735, -0.0152980303, -0.0250118300, 0.00536612747, -0.0122798756, 0.0146782892, 0.00583697064, 0.00390460948, 0.00474060560, 0.000686482934, 0.0220647641) * textureLoad(t_EXPANDED10, clampCoord(p + vec2i(1, -1), textureDimensions(t_EXPANDED10)), 0);
-  res += mat4x4f(0.00374758756, 0.00497502880, -0.0197184738, 0.0000547275195, -0.00258038519, 0.000496056746, -0.00983682740, -0.0169142559, 0.00380030461, -0.00752455601, 0.0200329833, -0.00163584587, -0.00512212468, -0.0222067274, 0.00103999802, 0.000816715241) * textureLoad(t_EXPANDED11, clampCoord(p + vec2i(1, -1), textureDimensions(t_EXPANDED11)), 0);
-  res += mat4x4f(0.00751734851, -0.00962300692, -0.00313303177, -0.0120848203, 0.000353873940, 0.00268204906, -0.00255441316, -0.00647323066, 0.0143667758, 0.000283083034, 0.00658194674, -0.00428345287, -0.00249785837, -0.00203829003, 0.0193583816, 0.00760883419) * textureLoad(t_EXPANDED12, clampCoord(p + vec2i(1, -1), textureDimensions(t_EXPANDED12)), 0);
-  res += mat4x4f(-0.00407835329, -0.00644389493, -0.00813631061, -0.0114807384, 0.00684127444, -0.00897538476, -0.0126314610, -0.00868961774, -0.00628671888, -0.0224456079, 0.0678314120, -0.0441831723, -0.00373237440, 0.00871122815, -0.0105687287, 0.00372821861) * textureLoad(t_EXPANDED13, clampCoord(p + vec2i(1, -1), textureDimensions(t_EXPANDED13)), 0);
-  res += mat4x4f(0.00641002180, 0.00482991803, 0.00560312951, 0.00349449320, 0.0319041759, -0.00192960084, -0.0371858664, 0.0125375008, 0.0200700220, -0.00334300823, 0.0257971343, -0.0348789878, 0.0105168009, 0.0288524367, -0.00167182088, 0.0223896857) * textureLoad(t_EXPANDED14, clampCoord(p + vec2i(1, -1), textureDimensions(t_EXPANDED14)), 0);
-  res += mat4x4f(-0.0184962563, -0.0320136361, -0.0126315467, 0.0444859937, -0.0313830785, -0.0944957733, -0.00573621690, 0.107732125, -0.0782649666, 0.00177395635, 0.0870343745, -0.0894813165, 0.00168703299, -0.00544747431, 0.0265778732, 0.0285786465) * textureLoad(t_EXPANDED1, clampCoord(p + vec2i(1, 0), textureDimensions(t_EXPANDED1)), 0);
-  res += mat4x4f(0.0247863643, 0.0238117296, -0.0130776521, -0.0254951417, 0.00945794489, 0.0194596164, -0.0340258591, -0.0139600420, -0.0360405184, -0.0102332784, 0.0711475909, -0.0261271391, 0.0560555272, 0.0484054312, 0.0419808812, 0.0566850565) * textureLoad(t_EXPANDED2, clampCoord(p + vec2i(1, 0), textureDimensions(t_EXPANDED2)), 0);
-  res += mat4x4f(-0.0197766516, -0.0548683852, 0.0733709484, -0.0222811736, 0.00814114604, 0.00829042960, 0.0782288462, 0.0899446309, 0.0173932202, -0.0140126459, 0.0662104040, -0.0361278765, 0.0603479892, -0.0428661890, 0.0290297586, -0.0962414220) * textureLoad(t_EXPANDED3, clampCoord(p + vec2i(1, 0), textureDimensions(t_EXPANDED3)), 0);
-  res += mat4x4f(0.0323367901, 0.00270993961, -0.0977617130, -0.0749261975, 0.00853793975, 0.0308557041, -0.0185245294, 0.00490008295, -0.0441985056, 0.0134611819, 0.000557388994, 0.0563399792, 0.0231021345, 0.0225550234, 0.0208115876, -0.0123424241) * textureLoad(t_EXPANDED4, clampCoord(p + vec2i(1, 0), textureDimensions(t_EXPANDED4)), 0);
-  res += mat4x4f(-0.0116702216, 0.0409383811, -0.0589596778, 0.113103099, 0.0851673782, -0.0270632580, -0.0353628471, 0.124367803, 0.00411493843, -0.0256442241, 0.134798557, 0.128871247, -0.00725082820, -0.00938248634, -0.0669046789, 0.0261262134) * textureLoad(t_EXPANDED5, clampCoord(p + vec2i(1, 0), textureDimensions(t_EXPANDED5)), 0);
-  res += mat4x4f(0.0212641507, 0.0223075021, 0.0300915502, -0.00909365434, 0.0452462174, 0.00699956110, -0.0233663600, 0.0305813458, 0.0133925574, 0.00879911706, -0.0277597364, -0.00537847821, -0.0187084582, -0.00123573397, 0.0195687097, -0.0201828238) * textureLoad(t_EXPANDED6, clampCoord(p + vec2i(1, 0), textureDimensions(t_EXPANDED6)), 0);
-  res += mat4x4f(0.0250394158, 0.0531034395, -0.0108917607, -0.0460030660, 0.106191181, 0.211108074, -0.170617655, -0.233739361, -0.0130168358, -0.0157280844, 0.0944516733, -0.0821039453, 0.0521730259, 0.0418762602, -0.0667076632, -0.0686936229) * textureLoad(t_EXPANDED7, clampCoord(p + vec2i(1, 0), textureDimensions(t_EXPANDED7)), 0);
-  res += mat4x4f(0.0740966871, -0.0272465870, -0.103871308, -0.0103241419, -0.0452807769, -0.0150169535, -0.0426364206, -0.0417800993, -0.0109939352, -0.0156145813, -0.0395091474, -0.00677573867, -0.0957637653, -0.0580391027, 0.121090680, 0.0655305609) * textureLoad(t_EXPANDED8, clampCoord(p + vec2i(1, 0), textureDimensions(t_EXPANDED8)), 0);
-  res += mat4x4f(0.00691434136, -0.0605717711, -0.00728570251, 0.0574444048, 0.0432254635, -0.0379420072, -0.0760613158, 0.134543210, -0.00103615946, -0.0102466596, -0.0236323681, -0.00757346908, 0.0819941983, -0.0518381335, 0.0854519606, -0.0816639215) * textureLoad(t_EXPANDED9, clampCoord(p + vec2i(1, 0), textureDimensions(t_EXPANDED9)), 0);
-  res += mat4x4f(-0.0683428571, -0.0803648606, -0.00809046719, -0.0244971588, -0.0315382220, 0.0284984168, 0.0322921164, -0.0355376713, 0.0182275083, 0.00473562814, 0.0790180489, -0.0664516166, 0.00720376335, 0.0126625281, 0.00306708366, -0.0360591263) * textureLoad(t_EXPANDED10, clampCoord(p + vec2i(1, 0), textureDimensions(t_EXPANDED10)), 0);
-  res += mat4x4f(0.0460715666, 0.0807448328, 0.0224511381, -0.151783243, -0.00149502070, 0.00136707514, -0.0506713130, 0.0543538667, -0.0213969126, -0.0227475464, -0.0666629374, 0.0596298091, -0.0394976325, -0.0255052727, 0.201085299, 0.0841590613) * textureLoad(t_EXPANDED11, clampCoord(p + vec2i(1, 0), textureDimensions(t_EXPANDED11)), 0);
-  res += mat4x4f(-0.0177825540, 0.0318410620, -0.0401625298, 0.0287528671, -0.0204551201, -0.00448628562, 0.0484804250, 0.0446552448, 0.0206998195, 0.0334834605, -0.0515508875, -0.0571819916, -0.0178312548, -0.0185589753, -0.0162856970, -0.0245198160) * textureLoad(t_EXPANDED12, clampCoord(p + vec2i(1, 0), textureDimensions(t_EXPANDED12)), 0);
-  res += mat4x4f(-0.0255415067, -0.00721692992, 0.0423931070, 0.0409089774, 0.0146554727, 0.0124719916, -0.0249556545, 0.0253782049, -0.0950032249, 0.0711892098, -0.0883118585, 0.0112465890, -0.0388048626, -0.0357541069, 0.00457365392, 0.0133592524) * textureLoad(t_EXPANDED13, clampCoord(p + vec2i(1, 0), textureDimensions(t_EXPANDED13)), 0);
-  res += mat4x4f(0.00922367815, 0.00562695181, -0.0182556901, -0.0240785684, 0.000228019344, 0.0607512482, -0.0778418705, -0.142283022, 0.0316274054, -0.00977445859, -0.0401931703, 0.00168824545, -0.0168675762, -0.0898211300, 0.0102425469, -0.0700335205) * textureLoad(t_EXPANDED14, clampCoord(p + vec2i(1, 0), textureDimensions(t_EXPANDED14)), 0);
-  res += mat4x4f(0.00537996180, -0.00152398855, 0.00987135060, -0.0155050615, -0.0168286450, -0.0189706367, 0.0129021229, -0.00860552676, 0.0220459104, -0.00355061633, -0.0192061178, 0.0539917499, 0.00242065545, -0.000873853161, -0.00608007610, -0.0117605571) * textureLoad(t_EXPANDED1, clampCoord(p + vec2i(1, 1), textureDimensions(t_EXPANDED1)), 0);
-  res += mat4x4f(0.0132370861, 0.0186951142, -0.00117675937, -0.00857037399, 0.00408451399, 0.00190130435, -0.000609708310, -0.00471410900, 0.00219002878, -0.0238557812, -0.0168099739, -0.00505603990, -0.0160330031, 0.0158422198, 0.00989657361, 0.0161181986) * textureLoad(t_EXPANDED2, clampCoord(p + vec2i(1, 1), textureDimensions(t_EXPANDED2)), 0);
-  res += mat4x4f(-0.0156714916, -0.0299702827, -0.0173617620, 0.00124624849, 0.00361644104, 0.0173429754, 0.00127568748, 0.00968182553, -0.00800429191, 0.0147599317, -0.0302315746, -0.0149535052, -0.0294850022, -0.0184743293, -0.0352926254, 0.113319270) * textureLoad(t_EXPANDED3, clampCoord(p + vec2i(1, 1), textureDimensions(t_EXPANDED3)), 0);
-  res += mat4x4f(-0.00407518819, -0.0113417488, 0.00460004574, -0.0231711343, -0.0215754267, -0.00631114095, -0.0463271327, 0.0685198307, 0.00764415646, 0.0116365356, 0.0206361748, -0.0665761605, -0.00670619542, 0.00927968323, -0.000629501475, 0.0117078992) * textureLoad(t_EXPANDED4, clampCoord(p + vec2i(1, 1), textureDimensions(t_EXPANDED4)), 0);
-  res += mat4x4f(0.0127609242, 0.00898573361, 0.0259254966, -0.0267519746, 0.0283152927, 0.000316438818, 0.0199704468, -0.0352582000, -0.0253940672, -0.0292132366, -0.00857717730, 0.0230473038, 0.00766400760, 0.0137068126, 0.0194043107, -0.0129793407) * textureLoad(t_EXPANDED5, clampCoord(p + vec2i(1, 1), textureDimensions(t_EXPANDED5)), 0);
-  res += mat4x4f(-0.0149040101, -0.000320433843, 0.00146138889, -0.00269568921, -0.00799533352, -0.0148122814, 0.0137279220, 0.0146819483, 0.0121641494, 0.00833295286, 0.00239731534, -0.00637241919, 0.00394340837, -0.00905174203, -0.00157052535, -0.00651811995) * textureLoad(t_EXPANDED6, clampCoord(p + vec2i(1, 1), textureDimensions(t_EXPANDED6)), 0);
-  res += mat4x4f(-0.00718048913, 0.0167393051, -0.0169023462, 0.0157971308, 0.0448624529, 0.0467568114, 0.00986307859, -0.00548705831, -0.00528189354, -0.0243509077, -0.0147619881, -0.00471868552, 0.00995773636, 0.0318740979, 0.00888221152, -0.0142952092) * textureLoad(t_EXPANDED7, clampCoord(p + vec2i(1, 1), textureDimensions(t_EXPANDED7)), 0);
-  res += mat4x4f(0.0199243464, 0.0611780696, 0.0190082211, -0.0380861796, -0.00581454113, -0.00502812397, -0.000234674531, -0.0259832907, 0.00763781136, 0.00750320824, 0.00184379739, -0.0225825030, -0.00655342964, -0.0128699159, -0.00245523360, 0.0105131622) * textureLoad(t_EXPANDED8, clampCoord(p + vec2i(1, 1), textureDimensions(t_EXPANDED8)), 0);
-  res += mat4x4f(0.00597253814, 0.00144383952, -0.0132205505, 0.00603510765, -0.0312765427, -0.0153707424, 0.0337359868, -0.0746689513, 0.000834171544, -0.0120293619, -0.0105655715, -0.0107231289, -0.0171452053, 0.0109399352, 0.0194596779, -0.0735108554) * textureLoad(t_EXPANDED9, clampCoord(p + vec2i(1, 1), textureDimensions(t_EXPANDED9)), 0);
-  res += mat4x4f(-0.00423839875, -0.0205608830, -0.00740027009, -0.00100855215, -0.0106185907, -0.00162506849, 0.0193887465, 0.0215425566, -0.0103823040, -0.0160930660, 0.00240202481, 0.00655986276, -0.00895737018, 0.000572379038, -0.00661388692, 0.0113620115) * textureLoad(t_EXPANDED10, clampCoord(p + vec2i(1, 1), textureDimensions(t_EXPANDED10)), 0);
-  res += mat4x4f(-0.00112798100, 0.0132640386, -0.0656470954, 0.0222415477, 0.0304583739, -0.00863112789, 0.0780677274, -0.0405106619, 0.00656982465, 0.0173827782, 0.0198323764, -0.0306647513, -0.0171637870, -0.0379987955, -0.0165773984, 0.0605392084) * textureLoad(t_EXPANDED11, clampCoord(p + vec2i(1, 1), textureDimensions(t_EXPANDED11)), 0);
-  res += mat4x4f(0.00766572310, 0.0314066708, -0.00133137044, 0.0372512601, 0.00153933337, -0.0120861111, -0.00359030836, 0.0156805422, 0.00366737368, 0.0250460301, 0.0108686853, -0.0235094186, -0.00466085877, 0.00224248460, -0.00541471457, 0.0163286068) * textureLoad(t_EXPANDED12, clampCoord(p + vec2i(1, 1), textureDimensions(t_EXPANDED12)), 0);
-  res += mat4x4f(-0.00945900939, -0.0224553198, -0.0114769554, 0.00469528744, -0.000963992497, 0.00627331110, 0.0195541531, -0.00632963842, 0.0279486384, 0.0279689096, -0.0431774817, 0.0960153639, -0.00162866211, -0.0254326034, -0.00120990537, -0.0207063202) * textureLoad(t_EXPANDED13, clampCoord(p + vec2i(1, 1), textureDimensions(t_EXPANDED13)), 0);
-  res += mat4x4f(-0.0000322326014, 0.0139382435, 0.00403058156, 0.00978471059, 0.0195218362, -0.00468907738, -0.00648459420, 0.0111728199, 0.00490996242, 0.0169881806, -0.0113912970, -0.0305335037, 0.0504101701, 0.0205113869, -0.00508323265, -0.0615257733) * textureLoad(t_EXPANDED14, clampCoord(p + vec2i(1, 1), textureDimensions(t_EXPANDED14)), 0);
+  res += mat4x4f(-0.00845791865, -0.00382668059, 0.000939234800, 0.00277114683, 0.0575491972, -0.00133076287, -0.0186221693, 0.0134833492, -0.0917152241, 0.0115084937, 0.0138894748, -0.0292571466, 0.0301878508, -0.0494047925, -0.0157791302, -0.0292122159) * textureLoad(t_EXPANDED1, clampCoord(p + vec2i(-1, -1), d_EXPANDED1), 0);
+  res += mat4x4f(-0.0418097079, 0.0386713892, 0.0487923510, -0.00830261596, -0.0287191644, 0.00133977807, 0.0444803722, 0.00366554293, -0.0579890721, -0.00691598374, 0.0113183511, 0.0163729768, 0.0189570338, 0.0164324511, 0.0181374475, -0.00966223702) * textureLoad(t_EXPANDED2, clampCoord(p + vec2i(-1, -1), d_EXPANDED2), 0);
+  res += mat4x4f(0.0308923051, -0.0102507100, 0.00763784675, 0.0100745307, -0.0299408399, -0.00319610327, -0.0165354386, -0.0150921186, -0.0157683548, 0.00302207936, -0.00279551302, -0.00889727194, -0.0528509766, 0.0472248755, 0.0373144336, 0.0141834514) * textureLoad(t_EXPANDED3, clampCoord(p + vec2i(-1, -1), d_EXPANDED3), 0);
+  res += mat4x4f(0.0282710027, 0.0141655300, -0.00333618210, 0.0133147212, -0.00940948073, 0.00728658214, 0.00166168355, 0.000168018087, -0.0114940442, -0.000904774060, -0.0235649347, -0.00952380151, 0.00395541126, -0.00633725431, -0.0114066303, -0.0138765238) * textureLoad(t_EXPANDED4, clampCoord(p + vec2i(-1, -1), d_EXPANDED4), 0);
+  res += mat4x4f(0.0919740796, -0.0449555963, 0.0113128256, -0.0167054497, 0.0132541051, 0.00432338798, -0.00232769758, 0.0179720279, 0.00852896925, 0.00166366633, -0.0102329338, -0.00194233307, -0.0207794346, -0.000548564538, 0.00871098507, 0.00404870557) * textureLoad(t_EXPANDED5, clampCoord(p + vec2i(-1, -1), d_EXPANDED5), 0);
+  res += mat4x4f(0.0440304130, -0.0335848369, -0.0813063681, 0.0165831018, -0.00900261011, 0.00767699955, -0.00467581814, -0.00804609433, -0.0124670314, 0.00711616036, -0.00182728516, 0.00449472759, 0.00230902340, 0.00560098747, 0.00375599344, 0.00276506552) * textureLoad(t_EXPANDED6, clampCoord(p + vec2i(-1, -1), d_EXPANDED6), 0);
+  res += mat4x4f(0.00634891260, -0.00972907338, 0.00125662424, 0.00585811352, -0.00244843285, -0.000925859087, -0.00111691887, 0.00486593461, -0.00563807692, 0.0129827512, 0.00800446980, 0.00507297926, -0.00260802358, -0.00726787280, -0.0254334733, -0.00176032749) * textureLoad(t_EXPANDED7, clampCoord(p + vec2i(-1, -1), d_EXPANDED7), 0);
+  res += mat4x4f(0.0901929289, -0.0266965032, -0.0582166798, -0.0228525475, 0.0345232114, -0.0184003823, -0.0129962349, 0.00325224851, 0.0297258925, 0.0111841708, -0.00114619336, -0.00923748501, 0.0269716624, -0.0146893281, 0.000242271170, -0.0291120168) * textureLoad(t_EXPANDED8, clampCoord(p + vec2i(-1, -1), d_EXPANDED8), 0);
+  res += mat4x4f(0.000112551854, 0.0370316133, 0.00412115268, -0.00140058738, 0.0329671837, -0.00275029335, 0.0259870570, 0.0140932556, -0.0247148946, 0.00732354028, -0.00660198834, 0.00163678476, 0.0565780699, -0.00450152019, -0.00863267109, -0.000295074511) * textureLoad(t_EXPANDED9, clampCoord(p + vec2i(-1, -1), d_EXPANDED9), 0);
+  res += mat4x4f(0.0165178478, 0.00159655337, -0.0172380731, -0.0133005893, -0.00331197097, -0.0278938655, -0.0256247222, -0.0248877741, 0.0375293829, -0.00534664234, -0.0229313448, 0.0124236466, 0.00140813296, 0.0120270215, 0.00813171361, 0.00522069633) * textureLoad(t_EXPANDED10, clampCoord(p + vec2i(-1, -1), d_EXPANDED10), 0);
+  res += mat4x4f(-0.0278020948, -0.0103753256, 0.0209024921, 0.0129399663, 0.0209526103, -0.00468667457, 0.00925619435, 0.0176489260, 0.000235230473, -0.00321162539, -0.00643527135, -0.0131941289, 0.00379652018, -0.000259643624, 0.0184696745, 0.00882200990) * textureLoad(t_EXPANDED11, clampCoord(p + vec2i(-1, -1), d_EXPANDED11), 0);
+  res += mat4x4f(-0.0402455889, -0.00896959379, -0.0144632040, -0.0132053588, 0.0360528678, -0.00663749920, -0.0406562462, -0.00875978265, 0.0182064138, -0.0130765541, 0.00627799099, 0.000935965509, 0.00162287208, 0.0106634535, -0.0128378263, 0.0189062748) * textureLoad(t_EXPANDED12, clampCoord(p + vec2i(-1, -1), d_EXPANDED12), 0);
+  res += mat4x4f(0.00386915193, 0.00944172498, 0.0184059255, 0.00395154720, 0.0129235676, -0.0189460311, -0.0140396487, -0.00532634184, -0.115084693, 0.0475030467, -0.0465413816, 0.000165768593, -0.0000633919699, 0.00184084568, 0.0218909364, 0.0172406081) * textureLoad(t_EXPANDED13, clampCoord(p + vec2i(-1, -1), d_EXPANDED13), 0);
+  res += mat4x4f(-0.00239110040, -0.00328445411, 0.00268933107, 0.00503449934, -0.0183665752, -0.00673961686, -0.00556454528, -0.00391281210, 0.0648887828, -0.0318111107, -0.00697663287, -0.00655576354, -0.0509419218, 0.0318751559, 0.00500580762, 0.00983206928) * textureLoad(t_EXPANDED14, clampCoord(p + vec2i(-1, -1), d_EXPANDED14), 0);
+  res += mat4x4f(0.0192413852, -0.0479554161, -0.00116804917, 0.0288745631, 0.0198999215, 0.113121197, 0.00311861234, -0.0519252643, 0.0679928511, -0.0718355849, 0.00985423196, 0.0583435223, -0.0267040860, 0.0481388271, -0.0234255437, 0.00922221597) * textureLoad(t_EXPANDED1, clampCoord(p + vec2i(-1, 0), d_EXPANDED1), 0);
+  res += mat4x4f(-0.0978811830, -0.139989227, 0.130863339, 0.172891825, -0.0359813198, -0.0629157275, -0.0371208414, 0.00507582864, 0.0642571673, 0.00286665861, -0.00427530333, -0.0138711911, -0.00826845784, -0.0187218431, 0.0106125614, 0.0183942132) * textureLoad(t_EXPANDED2, clampCoord(p + vec2i(-1, 0), d_EXPANDED2), 0);
+  res += mat4x4f(-0.0799536631, -0.0514595024, 0.0323004089, 0.0297575817, -0.0639481172, -0.0951002464, 0.000433883863, 0.00911942404, -0.00114723912, -0.00562915346, 0.0138590941, -0.00412224839, 0.0563663170, -0.0890365914, 0.0144167515, -0.0241040997) * textureLoad(t_EXPANDED3, clampCoord(p + vec2i(-1, 0), d_EXPANDED3), 0);
+  res += mat4x4f(0.117959283, 0.0713051930, -0.0475016609, -0.0570210554, -0.0261360966, 0.0448227301, 0.0203539710, 0.0216044281, -0.0483759977, 0.0329126641, -0.0112956883, -0.0279412009, 0.0214761980, 0.0268824231, -0.00152943726, -0.00584161049) * textureLoad(t_EXPANDED4, clampCoord(p + vec2i(-1, 0), d_EXPANDED4), 0);
+  res += mat4x4f(-0.0178364031, 0.0177060496, -0.0164381787, 0.00792162959, 0.0703652278, 0.000946071290, 0.0140440101, 0.0112558426, 0.0138711911, 0.00770583889, -0.00288925297, -0.00508358330, 0.00981689151, 0.00235907757, 0.00653724698, 0.00542204129) * textureLoad(t_EXPANDED5, clampCoord(p + vec2i(-1, 0), d_EXPANDED5), 0);
+  res += mat4x4f(0.128602415, 0.219595179, -0.146460205, -0.289432913, 0.0439403690, -0.0222237166, -0.0502039641, -0.00802402198, 0.0293221921, -0.0242700763, -0.0319416039, -0.00386805809, -0.0426360257, 0.00467182463, 0.0152078196, 0.00917576812) * textureLoad(t_EXPANDED6, clampCoord(p + vec2i(-1, 0), d_EXPANDED6), 0);
+  res += mat4x4f(-0.0178382993, 0.0327081569, 0.00908473134, -0.0352359191, -0.0134735852, -0.0220241845, -0.0316121913, -0.0176051818, 0.00420018379, 0.0143017825, 0.0187756531, -0.0123716146, 0.112669155, 0.0914030373, -0.0502825342, -0.0489331670) * textureLoad(t_EXPANDED7, clampCoord(p + vec2i(-1, 0), d_EXPANDED7), 0);
+  res += mat4x4f(-0.0703412294, 0.100188084, 0.0720408410, 0.00806382205, 0.0389194265, 0.123964697, 0.0720871836, 0.0196087882, -0.0178751145, -0.0147012146, 0.0350220799, 0.0326307416, 0.0634997785, 0.102764010, -0.0277309772, -0.0290504675) * textureLoad(t_EXPANDED8, clampCoord(p + vec2i(-1, 0), d_EXPANDED8), 0);
+  res += mat4x4f(0.0264301971, -0.0248339362, 0.0235013925, 0.0206343029, -0.111851081, 0.0340601206, -0.00683973078, -0.0314202458, 0.0358117148, -0.0257524215, -0.0215573665, -0.0198947955, 0.0518256202, -0.0662014112, 0.0108054159, -0.0318648815) * textureLoad(t_EXPANDED9, clampCoord(p + vec2i(-1, 0), d_EXPANDED9), 0);
+  res += mat4x4f(-0.0218505077, -0.0260991734, -0.00944458134, 0.000928766036, -0.00214092992, 0.0246180315, 0.0187164862, 0.0951490924, 0.00649351627, -0.0170825925, 0.0478098355, -0.00657497253, 0.0315656438, 0.00894672330, -0.000351638795, -0.0145172402) * textureLoad(t_EXPANDED10, clampCoord(p + vec2i(-1, 0), d_EXPANDED10), 0);
+  res += mat4x4f(-0.0130883073, -0.0450729094, 0.0104909418, 0.0294497553, -0.0308215097, 0.0162216332, -0.0750420913, -0.0296699908, -0.00582634564, -0.00931788329, -0.00305738929, -0.000412969937, 0.00572475465, 0.0194812249, -0.0127659617, -0.0152707873) * textureLoad(t_EXPANDED11, clampCoord(p + vec2i(-1, 0), d_EXPANDED11), 0);
+  res += mat4x4f(-0.107818544, 0.115350798, -0.0286622103, 0.00621990720, 0.140006095, 0.165111542, -0.0681953803, -0.0713128299, -0.0442281514, -0.0457805023, 0.0519373193, 0.0431986004, -0.00278821844, -0.0129560139, 0.131876469, 0.0496316403) * textureLoad(t_EXPANDED12, clampCoord(p + vec2i(-1, 0), d_EXPANDED12), 0);
+  res += mat4x4f(-0.0407394730, -0.0329078399, 0.0106979720, 0.0233990550, -0.0102507388, 0.0145383319, -0.00745819323, -0.0114303846, 0.00738555938, 0.0600433983, -0.0589543879, 0.0869924054, -0.0413387679, -0.0294676311, 0.00300312554, 0.0147322426) * textureLoad(t_EXPANDED13, clampCoord(p + vec2i(-1, 0), d_EXPANDED13), 0);
+  res += mat4x4f(-0.0106398836, 0.0232375171, -0.00183451595, -0.0351459906, -0.0550653897, -0.0478023924, 0.00377742108, 0.00357048702, -0.0585955530, -0.00129847997, 0.0176964123, 0.0160206892, 0.0612036884, -0.181237862, -0.116116703, -0.0117453001) * textureLoad(t_EXPANDED14, clampCoord(p + vec2i(-1, 0), d_EXPANDED14), 0);
+  res += mat4x4f(-0.00536960736, 0.0110508287, -0.00442947447, -0.00999789499, 0.0143686254, -0.0243171751, -0.00372097082, -0.00665223133, -0.0132723255, 0.0404342972, -0.0180517063, -0.0223241337, -0.0157071929, 0.0281598289, -0.00747457799, 0.000559459324) * textureLoad(t_EXPANDED1, clampCoord(p + vec2i(-1, 1), d_EXPANDED1), 0);
+  res += mat4x4f(0.0185450390, 0.0195826348, 0.000873425452, 0.0232357364, -0.00602270477, 0.00300755142, 0.00419372506, 0.00816098321, -0.0124518843, 0.0102319056, 0.0176490787, -0.00104941940, 0.0253161173, 0.0225027241, 0.0103972815, 0.0327307209) * textureLoad(t_EXPANDED2, clampCoord(p + vec2i(-1, 1), d_EXPANDED2), 0);
+  res += mat4x4f(-0.000170976346, 0.00243840483, 0.00685358047, 0.0178426672, -0.0102559486, -0.00565136224, -0.0135684526, -0.0144804567, 0.0147307692, -0.0202700328, -0.0101689678, 0.00454006717, -0.0150295310, -0.0418834239, -0.0182976201, 0.0237848405) * textureLoad(t_EXPANDED3, clampCoord(p + vec2i(-1, 1), d_EXPANDED3), 0);
+  res += mat4x4f(0.0109567447, 0.0500781462, -0.0135678658, -0.0103647774, -0.0226638895, -0.00136768725, -0.00922444556, 0.0178915486, 0.0116386795, -0.00536854845, -0.00194151246, -0.0182786789, 0.00516170822, 0.000780894479, -0.00435365178, 0.00201090612) * textureLoad(t_EXPANDED4, clampCoord(p + vec2i(-1, 1), d_EXPANDED4), 0);
+  res += mat4x4f(0.0198764801, -0.0331307538, 0.000778020883, 0.0250247791, -0.00453234604, -0.00438058889, 0.00719010551, 0.00337885832, -0.00144215394, 0.0273085739, -0.00954424217, -0.00532586686, -0.00364370714, -0.00511671649, -0.00302959210, -0.00556591339) * textureLoad(t_EXPANDED5, clampCoord(p + vec2i(-1, 1), d_EXPANDED5), 0);
+  res += mat4x4f(-0.0114496881, -0.0461821854, -0.0173295811, -0.0203608405, 0.0119364718, 0.00928202830, -0.00468356768, -0.0215721093, -0.0119977109, -0.00248992024, 0.00151668396, -0.0103101842, -0.00156902382, -0.00713463826, 0.0122981211, 0.0110869128) * textureLoad(t_EXPANDED6, clampCoord(p + vec2i(-1, 1), d_EXPANDED6), 0);
+  res += mat4x4f(-0.00158135104, 0.0141248293, -0.00497283926, 0.00979664735, 0.00232256949, -0.0187237207, 0.0116074067, -0.00843894202, 0.00737329479, -0.0244456474, 0.00311246887, -0.00242810580, -0.0126258498, 0.0243344083, -0.00543325068, -0.0257614087) * textureLoad(t_EXPANDED7, clampCoord(p + vec2i(-1, 1), d_EXPANDED7), 0);
+  res += mat4x4f(0.00396241713, -0.0816341192, -0.0333665125, 0.00998898316, 0.00136507780, -0.0395455882, 0.0166947618, 0.0315072872, -0.00587365031, 0.00674030837, -0.0169018414, -0.00228100922, -0.0149331465, 0.0100655640, -0.0153225567, -0.00297246757) * textureLoad(t_EXPANDED8, clampCoord(p + vec2i(-1, 1), d_EXPANDED8), 0);
+  res += mat4x4f(0.0104102194, -0.0229700506, -0.00825588405, 0.0231874548, 0.0237333719, -0.0411732383, 0.0252905488, 0.0454767346, -0.00543887774, -0.00522213709, -0.00636110967, 0.00240463740, -0.0423299894, 0.0561911911, -0.0205518231, 0.0299595706) * textureLoad(t_EXPANDED9, clampCoord(p + vec2i(-1, 1), d_EXPANDED9), 0);
+  res += mat4x4f(-0.0109067587, 0.00500367722, -0.00514357956, -0.0207303669, 0.0284921583, -0.00199429551, 0.00422498956, 0.0156558994, 0.00222094287, 0.00378779927, 0.00110069453, 0.00529460562, -0.0227501690, -0.00238702679, -0.00206880062, -0.0191609431) * textureLoad(t_EXPANDED10, clampCoord(p + vec2i(-1, 1), d_EXPANDED10), 0);
+  res += mat4x4f(-0.0259114467, 0.00829590578, 0.00994539820, 0.00858911686, 0.0663686618, -0.0409342088, 0.00309032877, -0.0367947295, 0.00908362865, 0.0105582811, -0.0102113942, -0.00205962500, 0.0119886138, -0.00814658590, 0.00856595021, 0.00368244480) * textureLoad(t_EXPANDED11, clampCoord(p + vec2i(-1, 1), d_EXPANDED11), 0);
+  res += mat4x4f(0.0126900654, 0.0615716018, 0.00209017983, 0.00674351677, 0.000849056931, 0.0256354790, -0.00189609837, -0.0344506726, 0.000120657074, 0.0359271020, 0.00854431279, 0.0250126533, 0.0201439913, -0.00965338759, -0.0280496646, 0.0184719469) * textureLoad(t_EXPANDED12, clampCoord(p + vec2i(-1, 1), d_EXPANDED12), 0);
+  res += mat4x4f(0.00525650941, -0.00703383144, 0.00906703062, 0.0104125179, 0.0190774649, 0.00292311842, 0.00697412668, 0.000399773795, 0.0594259612, -0.0893695578, 0.0227510408, -0.00353631889, -0.00880323816, -0.0159376413, 0.00673482521, 0.0118979923) * textureLoad(t_EXPANDED13, clampCoord(p + vec2i(-1, 1), d_EXPANDED13), 0);
+  res += mat4x4f(0.0135554923, -0.00599034736, 0.00251518516, 0.00201052567, 0.00794826727, -0.0137567390, -0.00103741873, -0.00298650004, 0.00652743271, 0.0119257104, -0.00115847273, -0.00719900243, -0.0185654052, 0.0835020468, -0.0432207473, -0.0685475394) * textureLoad(t_EXPANDED14, clampCoord(p + vec2i(-1, 1), d_EXPANDED14), 0);
+  res += mat4x4f(0.00309772766, -0.0167831965, -0.0107046161, -0.0268401746, 0.100383721, -0.0219729468, -0.128658950, -0.0224073902, 0.000823354349, -0.0481482781, 0.0705501065, 0.0737544745, -0.0880446211, -0.0196331907, 0.0729970038, -0.0991751999) * textureLoad(t_EXPANDED1, clampCoord(p + vec2i(0, -1), d_EXPANDED1), 0);
+  res += mat4x4f(-0.0311617423, 0.00938033219, 0.0531129055, 0.00537741603, 0.0333479270, 0.00662772404, -0.0340002514, 0.00274531683, 0.0154044256, 0.00738463923, -0.0000563604408, -0.0266689342, 0.0201399848, 0.0208100304, 0.0242317580, 0.0356795937) * textureLoad(t_EXPANDED2, clampCoord(p + vec2i(0, -1), d_EXPANDED2), 0);
+  res += mat4x4f(-0.0154611720, -0.0459337309, 0.0199307874, -0.0448187627, -0.0793030560, -0.0144911772, 0.105712339, 0.00229093712, -0.00955981016, 0.0106537137, -0.0176209416, 0.0239937790, 0.101783000, -0.0636019036, -0.126366928, 0.0194826610) * textureLoad(t_EXPANDED3, clampCoord(p + vec2i(0, -1), d_EXPANDED3), 0);
+  res += mat4x4f(0.0608064830, 0.0278774388, -0.0559132472, -0.00888465717, 0.0348644443, -0.0179951210, 0.0376675352, 0.00637048157, -0.0797440112, -0.00452441489, 0.102527253, -0.0106769074, 0.00261408603, 0.0209568813, 0.0229888298, 0.0272161551) * textureLoad(t_EXPANDED4, clampCoord(p + vec2i(0, -1), d_EXPANDED4), 0);
+  res += mat4x4f(0.0157769397, -0.00188548258, 0.0649448931, -0.0181190129, 0.0772280693, -0.0174879860, 0.0178782269, 0.00891945884, -0.0519071706, -0.00897526089, 0.0309995152, 0.0157432407, 0.0438226536, -0.0123207029, -0.0262368955, -0.00836033281) * textureLoad(t_EXPANDED5, clampCoord(p + vec2i(0, -1), d_EXPANDED5), 0);
+  res += mat4x4f(-0.0698773488, -0.0204444267, 0.0824921876, -0.0310935620, -0.0106520159, -0.0403096043, -0.0294076223, 0.00621533906, -0.0149652520, -0.00244958862, -0.0304640196, 0.0220390093, -0.0137833487, 0.0143663408, -0.0120294541, 0.000560329936) * textureLoad(t_EXPANDED6, clampCoord(p + vec2i(0, -1), d_EXPANDED6), 0);
+  res += mat4x4f(0.0459703729, 0.00290106796, 0.0129441330, 0.00942931138, -0.0599747412, -0.0163903683, 0.0515003763, 0.00100902992, -0.0218271613, 0.0314828902, -0.0382377394, 0.0103039062, -0.00151429663, 0.00715212710, 0.0325446874, 0.0119517334) * textureLoad(t_EXPANDED7, clampCoord(p + vec2i(0, -1), d_EXPANDED7), 0);
+  res += mat4x4f(-0.0278179254, -0.0491713695, 0.0143709378, 0.0385062769, 0.0199799333, 0.0201750994, -0.0165301990, -0.0441017188, -0.0313355140, 0.0250282642, -0.0305537861, 0.00573369116, 0.0755715817, -0.0572116412, 0.125226572, -0.0850872919) * textureLoad(t_EXPANDED8, clampCoord(p + vec2i(0, -1), d_EXPANDED8), 0);
+  res += mat4x4f(0.000968733686, 0.0356939472, -0.109908171, 0.106769063, 0.0711468160, 0.0280735102, -0.106617324, -0.0481392145, -0.00988917425, 0.00117819034, -0.0300043486, 0.0265110359, 0.0723108128, 0.00458646240, 0.115539700, -0.0250482541) * textureLoad(t_EXPANDED9, clampCoord(p + vec2i(0, -1), d_EXPANDED9), 0);
+  res += mat4x4f(-0.00121852872, -0.00208086940, -0.0310122594, -0.0238042232, 0.0712311789, -0.0852747187, 0.0963311121, -0.0747845620, 0.0205409080, 0.0626615211, 0.0806915462, 0.00110128755, -0.0510443784, 0.0522621647, -0.0543311276, 0.0258967690) * textureLoad(t_EXPANDED10, clampCoord(p + vec2i(0, -1), d_EXPANDED10), 0);
+  res += mat4x4f(0.0926505998, -0.0170079656, -0.0130562466, -0.0338355228, -0.0506330207, 0.00765459472, -0.0652731508, -0.0365156569, -0.0185303520, -0.0151366508, -0.0207968280, 0.00440393109, -0.00827036705, -0.00300785364, 0.0148141365, 0.0286504198) * textureLoad(t_EXPANDED11, clampCoord(p + vec2i(0, -1), d_EXPANDED11), 0);
+  res += mat4x4f(-0.0986157283, -0.00646300567, -0.0900010914, 0.0128815062, -0.0134371668, 0.0172572900, -0.0102788061, -0.00534902140, -0.0481173061, 0.0392727517, 0.0268426798, -0.0142146619, 0.0377039574, 0.00282036257, 0.00389196328, -0.0202773437) * textureLoad(t_EXPANDED12, clampCoord(p + vec2i(0, -1), d_EXPANDED12), 0);
+  res += mat4x4f(-0.0209710766, 0.00288482755, -0.0324134417, 0.0112398146, 0.0240102690, -0.0234499667, 0.0642898604, -0.0400659107, 0.137523055, -0.0491282083, -0.0224918295, 0.0499754287, -0.0167578738, -0.0294696465, -0.0128111411, -0.0583304316) * textureLoad(t_EXPANDED13, clampCoord(p + vec2i(0, -1), d_EXPANDED13), 0);
+  res += mat4x4f(-0.0119691137, -0.00524020335, -0.00208808202, -0.0140769109, -0.0442097001, 0.0110711362, 0.0268030316, -0.00569909671, 0.114342809, -0.0394854881, 0.181453809, -0.0470916107, 0.00366966170, -0.0192557145, -0.0371073298, 0.0477632470) * textureLoad(t_EXPANDED14, clampCoord(p + vec2i(0, -1), d_EXPANDED14), 0);
+  res += mat4x4f(-0.0531748831, 0.147571757, -0.0667049661, -0.0547870062, -0.0714133233, 0.0686139166, 0.0206728335, -0.132465422, 0.0220339391, 0.111049399, -0.113177665, -0.0350927897, -0.0760946348, 0.125614181, -0.117097780, 0.140971318) * textureLoad(t_EXPANDED1, clampCoord(p + vec2i(0, 0), d_EXPANDED1), 0);
+  res += mat4x4f(-0.0894309953, -0.0789554715, 0.0849822760, 0.138721898, -0.0382876508, 0.0347646438, 0.118601196, 0.0436772630, 0.189810365, -0.0849920064, -0.142651081, 0.0490130410, -0.0981369838, -0.0616297200, -0.0772218704, -0.0830301642) * textureLoad(t_EXPANDED2, clampCoord(p + vec2i(0, 0), d_EXPANDED2), 0);
+  res += mat4x4f(0.0836789683, 0.257873386, -0.227908865, -0.00912429113, -0.200926185, -0.192271635, 0.159281343, 0.180288389, 0.152671531, -0.0497234985, 0.0976368710, -0.0168918166, -0.211716384, 0.109140247, 0.0717186332, 0.0593278557) * textureLoad(t_EXPANDED3, clampCoord(p + vec2i(0, 0), d_EXPANDED3), 0);
+  res += mat4x4f(0.118174687, 0.184238315, -0.112734795, -0.151961982, -0.105284028, -0.0648825318, -0.139711484, 0.0187385399, 0.0498556085, -0.187541887, -0.0727197379, 0.191520184, 0.468055338, 0.402735800, 0.409087479, 0.386983931) * textureLoad(t_EXPANDED4, clampCoord(p + vec2i(0, 0), d_EXPANDED4), 0);
+  res += mat4x4f(0.0967033282, -0.0718072802, 0.273594439, -0.219427764, -0.195341438, 0.00197830307, 0.0733269602, -0.137437761, -0.163918734, -0.156568602, 0.0217191242, 0.0474232212, 0.251248002, 0.391395926, 0.132610217, 0.180995956) * textureLoad(t_EXPANDED5, clampCoord(p + vec2i(0, 0), d_EXPANDED5), 0);
+  res += mat4x4f(-0.00866182800, -0.129888326, -0.0381872989, 0.149009004, -0.310921311, 0.160223052, 0.100475907, 0.0718154237, -0.0483913273, -0.0215625241, 0.138278440, -0.0244476497, 0.147033468, -0.0263777915, -0.0179095324, -0.0272326320) * textureLoad(t_EXPANDED6, clampCoord(p + vec2i(0, 0), d_EXPANDED6), 0);
+  res += mat4x4f(0.0710366294, -0.304024339, 0.0616992861, 0.103958786, 0.0715941787, 0.00470473524, 0.0870784670, 0.0655718520, 0.159178227, -0.156684428, 0.0492440909, 0.0364349149, -0.182722688, -0.141774267, 0.132108480, 0.0976375639) * textureLoad(t_EXPANDED7, clampCoord(p + vec2i(0, 0), d_EXPANDED7), 0);
+  res += mat4x4f(0.0320702754, 0.0799428076, -0.0101187555, -0.140690699, 0.312746823, 0.0850308463, -0.266279519, -0.170930311, 0.0704256892, 0.126581654, -0.0805993155, -0.0785026699, -0.0347617231, 0.0598682351, -0.202841431, -0.0724329054) * textureLoad(t_EXPANDED8, clampCoord(p + vec2i(0, 0), d_EXPANDED8), 0);
+  res += mat4x4f(0.0953889042, 0.0495167300, 0.176042959, -0.341011047, 0.0134755457, -0.135701954, 0.0662675053, 0.0700510740, 0.0298999324, -0.0221953765, 0.133442223, -0.0258115418, 0.149010599, -0.125192180, 0.114874132, -0.158402607) * textureLoad(t_EXPANDED9, clampCoord(p + vec2i(0, 0), d_EXPANDED9), 0);
+  res += mat4x4f(0.267625272, 0.168730959, -0.182677165, -0.186484352, 0.234280065, -0.316767782, 0.172944844, -0.274609119, 0.0962567851, -0.214574113, 0.0105733378, -0.112472855, 0.0760679021, -0.188600644, 0.120681442, -0.0895574540) * textureLoad(t_EXPANDED10, clampCoord(p + vec2i(0, 0), d_EXPANDED10), 0);
+  res += mat4x4f(-0.0592676327, -0.0114887040, -0.0680907220, 0.0582522340, -0.170684308, 0.119579688, -0.0505379662, 0.120116979, 0.0164414681, 0.0785249025, 0.0538194142, -0.0405557752, -0.153369710, -0.111842483, 0.0124645103, 0.00940106530) * textureLoad(t_EXPANDED11, clampCoord(p + vec2i(0, 0), d_EXPANDED11), 0);
+  res += mat4x4f(-0.240565553, 0.170359358, -0.310203344, 0.318568349, 0.0612700321, -0.0105084972, -0.142442107, -0.102361105, 0.127341926, 0.0357327014, -0.174286529, 0.0742380172, 0.0770005882, 0.0330595002, -0.134081796, -0.0432191379) * textureLoad(t_EXPANDED12, clampCoord(p + vec2i(0, 0), d_EXPANDED12), 0);
+  res += mat4x4f(0.0983620062, 0.0200136378, -0.0333007611, -0.0690235272, -0.166884467, 0.123758405, -0.0938762948, 0.180041790, 0.0268501863, -0.0747236460, 0.131167218, -0.0645589903, 0.192561150, 0.207865939, 0.410274595, 0.404128551) * textureLoad(t_EXPANDED13, clampCoord(p + vec2i(0, 0), d_EXPANDED13), 0);
+  res += mat4x4f(-0.0428101495, 0.00956358761, 0.0161744487, 0.166406691, 0.0900894403, -0.00518129952, 0.0398929194, 0.103933617, -0.0136766033, -0.120362096, -0.00249555777, -0.144752219, 0.274836630, 0.0984896794, 0.210725740, -0.388955355) * textureLoad(t_EXPANDED14, clampCoord(p + vec2i(0, 0), d_EXPANDED14), 0);
+  res += mat4x4f(0.0268049221, -0.0423703380, 0.000589119853, 0.000765480392, 0.00815617573, 0.0116128866, -0.0154728275, -0.0181998722, -0.0316719227, -0.0777811259, 0.0438630432, 0.0165820941, 0.00852827355, 0.00112629461, -0.00335321319, 0.0349446051) * textureLoad(t_EXPANDED1, clampCoord(p + vec2i(0, 1), d_EXPANDED1), 0);
+  res += mat4x4f(0.0218147188, -0.0209868513, -0.0253979675, 0.0100468677, 0.00396105088, -0.0313926488, 0.00676483987, 0.0355568677, -0.0302412435, 0.0889226347, -0.0100760246, -0.0449699573, 0.00836020242, -0.00429840013, 0.0117295804, 0.0163558796) * textureLoad(t_EXPANDED2, clampCoord(p + vec2i(0, 1), d_EXPANDED2), 0);
+  res += mat4x4f(-0.00833919644, -0.0576251484, 0.0299261231, -0.0409072787, -0.00985097047, -0.0825842023, 0.0245215129, 0.0840833038, -0.0497684106, -0.0559792221, -0.00518640736, -0.0733962953, 0.0211381596, 0.0595357232, 0.0223686639, -0.0661195889) * textureLoad(t_EXPANDED3, clampCoord(p + vec2i(0, 1), d_EXPANDED3), 0);
+  res += mat4x4f(0.0164041184, 0.0444185361, -0.0324126743, -0.0633065030, -0.0476480760, 0.225897983, -0.0125664268, 0.104383118, -0.0274278391, -0.0349201150, 0.00732075842, 0.0588813871, 0.00911436323, -0.0104056001, 0.0244308785, -0.0238681268) * textureLoad(t_EXPANDED4, clampCoord(p + vec2i(0, 1), d_EXPANDED4), 0);
+  res += mat4x4f(0.0171075836, -0.0812225342, -0.00871056411, -0.0502208956, 0.0220535379, 0.0635885522, -0.0262416564, 0.0940538049, 0.00871607941, -0.0440918356, 0.0278396122, 0.0160961840, 0.0240839310, 0.0314593911, 0.00423652073, 0.0196002424) * textureLoad(t_EXPANDED5, clampCoord(p + vec2i(0, 1), d_EXPANDED5), 0);
+  res += mat4x4f(-0.0194062125, -0.000711879460, 0.0349982902, -0.0375613794, 0.0584280454, -0.0692161620, 0.0242442004, 0.00378674502, -0.00712879701, -0.0193377268, -0.0275215600, 0.0380689912, -0.0170479063, 0.0209312905, -0.0127153220, -0.00909863692) * textureLoad(t_EXPANDED6, clampCoord(p + vec2i(0, 1), d_EXPANDED6), 0);
+  res += mat4x4f(-0.0634901226, 0.0649155900, -0.00651560631, -0.00995347556, -0.0324666686, -0.00401947973, -0.00606987998, 0.0632333905, -0.00865117926, -0.0405827574, 0.0312802121, -0.0850012973, 0.0279083177, -0.0514059477, -0.0107416091, 0.0196707081) * textureLoad(t_EXPANDED7, clampCoord(p + vec2i(0, 1), d_EXPANDED7), 0);
+  res += mat4x4f(-0.0343349688, -0.0673109666, 0.0735018775, 0.0943260714, 0.0195075367, 0.168859646, -0.0130262915, -0.101187438, 0.0248281993, -0.0362138934, 0.0182105284, -0.0397793390, -0.0186639503, 0.0615736246, -0.0594336987, 0.124481715) * textureLoad(t_EXPANDED8, clampCoord(p + vec2i(0, 1), d_EXPANDED8), 0);
+  res += mat4x4f(-0.00820623245, -0.0333479084, -0.0219082460, -0.00946887117, 0.0446647257, 0.124685116, -0.0784979984, -0.0901943892, -0.0130400108, 0.00355813862, -0.0139002362, -0.00188792078, 0.0419475175, -0.140570015, -0.0175112672, -0.0347191766) * textureLoad(t_EXPANDED9, clampCoord(p + vec2i(0, 1), d_EXPANDED9), 0);
+  res += mat4x4f(-0.0332411118, 0.0312420875, -0.00101272040, -0.0282025412, 0.0415192395, -0.0619867370, 0.0864597633, -0.0767755881, 0.00237678038, 0.0130821094, -0.0120015955, -0.0168173891, -0.0157891698, 0.105535582, -0.0448675118, 0.103769280) * textureLoad(t_EXPANDED10, clampCoord(p + vec2i(0, 1), d_EXPANDED10), 0);
+  res += mat4x4f(-0.00713205989, 0.0622181036, 0.000361528480, 0.0321116075, 0.271505982, -0.147329986, 0.214585692, -0.140340433, -0.0194639321, -0.0483060032, -0.0145738553, 0.0297232103, 0.00175656471, -0.0241506360, 0.00894977804, -0.00539694680) * textureLoad(t_EXPANDED11, clampCoord(p + vec2i(0, 1), d_EXPANDED11), 0);
+  res += mat4x4f(-0.00329170260, 0.0733954087, 0.0165697653, 0.109500386, 0.00234818435, 0.0329546370, 0.0162087381, -0.0403717682, 0.00923333690, 0.0125814099, 0.0430072881, -0.0227678269, -0.00831278134, 0.0564333871, 0.0295491926, -0.0497983843) * textureLoad(t_EXPANDED12, clampCoord(p + vec2i(0, 1), d_EXPANDED12), 0);
+  res += mat4x4f(-0.0132524967, 0.0519412756, -0.00474822894, 0.00789800938, 0.0317514166, -0.0785601214, 0.0248461049, -0.0656588823, -0.0406996459, -0.00701956032, 0.0685101375, -0.142654940, -0.0128538543, 0.0129879108, -0.0456236936, 0.0348501094) * textureLoad(t_EXPANDED13, clampCoord(p + vec2i(0, 1), d_EXPANDED13), 0);
+  res += mat4x4f(0.0145887258, -0.00577759184, 0.0225801375, -0.0375324339, -0.0167996138, 0.0235566106, 0.00568873994, -0.0298338067, -0.0530301034, 0.0518549830, -0.0542714894, 0.0800304040, -0.106656224, -0.139228195, -0.0996354371, 0.0349990204) * textureLoad(t_EXPANDED14, clampCoord(p + vec2i(0, 1), d_EXPANDED14), 0);
+  res += mat4x4f(-0.00706978748, 0.00300195510, -0.0101987068, -0.00484736124, -0.0483880118, -0.0168889519, 0.0531597137, -0.0127810733, 0.0450084023, 0.0206975546, -0.0770654008, 0.00992680155, -0.00742335105, -0.0254392084, -0.0463174097, 0.0235481001) * textureLoad(t_EXPANDED1, clampCoord(p + vec2i(1, -1), d_EXPANDED1), 0);
+  res += mat4x4f(0.00268344511, -0.00448853755, -0.0139462044, -0.0143479332, -0.00282976008, -0.0128172981, -0.00232236180, -0.00288416655, -0.0323711522, 0.0273925271, -0.00662265066, 0.00891441014, -0.00613935618, -0.0274170376, 0.0146901999, 0.00422018021) * textureLoad(t_EXPANDED2, clampCoord(p + vec2i(1, -1), d_EXPANDED2), 0);
+  res += mat4x4f(-0.0199026167, -0.000283252826, -0.0560650490, -0.00315929274, 0.0132478299, 0.00192523166, 0.0193919558, 0.0117233815, -0.00866307039, 0.00794270914, -0.00812837295, 0.00824669283, 0.00361283100, -0.00888843741, 0.0771531239, -0.0454563871) * textureLoad(t_EXPANDED3, clampCoord(p + vec2i(1, -1), d_EXPANDED3), 0);
+  res += mat4x4f(-0.0152000217, -0.000724083104, -0.0300575197, -0.00596836442, -0.00191949063, 0.00510493666, 0.0129455877, 0.0114760194, -0.00643577892, 0.0292864535, -0.0161660630, -0.0172564927, 0.00460064318, -0.00715680746, -0.00722053554, 0.00110043737) * textureLoad(t_EXPANDED4, clampCoord(p + vec2i(1, -1), d_EXPANDED4), 0);
+  res += mat4x4f(0.0362983644, -0.0296280589, -0.00181463023, -0.0459754430, -0.0399324857, 0.0233110320, 0.00628985837, -0.0143335136, -0.0345311873, -0.0128184864, 0.0423661806, 0.0171729308, -0.00308535714, -0.00226059323, 0.0285778213, -0.00319073931) * textureLoad(t_EXPANDED5, clampCoord(p + vec2i(1, -1), d_EXPANDED5), 0);
+  res += mat4x4f(0.0280922875, 0.0266403351, -0.0253026001, 0.0124862436, 0.0150751239, -0.00568647822, -0.0303287320, 0.00516283978, 0.00928262714, 0.00151874230, -0.00214368850, 0.00670123938, 0.00870109908, 0.00393278571, 0.00872233231, 0.000615393859) * textureLoad(t_EXPANDED6, clampCoord(p + vec2i(1, -1), d_EXPANDED6), 0);
+  res += mat4x4f(0.00173169200, -0.0112450533, 0.0603926443, -0.0203674678, 0.103013806, 0.00695313420, -0.0526113398, 0.0341072418, 0.00888459198, 0.00776630314, 0.0368823037, 0.0165299270, 0.0167778991, 0.00652740989, 0.00671379967, 0.0109969964) * textureLoad(t_EXPANDED7, clampCoord(p + vec2i(1, -1), d_EXPANDED7), 0);
+  res += mat4x4f(-0.0646061078, -0.0227786694, 0.0845427066, 0.0481221303, -0.000831399229, -0.00621418282, 0.0178107135, 0.0325539596, -0.00107387861, 0.00223290711, -0.0203583464, 0.00273415865, -0.00408771029, -0.0260962285, 0.0160613656, -0.00632541068) * textureLoad(t_EXPANDED8, clampCoord(p + vec2i(1, -1), d_EXPANDED8), 0);
+  res += mat4x4f(-0.0226741694, 0.0111043574, 0.00640034676, 0.0216565225, -0.105985157, -0.00909063686, 0.0833472386, -0.0445813239, -0.0101915132, -0.00285902875, -0.00301895360, -0.00777228130, -0.0175687615, 0.0295800418, -0.00756940106, 0.0298212003) * textureLoad(t_EXPANDED9, clampCoord(p + vec2i(1, -1), d_EXPANDED9), 0);
+  res += mat4x4f(-0.0176966935, 0.0122332163, -0.00597745087, 0.00896055624, -0.00630302588, -0.00903482735, -0.0152980303, -0.0250118300, 0.00536612747, -0.0122798756, 0.0146782892, 0.00583697064, 0.00390460948, 0.00474060560, 0.000686482934, 0.0220647641) * textureLoad(t_EXPANDED10, clampCoord(p + vec2i(1, -1), d_EXPANDED10), 0);
+  res += mat4x4f(0.00374758756, 0.00497502880, -0.0197184738, 0.0000547275195, -0.00258038519, 0.000496056746, -0.00983682740, -0.0169142559, 0.00380030461, -0.00752455601, 0.0200329833, -0.00163584587, -0.00512212468, -0.0222067274, 0.00103999802, 0.000816715241) * textureLoad(t_EXPANDED11, clampCoord(p + vec2i(1, -1), d_EXPANDED11), 0);
+  res += mat4x4f(0.00751734851, -0.00962300692, -0.00313303177, -0.0120848203, 0.000353873940, 0.00268204906, -0.00255441316, -0.00647323066, 0.0143667758, 0.000283083034, 0.00658194674, -0.00428345287, -0.00249785837, -0.00203829003, 0.0193583816, 0.00760883419) * textureLoad(t_EXPANDED12, clampCoord(p + vec2i(1, -1), d_EXPANDED12), 0);
+  res += mat4x4f(-0.00407835329, -0.00644389493, -0.00813631061, -0.0114807384, 0.00684127444, -0.00897538476, -0.0126314610, -0.00868961774, -0.00628671888, -0.0224456079, 0.0678314120, -0.0441831723, -0.00373237440, 0.00871122815, -0.0105687287, 0.00372821861) * textureLoad(t_EXPANDED13, clampCoord(p + vec2i(1, -1), d_EXPANDED13), 0);
+  res += mat4x4f(0.00641002180, 0.00482991803, 0.00560312951, 0.00349449320, 0.0319041759, -0.00192960084, -0.0371858664, 0.0125375008, 0.0200700220, -0.00334300823, 0.0257971343, -0.0348789878, 0.0105168009, 0.0288524367, -0.00167182088, 0.0223896857) * textureLoad(t_EXPANDED14, clampCoord(p + vec2i(1, -1), d_EXPANDED14), 0);
+  res += mat4x4f(-0.0184962563, -0.0320136361, -0.0126315467, 0.0444859937, -0.0313830785, -0.0944957733, -0.00573621690, 0.107732125, -0.0782649666, 0.00177395635, 0.0870343745, -0.0894813165, 0.00168703299, -0.00544747431, 0.0265778732, 0.0285786465) * textureLoad(t_EXPANDED1, clampCoord(p + vec2i(1, 0), d_EXPANDED1), 0);
+  res += mat4x4f(0.0247863643, 0.0238117296, -0.0130776521, -0.0254951417, 0.00945794489, 0.0194596164, -0.0340258591, -0.0139600420, -0.0360405184, -0.0102332784, 0.0711475909, -0.0261271391, 0.0560555272, 0.0484054312, 0.0419808812, 0.0566850565) * textureLoad(t_EXPANDED2, clampCoord(p + vec2i(1, 0), d_EXPANDED2), 0);
+  res += mat4x4f(-0.0197766516, -0.0548683852, 0.0733709484, -0.0222811736, 0.00814114604, 0.00829042960, 0.0782288462, 0.0899446309, 0.0173932202, -0.0140126459, 0.0662104040, -0.0361278765, 0.0603479892, -0.0428661890, 0.0290297586, -0.0962414220) * textureLoad(t_EXPANDED3, clampCoord(p + vec2i(1, 0), d_EXPANDED3), 0);
+  res += mat4x4f(0.0323367901, 0.00270993961, -0.0977617130, -0.0749261975, 0.00853793975, 0.0308557041, -0.0185245294, 0.00490008295, -0.0441985056, 0.0134611819, 0.000557388994, 0.0563399792, 0.0231021345, 0.0225550234, 0.0208115876, -0.0123424241) * textureLoad(t_EXPANDED4, clampCoord(p + vec2i(1, 0), d_EXPANDED4), 0);
+  res += mat4x4f(-0.0116702216, 0.0409383811, -0.0589596778, 0.113103099, 0.0851673782, -0.0270632580, -0.0353628471, 0.124367803, 0.00411493843, -0.0256442241, 0.134798557, 0.128871247, -0.00725082820, -0.00938248634, -0.0669046789, 0.0261262134) * textureLoad(t_EXPANDED5, clampCoord(p + vec2i(1, 0), d_EXPANDED5), 0);
+  res += mat4x4f(0.0212641507, 0.0223075021, 0.0300915502, -0.00909365434, 0.0452462174, 0.00699956110, -0.0233663600, 0.0305813458, 0.0133925574, 0.00879911706, -0.0277597364, -0.00537847821, -0.0187084582, -0.00123573397, 0.0195687097, -0.0201828238) * textureLoad(t_EXPANDED6, clampCoord(p + vec2i(1, 0), d_EXPANDED6), 0);
+  res += mat4x4f(0.0250394158, 0.0531034395, -0.0108917607, -0.0460030660, 0.106191181, 0.211108074, -0.170617655, -0.233739361, -0.0130168358, -0.0157280844, 0.0944516733, -0.0821039453, 0.0521730259, 0.0418762602, -0.0667076632, -0.0686936229) * textureLoad(t_EXPANDED7, clampCoord(p + vec2i(1, 0), d_EXPANDED7), 0);
+  res += mat4x4f(0.0740966871, -0.0272465870, -0.103871308, -0.0103241419, -0.0452807769, -0.0150169535, -0.0426364206, -0.0417800993, -0.0109939352, -0.0156145813, -0.0395091474, -0.00677573867, -0.0957637653, -0.0580391027, 0.121090680, 0.0655305609) * textureLoad(t_EXPANDED8, clampCoord(p + vec2i(1, 0), d_EXPANDED8), 0);
+  res += mat4x4f(0.00691434136, -0.0605717711, -0.00728570251, 0.0574444048, 0.0432254635, -0.0379420072, -0.0760613158, 0.134543210, -0.00103615946, -0.0102466596, -0.0236323681, -0.00757346908, 0.0819941983, -0.0518381335, 0.0854519606, -0.0816639215) * textureLoad(t_EXPANDED9, clampCoord(p + vec2i(1, 0), d_EXPANDED9), 0);
+  res += mat4x4f(-0.0683428571, -0.0803648606, -0.00809046719, -0.0244971588, -0.0315382220, 0.0284984168, 0.0322921164, -0.0355376713, 0.0182275083, 0.00473562814, 0.0790180489, -0.0664516166, 0.00720376335, 0.0126625281, 0.00306708366, -0.0360591263) * textureLoad(t_EXPANDED10, clampCoord(p + vec2i(1, 0), d_EXPANDED10), 0);
+  res += mat4x4f(0.0460715666, 0.0807448328, 0.0224511381, -0.151783243, -0.00149502070, 0.00136707514, -0.0506713130, 0.0543538667, -0.0213969126, -0.0227475464, -0.0666629374, 0.0596298091, -0.0394976325, -0.0255052727, 0.201085299, 0.0841590613) * textureLoad(t_EXPANDED11, clampCoord(p + vec2i(1, 0), d_EXPANDED11), 0);
+  res += mat4x4f(-0.0177825540, 0.0318410620, -0.0401625298, 0.0287528671, -0.0204551201, -0.00448628562, 0.0484804250, 0.0446552448, 0.0206998195, 0.0334834605, -0.0515508875, -0.0571819916, -0.0178312548, -0.0185589753, -0.0162856970, -0.0245198160) * textureLoad(t_EXPANDED12, clampCoord(p + vec2i(1, 0), d_EXPANDED12), 0);
+  res += mat4x4f(-0.0255415067, -0.00721692992, 0.0423931070, 0.0409089774, 0.0146554727, 0.0124719916, -0.0249556545, 0.0253782049, -0.0950032249, 0.0711892098, -0.0883118585, 0.0112465890, -0.0388048626, -0.0357541069, 0.00457365392, 0.0133592524) * textureLoad(t_EXPANDED13, clampCoord(p + vec2i(1, 0), d_EXPANDED13), 0);
+  res += mat4x4f(0.00922367815, 0.00562695181, -0.0182556901, -0.0240785684, 0.000228019344, 0.0607512482, -0.0778418705, -0.142283022, 0.0316274054, -0.00977445859, -0.0401931703, 0.00168824545, -0.0168675762, -0.0898211300, 0.0102425469, -0.0700335205) * textureLoad(t_EXPANDED14, clampCoord(p + vec2i(1, 0), d_EXPANDED14), 0);
+  res += mat4x4f(0.00537996180, -0.00152398855, 0.00987135060, -0.0155050615, -0.0168286450, -0.0189706367, 0.0129021229, -0.00860552676, 0.0220459104, -0.00355061633, -0.0192061178, 0.0539917499, 0.00242065545, -0.000873853161, -0.00608007610, -0.0117605571) * textureLoad(t_EXPANDED1, clampCoord(p + vec2i(1, 1), d_EXPANDED1), 0);
+  res += mat4x4f(0.0132370861, 0.0186951142, -0.00117675937, -0.00857037399, 0.00408451399, 0.00190130435, -0.000609708310, -0.00471410900, 0.00219002878, -0.0238557812, -0.0168099739, -0.00505603990, -0.0160330031, 0.0158422198, 0.00989657361, 0.0161181986) * textureLoad(t_EXPANDED2, clampCoord(p + vec2i(1, 1), d_EXPANDED2), 0);
+  res += mat4x4f(-0.0156714916, -0.0299702827, -0.0173617620, 0.00124624849, 0.00361644104, 0.0173429754, 0.00127568748, 0.00968182553, -0.00800429191, 0.0147599317, -0.0302315746, -0.0149535052, -0.0294850022, -0.0184743293, -0.0352926254, 0.113319270) * textureLoad(t_EXPANDED3, clampCoord(p + vec2i(1, 1), d_EXPANDED3), 0);
+  res += mat4x4f(-0.00407518819, -0.0113417488, 0.00460004574, -0.0231711343, -0.0215754267, -0.00631114095, -0.0463271327, 0.0685198307, 0.00764415646, 0.0116365356, 0.0206361748, -0.0665761605, -0.00670619542, 0.00927968323, -0.000629501475, 0.0117078992) * textureLoad(t_EXPANDED4, clampCoord(p + vec2i(1, 1), d_EXPANDED4), 0);
+  res += mat4x4f(0.0127609242, 0.00898573361, 0.0259254966, -0.0267519746, 0.0283152927, 0.000316438818, 0.0199704468, -0.0352582000, -0.0253940672, -0.0292132366, -0.00857717730, 0.0230473038, 0.00766400760, 0.0137068126, 0.0194043107, -0.0129793407) * textureLoad(t_EXPANDED5, clampCoord(p + vec2i(1, 1), d_EXPANDED5), 0);
+  res += mat4x4f(-0.0149040101, -0.000320433843, 0.00146138889, -0.00269568921, -0.00799533352, -0.0148122814, 0.0137279220, 0.0146819483, 0.0121641494, 0.00833295286, 0.00239731534, -0.00637241919, 0.00394340837, -0.00905174203, -0.00157052535, -0.00651811995) * textureLoad(t_EXPANDED6, clampCoord(p + vec2i(1, 1), d_EXPANDED6), 0);
+  res += mat4x4f(-0.00718048913, 0.0167393051, -0.0169023462, 0.0157971308, 0.0448624529, 0.0467568114, 0.00986307859, -0.00548705831, -0.00528189354, -0.0243509077, -0.0147619881, -0.00471868552, 0.00995773636, 0.0318740979, 0.00888221152, -0.0142952092) * textureLoad(t_EXPANDED7, clampCoord(p + vec2i(1, 1), d_EXPANDED7), 0);
+  res += mat4x4f(0.0199243464, 0.0611780696, 0.0190082211, -0.0380861796, -0.00581454113, -0.00502812397, -0.000234674531, -0.0259832907, 0.00763781136, 0.00750320824, 0.00184379739, -0.0225825030, -0.00655342964, -0.0128699159, -0.00245523360, 0.0105131622) * textureLoad(t_EXPANDED8, clampCoord(p + vec2i(1, 1), d_EXPANDED8), 0);
+  res += mat4x4f(0.00597253814, 0.00144383952, -0.0132205505, 0.00603510765, -0.0312765427, -0.0153707424, 0.0337359868, -0.0746689513, 0.000834171544, -0.0120293619, -0.0105655715, -0.0107231289, -0.0171452053, 0.0109399352, 0.0194596779, -0.0735108554) * textureLoad(t_EXPANDED9, clampCoord(p + vec2i(1, 1), d_EXPANDED9), 0);
+  res += mat4x4f(-0.00423839875, -0.0205608830, -0.00740027009, -0.00100855215, -0.0106185907, -0.00162506849, 0.0193887465, 0.0215425566, -0.0103823040, -0.0160930660, 0.00240202481, 0.00655986276, -0.00895737018, 0.000572379038, -0.00661388692, 0.0113620115) * textureLoad(t_EXPANDED10, clampCoord(p + vec2i(1, 1), d_EXPANDED10), 0);
+  res += mat4x4f(-0.00112798100, 0.0132640386, -0.0656470954, 0.0222415477, 0.0304583739, -0.00863112789, 0.0780677274, -0.0405106619, 0.00656982465, 0.0173827782, 0.0198323764, -0.0306647513, -0.0171637870, -0.0379987955, -0.0165773984, 0.0605392084) * textureLoad(t_EXPANDED11, clampCoord(p + vec2i(1, 1), d_EXPANDED11), 0);
+  res += mat4x4f(0.00766572310, 0.0314066708, -0.00133137044, 0.0372512601, 0.00153933337, -0.0120861111, -0.00359030836, 0.0156805422, 0.00366737368, 0.0250460301, 0.0108686853, -0.0235094186, -0.00466085877, 0.00224248460, -0.00541471457, 0.0163286068) * textureLoad(t_EXPANDED12, clampCoord(p + vec2i(1, 1), d_EXPANDED12), 0);
+  res += mat4x4f(-0.00945900939, -0.0224553198, -0.0114769554, 0.00469528744, -0.000963992497, 0.00627331110, 0.0195541531, -0.00632963842, 0.0279486384, 0.0279689096, -0.0431774817, 0.0960153639, -0.00162866211, -0.0254326034, -0.00120990537, -0.0207063202) * textureLoad(t_EXPANDED13, clampCoord(p + vec2i(1, 1), d_EXPANDED13), 0);
+  res += mat4x4f(-0.0000322326014, 0.0139382435, 0.00403058156, 0.00978471059, 0.0195218362, -0.00468907738, -0.00648459420, 0.0111728199, 0.00490996242, 0.0169881806, -0.0113912970, -0.0305335037, 0.0504101701, 0.0205113869, -0.00508323265, -0.0615257733) * textureLoad(t_EXPANDED14, clampCoord(p + vec2i(1, 1), d_EXPANDED14), 0);
   textureStore(outTex, p, res);
 }
 
-//==== ENTRY pass53 : aggregation ====
-// ---- PASS 53: aggregation (save=null, comps=1) ----
+//==== ENTRY pass15 : aggregation ====
+// ---- PASS 15: aggregation (save=null, comps=1) ----
 // binds: SUBCONV1
 // pixel-shuffle aggregation, scale=2, 1 subconv texture(s)
 @group(0) @binding(0) var src0 : texture_2d<f32>;

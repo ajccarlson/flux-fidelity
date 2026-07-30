@@ -405,6 +405,13 @@ async function loadStatusHarness(storeHealth = {
     let gpuResourceReason = deps.runtime.resourceReason || null;
     let rendererFallback = null, neuralLastFailure = null, neuralFail = 0;
     const frameTimes = deps.frameTimes || [];
+    // getStatus publishes GPU timing alongside encodeMs. This slice is about the
+    // settings contract, so the timer reports its unsupported shape — which is
+    // also the shape most real devices produce, timestamp-query being optional.
+    const gpuTimer = deps.gpuTimer || {
+      stats: () => ({ supported: false, samples: 0, avgMs: null, maxMs: null, lastMs: null }),
+      series: () => [],
+    };
     const playbackPerformance = { snapshot: () => ({
       triggered: null,
       lastWindow: null,

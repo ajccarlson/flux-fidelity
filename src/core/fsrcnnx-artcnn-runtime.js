@@ -31,6 +31,7 @@ export class ArtCnnModel {
     this.bindGroups = null;
     this.allocationPlan = null;
     this.destroyed = false;
+    this._warmPromise = null;
   }
 
   _assertLive() {
@@ -56,6 +57,38 @@ export class ArtCnnModel {
     // Do not let a synchronous failure leave a partially published generation.
     this.pipelines = candidates;
     return candidates;
+  }
+
+  // See FsrcnnxModel.warmPipelines: compiling on the frame callback made the
+  // first frame of a model pay for every pass at once. Warming off the critical
+  // path leaves buildPipelines() as a fallback that finds the work already done.
+  async warmPipelines() {
+    this._assertLive();
+    if (this.pipelines.length === this.manifest.passes.length) return this.pipelines;
+    if (!this._warmPromise) {
+      this._warmPromise = this._compileAsync().finally(() => { this._warmPromise = null; });
+    }
+    return this._warmPromise;
+  }
+
+  async _compileAsync() {
+    if (typeof this.device.createComputePipelineAsync !== "function") {
+      return this.buildPipelines();
+    }
+    const candidates = await Promise.all(this.manifest.passes.map((pass, index) => {
+      const module = this.device.createShaderModule({
+        label: `artcnn-p${index}`,
+        code: this.entries.get(index),
+      });
+      return this.device.createComputePipelineAsync({
+        label: `artcnn-p${index}-${pass.kind}`,
+        layout: "auto",
+        compute: { module, entryPoint: "main" },
+      });
+    }));
+    if (this.destroyed) return [];
+    if (this.pipelines.length !== this.manifest.passes.length) this.pipelines = candidates;
+    return this.pipelines;
   }
 
   preflight(lumaW, lumaH, options = {}) {
@@ -192,6 +225,7 @@ export class ArtCnnModel {
     this._destroyTextures();
     this.pipelines = [];
     this.entries = new Map();
+    this._warmPromise = null;
     this.destroyed = true;
   }
 }

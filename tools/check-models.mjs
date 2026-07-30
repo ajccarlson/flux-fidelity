@@ -39,10 +39,10 @@ const pinnedArtifacts = {
   "shaders/upstream/ArtCNN_C4F32.glsl": "f773bce6cf5fe7e5e5d599a695edd40df5cd7a20c3d08c4d164d07591d5bead3",
   "shaders/upstream/ArtCNN_C4F32_DN.glsl": "6b51a6f7d75826c9492c3f78b5e60acffa24a71928e2d47c4a329423922a143c",
   "shaders/upstream/ArtCNN_C4F32_DS.glsl": "a04c9cba6fbb8e6db9239d61848390208aedf8e348ef116e12174c803d22077e",
-  "model/FSRCNNX_x2_16-0-4-1.wgsl": "2b005b9c4e60c59445708b2f503c9afb01fd70ee9efb1615782274e7b7707f26",
-  "model/FSRCNNX_x2_16-0-4-1.passes.json": "1378fc336deb2588f75ddf8b9ed6ec70109256f2c3fa0477ca742adf830fb3e0",
-  "model/FSRCNNX_x2_56-16-4-1.wgsl": "19a5327c8f96b7cb0593512f846f75ef266a3d857a84532c4dc5a374296e3d11",
-  "model/FSRCNNX_x2_56-16-4-1.passes.json": "4b7512ca17fd9788f4876f2681207fa8fb3b10c46d314ea2b3ce684864fb4d70",
+  "model/FSRCNNX_x2_16-0-4-1.wgsl": "9e39193dd6dd9f1935ca48b832f08d4ebf22e70698a522708ac2e4f45fbcfb34",
+  "model/FSRCNNX_x2_16-0-4-1.passes.json": "40c22c1ecf9dbbf8b9872d2f4e57b1cfd505559d641f9f58bc62d0026298a633",
+  "model/FSRCNNX_x2_56-16-4-1.wgsl": "c7075c901a3e1aa25d1279eb360181ddd9d179e59dc4950162471c1fc9e711c9",
+  "model/FSRCNNX_x2_56-16-4-1.passes.json": "baee24ca3cbcbb01d73e6da17fc5d6f46fe1e3e66f4f5e4b9491484980bebf5a",
   "model/ArtCNN_C4F32.artcnn.wgsl": "ab6fe4c88e88eb0cc3b5482e68ca9279c802c0b7844699c40f9f15eb3aac8138",
   "model/ArtCNN_C4F32.artcnn.json": "4ab29b29a6121e0fa3d3880b890bedabb3ea1f49356ef46704ad1770b143077a",
   "model/ArtCNN_C4F32_DN.artcnn.wgsl": "c319ff51ff358558cd4daa1fc897da4bfc0064c175cca3f9fd29052ac29af280",
@@ -52,7 +52,7 @@ const pinnedArtifacts = {
   "src/core/fsrcnnx-ssimds.js": "70ccb3d08686bc2cb244683c8800dd1117cad916611c51bb069ff4aa35f3ed9e",
   "src/core/fsrcnnx-sharpen.js": "9312f5445791792634679bac74f01d3292e8e776c6fc7e3be348435f2913ef8a",
   "tools/package.json": "609158e6c5fbc237939fa3ddf7faab80ab690bdc0c8d584414a885130103c4e8",
-  "tools/transpile.js": "6abd739bc5356ea9fc151c754f6c4d9e017c39283d5e5ba477a70aafe814003a",
+  "tools/transpile.js": "f3352bf6baba9185bc246c151671e06fffd3cc08218570bd59262c69aa4d9c1f",
 };
 
 for (const [path, expected] of Object.entries(pinnedArtifacts)) {
