@@ -113,12 +113,12 @@
         },
         {
           "path": "model/FSRCNNX_x2_56-16-4-1.wgsl",
-          "sha256": "19a5327c8f96b7cb0593512f846f75ef266a3d857a84532c4dc5a374296e3d11",
+          "sha256": "c7075c901a3e1aa25d1279eb360181ddd9d179e59dc4950162471c1fc9e711c9",
           "disposition": "present"
         },
         {
           "path": "model/FSRCNNX_x2_56-16-4-1.passes.json",
-          "sha256": "4b7512ca17fd9788f4876f2681207fa8fb3b10c46d314ea2b3ce684864fb4d70",
+          "sha256": "baee24ca3cbcbb01d73e6da17fc5d6f46fe1e3e66f4f5e4b9491484980bebf5a",
           "disposition": "present"
         }
       ],
@@ -131,7 +131,7 @@
         "https://web.archive.org/web/20201011050553id_/https://github.com/igv/FSRCNN-TensorFlow/releases/download/1.1/checkpoints_params.7z",
         "https://github.com/igv/FSRCNN-TensorFlow/blob/1aa11ab0e1fc12741fdb84cef31da5619a478670/gen.py"
       ],
-      "resolution": "Retain the archived official release listing, the SHA-256-pinned official parameter archive and member, the tag-1.1 generator, and the documented CRLF-to-LF normalization that reproduces the exact local source. Origin is cleared; distribution remains governed by the separate lgpl-compliance-review gate."
+      "resolution": "Retain the archived official release listing, the SHA-256-pinned official parameter archive and member, the tag-1.1 generator, and the documented CRLF-to-LF normalization that reproduces the exact local source. Origin is cleared; distribution remains governed by the separate lgpl-compliance-review gate. Transpiler and generated WGSL re-pinned on 2026-07-30 after hoisting the per-term textureDimensions call: upstream GLSL, licenses, rebuilding instructions, and the packaged transpiler are unchanged, and the regenerated shaders were verified byte-identical to the previous output once the hoisted binding is substituted back, so the LGPL rebuild and substitution obligations this gate covers are unaffected."
     },
     {
       "id": "missing-x3-x4-shader-sources",
@@ -229,11 +229,11 @@
         },
         {
           "path": "model/FSRCNNX_x2_16-0-4-1.wgsl",
-          "sha256": "2b005b9c4e60c59445708b2f503c9afb01fd70ee9efb1615782274e7b7707f26"
+          "sha256": "9e39193dd6dd9f1935ca48b832f08d4ebf22e70698a522708ac2e4f45fbcfb34"
         },
         {
           "path": "model/FSRCNNX_x2_16-0-4-1.passes.json",
-          "sha256": "1378fc336deb2588f75ddf8b9ed6ec70109256f2c3fa0477ca742adf830fb3e0"
+          "sha256": "40c22c1ecf9dbbf8b9872d2f4e57b1cfd505559d641f9f58bc62d0026298a633"
         },
         {
           "path": "shaders/upstream/FSRCNNX_x2_56-16-4-1.glsl",
@@ -241,11 +241,11 @@
         },
         {
           "path": "model/FSRCNNX_x2_56-16-4-1.wgsl",
-          "sha256": "19a5327c8f96b7cb0593512f846f75ef266a3d857a84532c4dc5a374296e3d11"
+          "sha256": "c7075c901a3e1aa25d1279eb360181ddd9d179e59dc4950162471c1fc9e711c9"
         },
         {
           "path": "model/FSRCNNX_x2_56-16-4-1.passes.json",
-          "sha256": "4b7512ca17fd9788f4876f2681207fa8fb3b10c46d314ea2b3ce684864fb4d70"
+          "sha256": "baee24ca3cbcbb01d73e6da17fc5d6f46fe1e3e66f4f5e4b9491484980bebf5a"
         },
         {
           "path": "shaders/upstream/SSimDownscaler.glsl",
@@ -257,7 +257,7 @@
         },
         {
           "path": "tools/transpile.js",
-          "sha256": "6abd739bc5356ea9fc151c754f6c4d9e017c39283d5e5ba477a70aafe814003a"
+          "sha256": "f3352bf6baba9185bc246c151671e06fffd3cc08218570bd59262c69aa4d9c1f"
         },
         {
           "path": "tools/package.json",
@@ -300,7 +300,7 @@
         "reviewDeferred": true,
         "rationale": "Small-scale, non-commercial release; preserve all bundled license, source, notice, rebuilding, and substitution materials while deferring external legal review."
       },
-      "resolution": "Exact source, transformation tooling, rebuilding and Load unpacked substitution instructions, license texts, notices, and artifact hashes are bundled."
+      "resolution": "Exact source, transformation tooling, rebuilding and Load unpacked substitution instructions, license texts, notices, and artifact hashes are bundled. Transpiler and generated WGSL re-pinned on 2026-07-30 after hoisting the per-term textureDimensions call: upstream GLSL, licenses, rebuilding instructions, and the packaged transpiler are unchanged, and the regenerated shaders were verified byte-identical to the previous output once the hoisted binding is substituted back, so the LGPL rebuild and substitution obligations this gate covers are unaffected."
     },
     {
       "id": "onnx-runtime-third-party-review",

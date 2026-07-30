@@ -8,892 +8,458 @@
   "passes": [
     {
       "index": 0,
-      "desc": "feature map 1",
+      "desc": "feature map 1 + feature map 2 + feature map 3 + feature map 4",
       "binds": [
         "LUMA"
       ],
-      "save": "FEATURE1",
+      "saves": [
+        "FEATURE1",
+        "FEATURE2",
+        "FEATURE3",
+        "FEATURE4"
+      ],
       "components": 4,
       "widthMul": 1,
       "heightMul": 1,
       "kind": "conv",
-      "activation": "prelu",
-      "termCount": 25
+      "activations": [
+        "prelu",
+        "prelu",
+        "prelu",
+        "prelu"
+      ],
+      "fusedFrom": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "termCount": 100
     },
     {
       "index": 1,
-      "desc": "feature map 2",
+      "desc": "feature map 5 + feature map 6 + feature map 7 + feature map 8",
       "binds": [
         "LUMA"
       ],
-      "save": "FEATURE2",
+      "saves": [
+        "FEATURE5",
+        "FEATURE6",
+        "FEATURE7",
+        "FEATURE8"
+      ],
       "components": 4,
       "widthMul": 1,
       "heightMul": 1,
       "kind": "conv",
-      "activation": "prelu",
-      "termCount": 25
+      "activations": [
+        "prelu",
+        "prelu",
+        "prelu",
+        "prelu"
+      ],
+      "fusedFrom": [
+        4,
+        5,
+        6,
+        7
+      ],
+      "termCount": 100
     },
     {
       "index": 2,
-      "desc": "feature map 3",
+      "desc": "feature map 9 + feature map 10 + feature map 11 + feature map 12",
       "binds": [
         "LUMA"
       ],
-      "save": "FEATURE3",
+      "saves": [
+        "FEATURE9",
+        "FEATURE10",
+        "FEATURE11",
+        "FEATURE12"
+      ],
       "components": 4,
       "widthMul": 1,
       "heightMul": 1,
       "kind": "conv",
-      "activation": "prelu",
-      "termCount": 25
+      "activations": [
+        "prelu",
+        "prelu",
+        "prelu",
+        "prelu"
+      ],
+      "fusedFrom": [
+        8,
+        9,
+        10,
+        11
+      ],
+      "termCount": 100
     },
     {
       "index": 3,
-      "desc": "feature map 4",
+      "desc": "feature map 13 + feature map 14",
       "binds": [
         "LUMA"
       ],
-      "save": "FEATURE4",
+      "saves": [
+        "FEATURE13",
+        "FEATURE14"
+      ],
       "components": 4,
       "widthMul": 1,
       "heightMul": 1,
       "kind": "conv",
-      "activation": "prelu",
-      "termCount": 25
+      "activations": [
+        "prelu",
+        "prelu"
+      ],
+      "fusedFrom": [
+        12,
+        13
+      ],
+      "termCount": 50
     },
     {
       "index": 4,
-      "desc": "feature map 5",
+      "desc": "shrinking 1 + shrinking 2 + shrinking 3 + shrinking 4",
       "binds": [
-        "LUMA"
+        "FEATURE1",
+        "FEATURE2",
+        "FEATURE3",
+        "FEATURE4",
+        "FEATURE5",
+        "FEATURE6",
+        "FEATURE7",
+        "FEATURE8",
+        "FEATURE9",
+        "FEATURE10",
+        "FEATURE11",
+        "FEATURE12",
+        "FEATURE13",
+        "FEATURE14"
       ],
-      "save": "FEATURE5",
+      "saves": [
+        "SHRINKED1",
+        "SHRINKED2",
+        "SHRINKED3",
+        "SHRINKED4"
+      ],
       "components": 4,
       "widthMul": 1,
       "heightMul": 1,
       "kind": "conv",
-      "activation": "prelu",
-      "termCount": 25
+      "activations": [
+        "none",
+        "none",
+        "none",
+        "none"
+      ],
+      "fusedFrom": [
+        14,
+        15,
+        16,
+        17
+      ],
+      "termCount": 56
     },
     {
       "index": 5,
-      "desc": "feature map 6",
+      "desc": "mapping 1_1 + mapping 1_2 + mapping 1_3 + mapping 1_4",
       "binds": [
-        "LUMA"
+        "SHRINKED1",
+        "SHRINKED2",
+        "SHRINKED3",
+        "SHRINKED4"
       ],
-      "save": "FEATURE6",
+      "saves": [
+        "MODEL21",
+        "MODEL22",
+        "MODEL23",
+        "MODEL24"
+      ],
       "components": 4,
       "widthMul": 1,
       "heightMul": 1,
       "kind": "conv",
-      "activation": "prelu",
-      "termCount": 25
+      "activations": [
+        "prelu",
+        "prelu",
+        "prelu",
+        "prelu"
+      ],
+      "fusedFrom": [
+        18,
+        19,
+        20,
+        21
+      ],
+      "termCount": 144
     },
     {
       "index": 6,
-      "desc": "feature map 7",
+      "desc": "mapping 2_1 + mapping 2_2 + mapping 2_3 + mapping 2_4",
       "binds": [
-        "LUMA"
+        "MODEL21",
+        "MODEL22",
+        "MODEL23",
+        "MODEL24"
       ],
-      "save": "FEATURE7",
+      "saves": [
+        "MODEL1",
+        "MODEL2",
+        "MODEL3",
+        "MODEL4"
+      ],
       "components": 4,
       "widthMul": 1,
       "heightMul": 1,
       "kind": "conv",
-      "activation": "prelu",
-      "termCount": 25
+      "activations": [
+        "prelu",
+        "prelu",
+        "prelu",
+        "prelu"
+      ],
+      "fusedFrom": [
+        22,
+        23,
+        24,
+        25
+      ],
+      "termCount": 144
     },
     {
       "index": 7,
-      "desc": "feature map 8",
+      "desc": "mapping 3_1 + mapping 3_2 + mapping 3_3 + mapping 3_4",
       "binds": [
-        "LUMA"
+        "MODEL1",
+        "MODEL2",
+        "MODEL3",
+        "MODEL4"
       ],
-      "save": "FEATURE8",
+      "saves": [
+        "MODEL21",
+        "MODEL22",
+        "MODEL23",
+        "MODEL24"
+      ],
       "components": 4,
       "widthMul": 1,
       "heightMul": 1,
       "kind": "conv",
-      "activation": "prelu",
-      "termCount": 25
+      "activations": [
+        "prelu",
+        "prelu",
+        "prelu",
+        "prelu"
+      ],
+      "fusedFrom": [
+        26,
+        27,
+        28,
+        29
+      ],
+      "termCount": 144
     },
     {
       "index": 8,
-      "desc": "feature map 9",
+      "desc": "mapping 4_1 + mapping 4_2 + mapping 4_3 + mapping 4_4",
       "binds": [
-        "LUMA"
+        "MODEL21",
+        "MODEL22",
+        "MODEL23",
+        "MODEL24"
       ],
-      "save": "FEATURE9",
+      "saves": [
+        "MODEL1",
+        "MODEL2",
+        "MODEL3",
+        "MODEL4"
+      ],
       "components": 4,
       "widthMul": 1,
       "heightMul": 1,
       "kind": "conv",
-      "activation": "prelu",
-      "termCount": 25
+      "activations": [
+        "prelu",
+        "prelu",
+        "prelu",
+        "prelu"
+      ],
+      "fusedFrom": [
+        30,
+        31,
+        32,
+        33
+      ],
+      "termCount": 144
     },
     {
       "index": 9,
-      "desc": "feature map 10",
+      "desc": "sub-band residuals 1 + sub-band residuals 2 + sub-band residuals 3 + sub-band residuals 4",
       "binds": [
-        "LUMA"
+        "MODEL1",
+        "MODEL2",
+        "MODEL3",
+        "MODEL4",
+        "SHRINKED1",
+        "SHRINKED2",
+        "SHRINKED3",
+        "SHRINKED4"
       ],
-      "save": "FEATURE10",
+      "saves": [
+        "RES1",
+        "RES2",
+        "RES3",
+        "RES4"
+      ],
       "components": 4,
       "widthMul": 1,
       "heightMul": 1,
       "kind": "conv",
-      "activation": "prelu",
-      "termCount": 25
+      "activations": [
+        "prelu",
+        "prelu",
+        "prelu",
+        "prelu"
+      ],
+      "fusedFrom": [
+        34,
+        35,
+        36,
+        37
+      ],
+      "termCount": 20
     },
     {
       "index": 10,
-      "desc": "feature map 11",
+      "desc": "expanding 1 + expanding 2 + expanding 3 + expanding 4",
       "binds": [
-        "LUMA"
+        "RES1",
+        "RES2",
+        "RES3",
+        "RES4"
       ],
-      "save": "FEATURE11",
+      "saves": [
+        "EXPANDED1",
+        "EXPANDED2",
+        "EXPANDED3",
+        "EXPANDED4"
+      ],
       "components": 4,
       "widthMul": 1,
       "heightMul": 1,
       "kind": "conv",
-      "activation": "prelu",
-      "termCount": 25
+      "activations": [
+        "prelu",
+        "prelu",
+        "prelu",
+        "prelu"
+      ],
+      "fusedFrom": [
+        38,
+        39,
+        40,
+        41
+      ],
+      "termCount": 16
     },
     {
       "index": 11,
-      "desc": "feature map 12",
+      "desc": "expanding 5 + expanding 6 + expanding 7 + expanding 8",
       "binds": [
-        "LUMA"
+        "RES1",
+        "RES2",
+        "RES3",
+        "RES4"
       ],
-      "save": "FEATURE12",
+      "saves": [
+        "EXPANDED5",
+        "EXPANDED6",
+        "EXPANDED7",
+        "EXPANDED8"
+      ],
       "components": 4,
       "widthMul": 1,
       "heightMul": 1,
       "kind": "conv",
-      "activation": "prelu",
-      "termCount": 25
+      "activations": [
+        "prelu",
+        "prelu",
+        "prelu",
+        "prelu"
+      ],
+      "fusedFrom": [
+        42,
+        43,
+        44,
+        45
+      ],
+      "termCount": 16
     },
     {
       "index": 12,
-      "desc": "feature map 13",
+      "desc": "expanding 9 + expanding 10 + expanding 11 + expanding 12",
       "binds": [
-        "LUMA"
+        "RES1",
+        "RES2",
+        "RES3",
+        "RES4"
       ],
-      "save": "FEATURE13",
+      "saves": [
+        "EXPANDED9",
+        "EXPANDED10",
+        "EXPANDED11",
+        "EXPANDED12"
+      ],
       "components": 4,
       "widthMul": 1,
       "heightMul": 1,
       "kind": "conv",
-      "activation": "prelu",
-      "termCount": 25
+      "activations": [
+        "prelu",
+        "prelu",
+        "prelu",
+        "prelu"
+      ],
+      "fusedFrom": [
+        46,
+        47,
+        48,
+        49
+      ],
+      "termCount": 16
     },
     {
       "index": 13,
-      "desc": "feature map 14",
+      "desc": "expanding 13 + expanding 14",
       "binds": [
-        "LUMA"
+        "RES1",
+        "RES2",
+        "RES3",
+        "RES4"
       ],
-      "save": "FEATURE14",
+      "saves": [
+        "EXPANDED13",
+        "EXPANDED14"
+      ],
       "components": 4,
       "widthMul": 1,
       "heightMul": 1,
       "kind": "conv",
-      "activation": "prelu",
-      "termCount": 25
+      "activations": [
+        "prelu",
+        "prelu"
+      ],
+      "fusedFrom": [
+        50,
+        51
+      ],
+      "termCount": 8
     },
     {
       "index": 14,
-      "desc": "shrinking 1",
-      "binds": [
-        "FEATURE1",
-        "FEATURE2",
-        "FEATURE3",
-        "FEATURE4",
-        "FEATURE5",
-        "FEATURE6",
-        "FEATURE7",
-        "FEATURE8",
-        "FEATURE9",
-        "FEATURE10",
-        "FEATURE11",
-        "FEATURE12",
-        "FEATURE13",
-        "FEATURE14"
-      ],
-      "save": "SHRINKED1",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "none",
-      "termCount": 14
-    },
-    {
-      "index": 15,
-      "desc": "shrinking 2",
-      "binds": [
-        "FEATURE1",
-        "FEATURE2",
-        "FEATURE3",
-        "FEATURE4",
-        "FEATURE5",
-        "FEATURE6",
-        "FEATURE7",
-        "FEATURE8",
-        "FEATURE9",
-        "FEATURE10",
-        "FEATURE11",
-        "FEATURE12",
-        "FEATURE13",
-        "FEATURE14"
-      ],
-      "save": "SHRINKED2",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "none",
-      "termCount": 14
-    },
-    {
-      "index": 16,
-      "desc": "shrinking 3",
-      "binds": [
-        "FEATURE1",
-        "FEATURE2",
-        "FEATURE3",
-        "FEATURE4",
-        "FEATURE5",
-        "FEATURE6",
-        "FEATURE7",
-        "FEATURE8",
-        "FEATURE9",
-        "FEATURE10",
-        "FEATURE11",
-        "FEATURE12",
-        "FEATURE13",
-        "FEATURE14"
-      ],
-      "save": "SHRINKED3",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "none",
-      "termCount": 14
-    },
-    {
-      "index": 17,
-      "desc": "shrinking 4",
-      "binds": [
-        "FEATURE1",
-        "FEATURE2",
-        "FEATURE3",
-        "FEATURE4",
-        "FEATURE5",
-        "FEATURE6",
-        "FEATURE7",
-        "FEATURE8",
-        "FEATURE9",
-        "FEATURE10",
-        "FEATURE11",
-        "FEATURE12",
-        "FEATURE13",
-        "FEATURE14"
-      ],
-      "save": "SHRINKED4",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "none",
-      "termCount": 14
-    },
-    {
-      "index": 18,
-      "desc": "mapping 1_1",
-      "binds": [
-        "SHRINKED1",
-        "SHRINKED2",
-        "SHRINKED3",
-        "SHRINKED4"
-      ],
-      "save": "MODEL21",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 36
-    },
-    {
-      "index": 19,
-      "desc": "mapping 1_2",
-      "binds": [
-        "SHRINKED1",
-        "SHRINKED2",
-        "SHRINKED3",
-        "SHRINKED4"
-      ],
-      "save": "MODEL22",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 36
-    },
-    {
-      "index": 20,
-      "desc": "mapping 1_3",
-      "binds": [
-        "SHRINKED1",
-        "SHRINKED2",
-        "SHRINKED3",
-        "SHRINKED4"
-      ],
-      "save": "MODEL23",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 36
-    },
-    {
-      "index": 21,
-      "desc": "mapping 1_4",
-      "binds": [
-        "SHRINKED1",
-        "SHRINKED2",
-        "SHRINKED3",
-        "SHRINKED4"
-      ],
-      "save": "MODEL24",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 36
-    },
-    {
-      "index": 22,
-      "desc": "mapping 2_1",
-      "binds": [
-        "MODEL21",
-        "MODEL22",
-        "MODEL23",
-        "MODEL24"
-      ],
-      "save": "MODEL1",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 36
-    },
-    {
-      "index": 23,
-      "desc": "mapping 2_2",
-      "binds": [
-        "MODEL21",
-        "MODEL22",
-        "MODEL23",
-        "MODEL24"
-      ],
-      "save": "MODEL2",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 36
-    },
-    {
-      "index": 24,
-      "desc": "mapping 2_3",
-      "binds": [
-        "MODEL21",
-        "MODEL22",
-        "MODEL23",
-        "MODEL24"
-      ],
-      "save": "MODEL3",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 36
-    },
-    {
-      "index": 25,
-      "desc": "mapping 2_4",
-      "binds": [
-        "MODEL21",
-        "MODEL22",
-        "MODEL23",
-        "MODEL24"
-      ],
-      "save": "MODEL4",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 36
-    },
-    {
-      "index": 26,
-      "desc": "mapping 3_1",
-      "binds": [
-        "MODEL1",
-        "MODEL2",
-        "MODEL3",
-        "MODEL4"
-      ],
-      "save": "MODEL21",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 36
-    },
-    {
-      "index": 27,
-      "desc": "mapping 3_2",
-      "binds": [
-        "MODEL1",
-        "MODEL2",
-        "MODEL3",
-        "MODEL4"
-      ],
-      "save": "MODEL22",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 36
-    },
-    {
-      "index": 28,
-      "desc": "mapping 3_3",
-      "binds": [
-        "MODEL1",
-        "MODEL2",
-        "MODEL3",
-        "MODEL4"
-      ],
-      "save": "MODEL23",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 36
-    },
-    {
-      "index": 29,
-      "desc": "mapping 3_4",
-      "binds": [
-        "MODEL1",
-        "MODEL2",
-        "MODEL3",
-        "MODEL4"
-      ],
-      "save": "MODEL24",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 36
-    },
-    {
-      "index": 30,
-      "desc": "mapping 4_1",
-      "binds": [
-        "MODEL21",
-        "MODEL22",
-        "MODEL23",
-        "MODEL24"
-      ],
-      "save": "MODEL1",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 36
-    },
-    {
-      "index": 31,
-      "desc": "mapping 4_2",
-      "binds": [
-        "MODEL21",
-        "MODEL22",
-        "MODEL23",
-        "MODEL24"
-      ],
-      "save": "MODEL2",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 36
-    },
-    {
-      "index": 32,
-      "desc": "mapping 4_3",
-      "binds": [
-        "MODEL21",
-        "MODEL22",
-        "MODEL23",
-        "MODEL24"
-      ],
-      "save": "MODEL3",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 36
-    },
-    {
-      "index": 33,
-      "desc": "mapping 4_4",
-      "binds": [
-        "MODEL21",
-        "MODEL22",
-        "MODEL23",
-        "MODEL24"
-      ],
-      "save": "MODEL4",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 36
-    },
-    {
-      "index": 34,
-      "desc": "sub-band residuals 1",
-      "binds": [
-        "MODEL1",
-        "MODEL2",
-        "MODEL3",
-        "MODEL4",
-        "SHRINKED1"
-      ],
-      "save": "RES1",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 5
-    },
-    {
-      "index": 35,
-      "desc": "sub-band residuals 2",
-      "binds": [
-        "MODEL1",
-        "MODEL2",
-        "MODEL3",
-        "MODEL4",
-        "SHRINKED2"
-      ],
-      "save": "RES2",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 5
-    },
-    {
-      "index": 36,
-      "desc": "sub-band residuals 3",
-      "binds": [
-        "MODEL1",
-        "MODEL2",
-        "MODEL3",
-        "MODEL4",
-        "SHRINKED3"
-      ],
-      "save": "RES3",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 5
-    },
-    {
-      "index": 37,
-      "desc": "sub-band residuals 4",
-      "binds": [
-        "MODEL1",
-        "MODEL2",
-        "MODEL3",
-        "MODEL4",
-        "SHRINKED4"
-      ],
-      "save": "RES4",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 5
-    },
-    {
-      "index": 38,
-      "desc": "expanding 1",
-      "binds": [
-        "RES1",
-        "RES2",
-        "RES3",
-        "RES4"
-      ],
-      "save": "EXPANDED1",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 4
-    },
-    {
-      "index": 39,
-      "desc": "expanding 2",
-      "binds": [
-        "RES1",
-        "RES2",
-        "RES3",
-        "RES4"
-      ],
-      "save": "EXPANDED2",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 4
-    },
-    {
-      "index": 40,
-      "desc": "expanding 3",
-      "binds": [
-        "RES1",
-        "RES2",
-        "RES3",
-        "RES4"
-      ],
-      "save": "EXPANDED3",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 4
-    },
-    {
-      "index": 41,
-      "desc": "expanding 4",
-      "binds": [
-        "RES1",
-        "RES2",
-        "RES3",
-        "RES4"
-      ],
-      "save": "EXPANDED4",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 4
-    },
-    {
-      "index": 42,
-      "desc": "expanding 5",
-      "binds": [
-        "RES1",
-        "RES2",
-        "RES3",
-        "RES4"
-      ],
-      "save": "EXPANDED5",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 4
-    },
-    {
-      "index": 43,
-      "desc": "expanding 6",
-      "binds": [
-        "RES1",
-        "RES2",
-        "RES3",
-        "RES4"
-      ],
-      "save": "EXPANDED6",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 4
-    },
-    {
-      "index": 44,
-      "desc": "expanding 7",
-      "binds": [
-        "RES1",
-        "RES2",
-        "RES3",
-        "RES4"
-      ],
-      "save": "EXPANDED7",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 4
-    },
-    {
-      "index": 45,
-      "desc": "expanding 8",
-      "binds": [
-        "RES1",
-        "RES2",
-        "RES3",
-        "RES4"
-      ],
-      "save": "EXPANDED8",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 4
-    },
-    {
-      "index": 46,
-      "desc": "expanding 9",
-      "binds": [
-        "RES1",
-        "RES2",
-        "RES3",
-        "RES4"
-      ],
-      "save": "EXPANDED9",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 4
-    },
-    {
-      "index": 47,
-      "desc": "expanding 10",
-      "binds": [
-        "RES1",
-        "RES2",
-        "RES3",
-        "RES4"
-      ],
-      "save": "EXPANDED10",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 4
-    },
-    {
-      "index": 48,
-      "desc": "expanding 11",
-      "binds": [
-        "RES1",
-        "RES2",
-        "RES3",
-        "RES4"
-      ],
-      "save": "EXPANDED11",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 4
-    },
-    {
-      "index": 49,
-      "desc": "expanding 12",
-      "binds": [
-        "RES1",
-        "RES2",
-        "RES3",
-        "RES4"
-      ],
-      "save": "EXPANDED12",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 4
-    },
-    {
-      "index": 50,
-      "desc": "expanding 13",
-      "binds": [
-        "RES1",
-        "RES2",
-        "RES3",
-        "RES4"
-      ],
-      "save": "EXPANDED13",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 4
-    },
-    {
-      "index": 51,
-      "desc": "expanding 14",
-      "binds": [
-        "RES1",
-        "RES2",
-        "RES3",
-        "RES4"
-      ],
-      "save": "EXPANDED14",
-      "components": 4,
-      "widthMul": 1,
-      "heightMul": 1,
-      "kind": "conv",
-      "activation": "prelu",
-      "termCount": 4
-    },
-    {
-      "index": 52,
       "desc": "sub-pixel convolution 1",
       "binds": [
         "EXPANDED1",
@@ -920,7 +486,7 @@
       "termCount": 126
     },
     {
-      "index": 53,
+      "index": 15,
       "desc": "aggregation",
       "binds": [
         "SUBCONV1"

@@ -100,5 +100,16 @@ test("ArtCNN corner taps contribute zero while in-range taps retain their source
 
 test("FSRCNNX retains its sampled clamp-to-edge boundary convention", () => {
   const source = read("model/FSRCNNX_x2_16-0-4-1.wgsl");
-  assert.match(source, /textureLoad\(t_LUMA, clampCoord\(p \+ vec2i\(-2, -2\), textureDimensions\(t_LUMA\)\), 0\)\.x/);
+  // The dimensions are now hoisted to one binding per input instead of being
+  // recomputed inside every term. The convention under test is the clamp itself,
+  // not where its second argument comes from.
+  assert.match(source, /let d_LUMA = textureDimensions\(t_LUMA\);/);
+  assert.match(source, /textureLoad\(t_LUMA, clampCoord\(p \+ vec2i\(-2, -2\), d_LUMA\), 0\)\.x/);
+  // And no fetch may reach the texture without passing through the clamp.
+  const fetches = source.match(/textureLoad\(t_[A-Z0-9]+, [^)]*\)/g) || [];
+  assert.ok(fetches.length > 0);
+  assert.ok(
+    fetches.every((fetch) => fetch.includes("clampCoord(")),
+    "every conv fetch must clamp to the edge",
+  );
 });

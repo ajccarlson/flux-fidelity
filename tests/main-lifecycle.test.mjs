@@ -211,6 +211,12 @@ async function loadAdoptionInternal(deps) {
     const warn = (...args) => deps.warnings.push(args);
     const log = (...args) => deps.logs.push(args);
     let device = deps.oldDevice || null, deviceOwnedByMain = !!deps.oldOwned;
+    // This slice includes retirement/adoption, which retire and republish the GPU
+    // frame timer. Timing is a diagnostic with no bearing on those lifecycles, so
+    // the harness supplies an inert stand-in rather than the real module.
+    const GpuFrameTimer = class { destroy() {} };
+    let gpuTimer = new GpuFrameTimer();
+    const publishGpuTimer = () => { gpuTimer = new GpuFrameTimer(); };
     let gpuResourceGeneration = 0;
     let adoptionGeneration = 1, adopting = false;
     let pageSuspended = false, primaryController = null, videoMonitor = null, video = {};
@@ -373,6 +379,13 @@ async function loadModelLifecycle(deps) {
     let models = [], activeModel = null;
     let modelsDevice = null, modelLoadPromise = null, modelLoadDevice = null;
     const FsrcnnxModel = globalThis.__mainLifecycleTestDeps.FsrcnnxModel;
+    // Stage builders warm pipelines off the critical path after publishing. That is
+    // an optimization with no bearing on build ordering, so it is a no-op here.
+    const warmStagePipelines = () => {};
+    // Model construction now carries the production working-set budget. This slice
+    // tests build ordering and device scoping, not capacity, so any finite budget
+    // large enough to admit the fixtures serves.
+    const MODEL_WORKING_SET_BUDGET_BYTES = 2048 * 1024 * 1024;
     const ArtCnnModel = globalThis.__mainLifecycleTestDeps.ArtCnnModel;
     const fetch = (...args) => globalThis.__mainLifecycleTestDeps.fetch(...args);
     const chrome = { runtime: { getURL: (path) => path } };
@@ -811,7 +824,11 @@ test("chained model builders coalesce concurrent requests and capture their devi
   assert.equal(highB.length, 3);
   assert.equal(fetchCalls.length, 4);
   assert.equal(created.length, 5);
-  assert.ok(highA.every((model) => model.options.maxWorkingSetBytes === undefined));
+  // Previously asserted to be undefined, which meant the working-set guard fell
+  // back to MAX_SAFE_INTEGER and only ever caught integer overflow. Every stage
+  // now carries the budget, and a chain is checked against the tightest one, so
+  // a deep High chain is refused before it asks the driver for several gigabytes.
+  assert.ok(highA.every((model) => model.options.maxWorkingSetBytes === 2048 * 1024 * 1024));
 
   const [artA, artB] = await Promise.all([
     lifecycle.ensureArtStages("ArtCNN_Test", 3),

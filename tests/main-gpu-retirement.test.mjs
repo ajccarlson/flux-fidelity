@@ -40,6 +40,12 @@ async function loadRetirementHarness(deps) {
     const deps = globalThis.__mainGpuRetirementDeps;
     let pageSuspended = false;
     let device = deps.device, deviceOwnedByMain = deps.owned;
+    // This slice includes retirement/adoption, which retire and republish the GPU
+    // frame timer. Timing is a diagnostic with no bearing on those lifecycles, so
+    // the harness supplies an inert stand-in rather than the real module.
+    const GpuFrameTimer = class { destroy() {} };
+    let gpuTimer = new GpuFrameTimer();
+    const publishGpuTimer = () => { gpuTimer = new GpuFrameTimer(); };
     let gpuResourceGeneration = 4, gpuResourcePhase = "active", gpuResourceReason = null;
     let gpuRetirementTail = Promise.resolve(), gpuRetirementPromise = null;
     let gpuAdapterPhase = "ready", gpuDevicePhase = "ready", gpuRecoveryPhase = "idle", gpuRecoveryAttempt = 0;
@@ -105,6 +111,11 @@ async function loadInitializationHarness(deps) {
   const harness = `
     const deps = globalThis.__mainGpuRetirementDeps;
     let device = null, deviceOwnedByMain = false;
+    // initWebGPU requests timestamp-query when the adapter advertises it and
+    // republishes the frame timer on success. Neither affects device publication,
+    // which is what this slice tests, so both are stubbed inert.
+    const GPU_TIMING_FEATURE = "timestamp-query";
+    const publishGpuTimer = () => {};
     let demand = true;
     let gpuResourceGeneration = 0, gpuResourcePhase = "idle", gpuResourceReason = null;
     let gpuLastFailure = null;

@@ -50,6 +50,12 @@ async function loadCoordinator(deps) {
     const watchedDeviceLosses = new WeakSet();
     const lostDevices = new WeakSet();
     let device = deps.device, deviceOwnedByMain = true;
+    // This slice includes retirement/adoption, which retire and republish the GPU
+    // frame timer. Timing is a diagnostic with no bearing on those lifecycles, so
+    // the harness supplies an inert stand-in rather than the real module.
+    const GpuFrameTimer = class { destroy() {} };
+    let gpuTimer = new GpuFrameTimer();
+    const publishGpuTimer = () => { gpuTimer = new GpuFrameTimer(); };
     let adoptionGeneration = 0;
     let videoSelectionGeneration = 0;
     let imagesSelectionGeneration = 0;

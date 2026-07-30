@@ -101,11 +101,11 @@ const HIGH_X2_ARTIFACTS = Object.freeze(new Map([
   ],
   [
     "model/FSRCNNX_x2_56-16-4-1.wgsl",
-    "19a5327c8f96b7cb0593512f846f75ef266a3d857a84532c4dc5a374296e3d11",
+    "c7075c901a3e1aa25d1279eb360181ddd9d179e59dc4950162471c1fc9e711c9",
   ],
   [
     "model/FSRCNNX_x2_56-16-4-1.passes.json",
-    "4b7512ca17fd9788f4876f2681207fa8fb3b10c46d314ea2b3ce684864fb4d70",
+    "baee24ca3cbcbb01d73e6da17fc5d6f46fe1e3e66f4f5e4b9491484980bebf5a",
   ],
 ]));
 const HIGH_X2_EVIDENCE = Object.freeze([
