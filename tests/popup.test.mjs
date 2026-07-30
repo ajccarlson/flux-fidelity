@@ -137,6 +137,7 @@ function popupDocument() {
   ]) document.add(id);
 
   document.addTab("tab-video", "panel-video");
+  document.addTab("tab-interpolation", "panel-interpolation");
   document.addTab("tab-advanced", "panel-advanced");
   document.addTab("tab-performance", "panel-performance");
 
@@ -1325,24 +1326,25 @@ test("tabs expose one selected panel and keep the rest out of the tab order", ()
   controller.start();
 
   const tabs = document.querySelectorAll('[role="tab"]');
-  assert.equal(tabs.length, 3);
+  assert.equal(tabs.length, 4);
   const selected = tabs.filter((tab) => tab.getAttribute("aria-selected") === "true");
   assert.equal(selected.length, 1, "exactly one tab may be selected");
   assert.equal(selected[0].id, "tab-video", "Video is the default panel");
   assert.equal(document.getElementById("panel-video").hidden, false);
+  assert.equal(document.getElementById("panel-interpolation").hidden, true);
   assert.equal(document.getElementById("panel-advanced").hidden, true);
   assert.equal(document.getElementById("panel-performance").hidden, true);
 
   // Only the selected tab is reachable by Tab; the others are arrow-key targets.
   // The previous disclosure had no such semantics, which left its controls
   // unreachable by heading navigation.
-  assert.deepEqual(tabs.map((tab) => tab.tabIndex), [0, -1, -1]);
+  assert.deepEqual(tabs.map((tab) => tab.tabIndex), [0, -1, -1, -1]);
 
   document.getElementById("tab-performance").emit("click");
   assert.equal(document.getElementById("panel-performance").hidden, false);
   assert.equal(document.getElementById("panel-video").hidden, true);
   assert.equal(document.getElementById("tab-performance").getAttribute("aria-selected"), "true");
-  assert.deepEqual(tabs.map((tab) => tab.tabIndex), [-1, -1, 0]);
+  assert.deepEqual(tabs.map((tab) => tab.tabIndex), [-1, -1, -1, 0]);
 
   // Arrow keys wrap, per the ARIA tabs pattern.
   document.getElementById("tab-performance").emit("keydown", { key: "ArrowRight" });

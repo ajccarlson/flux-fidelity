@@ -1315,7 +1315,7 @@ async function runPopupSmoke(httpBase, controlClient, extensionId, expectedName,
     }
     // The panels must stay reachable on a page the extension cannot act on; that is
     // precisely when a user goes looking for the Performance panel or diagnostics.
-    if (state?.tabCount !== 3 || state.enabledTabCount !== state.tabCount) {
+    if (state?.tabCount !== 4 || state.enabledTabCount !== state.tabCount) {
       problems.push("popup tabs must remain usable on an unsupported active page");
     }
     if (state?.modeStates?.length !== 3 ||
