@@ -599,7 +599,7 @@ export class ImageUpscaler {
   // pixels anyway. Gating on the display therefore covers exactly the case where
   // processing makes the result worse, and fails closed like the video path.
   // Cached because matchMedia is a layout-adjacent read on a hot path.
-  _displayGamutBlocked() {
+  _displayGamutWide() {
     if (this._wideGamutDisplay === undefined) {
       let wide = false;
       try { wide = globalThis.matchMedia?.("(color-gamut: p3)")?.matches === true; }
@@ -612,14 +612,18 @@ export class ImageUpscaler {
   async _processJob(job) {
     let bitmap = null;
     try {
-      if (this._displayGamutBlocked()) {
-        if (this._jobCurrent(job)) {
-          this._reportFailure(
-            "color-wide-gamut-display",
-            "Image upscaling is skipped on a wide-gamut display because the result would be clipped to sRGB.",
-          );
-        }
-        return false;
+      // Warn and proceed rather than refuse. There is no web API that reports a
+      // decoded image's colour space, so source gamut cannot be inspected, and the
+      // sRGB round trip only loses anything when the *source* is wide-gamut — which
+      // is a minority of images even on a wide-gamut display. Refusing outright
+      // disabled the feature on most modern laptops; the warning is emitted once so
+      // an unexpected desaturation is still diagnosable.
+      if (this._displayGamutWide() && !this._wideGamutNoticeSent) {
+        this._wideGamutNoticeSent = true;
+        this.warn(
+          "images: this display is wide-gamut; upscaled output is written as sRGB, " +
+          "so a Display-P3 source can lose saturation.",
+        );
       }
       bitmap = await this.loadReadable(job.img, job);
       if (!bitmap) {

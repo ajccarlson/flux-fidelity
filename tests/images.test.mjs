@@ -661,9 +661,10 @@ test("responsive load events validate effective currentSrc instead of the src at
   up.stop();
 });
 
-test("a wide-gamut display skips image upscaling instead of clipping it to sRGB", async (t) => {
-  const img = new FakeImageElement("https://example.test/wide.png");
-  const cleanup = installDom([img]); t.after(cleanup);
+test("a wide-gamut display warns once and still processes the image", async (t) => {
+  const one = new FakeImageElement("https://example.test/wide-1.png");
+  const two = new FakeImageElement("https://example.test/wide-2.png");
+  const cleanup = installDom([one, two]); t.after(cleanup);
   const previous = Object.getOwnPropertyDescriptor(globalThis, "matchMedia");
   t.after(() => {
     if (previous) Object.defineProperty(globalThis, "matchMedia", previous);
@@ -675,19 +676,23 @@ test("a wide-gamut display skips image upscaling instead of clipping it to sRGB"
     value: (query) => { queries.push(query); return { matches: true }; },
   });
 
-  const errors = [];
-  const up = makeUpscaler([img], { errors });
+  const warnings = [];
+  const up = makeUpscaler([one, two], { warnings });
   let loads = 0;
   up.loadReadable = async () => { loads++; return bitmap(); };
+  up.upscaleAndReplace = async () => true;
 
   up.start();
-  await up.tryProcess(img);
+  await up.tryProcess(one);
+  await up.tryProcess(two);
 
-  assert.equal(loads, 0, "a blocked display must not even decode the image");
-  assert.equal(errors.length, 1);
-  assert.equal(errors[0].code, "color-wide-gamut-display");
-  assert.match(errors[0].message, /wide-gamut display/);
-  assert.deepEqual(up.getStats().failures, { "color-wide-gamut-display": 1 });
+  // Source gamut is not inspectable from the web platform, and the round trip only
+  // loses anything when the source itself is wide-gamut, so refusing outright would
+  // disable the feature on most modern displays.
+  assert.equal(loads, 2, "a wide-gamut display must not block processing");
+  const notices = warnings.filter((message) => /wide-gamut/.test(String(message)));
+  assert.equal(notices.length, 1, "the notice is emitted once, not per image");
+  assert.deepEqual(up.getStats().failures, {}, "a warning is not a failure");
   assert.deepEqual(queries, ["(color-gamut: p3)"], "the gamut probe is cached after one read");
   up.stop();
 });

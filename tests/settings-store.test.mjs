@@ -755,3 +755,36 @@ test("close drains writes accepted behind an in-flight batch before resolving", 
   assert.equal(store.health().pending, 0);
   await assert.rejects(store.write({ mode: "off" }), /closed/);
 });
+
+test("reset clears every field convergently and heals a corrupt record", async () => {
+  const scope = "https://example.test";
+  const storage = seededStorage(scope);
+  const fields = ["mode", "engine"];
+  const store = createSettingsStore({
+    storage, onChanged: storage.onChanged, scope, fields, sourceId: "tab-a", now: clock(100),
+  });
+  await store.ready;
+
+  await store.write({ mode: "upscale", engine: "artcnn" });
+  assert.deepEqual(store.snapshot(), { mode: "upscale", engine: "artcnn" });
+
+  const cleared = await store.reset();
+  assert.deepEqual(cleared, {}, "no field may survive a reset");
+  assert.deepEqual(store.snapshot(), {});
+
+  // Tombstones rather than raw removal: a bare storage.remove carries no stamp, so
+  // a concurrent tab holding an older value could resurrect it, and other tabs
+  // would not observe the reset through onChanged.
+  const persisted = await storage.get(fields.map((field) => fieldKey(scope, field)));
+  for (const field of fields) {
+    const stored = persisted[fieldKey(scope, field)];
+    assert.ok(stored, `${field} must retain a tombstone`);
+    assert.equal(stored.deleted, true);
+    assert.equal(Object.prototype.hasOwnProperty.call(stored, "value"), false);
+    assert.ok(Number.isSafeInteger(stored.stamp?.counter));
+  }
+
+  // A reset is the recovery path for an unparseable record, so it must clear the
+  // corruption report rather than keep reporting an error for data that is gone.
+  assert.equal(store.health().error, null);
+});

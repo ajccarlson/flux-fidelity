@@ -138,6 +138,11 @@ const COMMANDS = Object.freeze({
   FSRCNNX_SETMODE: enumPayload("mode", ["off", "passthrough", "upscale"],
     (module, msg) => module.setMode(msg.mode)),
   FSRCNNX_RESTORE: noPayload(() => restoreOnce().then(() => restoreResult)),
+  FSRCNNX_FORGETSITE: Object.freeze({
+    mutates: true,
+    validate: (msg) => validatePayloadShape(msg, []),
+    run: (module) => module.forgetSitePreferences(),
+  }),
   FSRCNNX_SETENGINE: enumPayload("engine", ["fsrcnnx", "fsrcnnx-hi", "artcnn", "neural"],
     (module, msg) => module.setEngine(msg.engine)),
   FSRCNNX_SETNEURALMODEL: fieldPayload(
@@ -357,7 +362,13 @@ async function dispatch(msg) {
   return normalizeCommandResponse(result);
 }
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // Not exploitable today: onMessage only fires for same-extension senders and the
+  // manifest declares no externally_connectable, so a page cannot reach this. But
+  // background.js verifies sender.id on its capability handlers, and this listener
+  // drives every mutating command — the check costs one line and removes the
+  // dependency on nobody ever adding externally_connectable.
+  if (sender && sender.id !== chrome.runtime.id) return false;
   const type = msg && typeof msg === "object" ? msg.type : null;
   if (type !== "FSRCNNX_STATUS" && !Object.prototype.hasOwnProperty.call(COMMANDS, type)) {
     return false;
@@ -407,13 +418,15 @@ function publishCurrentDocumentState() {
   if (!api || startupPhase !== "ready") return Promise.resolve();
   try {
     const status = api.getStatus();
+    // `host` is deliberately omitted: background.js never read it, so publishing it
+    // moved the visited hostname into the service worker on every navigation for no
+    // consumer's benefit.
     const message = status.protected
-      ? { type: "FSRCNNX_PROTECTED", host: status.host }
+      ? { type: "FSRCNNX_PROTECTED" }
       : {
           type: "FSRCNNX_STATE",
           mode: status.activeMode || "off",
           requestedMode: status.mode,
-          host: status.host,
         };
     const pending = chrome.runtime.sendMessage(message);
     if (pending && typeof pending.catch === "function") return pending.catch(() => {});
