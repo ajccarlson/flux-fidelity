@@ -38,7 +38,13 @@ test("manifest requests only the capabilities used by the local media pipeline",
   assert.equal(directives.get("worker-src"), "'self'");
   assert.equal(directives.get("object-src"), "'none'");
   assert.equal(directives.get("base-uri"), "'none'");
-  assert.equal(directives.get("frame-ancestors"), "'none'");
+  // frame-ancestors is deliberately absent. The neural extension frame is embedded
+  // into the host page's DOM by the content script, so its ancestor is an arbitrary
+  // web origin — 'none' broke the handshake outright and 'self' would too. The frame
+  // is protected instead by use_dynamic_url plus the capability/nonce handshake,
+  // which is what actually authenticates it.
+  assert.equal(directives.has("frame-ancestors"), false,
+    "the neural frame must remain embeddable by the content script");
   assert.equal(/unsafe-eval(?!-)/.test(csp), false, "only wasm-unsafe-eval is permitted");
   assert.equal(/https?:/.test(csp), false, "no remote origin may be allowlisted");
 });
