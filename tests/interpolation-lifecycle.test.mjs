@@ -2424,3 +2424,160 @@ test("CPU grab recovery is bounded and a newer lifecycle cancels remaining attem
   assert.equal(await cancelled, false);
   assert.equal(attempts, 4, "no retry may survive the lifecycle that scheduled it");
 });
+
+test("the presentation watchdog reports a true cumulative stall and never fakes a present", () => {
+  let nextFrame = null;
+  let clock = 100_000;
+  const warnings = [];
+  const restore = installGlobals({
+    requestAnimationFrame(callback) { nextFrame = callback; return 1; },
+    cancelAnimationFrame() {},
+    document: { fullscreenElement: null, body: {} },
+    performance: { now: () => clock },
+  });
+  try {
+    const video = { style: { visibility: "visible" }, playbackRate: 1 };
+    const interpolator = new Interpolator({
+      findVideo: () => video,
+      log: () => {},
+      warn: (message) => warnings.push(String(message)),
+    });
+    interpolator.running = true;
+    interpolator._state = "running";
+    interpolator._stopped = false;
+    interpolator.video = video;
+    interpolator.overlay = { style: {}, remove() {} };
+    interpolator._rifeMod = { gpuRelease() {} };
+    interpolator._targetInterval = 16.7;
+    // Reproduces the observed production shape: frames are queued and due, but the
+    // display-takeover gate refuses every one of them without raising.
+    interpolator._stageTakeover = () => null;
+    const enqueue = () => {
+      interpolator.queue = Array.from({ length: 4 }, (_unused, index) => ({
+        tex: { _w: 16, _h: 9 }, ts: index * 16_700, enq: clock,
+      }));
+    };
+
+    enqueue();
+    interpolator._lastPresentAt = clock - 2000;
+    interpolator._present(interpolator._lifecycleGen);
+
+    nextFrame(clock);
+    const presentAtAfterFirstStall = interpolator._lastPresentAt;
+
+    enqueue();
+    clock += 6000;               // clears the 5 s log throttle
+    nextFrame(clock);
+
+    assert.equal(
+      interpolator._lastPresentAt,
+      presentAtAfterFirstStall,
+      "only a committed presentation may advance _lastPresentAt",
+    );
+    const stalls = warnings.filter((message) => message.includes("present stalled"));
+    assert.equal(stalls.length, 2);
+    assert.match(stalls[0], /present stalled 2000ms/);
+    assert.match(
+      stalls[1],
+      /present stalled 8000ms/,
+      "a continuing stall must report total elapsed time, not the log-throttle interval",
+    );
+  } finally {
+    restore();
+  }
+});
+
+test("presentation deadlines follow playbackRate so fast playback cannot outrun the schedule", () => {
+  let nextFrame = null;
+  let clock = 100_000;
+  const restore = installGlobals({
+    requestAnimationFrame(callback) { nextFrame = callback; return 1; },
+    cancelAnimationFrame() {},
+    document: { fullscreenElement: null, body: {} },
+    performance: { now: () => clock },
+  });
+  try {
+    const presented = [];
+    const video = { style: { visibility: "visible" }, playbackRate: 2 };
+    const interpolator = new Interpolator({ findVideo: () => video, log: () => {}, warn: () => {} });
+    interpolator.running = true;
+    interpolator._state = "running";
+    interpolator._stopped = false;
+    interpolator.video = video;
+    interpolator.overlay = { style: {}, remove() {} };
+    interpolator._rifeMod = {
+      gpuRelease() {},
+      gpuPresent(tex) { presented.push(tex.ts); return true; },
+    };
+    interpolator._targetInterval = 16.7;
+    interpolator._stageTakeover = () => ({ mount: {}, audioTransaction: null });
+    interpolator._activateTakeover = () => true;
+    interpolator._recordCommittedPresentation = () => {};
+    // Four frames spanning 150 ms of source time.
+    interpolator.queue = [0, 50, 100, 150].map((offsetMs) => ({
+      tex: { _w: 16, _h: 9, ts: offsetMs }, ts: offsetMs * 1000, enq: clock,
+    }));
+
+    interpolator._present(interpolator._lifecycleGen);
+    nextFrame(clock);            // anchors at source 0 ms
+    clock += 50;                 // 50 ms of wall clock at rate 2 == 100 ms of source
+    nextFrame(clock);
+
+    assert.deepEqual(
+      presented,
+      [0, 50, 100],
+      "at rate 2, 50 ms of wall clock must retire 100 ms of source frames",
+    );
+  } finally {
+    restore();
+  }
+});
+
+test("a rate change flushes the buffer whose deadlines were mapped at the old rate", () => {
+  const listeners = new Map();
+  let flushes = 0;
+  const video = {
+    addEventListener(type, listener) { listeners.set(type, listener); },
+    removeEventListener(type) { listeners.delete(type); },
+  };
+  const interpolator = makeInterpolator();
+  interpolator.video = video;
+  interpolator._flush = () => { flushes++; };
+  interpolator._installMediaBoundaryListeners(video, interpolator._lifecycleGen);
+
+  assert.ok(listeners.has("ratechange"), "ratechange must be a media boundary");
+  listeners.get("ratechange")();
+  assert.equal(flushes, 1);
+});
+
+test("a discontinuity clears the breaker streak and the stall clock together", () => {
+  const interpolator = makeInterpolator();
+  interpolator._tweenFailStreak = 4;
+  interpolator._stallSince = 1234;
+
+  interpolator._resetFailureStreaks();
+
+  assert.equal(interpolator._tweenFailStreak, 0,
+    "a stale streak would re-trip the breaker on the first failure after a rebuffer");
+  assert.equal(interpolator._stallSince, null);
+});
+
+test("restoring RIFE releases the pipelined frame the blend path never advanced", () => {
+  const released = [];
+  const interpolator = makeInterpolator();
+  interpolator._interpMode = "blend";
+  interpolator._forceBlend = false;
+  interpolator._rifeMod = {
+    gpuRelease(tex) { released.push(tex); },
+    gpuRifeCapable: () => true,
+  };
+  const stale = { _w: 16, _h: 9 };
+  interpolator._pipePrev = { tex: stale, ts: 0 };
+
+  interpolator.setAutoFallback(false);
+
+  assert.equal(interpolator._interpMode, "rife");
+  assert.equal(interpolator._pipePrev, null,
+    "a stale pre-blend frame would be paired with a live frame across the mode flip");
+  assert.deepEqual(released, [stale]);
+});

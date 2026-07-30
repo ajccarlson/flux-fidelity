@@ -385,6 +385,23 @@ export class Interpolator {
   // sags). Persisted per site; default OFF. The error CIRCUIT BREAKER (5
   // consecutive inference failures → blend) is deliberately NOT gated by this —
   // it guards against error storms, not slowness, and always announces itself.
+  // State that a discontinuity must clear because it describes a run of frames
+  // that no longer exists. Extracted from the _flush closure so it is reachable
+  // from tests; _flush itself is nested inside _startInternal and is only ever
+  // stubbed by the suite.
+  _resetFailureStreaks() {
+    this._tweenFailStreak = 0;
+    this._stallSince = null;
+  }
+
+  // Releases the pipelined previous frame so the next RIFE pair is formed from
+  // live frames. Safe to call when nothing is held.
+  _releasePipePrev() {
+    if (!this._pipePrev) return;
+    try { this._rifeMod && this._rifeMod.gpuRelease(this._pipePrev.tex); } catch {}
+    this._pipePrev = null;
+  }
+
   setAutoFallback(on) {
     this._autoFallback = !!on;
     if (this._autoFallback) {
@@ -393,6 +410,11 @@ export class Interpolator {
                && this._rifeMod && this._rifeMod.gpuRifeCapable && this._rifeMod.gpuRifeCapable()) {
       // disabling doubles as a "give me RIFE back NOW" lever mid-test
       this._interpMode = "rife"; this._srcFrameBase = null;
+      // The blend branch never advances _pipePrev, so a blend→rife flip without an
+      // intervening flush would pair a pre-blend texture with the current frame and
+      // derive tween timestamps from a stale gap — which _enqueueTexOrdered then
+      // rejects, costing a full inference and a dropped gap.
+      this._releasePipePrev();
       this.log("interp: auto-fallback disabled — restoring RIFE");
     }
     return this._autoFallback;
@@ -530,6 +552,15 @@ export class Interpolator {
       }
       hzLast = now;
 
+      // Source time advances at playbackRate; wall clock does not. Mapping source
+      // to wall 1:1 would make frames due at 1x while they arrive at Nx, saturating
+      // the queue and desyncing video from audio without bound. A rate of 0 is not
+      // reachable through playbackRate but is guarded so a hostile or exotic value
+      // cannot divide the schedule by zero.
+      const rawRate = Number(this.video?.playbackRate);
+      const rate = Number.isFinite(rawRate) && rawRate > 0.05 ? rawRate : 1;
+      const dueWallFor = (ts) => anchorWall + (ts / 1000 - anchorSrc) / rate;
+
       if (q && q.length) {
         // discontinuity (seek/pause/flush): the wall↔source mapping is stale — rebuild
         if (this._reanchor) { this._reanchor = false; started = false; }
@@ -545,7 +576,7 @@ export class Interpolator {
         // past, the anchor was poisoned by a source-time jump (forward: resume-seek;
         // backward: e.g. YouTube restarting at 0 after a stream reset) — re-anchor.
         if (started && q.length) {
-          const headDue = anchorWall + (q[0].ts / 1000 - anchorSrc);
+          const headDue = dueWallFor(q[0].ts);
           if (headDue - now > 1500 || headDue - now < -3000) {
             this.log && this.log(`interp: re-anchoring presentation (source time jumped ${((headDue - now)/1000).toFixed(1)}s)`);
             anchorWall = now;
@@ -556,14 +587,21 @@ export class Interpolator {
         // scheduler is stalled — log its state and RE-ANCHOR to the head so playback
         // resumes immediately (no pause/play needed).
         if (started && q.length && this._lastPresentAt && now - this._lastPresentAt > 1000) {
+          // Re-anchoring below is the recovery attempt. _lastPresentAt is
+          // deliberately NOT advanced here: only a committed presentation may move
+          // it. Advancing it optimistically reset the stall clock every tick, so a
+          // permanently dead scheduler reported as a series of short self-healing
+          // stalls (observed 2026-07-29: a continuous stall logged as 19848ms then
+          // 4991ms, the latter being only the log-throttle interval). _stallSince
+          // preserves the first missed deadline so the reported duration is true.
+          if (this._stallSince == null) this._stallSince = this._lastPresentAt;
           if (!this._stallLogAt || now - this._stallLogAt > 5000) {
             this._stallLogAt = now;
-            const hd = anchorWall + (q[0].ts / 1000 - anchorSrc) - now;
-            this.warn(`interp WATCHDOG: present stalled ${(now - this._lastPresentAt).toFixed(0)}ms (q=${q.length}, headDue=${hd.toFixed(0)}ms, headTs=${(q[0].ts/1e6).toFixed(2)}s) — re-anchoring to recover`);
+            const hd = dueWallFor(q[0].ts) - now;
+            this.warn(`interp WATCHDOG: present stalled ${(now - this._stallSince).toFixed(0)}ms (q=${q.length}, headDue=${hd.toFixed(0)}ms, headTs=${(q[0].ts/1e6).toFixed(2)}s) — re-anchoring to recover`);
           }
           anchorWall = now;
           anchorSrc = q[0].ts / 1000;
-          this._lastPresentAt = now; // presenting resumes this tick
         }
         if (started) {
           // present every frame whose source time is due relative to the anchor.
@@ -571,7 +609,7 @@ export class Interpolator {
           let presented = false;
           while (q.length) {
             const item = q[0];
-            const dueWall = anchorWall + (item.ts / 1000 - anchorSrc);
+            const dueWall = dueWallFor(item.ts);
             if (now >= dueWall) {
               q.shift();
               const presentationCandidate = {
@@ -655,6 +693,7 @@ export class Interpolator {
               if (!this._activateTakeover(generation, takeover)) continue;
               this._recordCommittedPresentation(presentationCandidate);
               this._lastPresentAt = now;
+              this._stallSince = null;   // a real presentation clears the stall clock
               this._lastPresentedTs = item.ts;
               const dwell = now - item.enq;
               if (dwell >= 0 && dwell < 1000) {
@@ -666,7 +705,7 @@ export class Interpolator {
           }
           // if we've drifted far from the anchor (buffer underran / stall), re-anchor
           if (presented && q.length) {
-            const nextDue = anchorWall + (q[0].ts / 1000 - anchorSrc);
+            const nextDue = dueWallFor(q[0].ts);
             if (now - nextDue > interval * 3) { anchorWall = now; anchorSrc = q[0].ts / 1000; }
           }
           if (q.length === 0) started = false;
@@ -1907,6 +1946,10 @@ export class Interpolator {
       ["canplay", resumeAudio],
       ["enterpictureinpicture", ordinarySuspend],
       ["leavepictureinpicture", resumeAudio],
+      // A rate change rescales source→wall mapping for every frame already queued,
+      // so the buffer and the presentation anchor are both stale. Flushing rebuilds
+      // both at the new rate; _present() reads playbackRate per tick thereafter.
+      ["ratechange", ordinarySuspend],
     ]);
     this._onSeeking = ordinarySuspend;
     this._onPlay = resumeAudio;
@@ -3098,6 +3141,11 @@ export class Interpolator {
       // a discontinuity is a fresh start — retry RIFE and re-measure whether it keeps
       // up (unless the user forced the blend engine)
       this._interpMode = this._forceBlend ? "blend" : "rife";
+      // A discontinuity restores RIFE, so the failure streak that tripped the
+      // breaker must clear with it. Leaving it set meant one failure after any
+      // buffering event re-tripped the breaker at the old count, so the engine
+      // flapped rife→blend once per rebuffer and announced it every time.
+      this._resetFailureStreaks();
       this._fallbackArmed = true; this._srcFrameBase = null;
       this._discontinuity = true;
       this._reanchor = true;       // presentation anchor is stale after a discontinuity
