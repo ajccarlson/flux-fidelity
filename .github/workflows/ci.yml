@@ -69,6 +69,10 @@ jobs:
     timeout-minutes: 12
     env:
       FSRCNNX_BROWSER: chromium
+      # Chromium runs under SwiftShader on an unpinned runner image here, so every
+      # wait is far slower than locally. Scaling the harness budgets is what makes
+      # the fixed local defaults appropriate for CI without retuning each one.
+      FSRCNNX_TIMEOUT_SCALE: "3"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
