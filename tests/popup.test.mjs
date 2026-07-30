@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 
 import {
   PopupTransport,
@@ -1208,4 +1209,48 @@ test("presentation formatting reports source, output, and scale, or nothing at a
   ]) {
     assert.equal(formatPresentation({ renderer: { presentation } }), "—");
   }
+});
+
+test("the popup viewport is capped so its scroll container can actually overflow", async () => {
+  const markup = await readFile(new URL("../popup.html", import.meta.url), "utf8");
+  // Extracts a rule whose selector is exactly `selector` on its own line, so a
+  // selector list such as `body, button {` cannot be mistaken for it.
+  const rule = (selector) => {
+    const lines = markup.split("\n");
+    const start = lines.findIndex((line) => line.trim() === `${selector} {`);
+    if (start < 0) return "";
+    const body = [];
+    for (let index = start + 1; index < lines.length; index++) {
+      if (lines[index].trim() === "}") break;
+      body.push(lines[index]);
+    }
+    return body.join("\n");
+  };
+
+  // A browser-action popup is sized from the document. `body` is the scroll
+  // container, so if `html` is left unconstrained the document can grow past the
+  // popup's height cap: the overflow lands on `html`, which nothing scrolls, while
+  // `body` still fits inside `html` and never draws a scrollbar. That is how
+  // expanding the Advanced <details> made those settings unreachable.
+  //
+  // This is asserted against the stylesheet because there is no behavioural hook:
+  // the Node suite compiles no CSS, and the browser harness opens the popup as a
+  // tab with a fixed viewport rather than a content-sized popup window, so it
+  // cannot reproduce the sizing path either. The invariant is the contract.
+  const body = rule("body");
+  const html = rule("html");
+  assert.match(body, /overflow-y:\s*auto/, "body is expected to be the scroll container");
+  const bodyCap = /max-height:\s*(\d+)px/.exec(body);
+  assert.ok(bodyCap, "body must cap its height for scrolling to engage");
+  const htmlCap = /max-height:\s*(\d+)px/.exec(html);
+  assert.ok(
+    htmlCap,
+    "html must also be capped, or the document outgrows the popup and nothing scrolls",
+  );
+  assert.equal(
+    htmlCap[1],
+    bodyCap[1],
+    "html and body caps must agree so the window never exceeds the scroll container",
+  );
+  assert.match(html, /overflow:\s*hidden/, "html must not become a second scroll container");
 });

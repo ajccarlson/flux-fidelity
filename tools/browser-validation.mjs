@@ -1975,6 +1975,39 @@ async function runRealVideoIntegration(
     })`);
     requireCondition(popupIdentity?.runtimeId === extensionId && popupIdentity?.manifestName === expectedName,
       "integration popup extension identity is incorrect");
+
+    // Expanding the Advanced <details> used to grow the document past the popup's
+    // height cap, so the overflow landed on <html> — which nothing scrolls — while
+    // <body> still fitted inside it and never produced a scrollbar. The extra
+    // settings were simply unreachable. Assert the invariant that makes that
+    // impossible: whatever the content height, the scroll container is the element
+    // that actually overflows.
+    const popupScroll = await evaluate(popupPage.client, `(() => {
+      const details = document.querySelector("details");
+      if (!details) return { error: "advanced details section is missing" };
+      details.open = true;
+      // Force layout so the expanded height is measured, not the collapsed one.
+      void document.body.scrollHeight;
+      const body = document.body;
+      const root = document.documentElement;
+      return {
+        overflowY: getComputedStyle(body).overflowY,
+        bodyScroll: body.scrollHeight,
+        bodyClient: body.clientHeight,
+        rootScroll: root.scrollHeight,
+        rootClient: root.clientHeight,
+      };
+    })()`);
+    requireCondition(!popupScroll?.error, `popup scroll probe failed: ${popupScroll?.error}`);
+    requireCondition(popupScroll.overflowY === "auto" || popupScroll.overflowY === "scroll",
+      `expanded popup body must be scrollable, saw overflow-y ${popupScroll.overflowY}`);
+    // The document root must never be the overflowing box: that is the exact state
+    // in which no scrollbar appears and content becomes unreachable.
+    requireCondition(popupScroll.rootScroll <= popupScroll.rootClient + 1,
+      "expanded popup overflows the document root, so its content cannot be scrolled to " +
+      `(root ${popupScroll.rootScroll} > ${popupScroll.rootClient})`);
+    console.log(`Popup advanced-settings scroll: body ${popupScroll.bodyScroll}/${popupScroll.bodyClient}, ` +
+      `root ${popupScroll.rootScroll}/${popupScroll.rootClient}`);
     let fixtureTab = await activateExtensionTab(popupPage.client, fixtureUrl);
     await fixturePage.client.send("Page.bringToFront");
 

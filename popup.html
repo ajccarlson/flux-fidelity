@@ -44,6 +44,21 @@
 
     * { box-sizing: border-box; }
 
+    /* A browser action popup is sized from the document, and `body` is the scroll
+       container below. With `html` left unconstrained, expanding the Advanced
+       <details> grew the document past the popup's height cap: the overflow landed
+       on `html`, which nothing scrolls, while `body` still fitted inside `html` and
+       so never showed a scrollbar. The extra settings were unreachable until the
+       popup was closed and measured again from scratch.
+
+       Capping `html` to the same height keeps the window from ever exceeding the
+       scroll container, so `body` overflows — and scrolls — as soon as the content
+       does. `max-height` rather than `height` so a short popup stays short. */
+    html {
+      max-height: 600px;
+      overflow: hidden;
+    }
+
     body {
       width: 390px;
       min-width: 390px;
@@ -51,6 +66,9 @@
       margin: 0;
       overflow-x: hidden;
       overflow-y: auto;
+      /* Scroll chaining would otherwise pass the gesture to the host page once the
+         list reaches its end. */
+      overscroll-behavior: contain;
       background: var(--bg);
       color: var(--text);
       font-size: 13px;
