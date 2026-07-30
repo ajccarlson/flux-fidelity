@@ -1983,9 +1983,17 @@ async function runRealVideoIntegration(
     // impossible: whatever the content height, the scroll container is the element
     // that actually overflows.
     const popupScroll = await evaluate(popupPage.client, `(() => {
-      const details = document.querySelector("details");
-      if (!details) return { error: "advanced details section is missing" };
-      details.open = true;
+      // Driven the way a user does, so this also proves the tab wiring works in a
+      // real browser rather than only in the synthetic test document.
+      const tab = document.getElementById("tab-advanced");
+      if (!tab) return { error: "advanced tab is missing" };
+      tab.click();
+      const panel = document.getElementById("panel-advanced");
+      if (!panel) return { error: "advanced panel is missing" };
+      if (panel.hidden) return { error: "advanced tab did not reveal its panel" };
+      if (tab.getAttribute("aria-selected") !== "true") {
+        return { error: "advanced tab did not report itself selected" };
+      }
       // Force layout so the expanded height is measured, not the collapsed one.
       void document.body.scrollHeight;
       const body = document.body;
