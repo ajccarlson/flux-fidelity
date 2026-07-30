@@ -1132,3 +1132,27 @@ test("mode accessibility reflects the requested mode while runtime text explains
   assert.equal(document.getElementById("runtime-status").textContent,
     "The requested mode will activate when a playable video appears.");
 });
+
+test("a content-level failure surfaces its specific reason rather than only the generic text", () => {
+  // content.js always sets error "command-failed" and puts the cause in `reason`,
+  // so checking `error` first matched the generic entry every time and discarded
+  // the reason for every content-level failure.
+  const described = describeCommandFailure({
+    ok: false,
+    error: "command-failed",
+    reason: "policy must be one of: display, auto, force2",
+  });
+  assert.match(described, /could not apply that setting/);
+  assert.match(described, /policy must be one of/);
+
+  // Named codes still win outright.
+  assert.equal(
+    describeCommandFailure({ ok: false, error: "response-timeout" }),
+    "The page did not answer the command in time.",
+  );
+  // And a bare generic failure still reads cleanly.
+  assert.equal(
+    describeCommandFailure({ ok: false, error: "command-failed" }),
+    "The page could not apply that setting.",
+  );
+});
