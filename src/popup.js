@@ -193,7 +193,7 @@ export function reconcileSelectOptions(documentRef, select, rawItems, selected =
 export function encodeSparkline(samples, budgetMs, { width = 240, height = 48 } = {}) {
   const series = (Array.isArray(samples) ? samples : [])
     .filter((value) => Number.isFinite(value) && value >= 0);
-  if (series.length < 2) return { line: "", budget: "", peak: 0, scaleMs: 0 };
+  if (series.length < 2) return { line: "", area: "", budget: "", peak: 0, scaleMs: 0 };
   const peak = Math.max(...series);
   const budget = Number.isFinite(budgetMs) && budgetMs > 0 ? budgetMs : 0;
   // Scale to whichever is larger so the budget line is always visible and a series
@@ -204,9 +204,16 @@ export function encodeSparkline(samples, budgetMs, { width = 240, height = 48 } 
   const line = series
     .map((value, index) => `${index === 0 ? "M" : "L"}${x(index).toFixed(1)} ${y(value).toFixed(1)}`)
     .join(" ");
+  // The same trace closed to the baseline. Filled at low alpha it gives the
+  // series visible mass at 48px tall, where a 1.5px stroke alone reads as a
+  // hairline scratch. Returned separately so the stroke stays a stroke — filling
+  // the open line path would close it between its first and last point and draw
+  // a shape the data does not describe.
+  const area = `${line} L${width.toFixed(1)} ${height.toFixed(1)} L0 ${height.toFixed(1)} Z`;
   const budgetY = budget ? y(budget).toFixed(1) : null;
   return {
     line,
+    area,
     budget: budgetY == null ? "" : `M0 ${budgetY} L${width} ${budgetY}`,
     peak,
     scaleMs,
@@ -1248,6 +1255,7 @@ export function createPopupController({
     if (!active) return;
 
     const spark = encodeSparkline(samples, budgetMs);
+    $("perf-encode-area")?.setAttribute("d", spark.area);
     $("perf-encode-line")?.setAttribute("d", spark.line);
     $("perf-encode-budget")?.setAttribute("d", spark.budget);
     setText($("perf-encode-summary"), describeEncodeSeries(samples, budgetMs));
