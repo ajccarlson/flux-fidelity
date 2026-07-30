@@ -916,6 +916,12 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
   let snapshotTex = null, snapshotTexW = 0, snapshotTexH = 0;
   let outTex = null, outTexW = 0, outTexH = 0;
   let temporalAtlas = null;
+  // planTemporalNeuralTiling is a pure function of (width, height, contract,
+  // limits), all stable across frames, but it was recomputed inside run() on
+  // every frame. Its grid search cost ~1 ms per frame at default limits and was
+  // measured at ~725 ms per frame on a device reporting a 16 MiB storage-binding
+  // limit (640 tiles) — a synchronous main-thread stall before any inference.
+  let temporalPlanCache = null;
   let temporalAuxPipe = null;
   const temporalStatePipes = new Map();
   let temporalStatePackU = null, temporalStateUnpackU = null;
@@ -1081,6 +1087,7 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
         : []),
     ];
     temporalAtlas = null;
+    temporalPlanCache = null;   // a replacement device may report different limits
     temporalStatePackU = null;
     temporalStateUnpackU = null;
     temporalStateScratch.clear();
@@ -1193,14 +1200,18 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
   }
 
   async function loadManifest() {
-    if (manifest) return manifest;
+    // An empty array is truthy, so caching a failed load here permanently
+    // disabled neural inference for the engine's lifetime and then blamed a
+    // "missing or empty" manifest file that was present and valid. Only a
+    // successful parse is cached; a transient fetch failure stays retryable.
+    if (manifest && manifest.length) return manifest;
     try {
       const r = await fetch(resolvePackagedAssetUrl("model/neural/manifest.json"));
       if (!r.ok) throw new Error("HTTP " + r.status);
       manifest = validateNeuralManifest(await r.json());
     } catch (e) {
       warn("neural manifest rejected:", e.message);
-      manifest = [];
+      return [];
     }
     return manifest;
   }
@@ -1298,6 +1309,21 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     ));
     const maxGroups = Math.max(1, Number(device?.limits?.maxComputeWorkgroupsPerDimension) || 65535);
     return { maxDimension, maxBuffer, maxGroups };
+  }
+
+  // Memoized wrapper. The limits object is rebuilt per call, so the cache key is
+  // its serialized form plus the contract identity; a device swap changes the
+  // limits and therefore invalidates the entry.
+  function cachedTemporalPlan(srcW, srcH, tiling, limits) {
+    const key = `${srcW}x${srcH}|${JSON.stringify(limits)}`;
+    if (temporalPlanCache &&
+        temporalPlanCache.key === key &&
+        temporalPlanCache.tiling === tiling) {
+      return temporalPlanCache.plan;
+    }
+    const plan = planTemporalNeuralTiling(srcW, srcH, tiling, limits);
+    temporalPlanCache = { key, tiling, plan };
+    return plan;
   }
 
   function temporalPlannerLimits() {
@@ -1788,7 +1814,17 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
   async function initOne(key, generation) {
     const list = await loadManifest();
     if (!list.length) throw new Error("no neural models: model/neural/manifest.json missing or empty");
-    const entry = list.find((m) => m.key === key) || list[0];
+    // Falling back to list[0] silently substituted a different model with a
+    // different scale — asking for the 4x temporal graph and receiving the 2x
+    // spatial one produced half-resolution output with no temporal state, no
+    // error, and a canvas sized from the substitute's own scale.
+    const entry = list.find((m) => m.key === key);
+    if (!entry) {
+      throw new Error(
+        `neural model ${key} is not in the bundled manifest ` +
+        `(available: ${list.map((m) => m.key).join(", ")})`,
+      );
+    }
     const modelContract = contractForEntry(entry);
     if (generation !== initGeneration) return null;
     if (session && device && active?.key === entry.key) return active;
@@ -2091,6 +2127,7 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     snapshotTex = null; snapshotTexW = 0; snapshotTexH = 0;
     outTex = null; outTexW = 0; outTexH = 0;
     temporalAtlas = null;
+    temporalPlanCache = null;   // a replacement device may report different limits
     temporalStatePackU = null;
     temporalStateUnpackU = null;
     temporalStateScratch.clear();
@@ -2366,7 +2403,7 @@ export function createNeuralEngine({ log = console.log, warn = console.warn } = 
     const outH = checkedProduct("neural output height", srcH, scale);
     validateFrameAllocationLimits(srcW, srcH, outW, outH);
     const temporalPlan = usesTemporalAtlas
-      ? planTemporalNeuralTiling(
+      ? cachedTemporalPlan(
         srcW,
         srcH,
         runModelContract.tiling,
