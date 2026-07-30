@@ -766,6 +766,8 @@
         <p class="help">CPU time spent building each upscaled frame, against the display's frame interval. This stops at the moment work is handed to the GPU, so it does not include how long the GPU takes.</p>
         <h3 class="perf-heading">GPU time</h3>
         <p class="perf-line" id="perf-gpu-summary">&#8212;</p>
+        <h3 class="perf-heading">Work avoided</h3>
+        <p class="perf-line" id="perf-avoided-summary">&#8212;</p>
         <p class="help">Measured on the GPU itself, from the first pass to the last, sampled every 15th frame. Needs the browser's timestamp-query feature, which is unavailable on some systems. Decoded and dropped counts come from the browser's own decoder, so they cover the whole video, not just enhanced frames.</p>
         <dl class="status perf-grid">
           <div><dt>Decoded frames</dt><dd id="perf-presented" class="v">&#8212;</dd></div>
