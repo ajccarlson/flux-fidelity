@@ -4313,10 +4313,33 @@ export async function resumeDocument() {
 // Readability is checked before constructing a VideoFrame so protected content
 // never reaches the metadata probe. A readable source must then prove that its
 // decoded frame is inside the validated BT.709 SDR boundary.
+// Access probing allocates a canvas and performs a synchronous getImageData
+// readback, and it ran uncached from five call sites — including a double probe
+// per multi-target reconcile (every 30 frames) and the 2 s selection monitor.
+// The result is a property of the element and its current source, so it is cached
+// exactly like colorSupportFor, keyed on the same source identity so a source
+// swap re-probes. DRM is checked live on every call because MediaKeys can be
+// attached mid-playback and must never be served from cache.
+const videoAccessCache = new WeakMap();
+
 function probeVideoAccess(v) {
   try {
     if (v && "mediaKeys" in v && v.mediaKeys) return "drm";
   } catch {}
+  if (v) {
+    const source = captureVideoSource(v);
+    const cached = videoAccessCache.get(v);
+    const age = cached ? Date.now() - cached.checkedAt : Infinity;
+    if (cached && sameVideoSource(cached.source, source) &&
+        age >= 0 && age < COLOR_REPROBE_INTERVAL_MS) return cached.result;
+    const result = probeVideoAccessUncached(v);
+    videoAccessCache.set(v, { source, result, checkedAt: Date.now() });
+    return result;
+  }
+  return probeVideoAccessUncached(v);
+}
+
+function probeVideoAccessUncached(v) {
   // Probe for cross-origin taint via a tiny 2D-canvas read. A SecurityError
   // here means the video is tainted, which also blocks importExternalTexture.
   try {
@@ -4335,7 +4358,7 @@ function probeVideoAccess(v) {
 }
 
 function invalidateVideoColorSupport(target) {
-  if (target) videoColorSupportCache.delete(target);
+  if (target) { videoColorSupportCache.delete(target); videoAccessCache.delete(target); }
   if (target === video) {
     selectedColorSupport = uncheckedColorSupport("The video source changed and must be checked again.");
   }
@@ -5381,7 +5404,12 @@ async function applyExternalSitePreferences(patch) {
 
 export function getStatus() {
   const apiAvailable = typeof navigator !== "undefined" && "gpu" in navigator;
-  const hasVideo = !!findVideo();
+  // The popup polls status every second, and findVideo() runs
+  // querySelectorAll("*") plus a recursive walk of every open shadow root and a
+  // getBoundingClientRect() per candidate — so an open popup forced a full DOM
+  // walk and layout on the host page every second. A selected, connected element
+  // already answers the question; only fall back to scanning when there is none.
+  const hasVideo = (video && video.isConnected) ? true : !!findVideo();
   const presented = currentPresentedRuntime();
   const activeMode = mode === "off" ? "off" : presented.mode;
   const presentation = activeMode !== "off" ? presentedPresentation : null;
