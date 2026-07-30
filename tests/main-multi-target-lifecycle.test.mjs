@@ -219,7 +219,7 @@ async function loadIntegratedRetirement(deps) {
 
     let multiTargets = new Map();
     let models = [], highStages = [], artStages = {};
-    let chainTapTex = null, chainTapFrame = 0;
+    let chainTapTex = null, chainTapFrame = 0, chainTapFailed = false;
     let lumaTexture = null, lumaW = 0, lumaH = 0;
     let hiRGB = null, hiRGBW = 0, hiRGBH = 0;
     let dispRGB = null, dispRGBW = 0, dispRGBH = 0;
