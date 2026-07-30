@@ -19,7 +19,14 @@ import test from "node:test";
 // with no gate able to execute it. These tests are the standing answer, so the
 // question is settled by measurement rather than re-argued.
 
+// Math.f16round landed after Node 20.11.1, which CI still verifies against.
+// Hand-rolling a half-float encoder here would put the measurement's
+// trustworthiness in the hands of a bit-twiddling routine written for one test,
+// so where the primitive is missing these skip rather than approximate. Node 24
+// runs them on every CI event, which is where the finding is actually gated.
 const f16 = Math.f16round;
+const HAS_F16 = typeof f16 === "function";
+const SKIP_REASON = "Math.f16round requires Node >= 21; measured on the Node 24 job";
 const REFERENCE_MAX_DEVIATION = 0.03;
 
 function shippedWeights() {
@@ -39,7 +46,8 @@ function lcg(seed) {
   return () => (state = (state * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
 }
 
-test("one 25-tap feature pass in f16 already spends most of the whole-network budget", () => {
+test("one 25-tap feature pass in f16 already spends most of the whole-network budget",
+  { skip: HAS_F16 ? false : SKIP_REASON }, () => {
   const { vecs } = shippedWeights();
   assert.ok(vecs.length > 100, "expected the shipped weights to be parseable");
   const random = lcg(12345);
@@ -93,7 +101,8 @@ function mappingPassError(featureRange, trials = 800) {
   return worst;
 }
 
-test("a 36-term mapping pass in f16 scales its error with the feature range", () => {
+test("a 36-term mapping pass in f16 scales its error with the feature range",
+  { skip: HAS_F16 ? false : SKIP_REASON }, () => {
   // Feature maps are not bounded to [0,1] the way luma is; their magnitude is
   // whatever the preceding layers produced. The error tracks that magnitude, so
   // there is no input regime where the budget is comfortable — and the model
