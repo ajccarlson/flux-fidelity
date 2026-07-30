@@ -20,10 +20,27 @@ test("manifest requests only the capabilities used by the local media pipeline",
     run_at: "document_idle",
     all_frames: false,
   }]);
-  assert.equal(
-    manifest.content_security_policy?.extension_pages,
-    "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
+  // Asserted directive by directive rather than as one literal, so a future
+  // addition does not silently relax one of these. In MV3 extension_pages an
+  // *omitted* directive is unrestricted, which is why default-src matters here:
+  // connect-src, img-src, style-src and worker-src were all open on a page that
+  // runs third-party ONNX Runtime and WASM.
+  const csp = manifest.content_security_policy?.extension_pages ?? "";
+  const directives = new Map(
+    csp.split(";").map((part) => part.trim()).filter(Boolean).map((part) => {
+      const [name, ...values] = part.split(/\s+/);
+      return [name, values.join(" ")];
+    }),
   );
+  assert.equal(directives.get("default-src"), "'self'", "omitted directives are unrestricted");
+  assert.equal(directives.get("script-src"), "'self' 'wasm-unsafe-eval'");
+  assert.equal(directives.get("connect-src"), "'self'", "no egress from extension pages");
+  assert.equal(directives.get("worker-src"), "'self'");
+  assert.equal(directives.get("object-src"), "'none'");
+  assert.equal(directives.get("base-uri"), "'none'");
+  assert.equal(directives.get("frame-ancestors"), "'none'");
+  assert.equal(/unsafe-eval(?!-)/.test(csp), false, "only wasm-unsafe-eval is permitted");
+  assert.equal(/https?:/.test(csp), false, "no remote origin may be allowlisted");
 });
 
 test("privacy disclosure is packaged and describes local handling, retention, and permissions", () => {

@@ -434,6 +434,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse?.(consumeNeuralCapability(msg, sender));
     return;
   }
+  // The capability handlers above verify sender.id; the state handlers relied only
+  // on senderDocument(). Same non-exploitability as the content script, same
+  // one-line fix, and it keeps every branch of this listener consistent.
+  if (sender?.id !== chrome.runtime.id) return;
   const identity = senderDocument(sender);
   if (msg?.type === "FSRCNNX_DOCUMENT") {
     handleDocumentHandshake(msg, identity);
