@@ -7,6 +7,8 @@ import {
   StatusCoordinator,
   createPopupController,
   describeCommandFailure,
+  describeEncodeSeries,
+  encodeSparkline,
   formatDiagnostics,
   formatPresentation,
   isSupportedPageUrl,
@@ -71,6 +73,18 @@ class FakeDocument {
     this.elements = new Map();
     this.controls = [];
     this.modeButtons = [];
+    this.tabButtons = [];
+  }
+
+  // Mirrors popup.html: a tab button carries role="tab" and a data-panel pointing
+  // at the panel it controls.
+  addTab(id, panelId) {
+    const tab = this.add(id, "button");
+    tab.setAttribute("role", "tab");
+    tab.dataset.panel = panelId;
+    this.tabButtons.push(tab);
+    this.add(panelId, "div");
+    return tab;
   }
 
   add(id, tagName = "div", values = {}) {
@@ -91,6 +105,7 @@ class FakeDocument {
   querySelectorAll(selector) {
     if (selector === ".modes button") return this.modeButtons;
     if (selector === "button, input, select") return this.controls;
+    if (selector === '[role="tab"]') return this.tabButtons;
     return [];
   }
 
@@ -110,10 +125,20 @@ function popupDocument() {
   for (const id of [
     "s-webgpu", "s-video", "s-model", "s-frames", "s-resolution", "runtime-status", "drm-banner",
     "copy-diagnostics", "forget-site",
+    "perf-idle", "perf-body", "perf-encode-line", "perf-encode-budget", "perf-encode-summary",
+    "perf-presented", "perf-dropped", "perf-engine", "perf-output",
+    "perf-interp-group", "perf-interp-fps", "perf-interp-frames", "perf-interp-infer",
+    "perf-interp-stutter",
+    "perf-neural-group", "perf-neural-infer", "perf-neural-tiles", "perf-neural-temporal",
+    "perf-neural-skip",
     "operation-status", "neuralrow", "neural-note", "sharpen-row", "sharpen-val",
     "multi-count", "image-count", "interp-res-row",
     "interp-target-hz", "interp-avoff-val", "interp-stats",
   ]) document.add(id);
+
+  document.addTab("tab-video", "panel-video");
+  document.addTab("tab-advanced", "panel-advanced");
+  document.addTab("tab-performance", "panel-performance");
 
   for (const [id, value] of [
     ["engine", "fsrcnnx"],
@@ -1253,4 +1278,68 @@ test("the popup viewport is capped so its scroll container can actually overflow
     "html and body caps must agree so the window never exceeds the scroll container",
   );
   assert.match(html, /overflow:\s*hidden/, "html must not become a second scroll container");
+});
+
+test("the encode sparkline scales to the budget and describes itself in text", () => {
+  const samples = [4, 6, 5, 20, 7];
+  const spark = encodeSparkline(samples, 16.7);
+  assert.match(spark.line, /^M0\.0 /, "the path must start at the first sample");
+  assert.equal(spark.line.split("L").length, samples.length, "one segment per later sample");
+  assert.match(spark.budget, /^M0 [\d.]+ L240 [\d.]+$/, "the budget is a flat reference line");
+  // Scaling to max(peak, budget) keeps the budget line on-screen even when the
+  // series never approaches it, and keeps a spiky series from clipping.
+  assert.ok(spark.scaleMs >= 20, "scale must cover the peak");
+  const calm = encodeSparkline([2, 3, 2], 16.7);
+  assert.ok(calm.scaleMs >= 16.7, "scale must cover the budget even for a calm series");
+
+  // Too short to plot must not produce a malformed path.
+  assert.deepEqual(encodeSparkline([5], 16.7).line, "");
+  assert.deepEqual(encodeSparkline(null, 16.7).line, "");
+  // Non-finite samples cannot poison the geometry.
+  assert.equal(encodeSparkline([1, Number.NaN, 3, Infinity], 16.7).line.includes("NaN"), false);
+});
+
+test("the encode summary names the number that actually matters", () => {
+  const described = describeEncodeSeries([4, 6, 20, 22], 16.7);
+  assert.match(described, /4 frames/);
+  assert.match(described, /peak 22\.0 ms/);
+  // Frames over the budget are when frames start being missed, so the count is
+  // stated rather than left for the reader to infer from the chart.
+  assert.match(described, /2 over budget/);
+  assert.match(describeEncodeSeries([4, 5], 16.7), /none over budget/);
+  assert.match(describeEncodeSeries([], 16.7), /No frames measured/);
+  // Without a known budget the summary must not invent one.
+  assert.equal(/budget/.test(describeEncodeSeries([4, 5], 0)), false);
+});
+
+test("tabs expose one selected panel and keep the rest out of the tab order", () => {
+  const { controller, document } = controllerHarness();
+  // start() performs the binding; the controller exposes no separate bind.
+  controller.start();
+
+  const tabs = document.querySelectorAll('[role="tab"]');
+  assert.equal(tabs.length, 3);
+  const selected = tabs.filter((tab) => tab.getAttribute("aria-selected") === "true");
+  assert.equal(selected.length, 1, "exactly one tab may be selected");
+  assert.equal(selected[0].id, "tab-video", "Video is the default panel");
+  assert.equal(document.getElementById("panel-video").hidden, false);
+  assert.equal(document.getElementById("panel-advanced").hidden, true);
+  assert.equal(document.getElementById("panel-performance").hidden, true);
+
+  // Only the selected tab is reachable by Tab; the others are arrow-key targets.
+  // The previous disclosure had no such semantics, which left its controls
+  // unreachable by heading navigation.
+  assert.deepEqual(tabs.map((tab) => tab.tabIndex), [0, -1, -1]);
+
+  document.getElementById("tab-performance").emit("click");
+  assert.equal(document.getElementById("panel-performance").hidden, false);
+  assert.equal(document.getElementById("panel-video").hidden, true);
+  assert.equal(document.getElementById("tab-performance").getAttribute("aria-selected"), "true");
+  assert.deepEqual(tabs.map((tab) => tab.tabIndex), [-1, -1, 0]);
+
+  // Arrow keys wrap, per the ARIA tabs pattern.
+  document.getElementById("tab-performance").emit("keydown", { key: "ArrowRight" });
+  assert.equal(document.getElementById("tab-video").getAttribute("aria-selected"), "true");
+  document.getElementById("tab-video").emit("keydown", { key: "ArrowLeft" });
+  assert.equal(document.getElementById("tab-performance").getAttribute("aria-selected"), "true");
 });

@@ -404,6 +404,7 @@ async function loadStatusHarness(storeHealth = {
     let gpuResourcePhase = deps.runtime.resourcePhase || "idle";
     let gpuResourceReason = deps.runtime.resourceReason || null;
     let rendererFallback = null, neuralLastFailure = null, neuralFail = 0;
+    const frameTimes = deps.frameTimes || [];
     const playbackPerformance = { snapshot: () => ({
       triggered: null,
       lastWindow: null,

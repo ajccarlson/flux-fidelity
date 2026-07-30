@@ -5551,6 +5551,14 @@ export function getStatus() {
                enabled: optAutoQualityFallback,
                ...playbackPerformance.snapshot(),
              },
+             // Per-frame CPU encode times. The renderer already maintains this
+             // 120-sample ring and previously only reduced it to an average in a
+             // console line every 120 frames. Publishing the series means one
+             // status poll carries frame-resolution history, so the popup can plot
+             // it without a second, higher-rate telemetry channel — which would
+             // itself cost frame time to measure frame time. Rounded to 0.1 ms to
+             // keep the payload small and copied so callers cannot mutate the ring.
+             encodeMs: frameTimes.map((value) => Math.round(value * 10) / 10),
              nativePresentation: primaryPresentationBoundary,
            },
            imagesRuntime: {

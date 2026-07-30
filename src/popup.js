@@ -187,9 +187,59 @@ export function reconcileSelectOptions(documentRef, select, rawItems, selected =
   return signature;
 }
 
+// Builds an SVG path for a series scaled to the viewBox, plus a dashed reference
+// line at `budget`. Returned as data rather than applied to the DOM so it can be
+// unit-tested without a document.
+export function encodeSparkline(samples, budgetMs, { width = 240, height = 48 } = {}) {
+  const series = (Array.isArray(samples) ? samples : [])
+    .filter((value) => Number.isFinite(value) && value >= 0);
+  if (series.length < 2) return { line: "", budget: "", peak: 0, scaleMs: 0 };
+  const peak = Math.max(...series);
+  const budget = Number.isFinite(budgetMs) && budgetMs > 0 ? budgetMs : 0;
+  // Scale to whichever is larger so the budget line is always visible and a series
+  // that never approaches it does not look alarming.
+  const scaleMs = Math.max(peak, budget) * 1.1 || 1;
+  const x = (index) => (index / (series.length - 1)) * width;
+  const y = (value) => height - Math.min(1, value / scaleMs) * height;
+  const line = series
+    .map((value, index) => `${index === 0 ? "M" : "L"}${x(index).toFixed(1)} ${y(value).toFixed(1)}`)
+    .join(" ");
+  const budgetY = budget ? y(budget).toFixed(1) : null;
+  return {
+    line,
+    budget: budgetY == null ? "" : `M0 ${budgetY} L${width} ${budgetY}`,
+    peak,
+    scaleMs,
+  };
+}
+
+// Summarizes the same series as text. The chart is aria-hidden, so this is the
+// accessible representation rather than a caption for it.
+export function describeEncodeSeries(samples, budgetMs) {
+  const series = (Array.isArray(samples) ? samples : [])
+    .filter((value) => Number.isFinite(value) && value >= 0);
+  if (!series.length) return "No frames measured yet.";
+  const mean = series.reduce((total, value) => total + value, 0) / series.length;
+  const peak = Math.max(...series);
+  const budget = Number.isFinite(budgetMs) && budgetMs > 0 ? budgetMs : null;
+  const over = budget ? series.filter((value) => value > budget).length : 0;
+  const parts = [
+    `${series.length} frames`,
+    `mean ${mean.toFixed(1)} ms`,
+    `peak ${peak.toFixed(1)} ms`,
+  ];
+  if (budget) {
+    parts.push(`budget ${budget.toFixed(1)} ms`);
+    // The number that actually matters: encode time above the frame interval is
+    // when frames start being missed.
+    parts.push(over ? `${over} over budget` : "none over budget");
+  }
+  return `${parts.join(" · ")}.`;
+}
+
 // Turns the status payload into a pasteable report. getStatus() already computes
-// far more than the four fields the popup shows; without this, a user whose video
-// looks wrong has nothing to hand over and no way to reach validate.html.
+// far more than the popup shows; without this, a user whose video looks wrong has
+// nothing to hand over and no way to reach validate.html.
 export function formatDiagnostics(status, { version = null } = {}) {
   if (!status || typeof status !== "object") return "Flux Fidelity diagnostics: status unavailable";
   const renderer = status.renderer || {};
@@ -552,6 +602,8 @@ export function createPopupController({
 
   const $ = (id) => documentRef.getElementById(id);
   const modeButtons = [...documentRef.querySelectorAll(".modes button")];
+  const tabButtons = [...documentRef.querySelectorAll('[role="tab"]')];
+  let activePanel = "panel-video";
   const controls = [...documentRef.querySelectorAll("button, input, select")];
   let ready = false;
   let commandBusy = 0;
@@ -868,6 +920,7 @@ export function createPopupController({
     // them away, so the one question an upscaler exists to answer — what goes in
     // and what comes out — was unanswerable from the UI. "Frames: N" is a counter,
     // not a quality signal.
+    renderPerformance(status);
     const resolutionText = formatPresentation(status);
     $("s-resolution").textContent = resolutionText;
     $("s-resolution").className = `v ${resolutionText === "—" ? "" : "ok"}`.trimEnd();
@@ -1059,7 +1112,122 @@ export function createPopupController({
     $(id).addEventListener(event, () => runCommand(label, () => transport.send(type, payload())));
   }
 
+  // Tabs are wired manually rather than with <details> so the panels carry real
+  // tab semantics: the previous disclosure summary was not a heading, which left
+  // its fourteen controls unreachable by heading navigation. Arrow keys move
+  // between tabs and only the selected tab sits in the tab order, per the ARIA
+  // tabs pattern.
+  function selectTab(panelId, { focus = false } = {}) {
+    for (const tab of tabButtons) {
+      const selected = tab.dataset.panel === panelId;
+      tab.setAttribute("aria-selected", selected ? "true" : "false");
+      tab.tabIndex = selected ? 0 : -1;
+      const panel = $(tab.dataset.panel);
+      if (panel) panel.hidden = !selected;
+      if (selected && focus) { try { tab.focus?.(); } catch {} }
+    }
+    activePanel = panelId;
+  }
+
+  // Only reads fields getStatus() already publishes. Everything drawn here also
+  // appears as text, because the chart is aria-hidden.
+  function renderPerformance(status) {
+    const renderer = status?.renderer || {};
+    const perf = renderer.performance || {};
+    const samples = Array.isArray(renderer.encodeMs) ? renderer.encodeMs : [];
+    const budgetMs = Number(perf.frameIntervalMs) || 0;
+    const active = samples.length > 0;
+    setVisible($("perf-idle"), !active);
+    setVisible($("perf-body"), active);
+    if (!active) return;
+
+    const spark = encodeSparkline(samples, budgetMs);
+    $("perf-encode-line")?.setAttribute("d", spark.line);
+    $("perf-encode-budget")?.setAttribute("d", spark.budget);
+    setText($("perf-encode-summary"), describeEncodeSeries(samples, budgetMs));
+
+    const window = perf.lastWindow || null;
+    const presented = Number(window?.presentedFrames);
+    const dropped = Number(window?.droppedFrames ?? window?.droppedVideoFrames);
+    $("perf-presented").textContent = Number.isFinite(presented) ? String(presented) : "—";
+    // A ratio rather than a bare count: 40 dropped frames means nothing without
+    // knowing how many were presented alongside them.
+    $("perf-dropped").textContent = Number.isFinite(dropped)
+      ? (Number.isFinite(presented) && presented + dropped > 0
+        ? `${dropped} (${Math.round((dropped / (presented + dropped)) * 100)}%)`
+        : String(dropped))
+      : "—";
+    // Requested versus effective engine: after a fallback these differ, and that
+    // divergence was previously visible only in the console.
+    const requested = status?.engine ?? "—";
+    const effective = renderer.effectiveEngine ?? status?.activeEngine ?? requested;
+    $("perf-engine").textContent = requested === effective
+      ? String(requested)
+      : `${requested} → ${effective}`;
+    $("perf-output").textContent = formatPresentation(status);
+
+    const interp = status?.interpStats || null;
+    const interpActive = !!interp && interp.running === true;
+    setVisible($("perf-interp-group"), interpActive);
+    if (interpActive) {
+      $("perf-interp-fps").textContent = `${interp.fpsIn ?? "—"} → ${interp.fpsOut ?? "—"} fps`;
+      // framesOut counts enqueued frames and framesPresented counts committed ones;
+      // they diverge under presentation backpressure, and the auto-fallback watches
+      // the former. Showing both makes that difference observable.
+      $("perf-interp-frames").textContent =
+        `${interp.framesOut ?? 0} out / ${interp.framesPresented ?? 0} shown`;
+      $("perf-interp-infer").textContent = interp.inferMeanMs
+        ? `${interp.inferMs ?? 0} / ${interp.inferMeanMs} ms`
+        : `${interp.inferMs ?? 0} ms`;
+      $("perf-interp-stutter").textContent =
+        `${interp.stutters ?? 0} (max gap ${interp.maxGapMs ?? 0} ms)`;
+    }
+
+    const neural = status?.neural || null;
+    setVisible($("perf-neural-group"), !!neural);
+    if (neural) {
+      $("perf-neural-infer").textContent = Number.isFinite(neural.meanRunMs)
+        ? `${(neural.lastRunMs ?? 0).toFixed?.(1) ?? neural.lastRunMs} / ${neural.meanRunMs.toFixed(1)} ms`
+        : "—";
+      $("perf-neural-tiles").textContent = Number.isFinite(neural.lastTiles)
+        ? String(neural.lastTiles)
+        : "—";
+      // Reset runs versus recurrent runs exposes how often temporal state is
+      // discarded, which is otherwise invisible and affects perceived quality.
+      const resets = Number(neural.temporalResetRuns);
+      const recurrent = Number(neural.temporalRecurrentRuns);
+      $("perf-neural-temporal").textContent =
+        Number.isFinite(resets) && Number.isFinite(recurrent)
+          ? `${resets} reset / ${recurrent} recurrent`
+          : "—";
+      $("perf-neural-skip").textContent = Number.isFinite(neural.skip) ? String(neural.skip) : "—";
+    }
+  }
+
+  function bindTabs() {
+    // Assert the initial selection here rather than trusting the markup's
+    // aria-selected, so the controller owns the "exactly one tab selected"
+    // invariant and the two cannot disagree.
+    if (tabButtons.length) selectTab(activePanel);
+    tabButtons.forEach((tab, index) => {
+      tab.addEventListener("click", () => selectTab(tab.dataset.panel));
+      tab.addEventListener("keydown", (event) => {
+        const key = event.key;
+        const delta = key === "ArrowRight" ? 1 : key === "ArrowLeft" ? -1 : 0;
+        if (!delta && key !== "Home" && key !== "End") return;
+        event.preventDefault?.();
+        const target = key === "Home"
+          ? 0
+          : key === "End"
+            ? tabButtons.length - 1
+            : (index + delta + tabButtons.length) % tabButtons.length;
+        selectTab(tabButtons[target].dataset.panel, { focus: true });
+      });
+    });
+  }
+
   function bind() {
+    bindTabs();
     // Destructive, so it confirms first. There is no undo: the tombstones are
     // convergent and will propagate to every other tab for this origin.
     $("forget-site")?.addEventListener("click", () => {
