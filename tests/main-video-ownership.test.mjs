@@ -1522,7 +1522,6 @@ test("main source keeps secondary mutable state and neural completion target-sco
     "layoutController = t.controller",
     "renderTargetOwner = t",
     "activeModel = t.activeModel",
-    "dispRGB = t.dispRGB",
     "chainedFsrcnnx = t.chainedFsrcnnx",
     "highStages = t.highStages",
     "chainedHigh = t.chainedHigh",

@@ -173,7 +173,6 @@ function resetScaleSelection() {
 }
 let sharpenEnabled = false, sharpenStrength = 1.0;
 let sharpenPipeline = null, sharpenStrengthBuilt = null;
-let dispRGB = null, dispRGBW = 0, dispRGBH = 0; // offscreen display-res for sharpen input
 let models = [], activeModel = null;
 let modelsDevice = null, modelLoadPromise = null, modelLoadDevice = null;
 const ART_FILES = ARTCNN_MODEL_NAMES;
@@ -200,7 +199,7 @@ const neuralCatalogReady = (async () => { try {
 })();
 let artVariant = "ArtCNN_C4F32";
 let chainDepth = 1; // 1 = single 2x, 2 = chained 4x, 3 = chained 8x (2x-only engines)
-let artLoadPending = false, artDiagLogged = false;
+let artLoadPending = false;
 let primaryController = null, layoutController = null, videoMonitor = null;
 let videoSelectionGeneration = 0, videoSwitchTail = Promise.resolve();
 let videoSelectionPendingGeneration = 0;
@@ -2094,7 +2093,6 @@ function invalidateMainDeviceResources() {
     ["chain-tap-texture", chainTapTex],
     ["luma-texture", lumaTexture],
     ["upscale-texture", hiRGB],
-    ["display-texture", dispRGB],
   ]) {
     try { texture?.destroy?.(); }
     catch (error) { recordCleanupError(name, error); }
@@ -2107,7 +2105,6 @@ function invalidateMainDeviceResources() {
   chainTapTex = null; chainTapFrame = 0; chainTapFailed = false;
   lumaTexture = null; lumaW = 0; lumaH = 0;
   hiRGB = null; hiRGBW = 0; hiRGBH = 0;
-  dispRGB = null; dispRGBW = 0; dispRGBH = 0;
   ssimds = null;
   extractPipeline = recombinePipeline = recombine16Pipeline = blitPipeline = null;
   extractPipelineTex = recombinePipelineTex = recombine16PipelineTex = null;
@@ -2160,14 +2157,13 @@ function retirePrimaryGpuAllocations(reason = "source-change") {
     for (const stage of stages) {
       try { stage?.resetAllocation?.(); } catch {}
     }
-    for (const texture of [chainTapTex, lumaTexture, hiRGB, dispRGB]) {
+    for (const texture of [chainTapTex, lumaTexture, hiRGB]) {
       try { texture?.destroy?.(); } catch {}
     }
     chainTapTex = null; chainTapFrame = 0; chainTapFailed = false;
     lumaTexture = null; lumaW = 0; lumaH = 0;
     hiRGB = null; hiRGBW = 0; hiRGBH = 0;
-    dispRGB = null; dispRGBW = 0; dispRGBH = 0;
-    try { ssimds?.destroy?.(); } catch {}
+      try { ssimds?.destroy?.(); } catch {}
     activeModel = null;
     chainedFsrcnnx = null;
     chainedHigh = null;
@@ -4410,7 +4406,6 @@ function probeVideo(target, { forceColor = false, publish = true } = {}) {
   return support.supported ? "ok" : support.code;
 }
 
-function isProtectedVideo(v) { return probeVideo(v) !== "ok"; }
 function isTaintedVideo(v) { return probeVideoAccess(v) !== "ok"; }
 
 // Guarded importExternalTexture. A tainted/DRM video throws here; rather than let
@@ -4532,7 +4527,6 @@ export function setEngine(e, { persist = true } = {}) {
   }
   chainDepth = engine === "artcnn" || engine === "fsrcnnx" || engine === "fsrcnnx-hi"
     ? policyToDepth(upscalePolicy) : 1;
-  artDiagLogged = false;
   if (engine === "fsrcnnx" && device) {
     ensureFsrcnnxStages(chainDepth).catch((er) => warn("FSRCNNX preload failed:", er.message));
   }
@@ -4554,7 +4548,6 @@ export function setArtVariant(v, { persist = true } = {}) {
   artVariant = v;
   resetScaleSelection();
   clearMultiTargets();
-  artDiagLogged = false;
   if (engine === "artcnn" && device) ensureArtStages(artVariant, chainDepth).catch((er) => warn("ArtCNN preload failed:", er.message));
   if (persist) saveSitePrefs(["artVariant"]);
   return { ok: true, artVariant };
@@ -4679,7 +4672,6 @@ class MultiTarget {
     this.canvas = null;
     this.lumaTexture = null; this.lumaW = 0; this.lumaH = 0;
     this.hiRGB = null; this.hiRGBW = 0; this.hiRGBH = 0;
-    this.dispRGB = null; this.dispRGBW = 0; this.dispRGBH = 0;
     this.ssimds = null;
     this.sharpenPipeline = null; this.sharpenStrengthBuilt = null;
     this.context = null;
@@ -4830,7 +4822,7 @@ class MultiTarget {
       ...(this.highStages || []),
       ...Object.values(this.artStages || {}).flat(),
     ]);
-    const ownedTextures = new Set([this.lumaTexture, this.hiRGB, this.dispRGB].filter(Boolean));
+    const ownedTextures = new Set([this.lumaTexture, this.hiRGB].filter(Boolean));
     const ownedDownscaler = this.ssimds;
     const ownedContext = this.context;
     const retainedReferences = new Set([
@@ -4842,7 +4834,7 @@ class MultiTarget {
     ].filter(Boolean));
     this.device = null;
     this.models = []; this.highStages = []; this.artStages = {};
-    this.lumaTexture = this.hiRGB = this.dispRGB = null;
+    this.lumaTexture = this.hiRGB = null;
     this.ssimds = null;
     this.context = null;
     this.sharpenPipeline = null; this.sharpenStrengthBuilt = null;
@@ -4936,7 +4928,6 @@ function withTarget(t, fn) {
   const saved = {
     video, canvas, context, layoutController, renderTargetOwner,
     lumaTexture, lumaW, lumaH, hiRGB, hiRGBW, hiRGBH,
-    dispRGB, dispRGBW, dispRGBH,
     ssimds, sharpenPipeline, sharpenStrengthBuilt, hoverHidden,
     models, highStages, artStages, activeModel, chainedFsrcnnx, chainedHigh, chainedArt, lastSSimDS,
     _scaleHeld, _scalePending, _scalePendingSince, _scaleHeldSrcW, _scaleHeldSrcH, _scaleLockLogged,
@@ -4946,7 +4937,6 @@ function withTarget(t, fn) {
   layoutController = t.controller; renderTargetOwner = t;
   lumaTexture = t.lumaTexture; lumaW = t.lumaW; lumaH = t.lumaH;
   hiRGB = t.hiRGB; hiRGBW = t.hiRGBW; hiRGBH = t.hiRGBH;
-  dispRGB = t.dispRGB; dispRGBW = t.dispRGBW; dispRGBH = t.dispRGBH;
   ssimds = t.ssimds; sharpenPipeline = t.sharpenPipeline; sharpenStrengthBuilt = t.sharpenStrengthBuilt;
   hoverHidden = t.hoverHidden;
   models = t.models; highStages = t.highStages; artStages = t.artStages; activeModel = t.activeModel;
@@ -4960,7 +4950,6 @@ function withTarget(t, fn) {
     // persist any lazily-created resources back onto the target
     t.lumaTexture = lumaTexture; t.lumaW = lumaW; t.lumaH = lumaH;
     t.hiRGB = hiRGB; t.hiRGBW = hiRGBW; t.hiRGBH = hiRGBH;
-    t.dispRGB = dispRGB; t.dispRGBW = dispRGBW; t.dispRGBH = dispRGBH;
     t.sharpenPipeline = sharpenPipeline; t.sharpenStrengthBuilt = sharpenStrengthBuilt;
     t.activeModel = activeModel; t.chainedFsrcnnx = chainedFsrcnnx; t.chainedHigh = chainedHigh;
     t.chainedArt = chainedArt; t.lastSSimDS = lastSSimDS;
@@ -4969,8 +4958,7 @@ function withTarget(t, fn) {
     ({
       video, canvas, context, layoutController, renderTargetOwner,
       lumaTexture, lumaW, lumaH, hiRGB, hiRGBW, hiRGBH,
-      dispRGB, dispRGBW, dispRGBH,
-      ssimds, sharpenPipeline, sharpenStrengthBuilt, hoverHidden,
+        ssimds, sharpenPipeline, sharpenStrengthBuilt, hoverHidden,
       models, highStages, artStages, activeModel, chainedFsrcnnx, chainedHigh, chainedArt, lastSSimDS,
       _scaleHeld, _scalePending, _scalePendingSince, _scaleHeldSrcW, _scaleHeldSrcH, _scaleLockLogged,
       chainTapOn, _texSource,
@@ -5119,7 +5107,6 @@ export function setPolicy(p, { persist = true } = {}) {
   chainDepth = requestedEngine === "artcnn" || requestedEngine === "fsrcnnx" ||
       requestedEngine === "fsrcnnx-hi"
     ? policyToDepth(upscalePolicy) : 1;
-  artDiagLogged = false;
   if (engine === "fsrcnnx" && device) {
     ensureFsrcnnxStages(chainDepth).catch(() => {});
   }
