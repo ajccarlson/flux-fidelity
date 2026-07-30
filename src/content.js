@@ -22,6 +22,14 @@ function restoreOnce() {
       .then((result) => {
         restoreResult = result;
         return result;
+      })
+      // A rejection used to be memoized for the life of the document, so one
+      // transient storage failure during first restore permanently poisoned
+      // FSRCNNX_RESTORE with no way back. Clear the memo so a later attempt can
+      // succeed, while still rejecting this caller.
+      .catch((error) => {
+        restorePromise = null;
+        throw error;
       });
   }
   return restorePromise;
