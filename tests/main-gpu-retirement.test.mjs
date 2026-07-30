@@ -171,7 +171,7 @@ async function loadPrimaryRetirementHarness(deps) {
     let models = [sharedStage];
     let highStages = [sharedStage, { resetAllocation: () => deps.events.push("high-reset") }];
     let artStages = { current: [sharedStage, { resetAllocation: () => deps.events.push("art-reset") }] };
-    let chainTapTex = deps.texture("chain"), chainTapFrame = 8;
+    let chainTapTex = deps.texture("chain"), chainTapFrame = 8, chainTapFailed = false;
     let lumaTexture = deps.texture("luma"), lumaW = 10, lumaH = 6;
     let hiRGB = deps.texture("hi"), hiRGBW = 20, hiRGBH = 12;
     let dispRGB = deps.texture("display"), dispRGBW = 20, dispRGBH = 12;

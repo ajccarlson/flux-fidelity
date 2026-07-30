@@ -121,10 +121,13 @@ let interpAutoFallbackPref = false; // RIFE→blend performance fallback (opt-in
 let interpLadderPref = false; // blend ladder (persisted per site)
 let interpStaticPassthroughPref = true; // preserve source pixels in static regions
 let _gpuErrWinStart = 0, _gpuErrCount = 0, _invRestarts = 0, _invRestartLast = 0; // present-path breaker state
+let _gpuErrBreakerFired = false; // latched per error window so a burst trips once
+const GPU_ERROR_BURST_THRESHOLD = 6; // uncaptured errors within one 2 s window
 let recombine16Pipeline = null, blitPipeline = null;
 // Interpolation chain tap: the interpolator (blend engine, same device) can consume
 // the upscaler's finished frames instead of the raw video.
 let chainTapOn = false, chainTapTex = null, chainTapFrame = 0;
+let chainTapFailed = false; // latched so a broken tap is reported once, not per frame
 export function chainTap(on) {
   chainTapOn = !!on;
   if (!chainTapOn) { try { chainTapTex && chainTapTex.destroy(); } catch {} chainTapTex = null; }
@@ -133,7 +136,8 @@ export function chainTap(on) {
 export function chainInfo() {
   // available only when the upscaler is actively rendering the primary video
   if (!device || mode === "off" || !primaryController?.active || !chainTapTex) return null;
-  return { device, tex: chainTapTex, w: chainTapTex.width, h: chainTapTex.height, frame: chainTapFrame, format };
+  return { device, tex: chainTapTex, w: chainTapTex.width, h: chainTapTex.height,
+    frame: chainTapFrame, failed: chainTapFailed, format };
 }
 export function chainAvailable() { return !!(device && mode !== "off" && primaryController?.active); }
 export function chainCanInvert() { return !!(device && mode === "upscale" && primaryController?.active); }
@@ -2067,7 +2071,7 @@ function invalidateMainDeviceResources() {
   try { context?.unconfigure?.(); }
   catch (error) { recordCleanupError("canvas-context", error); }
 
-  chainTapTex = null; chainTapFrame = 0;
+  chainTapTex = null; chainTapFrame = 0; chainTapFailed = false;
   lumaTexture = null; lumaW = 0; lumaH = 0;
   hiRGB = null; hiRGBW = 0; hiRGBH = 0;
   dispRGB = null; dispRGBW = 0; dispRGBH = 0;
@@ -2126,7 +2130,7 @@ function retirePrimaryGpuAllocations(reason = "source-change") {
     for (const texture of [chainTapTex, lumaTexture, hiRGB, dispRGB]) {
       try { texture?.destroy?.(); } catch {}
     }
-    chainTapTex = null; chainTapFrame = 0;
+    chainTapTex = null; chainTapFrame = 0; chainTapFailed = false;
     lumaTexture = null; lumaW = 0; lumaH = 0;
     hiRGB = null; hiRGBW = 0; hiRGBH = 0;
     dispRGB = null; dispRGBW = 0; dispRGBH = 0;
@@ -2263,7 +2267,11 @@ async function recoverDevice(generation, lostDevice, attempt, providerInvalidati
   } catch (error) {
     if (pageSuspended || generation !== deviceRecoveryGeneration || !deviceRecoveryRequested()) return false;
     warn(`device recovery attempt ${attempt + 1} failed:`, error.message);
-    if (attempt < 2) {
+    // Derived from the constant rather than a literal 2. The two had to be kept in
+    // agreement by hand, and only the constant was reported: editing
+    // GPU_RECOVERY_MAX_ATTEMPTS changed the status payload and nothing else, so
+    // status could claim "attempt 3 of 5" while the retry loop stopped at 3.
+    if (attempt < GPU_RECOVERY_MAX_ATTEMPTS - 1) {
       gpuRecoveryPhase = "scheduled";
       gpuRecoveryAttempt = attempt + 1;
       setGpuFailure("recovery", "device-recovery-failed", error, {
@@ -2448,9 +2456,20 @@ function attachDeviceErrorHandler(ownerDevice) {
   const handler = () => {
     if (device !== ownerDevice) return;
     const now = performance.now();
-    if (now - (_gpuErrWinStart || 0) > 2000) { _gpuErrWinStart = now; _gpuErrCount = 0; }
+    if (now - (_gpuErrWinStart || 0) > 2000) {
+      _gpuErrWinStart = now;
+      _gpuErrCount = 0;
+      _gpuErrBreakerFired = false;
+    }
     _gpuErrCount++;
-    if (_gpuErrCount !== 6 || !chainInverted) return;
+    // Was `!== 6`: strict equality meant that if chainInverted became true at
+    // error 7 within the same window, the breaker never fired for that window at
+    // all, and errors past the sixth were ignored outright. A threshold plus a
+    // once-per-window latch fires on the first qualifying error and then stays
+    // quiet until the window rolls over.
+    if (_gpuErrCount < GPU_ERROR_BURST_THRESHOLD || !chainInverted) return;
+    if (_gpuErrBreakerFired) return;
+    _gpuErrBreakerFired = true;
     if (now - (_invRestartLast || 0) < 60000 && _invRestarts >= 2) {
       warn("inverted chain: repeated GPU error bursts — DISABLING inverted (re-enable via the toggle)");
       interpInvertPref = false;
@@ -3712,22 +3731,30 @@ function loop(owner, frameNow = null, frameMetadata = null) {
     scheduleMainLoop();
     return;
   }
-  // A source can switch protection or decoded color metadata without replacing
-  // its element (DRM transitions and adaptive streams both do this). Re-check
-  // infrequently and fail back to the native video before another overlay frame.
-  if (mode !== "off" && frameCount > 0 && frameCount % 300 === 0) {
-    const reason = probeVideo(video, { forceColor: true });
-    if (reason !== "ok") {
-      warn(`source became unavailable for color-safe processing (${reason}); preserving native video.`);
-      protectedSource = true;
-      protectedReason = reason;
-      suspendSelectedVideo(protectedReason);
-      return;
-    }
-  }
-  observePlaybackPerformance(frameNow, frameMetadata);
-  const t0 = performance.now();
   try {
+    // The color re-probe and the performance observer live inside this try
+    // because they were previously ahead of it: a throw from either — and
+    // observePlaybackPerformance reaches activatePerformanceFallback, which tears
+    // down multi-targets, the neural engine, and interpolation — escaped the
+    // requestVideoFrameCallback entirely. scheduleMainLoop() then never ran, so
+    // the renderer stopped for good with a frozen frame on screen while
+    // getStatus() still reported rendererPhase "active".
+    //
+    // A source can switch protection or decoded color metadata without replacing
+    // its element (DRM transitions and adaptive streams both do this). Re-check
+    // infrequently and fail back to the native video before another overlay frame.
+    if (mode !== "off" && frameCount > 0 && frameCount % 300 === 0) {
+      const reason = probeVideo(video, { forceColor: true });
+      if (reason !== "ok") {
+        warn(`source became unavailable for color-safe processing (${reason}); preserving native video.`);
+        protectedSource = true;
+        protectedReason = reason;
+        suspendSelectedVideo(protectedReason);
+        return;   // suspension owns rescheduling; do not re-register here
+      }
+    }
+    observePlaybackPerformance(frameNow, frameMetadata);
+    const t0 = performance.now();
     if (adopting) { // device swap in progress — skip this frame, keep the loop alive
       scheduleMainLoop();
       return;
@@ -3757,7 +3784,18 @@ function loop(owner, frameNow = null, frameMetadata = null) {
         enc2.copyTextureToTexture({ texture: curTex }, { texture: chainTapTex }, { width: curTex.width, height: curTex.height });
         device.queue.submit([enc2.finish()]);
         chainTapFrame++;
-      } catch (e) { /* tap failure must never break upscaling */ }
+        chainTapFailed = false;
+      } catch (e) {
+        // Tap failure must never break upscaling, but it must be observable. The
+        // published texture stays valid-looking while chainTapFrame stops
+        // advancing, so the interpolator could not tell "no new frame yet" from
+        // "this tap will never produce another frame" and would consume the same
+        // stale texture indefinitely.
+        if (!chainTapFailed) {
+          chainTapFailed = true;
+          warn("chain tap copy failed; interpolation will not receive upscaled frames:", e.message);
+        }
+      }
     }
     // hover-reveal: fade overlay out while cursor is over the player. While the
     // interpolation chain is tapped, the interp overlay IS the output — hide ours.

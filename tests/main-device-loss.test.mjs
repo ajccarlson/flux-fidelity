@@ -29,9 +29,16 @@ async function loadCoordinator(deps) {
   assert.notEqual(start, -1);
   assert.notEqual(end, -1);
   const production = source.slice(start, end);
+  // Parsed from the real source instead of redeclared. The retry bound now derives
+  // from this constant, so a hardcoded copy here would let a production change to
+  // the attempt count pass against a stale test value — the exact failure mode a
+  // test named after the constant must not have.
+  const declared = /const GPU_RECOVERY_MAX_ATTEMPTS = (\d+);/.exec(source);
+  assert.notEqual(declared, null, "GPU_RECOVERY_MAX_ATTEMPTS declaration must be parseable");
+  const maxAttempts = Number(declared[1]);
   const harness = `
     const deps = globalThis.__mainDeviceLossDeps;
-    const GPU_RECOVERY_MAX_ATTEMPTS = 3;
+    const GPU_RECOVERY_MAX_ATTEMPTS = ${maxAttempts};
     const setTimeout = (...args) => deps.setTimeout
       ? deps.setTimeout(...args)
       : globalThis.setTimeout(...args);
@@ -101,7 +108,7 @@ async function loadCoordinator(deps) {
     let sampler = {}, extractPipeline = {}, recombinePipeline = {}, passthroughPipeline = {};
     let extractPipelineTex = {}, recombinePipelineTex = {}, recombine16PipelineTex = {};
     let recombine16Pipeline = {}, blitPipeline = {}, sharpenPipeline = {}, sharpenStrengthBuilt = 1;
-    let chainTapTex = deps.resources.shift(), chainTapFrame = 3;
+    let chainTapTex = deps.resources.shift(), chainTapFrame = 3, chainTapFailed = false;
     let lumaTexture = deps.resources.shift(), lumaW = 2, lumaH = 2;
     let hiRGB = deps.resources.shift(), hiRGBW = 4, hiRGBH = 4;
     let dispRGB = deps.resources.shift(), dispRGBW = 4, dispRGBH = 4;
