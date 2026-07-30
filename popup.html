@@ -137,6 +137,8 @@
 
     .status div { min-width: 0; }
 
+    .diagnostics { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+    .diagnostics a { color: var(--focus); font-size: 11px; }
     .status dt {
       color: var(--muted);
       font-size: 10px;
@@ -408,8 +410,16 @@
           <dt>Frames</dt>
           <dd id="s-frames" class="v">0</dd>
         </div>
+        <div>
+          <dt>Output</dt>
+          <dd id="s-resolution" class="v">&#8212;</dd>
+        </div>
       </dl>
       <p id="runtime-status" aria-live="polite" aria-atomic="true"></p>
+      <div class="diagnostics">
+        <button id="copy-diagnostics" type="button">Copy diagnostics</button>
+        <a id="self-test-link" href="validate.html" target="_blank" rel="noopener">Run self-test</a>
+      </div>
     </section>
 
     <p id="drm-banner" role="alert" aria-live="assertive"></p>

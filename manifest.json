@@ -8,6 +8,12 @@
     "activeTab",
     "storage"
   ],
+  "commands": {
+    "toggle-enhancement": {
+      "suggested_key": { "default": "Alt+Shift+U" },
+      "description": "Toggle video enhancement on the active tab"
+    }
+  },
   "action": {
     "default_popup": "popup.html",
     "default_title": "FluFi",

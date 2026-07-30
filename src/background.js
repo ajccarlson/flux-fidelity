@@ -45,8 +45,14 @@ function actionCall(method, details) {
   } catch {}
 }
 
+// Last mode published by each tab's active document. The keyboard shortcut needs
+// it to decide what to toggle to, and every mode transition already funnels
+// through setBadge, so this is the one place that cannot miss one.
+const tabModes = new Map();
+
 function setBadge(tabId, mode) {
   if (!Number.isInteger(tabId) || !VALID_MODES.has(mode)) return;
+  tabModes.set(tabId, mode);
   let text = "", color = "#000000";
   if (mode === "upscale") { text = "ON"; color = COLORS.upscale; }
   else if (mode === "passthrough") { text = "··"; color = COLORS.passthrough; }
@@ -497,7 +503,31 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   tabDocuments.delete(tabId);
   pendingDocuments.delete(tabId);
   documentLifecycles.delete(tabId);
+  tabModes.delete(tabId);
   clearNeuralCapabilities(tabId);
+});
+
+// The popup cannot be opened while the page is fullscreen, so before this there
+// was no way at all to toggle enhancement during the product's primary use case:
+// watching a video full-screen. Off toggles to upscale; anything else toggles off,
+// so the shortcut is a single predictable switch rather than a mode cycle.
+// Not exported: this service worker is registered as a classic script, so it has
+// no module scope. The suite reaches it through the vm context instead.
+function nextToggleMode(currentMode) {
+  return currentMode === "upscale" ? "off" : "upscale";
+}
+
+chrome.commands?.onCommand?.addListener(async (command) => {
+  if (command !== "toggle-enhancement") return;
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!Number.isInteger(tab?.id)) return;
+    const mode = nextToggleMode(tabModes.get(tab.id));
+    // A protected or video-less page answers with ok:false, which the badge
+    // already reflects; the shortcut deliberately stays silent because there is no
+    // popup open to report into.
+    await chrome.tabs.sendMessage(tab.id, { type: "FSRCNNX_SETMODE", mode });
+  } catch {}
 });
 
 chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
