@@ -73,6 +73,7 @@ class FakeDocument {
     this.elements = new Map();
     this.controls = [];
     this.modeButtons = [];
+    this.interpModeButtons = [];
     this.tabButtons = [];
   }
 
@@ -103,10 +104,18 @@ class FakeDocument {
   }
 
   querySelectorAll(selector) {
-    if (selector === ".modes button") return this.modeButtons;
+    if (selector === '.modes[data-group="video"] button') return this.modeButtons;
+    if (selector === '.modes[data-group="interpolation"] button') return this.interpModeButtons;
     if (selector === "button, input, select") return this.controls;
     if (selector === '[role="tab"]') return this.tabButtons;
     return [];
+  }
+
+  addInterpMode(mode, label) {
+    const button = this.add(`interp-mode-${mode}`, "button", { textContent: label });
+    button.dataset.mode = mode;
+    this.interpModeButtons.push(button);
+    return button;
   }
 
   addMode(mode, label) {
@@ -135,6 +144,11 @@ function popupDocument() {
     "multi-count", "image-count", "interp-res-row",
     "interp-target-hz", "interp-avoff-val", "interp-stats",
   ]) document.add(id);
+
+  for (const id of [
+    "tab-video-dot", "tab-video-state",
+    "tab-interpolation-dot", "tab-interpolation-state",
+  ]) document.add(id, "span");
 
   document.addTab("tab-video", "panel-video");
   document.addTab("tab-interpolation", "panel-interpolation");
@@ -181,6 +195,8 @@ function popupDocument() {
   document.addMode("off", "Off");
   document.addMode("passthrough", "Passthrough");
   document.addMode("upscale", "Upscale");
+  document.addInterpMode("off", "Off");
+  document.addInterpMode("on", "On");
   return document;
 }
 
@@ -1032,8 +1048,14 @@ test("automatic quality fallback is off by default and sends an explicit opt-in 
 test("a non-ready page state replaces stale command feedback", async () => {
   const { controller, document } = controllerHarness();
   controller.render(readyStatus());
-  await controller.runCommand("Applying test setting", async () => ({ ok: true }));
-  assert.equal(document.getElementById("operation-status").textContent, "Setting applied.");
+  // A plain success now leaves the region empty — the control's own state is the
+  // confirmation — so the stale text this test replaces has to come from a result
+  // that genuinely needs reporting.
+  await controller.runCommand("Applying test setting", async () => ({ ok: true, pending: true }));
+  assert.match(
+    document.getElementById("operation-status").textContent,
+    /activation is pending/,
+  );
 
   controller.render({ ok: false, error: "no-content-script" });
   assert.equal(document.getElementById("operation-status").dataset.tone, "error");
@@ -1368,4 +1390,72 @@ test("tabs stay usable while the page is disconnected or a command is in flight"
   }
   document.getElementById("tab-performance").emit("click");
   assert.equal(document.getElementById("panel-performance").hidden, false);
+});
+
+test("a routine success reports nothing while a refusal still speaks up", async () => {
+  const { controller, document } = controllerHarness();
+  controller.render(readyStatus());
+  const region = document.getElementById("operation-status");
+
+  // Every routine change used to post "Setting applied." into an alert region above
+  // the tabs, which made ordinary use look like a stream of events. The control's
+  // own state is already the confirmation.
+  await controller.runCommand("Applying test setting", async () => ({ ok: true }));
+  assert.equal(region.textContent, "");
+
+  // A refusal is not routine and must still be surfaced.
+  await controller.runCommand("Applying test setting", async () => ({
+    ok: true, pending: true, pendingKind: "runtime-rejected", reason: "runtime rejected resolution",
+  }));
+  assert.match(region.textContent, /did not accept it/);
+  assert.match(region.textContent, /runtime rejected resolution/);
+});
+
+test("tab indicators report each feature's state as text, not colour alone", () => {
+  const { controller, document } = controllerHarness();
+
+  controller.render(readyStatus({ activeMode: "upscale", interpStats: { running: true } }));
+  assert.equal(document.getElementById("tab-video-dot").hidden, false);
+  assert.equal(document.getElementById("tab-interpolation-dot").hidden, false);
+  // The hidden text joins the tab's accessible name, so the state is announced
+  // rather than being conveyed only by a coloured dot.
+  assert.equal(document.getElementById("tab-video-state").textContent, " (on)");
+  assert.equal(document.getElementById("tab-interpolation-state").textContent, " (on)");
+
+  controller.render(readyStatus({ activeMode: "off", interpStats: { running: false } }));
+  assert.equal(document.getElementById("tab-video-dot").hidden, true);
+  assert.equal(document.getElementById("tab-interpolation-dot").hidden, true);
+  assert.equal(document.getElementById("tab-video-state").textContent, " (off)");
+  assert.equal(document.getElementById("tab-interpolation-state").textContent, " (off)");
+});
+
+test("interpolation mode buttons mirror the upscaler's mode row", async () => {
+  const sent = [];
+  const { controller, document } = controllerHarness({
+    transport: { send: async (type, payload) => { sent.push([type, payload]); return { ok: true }; } },
+  });
+  controller.start();
+  controller.render(readyStatus({ interpolate: false }));
+
+  const [off, on] = document.interpModeButtons;
+  assert.equal(off.getAttribute("aria-pressed"), "true");
+  assert.equal(on.getAttribute("aria-pressed"), "false");
+
+  on.emit("click");
+  await flush();
+  assert.ok(
+    sent.some(([type, payload]) => type === "FSRCNNX_SETINTERPOLATE" && payload?.on === true),
+    "the On button must request interpolation",
+  );
+
+  controller.render(readyStatus({ interpolate: true }));
+  assert.equal(on.getAttribute("aria-pressed"), "true");
+  assert.equal(off.getAttribute("aria-pressed"), "false");
+
+  off.emit("click");
+  await flush();
+  assert.ok(
+    sent.some(([type, payload]) => type === "FSRCNNX_SETINTERPOLATE" && payload?.on === false),
+    "the Off button must disable interpolation",
+  );
 });

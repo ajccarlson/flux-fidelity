@@ -601,7 +601,10 @@ export function createPopupController({
   if (!chromeApi && !transport) throw new TypeError("The Chrome extension API is required");
 
   const $ = (id) => documentRef.getElementById(id);
-  const modeButtons = [...documentRef.querySelectorAll(".modes button")];
+  // Scoped by group: a second .modes row for interpolation would otherwise be
+  // swept into the upscaler mode handler and send the wrong command.
+  const modeButtons = [...documentRef.querySelectorAll('.modes[data-group="video"] button')];
+  const interpModeButtons = [...documentRef.querySelectorAll('.modes[data-group="interpolation"] button')];
   const tabButtons = [...documentRef.querySelectorAll('[role="tab"]')];
   let activePanel = "panel-video";
   // Tab buttons are navigation, not settings, so they are excluded from the
@@ -926,6 +929,7 @@ export function createPopupController({
     // them away, so the one question an upscaler exists to answer — what goes in
     // and what comes out — was unanswerable from the UI. "Frames: N" is a counter,
     // not a quality signal.
+    renderTabIndicators(status);
     renderPerformance(status);
     const resolutionText = formatPresentation(status);
     $("s-resolution").textContent = resolutionText;
@@ -1010,14 +1014,22 @@ export function createPopupController({
     syncCheckbox("idle-power-saving", status.idlePowerSaving);
     syncCheckbox("auto-quality-fallback", status.autoQualityFallback);
     syncCheckbox("images", status.images);
-    syncCheckbox("interpolate", status.interpolate);
+    // Mirrors the upscaler's Mode row: the pressed button is the current state, so
+    // the control and the state are the same thing rather than a checkbox whose
+    // meaning has to be read from its position.
+    for (const button of interpModeButtons) {
+      const on = button.dataset.mode === "on";
+      const pressed = on === (status.interpolate === true);
+      button.setAttribute("aria-pressed", pressed ? "true" : "false");
+      button.dataset.active = pressed ? "1" : "0";
+    }
     syncCheckbox("interp-diag", status.interpStaticPassthrough);
     syncCheckbox("interp-ladder", status.interpLadder);
     syncCheckbox("interp-invert", status.interpInvert);
     syncCheckbox("interp-autofallback", status.interpAutoFallback);
 
     setVisible($("sharpen-row"), status.sharpen === true);
-    setVisible($("interp-res-row"), status.interpolate === true);
+
     $("multi-count").textContent = status.allVideos && status.multiCount
       ? `(${status.multiCount} active)` : "";
     $("image-count").textContent = status.images && status.imageCount
@@ -1091,13 +1103,20 @@ export function createPopupController({
           // "activation is pending" hid every rejection behind a normal wait.
           const refused = result.pendingKind === "runtime-rejected" ||
             result.pendingKind === "runtime-error";
-          const message = !pending
-            ? "Setting applied."
-            : refused
-              ? `Setting saved, but the video runtime did not accept it${
-                result.reason ? ` (${result.reason})` : ""}.`
-              : "Setting saved; activation is pending.";
-          feedback(message, refused ? "notice" : "success", "operation");
+          if (refused) {
+            feedback(
+              `Setting saved, but the video runtime did not accept it${
+                result.reason ? ` (${result.reason})` : ""}.`,
+              "notice",
+              "operation",
+            );
+          } else if (pending) {
+            feedback("Setting saved; activation is pending.", "success", "operation");
+          } else {
+            // Nothing to report: the control now shows the new value, and a banner
+            // for every routine change made the alert region constant noise.
+            feedback("", "success", "operation");
+          }
         } else {
           feedback(describeCommandFailure(result), result?.pending ? "notice" : "error", "operation");
         }
@@ -1133,6 +1152,23 @@ export function createPopupController({
       if (selected && focus) { try { tab.focus?.(); } catch {} }
     }
     activePanel = panelId;
+  }
+
+  // A dot on the tab shows at a glance whether each feature is running, so the
+  // state is visible without opening the panel. The dot is paired with hidden text
+  // because colour alone is not an accessible signal, and the text becomes part of
+  // the tab's accessible name.
+  function renderTabIndicators(status) {
+    const states = [
+      ["tab-video", status?.activeMode === "upscale" || status?.activeMode === "passthrough"],
+      ["tab-interpolation", status?.interpStats?.running === true],
+    ];
+    for (const [tabId, on] of states) {
+      const dot = $(`${tabId}-dot`);
+      if (dot) dot.hidden = !on;
+      // "on"/"off" rather than a symbol, so the announcement is unambiguous.
+      setText($(`${tabId}-state`), on ? " (on)" : " (off)");
+    }
   }
 
   // Only reads fields getStatus() already publishes. Everything drawn here also
@@ -1263,7 +1299,12 @@ export function createPopupController({
     command("ssimds", "change", "Updating downscaling", "FSRCNNX_SETSSIMDS", () => ({ on: $("ssimds").checked }));
     command("sharpen", "change", "Updating sharpening", "FSRCNNX_SETSHARPEN", () => ({ on: $("sharpen").checked }));
     command("sharpen-str", "change", "Changing sharpen strength", "FSRCNNX_SETSHARPENSTR", () => ({ strength: Number($("sharpen-str").value) }));
-    command("interpolate", "change", "Updating frame interpolation", "FSRCNNX_SETINTERPOLATE", () => ({ on: $("interpolate").checked }));
+    for (const button of interpModeButtons) {
+      button.addEventListener("click", () => runCommand(
+        button.dataset.mode === "on" ? "Enabling interpolation" : "Disabling interpolation",
+        () => transport.send("FSRCNNX_SETINTERPOLATE", { on: button.dataset.mode === "on" }),
+      ));
+    }
     command("interp-res", "change", "Changing inference resolution", "FSRCNNX_SETINTERPRES", () => ({ mode: $("interp-res").value }));
     command("interp-avoff", "change", "Changing audio sync trim", "FSRCNNX_SETINTERPAVOFFSET", () => ({ ms: Number($("interp-avoff").value) }));
     command("interp-diag", "change", "Updating static-detail stabilization", "FSRCNNX_SETINTERPDIAG", () => ({ on: $("interp-diag").checked }));
