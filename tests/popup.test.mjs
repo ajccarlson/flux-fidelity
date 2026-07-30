@@ -193,7 +193,6 @@ function popupDocument() {
   document.getElementById("neural-model").children = [placeholder];
 
   document.addMode("off", "Off");
-  document.addMode("passthrough", "Passthrough");
   document.addMode("upscale", "Upscale");
   document.addInterpMode("off", "Off");
   document.addInterpMode("on", "On");
@@ -1177,10 +1176,8 @@ test("mode accessibility reflects the requested mode while runtime text explains
   }));
 
   const off = document.getElementById("mode-off");
-  const passthrough = document.getElementById("mode-passthrough");
   const upscale = document.getElementById("mode-upscale");
   assert.equal(off.getAttribute("aria-pressed"), "false");
-  assert.equal(passthrough.getAttribute("aria-pressed"), "false");
   assert.equal(upscale.getAttribute("aria-pressed"), "true");
   assert.equal(upscale.dataset.active, "1");
   assert.equal(document.getElementById("runtime-status").textContent,
@@ -1411,28 +1408,62 @@ test("a routine success reports nothing while a refusal still speaks up", async 
   assert.match(region.textContent, /runtime rejected resolution/);
 });
 
-test("tab indicators report each feature's state as text, not colour alone", () => {
+test("tab dots report off, pending, and on with matching text", () => {
   const { controller, document } = controllerHarness();
+  const state = (id) => document.getElementById(`${id}-dot`).dataset.state;
+  const label = (id) => document.getElementById(`${id}-state`).textContent;
 
+  // Neither feature enabled: both read off. This is the case that was broken —
+  // the dot toggled the hidden attribute, which `.tab-dot { display: inline-block }`
+  // overrode, so a green dot showed permanently no matter the state.
   controller.render(readyStatus({
-    activeMode: "upscale",
-    interpolationRuntime: { requested: true, phase: "active" },
+    mode: "off", activeMode: "off", interpolate: false,
+    interpolationRuntime: { requested: false, phase: "off" },
   }));
-  assert.equal(document.getElementById("tab-video-dot").hidden, false);
-  assert.equal(document.getElementById("tab-interpolation-dot").hidden, false);
-  // The hidden text joins the tab's accessible name, so the state is announced
-  // rather than being conveyed only by a coloured dot.
-  assert.equal(document.getElementById("tab-video-state").textContent, " (on)");
-  assert.equal(document.getElementById("tab-interpolation-state").textContent, " (on)");
+  assert.equal(state("tab-video"), "off");
+  assert.equal(state("tab-interpolation"), "off");
+  assert.equal(label("tab-video"), " (off)");
 
+  // Enabled but not running: no video yet.
   controller.render(readyStatus({
-    activeMode: "off",
+    mode: "upscale", activeMode: "off", hasVideo: false, interpolate: true,
     interpolationRuntime: { requested: true, phase: "waiting" },
   }));
-  assert.equal(document.getElementById("tab-video-dot").hidden, true);
-  assert.equal(document.getElementById("tab-interpolation-dot").hidden, true);
-  assert.equal(document.getElementById("tab-video-state").textContent, " (off)");
-  assert.equal(document.getElementById("tab-interpolation-state").textContent, " (off)");
+  assert.equal(state("tab-video"), "pending");
+  assert.equal(state("tab-interpolation"), "pending");
+  assert.equal(label("tab-video"), " (on, not running)");
+
+  // Enabled but suspended mid-playback is also pending, not on.
+  controller.render(readyStatus({
+    mode: "upscale", activeMode: "off", videoSuspended: true, interpolate: true,
+    interpolationRuntime: { requested: true, phase: "suspended" },
+  }));
+  assert.equal(state("tab-video"), "pending");
+  assert.equal(state("tab-interpolation"), "pending");
+
+  // Running.
+  controller.render(readyStatus({
+    mode: "upscale", activeMode: "upscale", interpolate: true,
+    interpolationRuntime: { requested: true, phase: "active" },
+  }));
+  assert.equal(state("tab-video"), "on");
+  assert.equal(state("tab-interpolation"), "on");
+  assert.equal(label("tab-video"), " (on)");
+  assert.equal(label("tab-interpolation"), " (on)");
+});
+
+test("the dot is never hidden, so no display rule can strand it on one colour", async () => {
+  const markup = await readFile(new URL("../popup.html", import.meta.url), "utf8");
+  // `[hidden]` is a UA rule, so any author `display` declaration on .tab-dot beats
+  // it. State must therefore be carried by an attribute the stylesheet keys on,
+  // never by hiding the element.
+  assert.equal(/id="tab-\w+-dot"[^>]*\shidden/.test(markup), false);
+  for (const dotState of ["on", "pending", "off"]) {
+    assert.ok(
+      markup.includes(`.tab-dot[data-state="${dotState}"]`),
+      `the stylesheet must give ${dotState} its own colour`,
+    );
+  }
 });
 
 test("interpolation mode buttons mirror the upscaler's mode row", async () => {
@@ -1464,37 +1495,4 @@ test("interpolation mode buttons mirror the upscaler's mode row", async () => {
     sent.some(([type, payload]) => type === "FSRCNNX_SETINTERPOLATE" && payload?.on === false),
     "the Off button must disable interpolation",
   );
-});
-
-test("a dot means the feature is working, not merely switched on", () => {
-  const { controller, document } = controllerHarness();
-  const videoDot = () => document.getElementById("tab-video-dot").hidden === false;
-  const interpDot = () => document.getElementById("tab-interpolation-dot").hidden === false;
-
-  // Requested but not presenting: no video yet, so nothing is actually happening.
-  controller.render(readyStatus({
-    mode: "upscale", activeMode: "off", hasVideo: false,
-    interpolationRuntime: { requested: true, phase: "waiting" },
-  }));
-  assert.equal(videoDot(), false, "a requested mode that is not presenting is not on");
-  assert.equal(interpDot(), false);
-
-  // Passthrough presents frames but performs no upscaling, so the upscaler is not on.
-  controller.render(readyStatus({ mode: "passthrough", activeMode: "passthrough" }));
-  assert.equal(videoDot(), false, "passthrough does no upscaling");
-
-  // Suspended mid-playback: enabled, but not currently doing anything.
-  controller.render(readyStatus({
-    mode: "upscale", activeMode: "off", videoSuspended: true,
-    interpolationRuntime: { requested: true, phase: "suspended" },
-  }));
-  assert.equal(videoDot(), false);
-  assert.equal(interpDot(), false);
-
-  controller.render(readyStatus({
-    activeMode: "upscale",
-    interpolationRuntime: { requested: true, phase: "active" },
-  }));
-  assert.equal(videoDot(), true);
-  assert.equal(interpDot(), true);
 });
