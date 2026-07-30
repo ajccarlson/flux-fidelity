@@ -1270,13 +1270,19 @@ async function runPopupSmoke(httpBase, controlClient, extensionId, expectedName,
             enabledTabCount: controls.filter(
               (control) => control.getAttribute("role") === "tab" && !control.disabled,
             ).length,
-            modeStates: [...document.querySelectorAll(".modes button")].map((button) => ({
+            // Scoped to the upscaler group: interpolation now has its own Mode row,
+            // and an unscoped selector would collect both.
+            modeStates: [...document.querySelectorAll('.modes[data-group="video"] button')].map((button) => ({
+              mode: button.dataset.mode,
+              pressed: button.getAttribute("aria-pressed"),
+            })),
+            interpModeStates: [...document.querySelectorAll('.modes[data-group="interpolation"] button')].map((button) => ({
               mode: button.dataset.mode,
               pressed: button.getAttribute("aria-pressed"),
             })),
             missingIds: [
               "s-webgpu", "s-video", "s-model", "s-frames", "runtime-status",
-              "drm-banner", "operation-status", "engine", "policy", "interpolate",
+              "drm-banner", "operation-status", "engine", "policy", "interp-model",
             ].filter((id) => !document.getElementById(id)),
           };
         })()`);
@@ -1317,6 +1323,11 @@ async function runPopupSmoke(httpBase, controlClient, extensionId, expectedName,
     // precisely when a user goes looking for the Performance panel or diagnostics.
     if (state?.tabCount !== 4 || state.enabledTabCount !== state.tabCount) {
       problems.push("popup tabs must remain usable on an unsupported active page");
+    }
+    if (state?.interpModeStates?.length !== 2 ||
+        state.interpModeStates.filter(({ pressed }) => pressed === "true").length !== 1 ||
+        state.interpModeStates.find(({ pressed }) => pressed === "true")?.mode !== "off") {
+      problems.push("popup interpolation mode row is invalid");
     }
     if (state?.modeStates?.length !== 3 ||
         state.modeStates.filter(({ pressed }) => pressed === "true").length !== 1 ||
@@ -1527,19 +1538,21 @@ async function sendContentCommand(client, type, payload = {}, tabId = null) {
   return snapshot.response;
 }
 
-async function clickPopupMode(client, mode) {
-  const encodedMode = JSON.stringify(mode);
-  await waitFor(`popup mode control ${mode}`, () => evaluate(client, `(() => {
-    const button = document.querySelector('.modes button[data-mode=' + JSON.stringify(${encodedMode}) + ']');
+async function clickPopupMode(client, mode, group = "video") {
+  const encodedSelector = JSON.stringify(
+    `.modes[data-group="${group}"] button[data-mode="${mode}"]`,
+  );
+  await waitFor(`popup ${group} mode control ${mode}`, () => evaluate(client, `(() => {
+    const button = document.querySelector(${encodedSelector});
     return !!button && !button.disabled;
   })()`), Boolean, { timeoutMs: CDP_TIMEOUT_MS });
   const clicked = await evaluate(client, `(() => {
-    const button = document.querySelector('.modes button[data-mode=' + JSON.stringify(${encodedMode}) + ']');
+    const button = document.querySelector(${encodedSelector});
     if (!button || button.disabled) return false;
     button.click();
     return true;
   })()`);
-  requireCondition(clicked === true, `popup mode button ${mode} is unavailable`);
+  requireCondition(clicked === true, `popup ${group} mode button ${mode} is unavailable`);
 }
 
 async function changePopupControl(client, id, value) {
@@ -1583,7 +1596,7 @@ async function popupSnapshot(client) {
     return {
       href: location.href,
       readyState: document.readyState,
-      modeStates: [...document.querySelectorAll(".modes button")].map((button) => ({
+      modeStates: [...document.querySelectorAll('.modes[data-group="video"] button')].map((button) => ({
         mode: button.dataset.mode,
         pressed: button.getAttribute("aria-pressed"),
         disabled: button.disabled,
@@ -1604,7 +1617,7 @@ async function popupSnapshot(client) {
       video: document.getElementById("s-video")?.textContent?.trim() || "",
       model: document.getElementById("s-model")?.textContent?.trim() || "",
       frames: document.getElementById("s-frames")?.textContent?.trim() || "",
-      offDisabled: document.querySelector('.modes button[data-mode="off"]')?.disabled ?? true,
+      offDisabled: document.querySelector('.modes[data-group="video"] button[data-mode="off"]')?.disabled ?? true,
     };
   })()`);
 }
@@ -2453,7 +2466,7 @@ async function runRealVideoIntegration(
     await waitForStatus(popupPage.client, fixtureTab.id, "blend target selection", (status) => status.interpTargetFps === 60, signal);
     await sendContentCommand(popupPage.client, "FSRCNNX_SETINVERT", { on: false }, fixtureTab.id);
     await waitForStatus(popupPage.client, fixtureTab.id, "normal interpolation order", (status) => status.interpInvert === false, signal);
-    await changePopupControl(popupPage.client, "interpolate", true);
+    await clickPopupMode(popupPage.client, "on", "interpolation");
     await waitForStatus(popupPage.client, fixtureTab.id, "blend interpolation activation", (status) =>
       status.interpolate === true && status.interpolationRuntime?.phase === "active" &&
       status.interpStats?.forceBlend === true && status.interpStats?.gpuPath === true &&
@@ -2498,7 +2511,7 @@ async function runRealVideoIntegration(
       fixturePage.client, "interpolation", "standalone interpolation compositor", signal,
     );
 
-    await changePopupControl(popupPage.client, "interpolate", false);
+    await clickPopupMode(popupPage.client, "off", "interpolation");
     const stopped = await waitForStatus(popupPage.client, fixtureTab.id, "complete renderer teardown", (status) =>
       status.mode === "off" && status.interpolate === false &&
       status.renderer?.phase === "off" && status.interpolationRuntime?.phase === "off", signal);
