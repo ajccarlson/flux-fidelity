@@ -5559,6 +5559,25 @@ export function getStatus() {
              // itself cost frame time to measure frame time. Rounded to 0.1 ms to
              // keep the payload small and copied so callers cannot mutate the ring.
              encodeMs: frameTimes.map((value) => Math.round(value * 10) / 10),
+             // Read straight from the media element rather than through
+             // PlaybackPerformanceGuard. That guard only accumulates windows when
+             // performanceFallbackEligible() holds, which requires the opt-in
+             // automatic quality fallback and a non-standard engine — so for most
+             // configurations it never runs and its window stays null. Presented and
+             // dropped counts should not depend on an unrelated opt-in feature.
+             playbackQuality: (() => {
+               try {
+                 const quality = video?.getVideoPlaybackQuality?.();
+                 if (!quality) return null;
+                 const total = Number(quality.totalVideoFrames);
+                 const dropped = Number(quality.droppedVideoFrames);
+                 if (!Number.isFinite(total)) return null;
+                 return {
+                   totalFrames: total,
+                   droppedFrames: Number.isFinite(dropped) ? dropped : 0,
+                 };
+               } catch { return null; }
+             })(),
              nativePresentation: primaryPresentationBoundary,
            },
            imagesRuntime: {
