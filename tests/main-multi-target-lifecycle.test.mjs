@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { CONTRACT_IMPORT } from "./helpers/setting-contract-import.mjs";
 
 const mainUrl = new URL("../src/core/fsrcnnx-main.js", import.meta.url);
 let revision = 0;
@@ -154,7 +155,6 @@ async function loadMultiTargetLifecycle(deps) {
       target.artStages = resources.artStages || {};
       target.lumaTexture = resources.lumaTexture || null;
       target.hiRGB = resources.hiRGB || null;
-      target.dispRGB = resources.dispRGB || null;
       target.sharpenPipeline = resources.sharpenPipeline || null;
       target.activeModel = resources.activeModel || null;
       target.chainedFsrcnnx = resources.chainedFsrcnnx || null;
@@ -164,7 +164,7 @@ async function loadMultiTargetLifecycle(deps) {
     export function size() { return multiTargets.size; }
   `;
   globalThis.__multiTargetLifecycleDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 async function loadIntegratedRetirement(deps) {
@@ -218,10 +218,9 @@ async function loadIntegratedRetirement(deps) {
 
     let multiTargets = new Map();
     let models = [], highStages = [], artStages = {};
-    let chainTapTex = null, chainTapFrame = 0;
+    let chainTapTex = null, chainTapFrame = 0, chainTapFailed = false;
     let lumaTexture = null, lumaW = 0, lumaH = 0;
     let hiRGB = null, hiRGBW = 0, hiRGBH = 0;
-    let dispRGB = null, dispRGBW = 0, dispRGBH = 0;
     let ssimds = null, context = null, format = null;
     let extractPipeline = null, recombinePipeline = null, recombine16Pipeline = null, blitPipeline = null;
     let extractPipelineTex = null, recombinePipelineTex = null, recombine16PipelineTex = null;
@@ -246,7 +245,7 @@ async function loadIntegratedRetirement(deps) {
     export function retire() { return retireGpuResources("all-features-off"); }
   `;
   globalThis.__multiTargetLifecycleDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 async function loadTargetModelPreparation(deps) {
@@ -275,7 +274,7 @@ async function loadTargetModelPreparation(deps) {
     export { ensureTargetModels };
   `;
   globalThis.__multiTargetLifecycleDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 test("MultiTarget constructor cleans partial resources at every post-allocation failure point", async (t) => {
@@ -505,7 +504,6 @@ test("MultiTarget destruction unpublishes immediately and retires physical resou
     artStages: { current: [resource("art-model")] },
     lumaTexture: resource("luma", new Error("texture cleanup failed")),
     hiRGB: resource("hi"),
-    dispRGB: resource("display"),
     sharpenPipeline: { id: "pipeline" },
   });
   lifecycle.register(video, target);
@@ -532,7 +530,6 @@ test("MultiTarget destruction unpublishes immediately and retires physical resou
     "art-model:destroy",
     "luma:destroy",
     "hi:destroy",
-    "display:destroy",
     "ssim:destroy",
     "context:unconfigure",
   ]) assert.equal(count(events, expected), 1, `${expected} should run exactly once`);

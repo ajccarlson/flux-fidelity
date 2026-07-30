@@ -32,11 +32,14 @@ Requirements:
 - A readable, non-DRM BT.709/sRGB SDR video in the top-level page
 
 1. Open `chrome://extensions`.
-2. Enable **Developer mode** and select **Load unpacked**.
-3. Choose this repository's root directory.
-4. Play a supported video, open FluFi, choose an engine, and select
+2. Build the packaged extension: `npm run package:stage`. Loading the repository
+   root instead works but also loads the test suite, tooling, and Git metadata.
+3. Enable **Developer mode** and select **Load unpacked**.
+4. Choose `dist/flux-fidelity`.
+5. Play a supported video, open FluFi, choose an engine, and select
    **Upscale**.
-5. Select **Off** to restore native rendering.
+6. Select **Off** to restore native rendering. `Alt+Shift+U` toggles
+   enhancement without opening the popup, including while fullscreen.
 
 Reload the extension after changing the checkout. HDR, wide-gamut,
 cross-origin, iframe, DRM, and page-specific restrictions may leave a video on

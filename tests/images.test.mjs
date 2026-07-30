@@ -660,3 +660,88 @@ test("responsive load events validate effective currentSrc instead of the src at
   assert.equal(up.count, 0);
   up.stop();
 });
+
+test("a wide-gamut display warns once and still processes the image", async (t) => {
+  const one = new FakeImageElement("https://example.test/wide-1.png");
+  const two = new FakeImageElement("https://example.test/wide-2.png");
+  const cleanup = installDom([one, two]); t.after(cleanup);
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "matchMedia");
+  t.after(() => {
+    if (previous) Object.defineProperty(globalThis, "matchMedia", previous);
+    else delete globalThis.matchMedia;
+  });
+  const queries = [];
+  Object.defineProperty(globalThis, "matchMedia", {
+    configurable: true, writable: true,
+    value: (query) => { queries.push(query); return { matches: true }; },
+  });
+
+  const warnings = [];
+  const up = makeUpscaler([one, two], { warnings });
+  let loads = 0;
+  up.loadReadable = async () => { loads++; return bitmap(); };
+  up.upscaleAndReplace = async () => true;
+
+  up.start();
+  await up.tryProcess(one);
+  await up.tryProcess(two);
+
+  // Source gamut is not inspectable from the web platform, and the round trip only
+  // loses anything when the source itself is wide-gamut, so refusing outright would
+  // disable the feature on most modern displays.
+  assert.equal(loads, 2, "a wide-gamut display must not block processing");
+  const notices = warnings.filter((message) => /wide-gamut/.test(String(message)));
+  assert.equal(notices.length, 1, "the notice is emitted once, not per image");
+  assert.deepEqual(up.getStats().failures, {}, "a warning is not a failure");
+  assert.deepEqual(queries, ["(color-gamut: p3)"], "the gamut probe is cached after one read");
+  up.stop();
+});
+
+test("an sRGB display still processes images", async (t) => {
+  const img = new FakeImageElement("https://example.test/srgb.png");
+  const cleanup = installDom([img]); t.after(cleanup);
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "matchMedia");
+  t.after(() => {
+    if (previous) Object.defineProperty(globalThis, "matchMedia", previous);
+    else delete globalThis.matchMedia;
+  });
+  Object.defineProperty(globalThis, "matchMedia", {
+    configurable: true, writable: true, value: () => ({ matches: false }),
+  });
+
+  const up = makeUpscaler([img]);
+  let loads = 0;
+  up.loadReadable = async () => { loads++; return bitmap(); };
+  up.upscaleAndReplace = async () => true;
+
+  up.start();
+  await up.tryProcess(img);
+
+  assert.equal(loads, 1);
+  up.stop();
+});
+
+test("the image presentation blit reads alpha from the original source", () => {
+  const bindings = [];
+  const pipe = { getBindGroupLayout: () => ({}) };
+  const device = {
+    limits: { maxTextureDimension2D: 8192 },
+    createShaderModule: ({ code }) => ({ code }),
+    createComputePipeline: () => pipe,
+    createRenderPipeline: ({ fragment }) => { bindings.push(fragment.module.code); return pipe; },
+  };
+  class Model { constructor() { this.scale = 2; } destroy() {} }
+  class Downscaler { destroy() {} }
+  new ImageUpscaler({
+    device, format: "bgra8unorm", sampler: {}, fsrcnnxSource: { manifest: {}, wgsl: "" },
+    FsrcnnxModel: Model, SsimDownscaler: Downscaler,
+    onCount: () => {}, onError: () => {}, warn: () => {},
+  });
+
+  // The recombine and SSimDownscaler tails both emit a hardcoded 1.0, so the blit
+  // must take coverage from the source or every transparent image ships opaque.
+  const blit = bindings.find((code) => code.includes("srcAlpha"));
+  assert.ok(blit, "the blit shader must sample a source-alpha binding");
+  assert.match(blit, /@group\(0\) @binding\(2\) var srcAlpha/);
+  assert.match(blit, /vec4f\(rgb \* a, a\)/, "output must be premultiplied to match the canvas");
+});

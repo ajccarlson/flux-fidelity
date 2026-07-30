@@ -61,7 +61,12 @@ test("browser validator covers the packaged extension and real-video runtime", (
   assert.match(validator, /async function waitForDevToolsHttp/);
   assert.match(validator, /new URL\("json\/version", httpBase\)/);
   assert.match(validator, /await waitForDevToolsHttp\(httpBase, signal\)/);
-  assert.match(validator, /deadline = Date\.now\(\) \+ STARTUP_TIMEOUT_MS/);
+  // DevTools readiness has its own budget: sharing STARTUP_TIMEOUT_MS meant a slow
+  // launch consumed the readiness window too, and every stall was reported as
+  // "browser startup timed out" regardless of which phase actually hung.
+  assert.match(validator, /deadline = Date\.now\(\) \+ DEVTOOLS_READY_TIMEOUT_MS/);
+  assert.match(validator, /const STARTUP_ATTEMPTS = 2;/);
+  assert.match(validator, /FSRCNNX_TIMEOUT_SCALE/);
   assert.match(validator, /chrome\.tabs\.create/);
   assert.match(validator, /manifest\.background\.service_worker/);
   assert.match(validator, /service-worker bootstrap/);

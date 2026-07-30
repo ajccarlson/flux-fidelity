@@ -1060,3 +1060,97 @@ test("neural run selects the declared output and retires every returned tensor",
   assert.deepEqual(disposals, { input: 2, selected: 1, unselected: 1, errorOutput: 1 });
   await engine.dispose();
 });
+
+test("an unknown model key is rejected instead of silently substituting another model", async (t) => {
+  const previous = {
+    chrome: globalThis.chrome,
+    fetch: globalThis.fetch,
+    GPUBufferUsage: globalThis.GPUBufferUsage,
+    deps: globalThis.__neuralTestDeps,
+  };
+  t.after(() => {
+    globalThis.chrome = previous.chrome;
+    globalThis.fetch = previous.fetch;
+    globalThis.GPUBufferUsage = previous.GPUBufferUsage;
+    globalThis.__neuralTestDeps = previous.deps;
+  });
+
+  globalThis.chrome = { runtime: { getURL: (path) => path } };
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({ models: [
+      { key: "spatial-2x", file: "spatial.onnx", label: "Spatial", scale: 2 },
+    ] }),
+  });
+  globalThis.GPUBufferUsage = { UNIFORM: 1, COPY_DST: 2, STORAGE: 4 };
+
+  let sessionsCreated = 0;
+  const deps = {
+    ensureOrt: async () => ({}),
+    getOrtSessionDevice: (session) => session.device,
+    createOrtSession: async () => {
+      sessionsCreated++;
+      return {
+        device: fakeDevice(), inputNames: ["input"], outputNames: ["output"],
+        release: async () => {},
+      };
+    },
+  };
+  const { createNeuralEngine } = await loadNeuralEngine(deps);
+  const engine = createNeuralEngine({ log: () => {}, warn: () => {} });
+
+  // Requesting a 4x temporal key that is absent used to return the 2x spatial
+  // entry, producing half-resolution output with no temporal state and no error.
+  await assert.rejects(
+    engine.init("cda-vsr-4x"),
+    /cda-vsr-4x is not in the bundled manifest/,
+  );
+  assert.equal(sessionsCreated, 0, "no session may be created for an unknown key");
+  assert.equal(engine.activeEntry(), null);
+});
+
+test("a transient neural manifest failure stays retryable instead of latching empty", async (t) => {
+  const previous = {
+    chrome: globalThis.chrome,
+    fetch: globalThis.fetch,
+    GPUBufferUsage: globalThis.GPUBufferUsage,
+    deps: globalThis.__neuralTestDeps,
+  };
+  t.after(() => {
+    globalThis.chrome = previous.chrome;
+    globalThis.fetch = previous.fetch;
+    globalThis.GPUBufferUsage = previous.GPUBufferUsage;
+    globalThis.__neuralTestDeps = previous.deps;
+  });
+
+  globalThis.chrome = { runtime: { getURL: (path) => path } };
+  globalThis.GPUBufferUsage = { UNIFORM: 1, COPY_DST: 2, STORAGE: 4 };
+  let attempts = 0;
+  globalThis.fetch = async () => {
+    attempts++;
+    if (attempts === 1) throw new Error("network blip");
+    return {
+      ok: true,
+      json: async () => ({ models: [
+        { key: "spatial-2x", file: "spatial.onnx", label: "Spatial", scale: 2 },
+      ] }),
+    };
+  };
+
+  const deps = {
+    ensureOrt: async () => ({}),
+    getOrtSessionDevice: (session) => session.device,
+    createOrtSession: async () => ({
+      device: fakeDevice(), inputNames: ["input"], outputNames: ["output"],
+      release: async () => {},
+    }),
+  };
+  const { createNeuralEngine } = await loadNeuralEngine(deps);
+  const engine = createNeuralEngine({ log: () => {}, warn: () => {} });
+
+  // An empty array is truthy, so the first failure used to be cached forever and
+  // then blamed a manifest file that was present and valid.
+  await assert.rejects(engine.init("spatial-2x"), /manifest\.json missing or empty/);
+  assert.equal((await engine.init("spatial-2x")).key, "spatial-2x");
+  assert.equal(attempts, 2);
+});

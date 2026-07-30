@@ -554,6 +554,26 @@ export function createSettingsStore({
       setCachedRecord(field, record);
     }
 
+    // Legacy hostname-keyed records were read forever and never removed, so an
+    // upgraded user retained an indefinite record of every site they had ever
+    // configured, in addition to the current origin-keyed records. They are only
+    // consulted as a fallback when a field has no current record, so they are safe
+    // to delete once every field they supplied has one — which makes this a no-op
+    // on fresh installs and a one-time cleanup for migrated ones. Deleting earlier
+    // would drop values the fallback is still serving.
+    const legacyKeysPresent = [...legacySiteKeys, LEGACY_MAP_KEY].filter((key) => hasOwn(stored, key));
+    if (legacyKeysPresent.length && typeof storage.remove === "function") {
+      const stillNeeded = [...legacyFallbacks.keys()].some((field) => !records.has(field));
+      if (!stillNeeded) {
+        try {
+          await storage.remove(legacyKeysPresent);
+          legacyFallbacks.clear();
+        } catch {
+          // A failed cleanup must never block initialization; it retries next load.
+        }
+      }
+    }
+
     initialized = true;
     storageError = null;
     storageErrorOperation = null;
@@ -611,6 +631,26 @@ export function createSettingsStore({
       }
       await startDrain();
     }
+    return snapshot();
+  }
+
+  // Clears every field for this scope. Deliberately expressed as tombstone writes
+  // through the normal path rather than storage.remove: a raw removal would not
+  // carry a stamp, so a concurrent tab holding an older value could resurrect it,
+  // and other tabs would not observe the reset through onChanged. makeRecord()
+  // already treats undefined as a deletion, so this reuses the existing convergence
+  // rules instead of adding a second one.
+  async function reset() {
+    await ensureInitialized();
+    if (closed) throw new Error("settings store is closed");
+    const patch = Object.create(null);
+    for (const field of uniqueFields) patch[field] = undefined;
+    // Corruption is cleared too: a reset is exactly the recovery path for a record
+    // that could not be parsed, and leaving the flag set would keep reporting an
+    // error for data that no longer exists.
+    corruptFields.clear();
+    refreshCorruptionError();
+    await write(patch);
     return snapshot();
   }
 
@@ -724,5 +764,5 @@ export function createSettingsStore({
     return closePromise;
   }
 
-  return Object.freeze({ ready, snapshot, write, flush, sync, subscribe, health, close });
+  return Object.freeze({ ready, snapshot, write, reset, flush, sync, subscribe, health, close });
 }

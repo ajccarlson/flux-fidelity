@@ -8,6 +8,12 @@
     "activeTab",
     "storage"
   ],
+  "commands": {
+    "toggle-enhancement": {
+      "suggested_key": { "default": "Alt+Shift+U" },
+      "description": "Toggle video enhancement on the active tab"
+    }
+  },
   "action": {
     "default_popup": "popup.html",
     "default_title": "FluFi",
@@ -39,6 +45,7 @@
         "src/core/fsrcnnx-model-catalog.js",
         "src/core/fsrcnnx-performance.js",
         "src/core/fsrcnnx-runtime.js",
+        "src/core/fsrcnnx-setting-contract.js",
         "src/core/fsrcnnx-settings-store.js",
         "src/core/fsrcnnx-color-support.js",
         "src/core/fsrcnnx-color.js",
@@ -89,6 +96,6 @@
     "service_worker": "src/background.js"
   },
   "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+    "extension_pages": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; worker-src 'self'; object-src 'none'; base-uri 'none'"
   }
 }

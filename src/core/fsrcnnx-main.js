@@ -3,6 +3,14 @@
 // relays popup messages. Modes: 'off' | 'passthrough' | 'upscale'.
 
 import { FsrcnnxModel } from "./fsrcnnx-runtime.js";
+import {
+  ENGINES as CONTRACT_ENGINES,
+  INTERPOLATION_MODELS as CONTRACT_INTERPOLATION_MODELS,
+  INTERPOLATION_RES_MODES as CONTRACT_INTERPOLATION_RES_MODES,
+  MODES as CONTRACT_MODES,
+  UPSCALE_POLICIES as CONTRACT_UPSCALE_POLICIES,
+  upscalePoliciesForEngine,
+} from "./fsrcnnx-setting-contract.js";
 import { allocateModelChain, preflightModelChain } from "./fsrcnnx-model-bundle.js";
 import {
   ARTCNN_MODEL_NAMES,
@@ -113,10 +121,13 @@ let interpAutoFallbackPref = false; // RIFE→blend performance fallback (opt-in
 let interpLadderPref = false; // blend ladder (persisted per site)
 let interpStaticPassthroughPref = true; // preserve source pixels in static regions
 let _gpuErrWinStart = 0, _gpuErrCount = 0, _invRestarts = 0, _invRestartLast = 0; // present-path breaker state
+let _gpuErrBreakerFired = false; // latched per error window so a burst trips once
+const GPU_ERROR_BURST_THRESHOLD = 6; // uncaptured errors within one 2 s window
 let recombine16Pipeline = null, blitPipeline = null;
 // Interpolation chain tap: the interpolator (blend engine, same device) can consume
 // the upscaler's finished frames instead of the raw video.
 let chainTapOn = false, chainTapTex = null, chainTapFrame = 0;
+let chainTapFailed = false; // latched so a broken tap is reported once, not per frame
 export function chainTap(on) {
   chainTapOn = !!on;
   if (!chainTapOn) { try { chainTapTex && chainTapTex.destroy(); } catch {} chainTapTex = null; }
@@ -125,7 +136,8 @@ export function chainTap(on) {
 export function chainInfo() {
   // available only when the upscaler is actively rendering the primary video
   if (!device || mode === "off" || !primaryController?.active || !chainTapTex) return null;
-  return { device, tex: chainTapTex, w: chainTapTex.width, h: chainTapTex.height, frame: chainTapFrame, format };
+  return { device, tex: chainTapTex, w: chainTapTex.width, h: chainTapTex.height,
+    frame: chainTapFrame, failed: chainTapFailed, format };
 }
 export function chainAvailable() { return !!(device && mode !== "off" && primaryController?.active); }
 export function chainCanInvert() { return !!(device && mode === "upscale" && primaryController?.active); }
@@ -161,7 +173,6 @@ function resetScaleSelection() {
 }
 let sharpenEnabled = false, sharpenStrength = 1.0;
 let sharpenPipeline = null, sharpenStrengthBuilt = null;
-let dispRGB = null, dispRGBW = 0, dispRGBH = 0; // offscreen display-res for sharpen input
 let models = [], activeModel = null;
 let modelsDevice = null, modelLoadPromise = null, modelLoadDevice = null;
 const ART_FILES = ARTCNN_MODEL_NAMES;
@@ -188,7 +199,7 @@ const neuralCatalogReady = (async () => { try {
 })();
 let artVariant = "ArtCNN_C4F32";
 let chainDepth = 1; // 1 = single 2x, 2 = chained 4x, 3 = chained 8x (2x-only engines)
-let artLoadPending = false, artDiagLogged = false;
+let artLoadPending = false;
 let primaryController = null, layoutController = null, videoMonitor = null;
 let videoSelectionGeneration = 0, videoSwitchTail = Promise.resolve();
 let videoSelectionPendingGeneration = 0;
@@ -305,6 +316,9 @@ const siteSettingsStore = createSettingsStore({
 let externalPreferenceTail = Promise.resolve();
 let preferenceValidationFailure = null;
 let preferenceApplicationFailure = null;
+// Last reported application failure, retained for status after the blocking flag
+// above is cleared so the condition stays visible without blocking commands.
+let preferenceApplicationLastError = null;
 const invalidPreferenceFields = new Set();
 
 async function loadSitePrefs() {
@@ -352,7 +366,7 @@ function validateSitePreferencePatch(patch) {
   for (const [field, value] of Object.entries(patch)) {
     if (!known.has(field)) { invalid.add(field); continue; }
     if (value === undefined) continue;
-    if (field === "mode" && !["off", "passthrough", "upscale"].includes(value)) invalid.add(field);
+    if (field === "mode" && !CONTRACT_MODES.includes(value)) invalid.add(field);
     else if (field === "engine" && !normalizeStoredEngine(value)) invalid.add(field);
     else if (field === "artVariant" && !ART_FILES.includes(value)) invalid.add(field);
     else if (field === "policy" && !normalizeStoredUpscalePolicy(value, targetEngine)) invalid.add(field);
@@ -393,6 +407,25 @@ function saveSitePrefs(fields = DEFAULT_SETTING_FIELDS) {
   return pending;
 }
 
+// Clears this origin's stored settings and returns the runtime to defaults. There
+// was previously no reset of any kind: no storage.remove call existed anywhere, the
+// store exposed no reset, and the popup had no control, so a user's only recourse
+// for 22 settings across N origins was reverting each by hand or wiping extension
+// storage from chrome://extensions.
+export async function forgetSitePreferences() {
+  cancelPreferenceRestore();
+  try {
+    await siteSettingsStore.reset();
+  } catch (error) {
+    return { ok: false, reason: "reset failed", detail: boundedRuntimeDetail(error) };
+  }
+  // Apply the cleared state through the same authoritative path an external change
+  // would take, so the live runtime converges instead of waiting for a reload.
+  queueExternalPreferenceApplication(authoritativeSitePreferencePatch(), { authoritative: true });
+  await drainExternalPreferenceApplications();
+  return { ok: true, persistence: persistenceStatus() };
+}
+
 export async function flushPreferenceWrites() {
   await siteSettingsStore.flush();
   return { ok: true, persistence: persistenceStatus() };
@@ -408,7 +441,18 @@ export async function syncSitePrefs() {
     queueExternalPreferenceApplication(authoritativeSitePreferencePatch(), { authoritative: true });
     await drainExternalPreferenceApplications();
   }
-  if (preferenceApplicationFailure) throw new Error(preferenceApplicationFailure);
+  if (preferenceApplicationFailure) {
+    // Clear the blocking flag as we report it. Every mutating popup command awaits
+    // this function, so a flag that survived a failed authoritative replay blocked
+    // all of them permanently with no reset short of wiping extension storage.
+    // Retaining the message separately keeps the condition visible in status while
+    // letting the next command retry from a clean slate; a persistent underlying
+    // fault simply fails again with a fresh error.
+    const detail = preferenceApplicationFailure;
+    preferenceApplicationFailure = null;
+    preferenceApplicationLastError = detail;
+    throw new Error(detail);
+  }
   return { ok: true, persistence: persistenceStatus() };
 }
 
@@ -442,7 +486,7 @@ function queueExternalPreferenceApplication(patch, { authoritative = false } = {
         // An unrelated incremental success cannot prove that a previously
         // failed field converged. Only a complete replay, including deletions,
         // is authoritative enough to clear the failure.
-        if (authoritative) preferenceApplicationFailure = null;
+        if (authoritative) { preferenceApplicationFailure = null; preferenceApplicationLastError = null; }
         return result;
       } catch (error) {
         preferenceApplicationFailure = boundedRuntimeDetail(error, "Preference application failed");
@@ -606,28 +650,20 @@ function neuralPresentationPlan(
 // ---- validated setting contracts ----------------------------------------
 // These values cross both a message boundary and chrome.storage. Treat them as
 // untrusted even though the current popup only emits values from fixed controls.
-const VALID_ENGINES = Object.freeze(["fsrcnnx", "fsrcnnx-hi", "artcnn", "neural"]);
-const STANDARD_UPSCALE_POLICIES = Object.freeze(["display", "auto", "force2", "force3", "force4"]);
-const FIXED_2X_UPSCALE_POLICIES = Object.freeze(["display", "auto", "force2", "force4", "force8"]);
-const NEURAL_UPSCALE_POLICIES = Object.freeze(["display", "force2", "native"]);
-const INTERPOLATION_MODEL_KEYS = Object.freeze([
-  "rife_v4.26_fp16",
-  "rife_v4.26",
-  "blend",
-]);
+// Re-exported so the content script's message gate can validate against the same
+// values this module enforces, instead of a hand-maintained second copy.
+export const VALID_ENGINES = CONTRACT_ENGINES;
+export const VALID_MODES = CONTRACT_MODES;
+export const VALID_UPSCALE_POLICIES = CONTRACT_UPSCALE_POLICIES;
+export const INTERPOLATION_MODEL_KEYS = CONTRACT_INTERPOLATION_MODELS;
+export const INTERPOLATION_RES_MODES = CONTRACT_INTERPOLATION_RES_MODES;
 const LEGACY_INTERPOLATION_MODEL = "rife_orig";
-const INTERPOLATION_RES_MODES = Object.freeze(["auto", "full", "half", "quarter"]);
 const DEFAULT_INTERPOLATION_MODEL = "rife_v4.26";
 const DEFAULT_INTERPOLATION_RES_MODE = "full";
 const DEFAULT_INTERPOLATION_TARGET_FPS = "auto";
 const DEFAULT_INTERPOLATION_AV_OFFSET_MS = 0;
 
-function policyOptionsForEngine(targetEngine) {
-  if (targetEngine === "neural") return NEURAL_UPSCALE_POLICIES;
-  return targetEngine === "artcnn" || targetEngine === "fsrcnnx-hi"
-    ? FIXED_2X_UPSCALE_POLICIES
-    : STANDARD_UPSCALE_POLICIES;
-}
+const policyOptionsForEngine = upscalePoliciesForEngine;
 
 function normalizeStoredEngine(value, fallback = null) {
   return VALID_ENGINES.includes(value) ? value : fallback;
@@ -2057,7 +2093,6 @@ function invalidateMainDeviceResources() {
     ["chain-tap-texture", chainTapTex],
     ["luma-texture", lumaTexture],
     ["upscale-texture", hiRGB],
-    ["display-texture", dispRGB],
   ]) {
     try { texture?.destroy?.(); }
     catch (error) { recordCleanupError(name, error); }
@@ -2067,10 +2102,9 @@ function invalidateMainDeviceResources() {
   try { context?.unconfigure?.(); }
   catch (error) { recordCleanupError("canvas-context", error); }
 
-  chainTapTex = null; chainTapFrame = 0;
+  chainTapTex = null; chainTapFrame = 0; chainTapFailed = false;
   lumaTexture = null; lumaW = 0; lumaH = 0;
   hiRGB = null; hiRGBW = 0; hiRGBH = 0;
-  dispRGB = null; dispRGBW = 0; dispRGBH = 0;
   ssimds = null;
   extractPipeline = recombinePipeline = recombine16Pipeline = blitPipeline = null;
   extractPipelineTex = recombinePipelineTex = recombine16PipelineTex = null;
@@ -2123,14 +2157,13 @@ function retirePrimaryGpuAllocations(reason = "source-change") {
     for (const stage of stages) {
       try { stage?.resetAllocation?.(); } catch {}
     }
-    for (const texture of [chainTapTex, lumaTexture, hiRGB, dispRGB]) {
+    for (const texture of [chainTapTex, lumaTexture, hiRGB]) {
       try { texture?.destroy?.(); } catch {}
     }
-    chainTapTex = null; chainTapFrame = 0;
+    chainTapTex = null; chainTapFrame = 0; chainTapFailed = false;
     lumaTexture = null; lumaW = 0; lumaH = 0;
     hiRGB = null; hiRGBW = 0; hiRGBH = 0;
-    dispRGB = null; dispRGBW = 0; dispRGBH = 0;
-    try { ssimds?.destroy?.(); } catch {}
+      try { ssimds?.destroy?.(); } catch {}
     activeModel = null;
     chainedFsrcnnx = null;
     chainedHigh = null;
@@ -2263,7 +2296,11 @@ async function recoverDevice(generation, lostDevice, attempt, providerInvalidati
   } catch (error) {
     if (pageSuspended || generation !== deviceRecoveryGeneration || !deviceRecoveryRequested()) return false;
     warn(`device recovery attempt ${attempt + 1} failed:`, error.message);
-    if (attempt < 2) {
+    // Derived from the constant rather than a literal 2. The two had to be kept in
+    // agreement by hand, and only the constant was reported: editing
+    // GPU_RECOVERY_MAX_ATTEMPTS changed the status payload and nothing else, so
+    // status could claim "attempt 3 of 5" while the retry loop stopped at 3.
+    if (attempt < GPU_RECOVERY_MAX_ATTEMPTS - 1) {
       gpuRecoveryPhase = "scheduled";
       gpuRecoveryAttempt = attempt + 1;
       setGpuFailure("recovery", "device-recovery-failed", error, {
@@ -2448,9 +2485,20 @@ function attachDeviceErrorHandler(ownerDevice) {
   const handler = () => {
     if (device !== ownerDevice) return;
     const now = performance.now();
-    if (now - (_gpuErrWinStart || 0) > 2000) { _gpuErrWinStart = now; _gpuErrCount = 0; }
+    if (now - (_gpuErrWinStart || 0) > 2000) {
+      _gpuErrWinStart = now;
+      _gpuErrCount = 0;
+      _gpuErrBreakerFired = false;
+    }
     _gpuErrCount++;
-    if (_gpuErrCount !== 6 || !chainInverted) return;
+    // Was `!== 6`: strict equality meant that if chainInverted became true at
+    // error 7 within the same window, the breaker never fired for that window at
+    // all, and errors past the sixth were ignored outright. A threshold plus a
+    // once-per-window latch fires on the first qualifying error and then stays
+    // quiet until the window rolls over.
+    if (_gpuErrCount < GPU_ERROR_BURST_THRESHOLD || !chainInverted) return;
+    if (_gpuErrBreakerFired) return;
+    _gpuErrBreakerFired = true;
     if (now - (_invRestartLast || 0) < 60000 && _invRestarts >= 2) {
       warn("inverted chain: repeated GPU error bursts — DISABLING inverted (re-enable via the toggle)");
       interpInvertPref = false;
@@ -3712,22 +3760,30 @@ function loop(owner, frameNow = null, frameMetadata = null) {
     scheduleMainLoop();
     return;
   }
-  // A source can switch protection or decoded color metadata without replacing
-  // its element (DRM transitions and adaptive streams both do this). Re-check
-  // infrequently and fail back to the native video before another overlay frame.
-  if (mode !== "off" && frameCount > 0 && frameCount % 300 === 0) {
-    const reason = probeVideo(video, { forceColor: true });
-    if (reason !== "ok") {
-      warn(`source became unavailable for color-safe processing (${reason}); preserving native video.`);
-      protectedSource = true;
-      protectedReason = reason;
-      suspendSelectedVideo(protectedReason);
-      return;
-    }
-  }
-  observePlaybackPerformance(frameNow, frameMetadata);
-  const t0 = performance.now();
   try {
+    // The color re-probe and the performance observer live inside this try
+    // because they were previously ahead of it: a throw from either — and
+    // observePlaybackPerformance reaches activatePerformanceFallback, which tears
+    // down multi-targets, the neural engine, and interpolation — escaped the
+    // requestVideoFrameCallback entirely. scheduleMainLoop() then never ran, so
+    // the renderer stopped for good with a frozen frame on screen while
+    // getStatus() still reported rendererPhase "active".
+    //
+    // A source can switch protection or decoded color metadata without replacing
+    // its element (DRM transitions and adaptive streams both do this). Re-check
+    // infrequently and fail back to the native video before another overlay frame.
+    if (mode !== "off" && frameCount > 0 && frameCount % 300 === 0) {
+      const reason = probeVideo(video, { forceColor: true });
+      if (reason !== "ok") {
+        warn(`source became unavailable for color-safe processing (${reason}); preserving native video.`);
+        protectedSource = true;
+        protectedReason = reason;
+        suspendSelectedVideo(protectedReason);
+        return;   // suspension owns rescheduling; do not re-register here
+      }
+    }
+    observePlaybackPerformance(frameNow, frameMetadata);
+    const t0 = performance.now();
     if (adopting) { // device swap in progress — skip this frame, keep the loop alive
       scheduleMainLoop();
       return;
@@ -3757,7 +3813,18 @@ function loop(owner, frameNow = null, frameMetadata = null) {
         enc2.copyTextureToTexture({ texture: curTex }, { texture: chainTapTex }, { width: curTex.width, height: curTex.height });
         device.queue.submit([enc2.finish()]);
         chainTapFrame++;
-      } catch (e) { /* tap failure must never break upscaling */ }
+        chainTapFailed = false;
+      } catch (e) {
+        // Tap failure must never break upscaling, but it must be observable. The
+        // published texture stays valid-looking while chainTapFrame stops
+        // advancing, so the interpolator could not tell "no new frame yet" from
+        // "this tap will never produce another frame" and would consume the same
+        // stale texture indefinitely.
+        if (!chainTapFailed) {
+          chainTapFailed = true;
+          warn("chain tap copy failed; interpolation will not receive upscaled frames:", e.message);
+        }
+      }
     }
     // hover-reveal: fade overlay out while cursor is over the player. While the
     // interpolation chain is tapped, the interp overlay IS the output — hide ours.
@@ -4261,10 +4328,33 @@ export async function resumeDocument() {
 // Readability is checked before constructing a VideoFrame so protected content
 // never reaches the metadata probe. A readable source must then prove that its
 // decoded frame is inside the validated BT.709 SDR boundary.
+// Access probing allocates a canvas and performs a synchronous getImageData
+// readback, and it ran uncached from five call sites — including a double probe
+// per multi-target reconcile (every 30 frames) and the 2 s selection monitor.
+// The result is a property of the element and its current source, so it is cached
+// exactly like colorSupportFor, keyed on the same source identity so a source
+// swap re-probes. DRM is checked live on every call because MediaKeys can be
+// attached mid-playback and must never be served from cache.
+const videoAccessCache = new WeakMap();
+
 function probeVideoAccess(v) {
   try {
     if (v && "mediaKeys" in v && v.mediaKeys) return "drm";
   } catch {}
+  if (v) {
+    const source = captureVideoSource(v);
+    const cached = videoAccessCache.get(v);
+    const age = cached ? Date.now() - cached.checkedAt : Infinity;
+    if (cached && sameVideoSource(cached.source, source) &&
+        age >= 0 && age < COLOR_REPROBE_INTERVAL_MS) return cached.result;
+    const result = probeVideoAccessUncached(v);
+    videoAccessCache.set(v, { source, result, checkedAt: Date.now() });
+    return result;
+  }
+  return probeVideoAccessUncached(v);
+}
+
+function probeVideoAccessUncached(v) {
   // Probe for cross-origin taint via a tiny 2D-canvas read. A SecurityError
   // here means the video is tainted, which also blocks importExternalTexture.
   try {
@@ -4283,7 +4373,7 @@ function probeVideoAccess(v) {
 }
 
 function invalidateVideoColorSupport(target) {
-  if (target) videoColorSupportCache.delete(target);
+  if (target) { videoColorSupportCache.delete(target); videoAccessCache.delete(target); }
   if (target === video) {
     selectedColorSupport = uncheckedColorSupport("The video source changed and must be checked again.");
   }
@@ -4316,7 +4406,6 @@ function probeVideo(target, { forceColor = false, publish = true } = {}) {
   return support.supported ? "ok" : support.code;
 }
 
-function isProtectedVideo(v) { return probeVideo(v) !== "ok"; }
 function isTaintedVideo(v) { return probeVideoAccess(v) !== "ok"; }
 
 // Guarded importExternalTexture. A tainted/DRM video throws here; rather than let
@@ -4348,7 +4437,7 @@ function safeImportExternal() {
 }
 
 export async function setMode(next, restoreToken = null, { persist = true } = {}) {
-  if (!["off", "passthrough", "upscale"].includes(next)) return { ok: false, reason: "invalid mode" };
+  if (!CONTRACT_MODES.includes(next)) return { ok: false, reason: "invalid mode" };
   if (restoreToken == null) {
     if (persist) cancelPreferenceRestore();
   } else if (restoreToken !== preferenceRestoreGeneration) {
@@ -4438,7 +4527,6 @@ export function setEngine(e, { persist = true } = {}) {
   }
   chainDepth = engine === "artcnn" || engine === "fsrcnnx" || engine === "fsrcnnx-hi"
     ? policyToDepth(upscalePolicy) : 1;
-  artDiagLogged = false;
   if (engine === "fsrcnnx" && device) {
     ensureFsrcnnxStages(chainDepth).catch((er) => warn("FSRCNNX preload failed:", er.message));
   }
@@ -4460,7 +4548,6 @@ export function setArtVariant(v, { persist = true } = {}) {
   artVariant = v;
   resetScaleSelection();
   clearMultiTargets();
-  artDiagLogged = false;
   if (engine === "artcnn" && device) ensureArtStages(artVariant, chainDepth).catch((er) => warn("ArtCNN preload failed:", er.message));
   if (persist) saveSitePrefs(["artVariant"]);
   return { ok: true, artVariant };
@@ -4585,7 +4672,6 @@ class MultiTarget {
     this.canvas = null;
     this.lumaTexture = null; this.lumaW = 0; this.lumaH = 0;
     this.hiRGB = null; this.hiRGBW = 0; this.hiRGBH = 0;
-    this.dispRGB = null; this.dispRGBW = 0; this.dispRGBH = 0;
     this.ssimds = null;
     this.sharpenPipeline = null; this.sharpenStrengthBuilt = null;
     this.context = null;
@@ -4736,7 +4822,7 @@ class MultiTarget {
       ...(this.highStages || []),
       ...Object.values(this.artStages || {}).flat(),
     ]);
-    const ownedTextures = new Set([this.lumaTexture, this.hiRGB, this.dispRGB].filter(Boolean));
+    const ownedTextures = new Set([this.lumaTexture, this.hiRGB].filter(Boolean));
     const ownedDownscaler = this.ssimds;
     const ownedContext = this.context;
     const retainedReferences = new Set([
@@ -4748,7 +4834,7 @@ class MultiTarget {
     ].filter(Boolean));
     this.device = null;
     this.models = []; this.highStages = []; this.artStages = {};
-    this.lumaTexture = this.hiRGB = this.dispRGB = null;
+    this.lumaTexture = this.hiRGB = null;
     this.ssimds = null;
     this.context = null;
     this.sharpenPipeline = null; this.sharpenStrengthBuilt = null;
@@ -4842,7 +4928,6 @@ function withTarget(t, fn) {
   const saved = {
     video, canvas, context, layoutController, renderTargetOwner,
     lumaTexture, lumaW, lumaH, hiRGB, hiRGBW, hiRGBH,
-    dispRGB, dispRGBW, dispRGBH,
     ssimds, sharpenPipeline, sharpenStrengthBuilt, hoverHidden,
     models, highStages, artStages, activeModel, chainedFsrcnnx, chainedHigh, chainedArt, lastSSimDS,
     _scaleHeld, _scalePending, _scalePendingSince, _scaleHeldSrcW, _scaleHeldSrcH, _scaleLockLogged,
@@ -4852,7 +4937,6 @@ function withTarget(t, fn) {
   layoutController = t.controller; renderTargetOwner = t;
   lumaTexture = t.lumaTexture; lumaW = t.lumaW; lumaH = t.lumaH;
   hiRGB = t.hiRGB; hiRGBW = t.hiRGBW; hiRGBH = t.hiRGBH;
-  dispRGB = t.dispRGB; dispRGBW = t.dispRGBW; dispRGBH = t.dispRGBH;
   ssimds = t.ssimds; sharpenPipeline = t.sharpenPipeline; sharpenStrengthBuilt = t.sharpenStrengthBuilt;
   hoverHidden = t.hoverHidden;
   models = t.models; highStages = t.highStages; artStages = t.artStages; activeModel = t.activeModel;
@@ -4866,7 +4950,6 @@ function withTarget(t, fn) {
     // persist any lazily-created resources back onto the target
     t.lumaTexture = lumaTexture; t.lumaW = lumaW; t.lumaH = lumaH;
     t.hiRGB = hiRGB; t.hiRGBW = hiRGBW; t.hiRGBH = hiRGBH;
-    t.dispRGB = dispRGB; t.dispRGBW = dispRGBW; t.dispRGBH = dispRGBH;
     t.sharpenPipeline = sharpenPipeline; t.sharpenStrengthBuilt = sharpenStrengthBuilt;
     t.activeModel = activeModel; t.chainedFsrcnnx = chainedFsrcnnx; t.chainedHigh = chainedHigh;
     t.chainedArt = chainedArt; t.lastSSimDS = lastSSimDS;
@@ -4875,8 +4958,7 @@ function withTarget(t, fn) {
     ({
       video, canvas, context, layoutController, renderTargetOwner,
       lumaTexture, lumaW, lumaH, hiRGB, hiRGBW, hiRGBH,
-      dispRGB, dispRGBW, dispRGBH,
-      ssimds, sharpenPipeline, sharpenStrengthBuilt, hoverHidden,
+        ssimds, sharpenPipeline, sharpenStrengthBuilt, hoverHidden,
       models, highStages, artStages, activeModel, chainedFsrcnnx, chainedHigh, chainedArt, lastSSimDS,
       _scaleHeld, _scalePending, _scalePendingSince, _scaleHeldSrcW, _scaleHeldSrcH, _scaleLockLogged,
       chainTapOn, _texSource,
@@ -5025,7 +5107,6 @@ export function setPolicy(p, { persist = true } = {}) {
   chainDepth = requestedEngine === "artcnn" || requestedEngine === "fsrcnnx" ||
       requestedEngine === "fsrcnnx-hi"
     ? policyToDepth(upscalePolicy) : 1;
-  artDiagLogged = false;
   if (engine === "fsrcnnx" && device) {
     ensureFsrcnnxStages(chainDepth).catch(() => {});
   }
@@ -5311,7 +5392,7 @@ async function applyExternalSitePreferences(patch) {
 
   if (has("mode")) {
     const next = deleted("mode") ? "off" : patch.mode;
-    const normalized = ["off", "passthrough", "upscale"].includes(next) ? next : "off";
+    const normalized = CONTRACT_MODES.includes(next) ? next : "off";
     if (normalized !== next) invalid.add("mode");
     await setMode(normalized, applyToken, { persist: false });
   }
@@ -5329,7 +5410,12 @@ async function applyExternalSitePreferences(patch) {
 
 export function getStatus() {
   const apiAvailable = typeof navigator !== "undefined" && "gpu" in navigator;
-  const hasVideo = !!findVideo();
+  // The popup polls status every second, and findVideo() runs
+  // querySelectorAll("*") plus a recursive walk of every open shadow root and a
+  // getBoundingClientRect() per candidate — so an open popup forced a full DOM
+  // walk and layout on the host page every second. A selected, connected element
+  // already answers the question; only fall back to scanning when there is none.
+  const hasVideo = (video && video.isConnected) ? true : !!findVideo();
   const presented = currentPresentedRuntime();
   const activeMode = mode === "off" ? "off" : presented.mode;
   const presentation = activeMode !== "off" ? presentedPresentation : null;
@@ -5497,7 +5583,7 @@ export function getStatus() {
 
 function persistenceStatus() {
   const storeHealth = siteSettingsStore.health();
-  const applicationError = preferenceApplicationFailure || null;
+  const applicationError = preferenceApplicationFailure || preferenceApplicationLastError || null;
   const validationError = preferenceValidationFailure || null;
   return {
     scope: storeHealth.scope || siteScope(),
@@ -5906,11 +5992,16 @@ export function getInterpolateStats() {
   return interpolator ? interpolator.getStats() : { running: false };
 }
 
+// The preference genuinely is stored, so ok:true is accurate — but the caller
+// also needs to know *why* it has not taken effect. Without that, the popup
+// reported a runtime rejection as "Setting saved; activation is pending", which
+// reads as a normal wait rather than a refusal.
 function acceptedPendingInterpolationSetting(context, state, reason, error = null) {
   void requestInterpolationRetry(context);
   return {
     ok: true,
     pending: true,
+    pendingKind: error ? "runtime-error" : "runtime-rejected",
     ...state,
     reason,
     ...(error ? { detail: error?.message || String(error) } : {}),

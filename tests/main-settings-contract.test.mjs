@@ -43,9 +43,27 @@ test("performance-driven quality reductions are opt-in by default", () => {
   );
 });
 
+// The setting enums now come from a shared contract module instead of being
+// declared inline three times, so a sliced harness must import the real module by
+// absolute URL. Redeclaring the values here would recreate exactly the drift the
+// contract module exists to prevent.
+const CONTRACT_IMPORT = [
+  "import {",
+  "  ENGINES as CONTRACT_ENGINES,",
+  "  INTERPOLATION_MODELS as CONTRACT_INTERPOLATION_MODELS,",
+  "  INTERPOLATION_RES_MODES as CONTRACT_INTERPOLATION_RES_MODES,",
+  "  MODES as CONTRACT_MODES,",
+  "  UPSCALE_POLICIES as CONTRACT_UPSCALE_POLICIES,",
+  "  upscalePoliciesForEngine,",
+  `} from ${JSON.stringify(
+    new URL("../src/core/fsrcnnx-setting-contract.js", import.meta.url).href,
+  )};`,
+  "",
+].join("\n");
+
 async function importHarness(code, deps = {}) {
   globalThis.__mainSettingsContractDeps = deps;
-  const encoded = Buffer.from(code).toString("base64");
+  const encoded = Buffer.from(CONTRACT_IMPORT + code).toString("base64");
   return import(`data:text/javascript;base64,${encoded}#${++revision}`);
 }
 
@@ -401,6 +419,7 @@ async function loadStatusHarness(storeHealth = {
     };
     let imageUpscaler = null, imageUpscalerInitPromise = null, imageLastFailure = null;
     let preferenceValidationFailure = null, preferenceApplicationFailure = null;
+    let preferenceApplicationLastError = null;
     const multiTargets = new Map();
     const _neuralList = [];
     const navigator = { gpu: {} };
@@ -426,6 +445,7 @@ async function loadPreferenceApplicationHarness(
     const DEFAULT_SETTING_FIELDS = ["mode", "images"];
     let externalPreferenceTail = Promise.resolve();
     let preferenceApplicationFailure = null, preferenceValidationFailure = null;
+    let preferenceApplicationLastError = null;
     const boundedRuntimeDetail = (error) => error?.message || String(error);
     const warn = () => {};
     const siteSettingsStore = {
@@ -449,6 +469,7 @@ async function loadPreferenceApplicationHarness(
     export function emit(patch) { deps.listener(patch); }
     export async function drainOnly() { await drainExternalPreferenceApplications(); }
     export function applicationFailure() { return preferenceApplicationFailure; }
+    export function lastApplicationError() { return preferenceApplicationLastError; }
   `, deps);
   return { module, deps };
 }
@@ -932,11 +953,11 @@ test("interpolation runtime failures are returned as explicit command results", 
   };
   const config = await loadInterpolationConfigHarness(runtime);
   assert.deepEqual(config.setInterpolateRes("full"), {
-    ok: true, pending: true, reason: "runtime failure",
+    ok: true, pending: true, pendingKind: "runtime-error", reason: "runtime failure",
     detail: "GPU state unavailable", resMode: "full",
   });
   assert.deepEqual(await config.setInterpolateModel("rife_v4.26_fp16"), {
-    ok: true, pending: true, model: "rife_v4.26_fp16",
+    ok: true, pending: true, pendingKind: "runtime-error", model: "rife_v4.26_fp16",
     reason: "runtime failure", detail: "model switch failed",
   });
   assert.equal(config.state().pendingResMode, "full");
@@ -1016,7 +1037,10 @@ test("preference synchronization retries failed runtime application and reports 
   const failed = await loadPreferenceApplicationHarness(Infinity);
   failed.module.emit({ mode: "passthrough" });
   await assert.rejects(failed.module.syncSitePrefs(), /application exploded/);
-  assert.equal(failed.module.applicationFailure(), "application exploded");
+  // syncSitePrefs clears the blocking flag as it reports, so a failed authoritative
+  // replay can no longer block every later command; the message is retained for status.
+  assert.equal(failed.module.applicationFailure(), null);
+  assert.equal(failed.module.lastApplicationError(), "application exploded");
 
   const deleted = await loadPreferenceApplicationHarness(1, null, { images: true });
   deleted.module.emit({ mode: undefined });
@@ -1033,7 +1057,7 @@ test("preference synchronization retries failed runtime application and reports 
     "snapshot",
     ["apply", { mode: undefined, images: true }],
   ], "authoritative replay includes tombstones for fields absent from the snapshot");
-  assert.equal(deleted.module.applicationFailure(), null);
+  assert.equal(deleted.module.lastApplicationError(), null);
 });
 
 test("status exposes configured interpolation and neural values without live runtimes", async () => {

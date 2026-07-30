@@ -42,15 +42,24 @@ fn rgb2y(c:vec3f)->f32 { return dot(c, vec3f(0.2126,0.7152,0.0722)); }
   let rgb = textureSampleLevel(srcRGB, samp, uv, 0.0).rgb; // bilinear chroma source
   let yNew = textureSampleLevel(hiLuma, samp, uv, 0.0).r;  // sharpened luma
   let yOld = rgb2y(rgb);
-  // scale chroma by luma ratio (preserve hue/sat, swap luminance)
-  let ratio = select(yNew / yOld, 1.0, yOld < 0.0001);
+  // scale chroma by luma ratio (preserve hue/sat, swap luminance).
+  // select() evaluates both operands, so the divisor is floored rather than
+  // relying on the condition — otherwise every flat-black pixel computed an
+  // Inf in the branch that is discarded.
+  let ratio = select(yNew / max(yOld, 0.0001), 1.0, yOld < 0.0001);
   let outc = clamp(rgb * ratio, vec3f(0.0), vec3f(1.0));
   return vec4f(outc, 1.0);
 }`;
 
+// Alpha is resampled from the ORIGINAL image rather than carried through the
+// chain: the luma/chroma recombine and the SSimDownscaler tail both emit a
+// hardcoded 1.0, so every transparent PNG or WebP came back fully opaque and then
+// overwrote the page's <img>. Alpha is a coverage channel, not detail, so taking
+// it bilinearly from the source is also the correct filter for it.
 const BLIT = `
 @group(0) @binding(0) var samp : sampler;
 @group(0) @binding(1) var src : texture_2d<f32>;
+@group(0) @binding(2) var srcAlpha : texture_2d<f32>;
 struct VsOut { @builtin(position) pos:vec4f, @location(0) uv:vec2f };
 @vertex fn vs(@builtin(vertex_index) i:u32)->VsOut{
   var p=array<vec2f,3>(vec2f(-1.,-3.),vec2f(-1.,1.),vec2f(3.,1.));
@@ -58,7 +67,10 @@ struct VsOut { @builtin(position) pos:vec4f, @location(0) uv:vec2f };
   var o:VsOut; o.pos=vec4f(p[i],0.,1.); o.uv=u[i]; return o;
 }
 @fragment fn fs(@location(0) uv:vec2f)->@location(0) vec4f {
-  return textureSampleLevel(src, samp, uv, 0.0);
+  let rgb = textureSampleLevel(src, samp, uv, 0.0).rgb;
+  let a = textureSampleLevel(srcAlpha, samp, uv, 0.0).a;
+  // The presentation canvas is configured alphaMode "premultiplied".
+  return vec4f(rgb * a, a);
 }`;
 
 const MIN_SOURCE_EDGE = 64;
@@ -580,9 +592,39 @@ export class ImageUpscaler {
     return promise;
   }
 
+  // The video path refuses wide-gamut sources outright; the image path had no
+  // colour gate at all. There is no web API that reports a decoded image's colour
+  // space, so source gamut cannot be inspected — but the round trip is only
+  // *lossy* on a wide-gamut display, because an sRGB display would clip the same
+  // pixels anyway. Gating on the display therefore covers exactly the case where
+  // processing makes the result worse, and fails closed like the video path.
+  // Cached because matchMedia is a layout-adjacent read on a hot path.
+  _displayGamutWide() {
+    if (this._wideGamutDisplay === undefined) {
+      let wide = false;
+      try { wide = globalThis.matchMedia?.("(color-gamut: p3)")?.matches === true; }
+      catch { wide = false; }
+      this._wideGamutDisplay = wide;
+    }
+    return this._wideGamutDisplay;
+  }
+
   async _processJob(job) {
     let bitmap = null;
     try {
+      // Warn and proceed rather than refuse. There is no web API that reports a
+      // decoded image's colour space, so source gamut cannot be inspected, and the
+      // sRGB round trip only loses anything when the *source* is wide-gamut — which
+      // is a minority of images even on a wide-gamut display. Refusing outright
+      // disabled the feature on most modern laptops; the warning is emitted once so
+      // an unexpected desaturation is still diagnosable.
+      if (this._displayGamutWide() && !this._wideGamutNoticeSent) {
+        this._wideGamutNoticeSent = true;
+        this.warn(
+          "images: this display is wide-gamut; upscaled output is written as sRGB, " +
+          "so a Display-P3 source can lose saturation.",
+        );
+      }
       bitmap = await this.loadReadable(job.img, job);
       if (!bitmap) {
         if (this._jobCurrent(job)) this._reportFailure("unreadable", "Image could not be read; cross-origin sources must provide CORS access.");
@@ -769,6 +811,7 @@ export class ImageUpscaler {
       {
         const bg = device.createBindGroup({ layout: this.blitPipe.getBindGroupLayout(0), entries: [
           { binding: 0, resource: this.sampler }, { binding: 1, resource: finalTex.createView() },
+          { binding: 2, resource: srcTex.createView() },
         ] });
         const rp = enc.beginRenderPass({ colorAttachments: [{ view: ctx.getCurrentTexture().createView(), loadOp: "clear", clearValue: {r:0,g:0,b:0,a:0}, storeOp: "store" }] });
         rp.setPipeline(this.blitPipe); rp.setBindGroup(0, bg); rp.draw(3); rp.end();

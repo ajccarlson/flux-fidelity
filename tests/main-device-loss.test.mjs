@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { CONTRACT_IMPORT } from "./helpers/setting-contract-import.mjs";
 
 const mainUrl = new URL("../src/core/fsrcnnx-main.js", import.meta.url);
 let revision = 0;
@@ -28,9 +29,16 @@ async function loadCoordinator(deps) {
   assert.notEqual(start, -1);
   assert.notEqual(end, -1);
   const production = source.slice(start, end);
+  // Parsed from the real source instead of redeclared. The retry bound now derives
+  // from this constant, so a hardcoded copy here would let a production change to
+  // the attempt count pass against a stale test value — the exact failure mode a
+  // test named after the constant must not have.
+  const declared = /const GPU_RECOVERY_MAX_ATTEMPTS = (\d+);/.exec(source);
+  assert.notEqual(declared, null, "GPU_RECOVERY_MAX_ATTEMPTS declaration must be parseable");
+  const maxAttempts = Number(declared[1]);
   const harness = `
     const deps = globalThis.__mainDeviceLossDeps;
-    const GPU_RECOVERY_MAX_ATTEMPTS = 3;
+    const GPU_RECOVERY_MAX_ATTEMPTS = ${maxAttempts};
     const setTimeout = (...args) => deps.setTimeout
       ? deps.setTimeout(...args)
       : globalThis.setTimeout(...args);
@@ -100,10 +108,9 @@ async function loadCoordinator(deps) {
     let sampler = {}, extractPipeline = {}, recombinePipeline = {}, passthroughPipeline = {};
     let extractPipelineTex = {}, recombinePipelineTex = {}, recombine16PipelineTex = {};
     let recombine16Pipeline = {}, blitPipeline = {}, sharpenPipeline = {}, sharpenStrengthBuilt = 1;
-    let chainTapTex = deps.resources.shift(), chainTapFrame = 3;
+    let chainTapTex = deps.resources.shift(), chainTapFrame = 3, chainTapFailed = false;
     let lumaTexture = deps.resources.shift(), lumaW = 2, lumaH = 2;
     let hiRGB = deps.resources.shift(), hiRGBW = 4, hiRGBH = 4;
-    let dispRGB = deps.resources.shift(), dispRGBW = 4, dispRGBH = 4;
     let ssimds = { destroy: deps.onSsimDestroy };
     let models = [{ destroy: deps.onModelDestroy }], modelsDevice = device, activeModel = models[0];
     let highStages = [{ destroy: deps.onHighModelDestroy }], artStages = {};
@@ -168,11 +175,11 @@ async function loadCoordinator(deps) {
         recovering: !!deviceRecoveryPromise || deviceRecoveryTimer != null,
         providerInvalidating: !!deviceLossInvalidationPromise,
         display: canvas.style.display, gpu: snapshotGpu(),
-        chainTapTex, lumaTexture, hiRGB, dispRGB, context, models, highStages };
+        chainTapTex, lumaTexture, hiRGB, context, models, highStages };
     }
   `;
   globalThis.__mainDeviceLossDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 async function loadInitializer(deps) {
@@ -244,7 +251,7 @@ async function loadInitializer(deps) {
     export function state() { return { device, pending: !!webGpuInitPromise, gpu: snapshotGpu() }; }
   `;
   globalThis.__mainDeviceLossDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 async function loadGpuReadiness(deps) {
@@ -295,7 +302,7 @@ async function loadGpuReadiness(deps) {
     }
   `;
   globalThis.__mainDeviceLossDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 function setup({ mode = "passthrough", images = false, interpolate = false, engine = "fsrcnnx",
@@ -428,7 +435,9 @@ test("current device loss retires stale state and single-flights recovery", asyn
   );
   assert.equal(coordinator.state().gpu.lastFailure.code, "device-lost");
   assert.equal(coordinator.state().display, "none");
-  assert.equal(deps.destroyed.count, 4);
+  // One fewer than before: dispRGB was never assigned a texture, so it was a
+  // phantom entry in the retirement set rather than a real allocation.
+  assert.equal(deps.destroyed.count, 3);
   assert.equal(deps.modelDestroys, 1);
   assert.equal(deps.highModelDestroys, 1);
   assert.equal(coordinator.state().highStages.length, 0);
@@ -441,8 +450,8 @@ test("current device loss retires stale state and single-flights recovery", asyn
     "the retained RIFE provider must join the same device-loss barrier");
   assert.deepEqual(
     [coordinator.state().chainTapTex, coordinator.state().lumaTexture,
-      coordinator.state().hiRGB, coordinator.state().dispRGB],
-    [null, null, null, null],
+      coordinator.state().hiRGB],
+    [null, null, null],
   );
 
   deps.recoveryGate.resolve();

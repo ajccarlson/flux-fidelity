@@ -264,6 +264,10 @@ class Harness {
       assert.equal(targetOrigin, "chrome-extension://unit-test");
       assert.equal(transfer.length, 1);
       this.childPort = transfer[0];
+      // The real child only ever learns the nonce from this handshake, and the
+      // bridge deliberately does not expose it as a public getter, so the harness
+      // records it here rather than reading it back off the bridge object.
+      this.instanceNonce = data.instanceNonce;
       this.childPort.onmessage = (event) => this.onRequest(event.data);
       if (this.autoAcknowledge) {
         this.childPort.postMessage({
@@ -313,7 +317,7 @@ class Harness {
     this.childPort.postMessage({
       channel: NEURAL_FRAME_CHANNEL,
       kind: "response",
-      instanceNonce: this.bridge.instanceNonce,
+      instanceNonce: this.instanceNonce,
       id,
       ok: true,
       result,
@@ -324,7 +328,7 @@ class Harness {
     this.childPort.postMessage({
       channel: NEURAL_FRAME_CHANNEL,
       kind: "response",
-      instanceNonce: this.bridge.instanceNonce,
+      instanceNonce: this.instanceNonce,
       id,
       ok: false,
       error,
@@ -428,9 +432,11 @@ test("bridge hides an unsandboxed extension frame and authenticates the private 
       "#instanceNonce=0123456789abcdef0123456789abcdef" +
       `&frameCapability=${FRAME_CAPABILITY}`,
   );
+  // Minting happens before the handshake, so the harness has not yet observed the
+  // nonce; assert against the value injected into the bridge.
   assert.deepEqual(harness.capabilityRequests, [{
     type: "FSRCNNX_NEURAL_FRAME_CAPABILITY_MINT",
-    instanceNonce: bridge.instanceNonce,
+    instanceNonce: "0123456789abcdef0123456789abcdef",
   }]);
 
   // Neither an unrelated WindowProxy nor an unrelated channel can claim the
@@ -445,7 +451,7 @@ test("bridge hides an unsandboxed extension frame and authenticates the private 
   assert.deepEqual(connectMessage.data, {
     channel: NEURAL_FRAME_CHANNEL,
     kind: "connect",
-    instanceNonce: bridge.instanceNonce,
+    instanceNonce: harness.instanceNonce,
   });
   assert.equal(connectMessage.targetOrigin, "chrome-extension://unit-test");
   assert.equal(bridge.state, "connecting",
@@ -454,7 +460,7 @@ test("bridge hides an unsandboxed extension frame and authenticates the private 
   harness.childPort.postMessage({
     channel: NEURAL_FRAME_CHANNEL,
     kind: "connected",
-    instanceNonce: bridge.instanceNonce,
+    instanceNonce: harness.instanceNonce,
   });
   const result = await started;
   assert.equal(result.connected, true);
@@ -650,7 +656,7 @@ test("bridge correlates requests, forwards diagnostics, and transfers each owner
   harness.childPort.postMessage({
     channel: NEURAL_FRAME_CHANNEL,
     kind: "event",
-    instanceNonce: bridge.instanceNonce,
+    instanceNonce: harness.instanceNonce,
     event: "device-lost",
     error: { code: "device-lost", message: "adapter reset", retryable: true },
     stats: { frames: 1 },
@@ -727,7 +733,7 @@ test("stop cancels an in-flight run before serialized cleanup and drops stale ou
   assert.deepEqual(harness.controls, [{
     channel: NEURAL_FRAME_CHANNEL,
     kind: "cancel",
-    instanceNonce: bridge.instanceNonce,
+    instanceNonce: harness.instanceNonce,
   }]);
   assert.equal(
     harness.requests.some(({ method }) => method === "stop"),
@@ -781,7 +787,7 @@ test("dispose cancels an in-flight run before releasing the frame transport", as
   assert.deepEqual(harness.controls, [{
     channel: NEURAL_FRAME_CHANNEL,
     kind: "cancel",
-    instanceNonce: bridge.instanceNonce,
+    instanceNonce: harness.instanceNonce,
   }]);
   assert.equal(
     harness.requests.some(({ method }) => method === "dispose"),
@@ -958,7 +964,7 @@ test("public nonce disclosure and an incorrect private nonce both fail closed", 
     data: {
       channel: NEURAL_FRAME_CHANNEL,
       kind: "ready",
-      instanceNonce: publicBridge.instanceNonce,
+      instanceNonce: publicHarness.instanceNonce,
     },
   });
   await assert.rejects(
@@ -1058,4 +1064,56 @@ test("pagehide rejects in-flight work and transitions directly to disposed", asy
   assert.equal(bitmap.closeCalls, 1);
   assert.equal(bridge.state, "disposed");
   assert.equal(hostIsGone(harness), true);
+});
+
+test("an unsupported message kind is ignored so the protocol can be extended", async () => {
+  const harness = new Harness();
+  const warnings = [];
+  const bridge = await connect(harness, { warn: (message) => warnings.push(String(message)) });
+
+  // A future heartbeat/progress/warning kind must not tear down the bridge, or no
+  // new kind could ever ship without breaking older parents. Unknown *event*
+  // names were already tolerated, so failing here was also inconsistent.
+  harness.childPort.postMessage({
+    channel: NEURAL_FRAME_CHANNEL,
+    kind: "heartbeat",
+    instanceNonce: harness.instanceNonce,
+  });
+  await flushMicrotasks();
+
+  assert.equal(bridge.state, "ready", "an unknown kind must not fail the bridge");
+  assert.equal(bridge.connected, true);
+  assert.equal(warnings.filter((m) => m.includes("unsupported message kind")).length, 1);
+
+  // A malformed response still fails closed.
+  harness.childPort.postMessage({
+    channel: NEURAL_FRAME_CHANNEL,
+    kind: "response",
+    instanceNonce: harness.instanceNonce,
+    id: 0,
+    ok: true,
+  });
+  await flushMicrotasks();
+  assert.notEqual(bridge.state, "ready", "a malformed response must still fail the bridge");
+});
+
+test("a persisted pagehide keeps the bridge alive for a back/forward cache restore", async () => {
+  const harness = new Harness();
+  const bridge = await connect(harness);
+
+  harness.window.emit("pagehide", { persisted: true });
+  await flushMicrotasks();
+  assert.equal(bridge.state, "ready",
+    "entering the back/forward cache must not discard the model and temporal state");
+
+  harness.window.emit("pagehide", { persisted: false });
+  await flushMicrotasks();
+  assert.notEqual(bridge.state, "ready", "a real unload must still dispose the bridge");
+});
+
+test("the bridge does not expose its transport nonce", async () => {
+  const harness = new Harness();
+  const bridge = await connect(harness);
+  assert.equal(bridge.instanceNonce, undefined,
+    "child-side security reduces to this value; it must not be readable off the bridge");
 });

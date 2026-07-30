@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { CONTRACT_IMPORT } from "./helpers/setting-contract-import.mjs";
 
 const mainUrl = new URL("../src/core/fsrcnnx-main.js", import.meta.url);
 let revision = 0;
@@ -90,7 +91,7 @@ async function loadRetirementHarness(deps) {
     }
   `;
   globalThis.__mainGpuRetirementDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 async function loadInitializationHarness(deps) {
@@ -150,7 +151,7 @@ async function loadInitializationHarness(deps) {
     }
   `;
   globalThis.__mainGpuRetirementDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 async function loadPrimaryRetirementHarness(deps) {
@@ -170,10 +171,9 @@ async function loadPrimaryRetirementHarness(deps) {
     let models = [sharedStage];
     let highStages = [sharedStage, { resetAllocation: () => deps.events.push("high-reset") }];
     let artStages = { current: [sharedStage, { resetAllocation: () => deps.events.push("art-reset") }] };
-    let chainTapTex = deps.texture("chain"), chainTapFrame = 8;
+    let chainTapTex = deps.texture("chain"), chainTapFrame = 8, chainTapFailed = false;
     let lumaTexture = deps.texture("luma"), lumaW = 10, lumaH = 6;
     let hiRGB = deps.texture("hi"), hiRGBW = 20, hiRGBH = 12;
-    let dispRGB = deps.texture("display"), dispRGBW = 20, dispRGBH = 12;
     let ssimds = { destroy: () => deps.events.push("ssim-reset") };
     let activeModel = sharedStage, chainedFsrcnnx = {}, chainedHigh = {}, chainedArt = {}, _texSource = {};
     let gpuResourceReason = null;
@@ -182,13 +182,13 @@ async function loadPrimaryRetirementHarness(deps) {
     ${production}
     export function retire(reason) { return retirePrimaryGpuAllocations(reason); }
     export function state() {
-      return { chainTapTex, lumaTexture, hiRGB, dispRGB, activeModel, chainedFsrcnnx,
+      return { chainTapTex, lumaTexture, hiRGB, activeModel, chainedFsrcnnx,
         chainedHigh, chainedArt, texSource: _texSource, gpuResourceReason,
         pending: !!primaryAllocationRetirementPromise };
     }
   `;
   globalThis.__mainGpuRetirementDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 async function loadImageInitializationHarness(deps) {
@@ -234,7 +234,7 @@ async function loadImageInitializationHarness(deps) {
     }
   `;
   globalThis.__mainGpuRetirementDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 async function loadModeSelectionHarness(deps) {
@@ -269,7 +269,7 @@ async function loadModeSelectionHarness(deps) {
     export function state() { return { mode, modeSelectionGeneration }; }
   `;
   globalThis.__mainGpuRetirementDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 test("hard retirement unpublishes immediately, drains work, and destroys only a main-owned device", async (t) => {
@@ -500,14 +500,15 @@ test("soft retirement fences source-sized allocations while preserving the healt
   assert.equal(await retirement, true);
   assert.equal(runtime.state().lumaTexture, null);
   assert.equal(runtime.state().hiRGB, null);
-  assert.equal(runtime.state().dispRGB, null);
   assert.equal(runtime.state().chainTapTex, null);
   assert.equal(runtime.state().activeModel, null);
   assert.equal(runtime.state().texSource, null);
   assert.equal(runtime.state().gpuResourceReason, "video-off");
   assert.equal(events.filter((event) => event === "stage-reset").length, 1,
     "a stage shared by model pools is reset exactly once");
-  assert.equal(events.filter((event) => Array.isArray(event) && event[0] === "texture-destroy").length, 4);
+  // Three, not four: dispRGB was never allocated, so its retirement entry was a
+  // phantom rather than a real texture destroy.
+  assert.equal(events.filter((event) => Array.isArray(event) && event[0] === "texture-destroy").length, 3);
   assert.equal(runtime.state().pending, false);
 });
 

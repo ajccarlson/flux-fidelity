@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { CONTRACT_IMPORT } from "./helpers/setting-contract-import.mjs";
 
 const mainUrl = new URL("../src/core/fsrcnnx-main.js", import.meta.url);
 let moduleRevision = 0;
@@ -43,7 +44,7 @@ async function loadTextureSizeBoundary({ limit = 8192, warnings = [] } = {}) {
     export { textureSizeAllowed };
   `;
   globalThis.__mainSizeWarnings = warnings;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++moduleRevision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++moduleRevision}`);
 }
 
 async function loadInterpolationLifecycle(deps) {
@@ -126,7 +127,7 @@ async function loadInterpolationLifecycle(deps) {
     export function quarantineState() { return interpolationTerminalQuarantine; }
   `;
   globalThis.__mainLifecycleTestDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++moduleRevision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++moduleRevision}`);
 }
 
 async function loadAdoptionCoordinator(deps) {
@@ -153,7 +154,7 @@ async function loadAdoptionCoordinator(deps) {
     }
   `;
   globalThis.__mainLifecycleTestDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++moduleRevision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++moduleRevision}`);
 }
 
 async function loadScaleSelection() {
@@ -175,7 +176,7 @@ async function loadScaleSelection() {
         _scaleHeldSrcW, _scaleHeldSrcH, _scaleLockLogged };
     }
   `;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++moduleRevision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++moduleRevision}`);
 }
 
 async function loadChainUpscaleBoundary(deps) {
@@ -195,7 +196,7 @@ async function loadChainUpscaleBoundary(deps) {
     export function source() { return _texSource; }
   `;
   globalThis.__mainLifecycleTestDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++moduleRevision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++moduleRevision}`);
 }
 
 async function loadAdoptionInternal(deps) {
@@ -299,7 +300,7 @@ async function loadAdoptionInternal(deps) {
     }
   `;
   globalThis.__mainLifecycleTestDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++moduleRevision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++moduleRevision}`);
 }
 
 async function loadProducerPause(deps) {
@@ -321,7 +322,7 @@ async function loadProducerPause(deps) {
     export function generation() { return imageUpscalerInitGeneration; }
   `;
   globalThis.__mainLifecycleTestDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++moduleRevision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++moduleRevision}`);
 }
 
 async function loadProducerResume(deps) {
@@ -358,7 +359,7 @@ async function loadProducerResume(deps) {
     export { resumeDeviceProducers };
   `;
   globalThis.__mainLifecycleTestDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++moduleRevision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++moduleRevision}`);
 }
 
 async function loadModelLifecycle(deps) {
@@ -382,7 +383,7 @@ async function loadModelLifecycle(deps) {
     export function state() { return { models, modelsDevice, highStages, artStages }; }
   `;
   globalThis.__mainLifecycleTestDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++moduleRevision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++moduleRevision}`);
 }
 
 async function loadRendererResourceHelpers(deps) {
@@ -411,7 +412,7 @@ async function loadRendererResourceHelpers(deps) {
       extractPipelineTex, recombinePipelineTex, recombine16PipelineTex }; }
   `;
   globalThis.__mainLifecycleTestDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++moduleRevision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++moduleRevision}`);
 }
 
 test("model selection during the shared interpolation import does not lose the pending enable", async (t) => {
