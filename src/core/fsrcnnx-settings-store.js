@@ -31,6 +31,9 @@ export const DEFAULT_SETTING_FIELDS = Object.freeze([
 
 const MAX_ERROR_LENGTH = 240;
 const LEGACY_MAP_KEY = "fsrcnnx_sites";
+const SETTINGS_RECORD_MIGRATIONS = Object.freeze({
+  1: (record) => ({ ...record, schemaVersion: 2 }),
+});
 const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 
 function isObject(value) {
@@ -171,19 +174,40 @@ export function createSettingsStore({
     return record;
   }
 
+  function migrateRecordEnvelope(value) {
+    if (!isObject(value) || !Number.isSafeInteger(value.schemaVersion) ||
+        value.schemaVersion < 1) return null;
+    let migrated = value;
+    while (migrated.schemaVersion < SETTINGS_SCHEMA_VERSION) {
+      const previousVersion = migrated.schemaVersion;
+      const migrate = SETTINGS_RECORD_MIGRATIONS[previousVersion];
+      if (typeof migrate !== "function") return null;
+      try { migrated = migrate(migrated); }
+      catch { return null; }
+      if (!isObject(migrated) || migrated.schemaVersion !== previousVersion + 1) return null;
+    }
+    return migrated;
+  }
+
   function parseRecord(value) {
-    if (!isObject(value) || value.schemaVersion !== SETTINGS_SCHEMA_VERSION ||
-        typeof value.source !== "string" || !value.source || value.source.length > 128 ||
-        value.source.includes("\0") || !isObject(value.stamp) ||
-        !Number.isSafeInteger(value.stamp.time) || value.stamp.time < 0 ||
-        !Number.isSafeInteger(value.stamp.counter) || value.stamp.counter < 0) return null;
-    const deleted = value.deleted === true;
-    if (deleted === hasOwn(value, "value")) return null;
+    const migrated = migrateRecordEnvelope(value);
+    if (!migrated || typeof migrated.source !== "string" || !migrated.source ||
+        migrated.source.length > 128 || migrated.source.includes("\0") ||
+        !isObject(migrated.stamp) ||
+        !Number.isSafeInteger(migrated.stamp.time) || migrated.stamp.time < 0 ||
+        !Number.isSafeInteger(migrated.stamp.counter) || migrated.stamp.counter < 0) return null;
+    const deleted = migrated.deleted === true;
+    if (deleted === hasOwn(migrated, "value")) return null;
     return deleted
-      ? { schemaVersion: SETTINGS_SCHEMA_VERSION, source: value.source,
-          stamp: { time: value.stamp.time, counter: value.stamp.counter }, deleted: true }
-      : { schemaVersion: SETTINGS_SCHEMA_VERSION, source: value.source,
-          stamp: { time: value.stamp.time, counter: value.stamp.counter }, value: value.value };
+      ? { schemaVersion: migrated.schemaVersion, source: migrated.source,
+          stamp: { time: migrated.stamp.time, counter: migrated.stamp.counter }, deleted: true }
+      : { schemaVersion: migrated.schemaVersion, source: migrated.source,
+          stamp: { time: migrated.stamp.time, counter: migrated.stamp.counter }, value: migrated.value };
+  }
+
+  function hasCompatibleSchemaMarker(value) {
+    return isObject(value) && Number.isSafeInteger(value.schemaVersion) &&
+      value.schemaVersion >= SETTINGS_SCHEMA_VERSION;
   }
 
   function recordValue(record) {
@@ -196,7 +220,7 @@ export function createSettingsStore({
 
   function refreshCorruptionError() {
     corruptionError = corruptFields.size
-      ? boundedError(`Corrupt v${SETTINGS_SCHEMA_VERSION} settings record: ${[...corruptFields].sort().join(", ")}`)
+      ? boundedError(`Invalid settings record: ${[...corruptFields].sort().join(", ")}`)
       : null;
   }
 
@@ -326,8 +350,7 @@ export function createSettingsStore({
     if (!isObject(changes)) return {};
     const schemaChange = changes[schemaKey];
     if (isObject(schemaChange) && hasOwn(schemaChange, "newValue")) {
-      schemaPersisted = isObject(schemaChange.newValue) &&
-        schemaChange.newValue.schemaVersion === SETTINGS_SCHEMA_VERSION;
+      schemaPersisted = hasCompatibleSchemaMarker(schemaChange.newValue);
     }
     const patch = {};
     for (const [key, change] of Object.entries(changes)) {
@@ -512,7 +535,7 @@ export function createSettingsStore({
     }
 
     const marker = stored[schemaKey];
-    schemaPersisted = isObject(marker) && marker.schemaVersion === SETTINGS_SCHEMA_VERSION;
+    schemaPersisted = hasCompatibleSchemaMarker(marker);
     for (const field of uniqueFields) {
       const key = keyByField.get(field);
       if (!hasOwn(stored, key)) {
