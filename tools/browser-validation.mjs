@@ -28,8 +28,28 @@ const NUMERICAL_VALIDATION_IDS = Object.freeze([
   ...ONNX_VALIDATION_CHECKS.map(({ id }) => id),
   ...GENERATED_MODEL_CATALOG.map(({ name }) => `${name}:inference`),
 ]);
-const STARTUP_TIMEOUT_MS = 30_000;
-const DISCOVERY_TIMEOUT_MS = 3_000;
+// CI runs Chromium under SwiftShader on an unpinned runner image, where every
+// phase is far slower than locally. FSRCNNX_TIMEOUT_SCALE multiplies the wait
+// budgets so CI can be generous without changing the local defaults, and without
+// each constant being retuned by hand.
+const TIMEOUT_SCALE = (() => {
+  const raw = Number(process.env.FSRCNNX_TIMEOUT_SCALE);
+  if (!Number.isFinite(raw) || raw <= 0) return 1;
+  return Math.min(raw, 20);
+})();
+const scaled = (ms) => Math.round(ms * TIMEOUT_SCALE);
+
+// Process launch to the "DevTools listening on" line on stderr.
+const STARTUP_TIMEOUT_MS = scaled(30_000);
+// HTTP readiness of that endpoint. This used to share STARTUP_TIMEOUT_MS, so a
+// slow launch consumed the readiness budget too and the failure was reported as
+// "browser startup timed out" regardless of which phase actually stalled.
+const DEVTOOLS_READY_TIMEOUT_MS = scaled(30_000);
+// Target enumeration for the MV3 service worker. 3 s was the tightest constant in
+// the harness and is polled at 200 ms intervals under software rendering.
+const DISCOVERY_TIMEOUT_MS = scaled(10_000);
+// One retry covers a cold-start stall; a second failure is treated as real.
+const STARTUP_ATTEMPTS = 2;
 const VALIDATION_TIMEOUT_MS = 240_000;
 const INTEGRATION_TIMEOUT_MS = 120_000;
 const CDP_TIMEOUT_MS = 15_000;
@@ -983,7 +1003,7 @@ function httpBaseFromWebSocket(address) {
 }
 
 async function waitForDevToolsHttp(httpBase, signal) {
-  const deadline = Date.now() + STARTUP_TIMEOUT_MS;
+  const deadline = Date.now() + DEVTOOLS_READY_TIMEOUT_MS;
   let lastError = null;
   while (Date.now() < deadline) {
     if (signal?.aborted) throw abortReason(signal);
@@ -1004,7 +1024,7 @@ async function waitForDevToolsHttp(httpBase, signal) {
     if (retryDelay > 0) await delay(retryDelay, signal);
   }
   const detail = lastError instanceof Error ? `: ${lastError.message}` : "";
-  throw new Error(`DevTools HTTP endpoint did not become ready after ${STARTUP_TIMEOUT_MS} ms${detail}`);
+  throw new Error(`DevTools HTTP endpoint did not become ready after ${DEVTOOLS_READY_TIMEOUT_MS} ms${detail}`);
 }
 
 async function listTargets(httpBase, signal) {
@@ -2514,10 +2534,33 @@ async function main(signal, options) {
       throw new Error("browser validator requires the project's MV3 src/background.js service worker");
     }
     fixtureServer = await startFixtureServer(signal);
-    launched = await startBrowser(browser, profile, extensionRoot, signal);
-    const browserWebSocket = await launched.endpoint;
-    const httpBase = httpBaseFromWebSocket(browserWebSocket);
-    await waitForDevToolsHttp(httpBase, signal);
+    // A cold runner can stall Chromium's launch or its DevTools readiness past any
+    // fixed budget, and this job is a required check on both protected branches
+    // with no retry anywhere. One bounded retry distinguishes a slow start from a
+    // real failure; the second attempt is reported as-is.
+    let httpBase = null;
+    for (let attempt = 1; attempt <= STARTUP_ATTEMPTS; attempt++) {
+      try {
+        launched = await startBrowser(browser, profile, extensionRoot, signal);
+        const browserWebSocket = await launched.endpoint;
+        httpBase = httpBaseFromWebSocket(browserWebSocket);
+        await waitForDevToolsHttp(httpBase, signal);
+        break;
+      } catch (error) {
+        if (signal?.aborted || attempt === STARTUP_ATTEMPTS) throw error;
+        process.stderr.write(
+          `browser startup attempt ${attempt} failed (${error.message}); retrying once
+`,
+        );
+        // Reclaim the half-started browser and profile before trying again, or the
+        // retry inherits a locked user-data directory.
+        if (launched) {
+          try { await terminateBrowser(launched.child); } catch {}
+          launched = null;
+        }
+        httpBase = null;
+      }
+    }
     // Loading an MV3 extension does not guarantee that its event worker is
     // already running. A local fixture page injects the packaged content script;
     // its normal startup ownership message provides a deterministic,
