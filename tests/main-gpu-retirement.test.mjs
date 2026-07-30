@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { CONTRACT_IMPORT } from "./helpers/setting-contract-import.mjs";
 
 const mainUrl = new URL("../src/core/fsrcnnx-main.js", import.meta.url);
 let revision = 0;
@@ -90,7 +91,7 @@ async function loadRetirementHarness(deps) {
     }
   `;
   globalThis.__mainGpuRetirementDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 async function loadInitializationHarness(deps) {
@@ -150,7 +151,7 @@ async function loadInitializationHarness(deps) {
     }
   `;
   globalThis.__mainGpuRetirementDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 async function loadPrimaryRetirementHarness(deps) {
@@ -188,7 +189,7 @@ async function loadPrimaryRetirementHarness(deps) {
     }
   `;
   globalThis.__mainGpuRetirementDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 async function loadImageInitializationHarness(deps) {
@@ -234,7 +235,7 @@ async function loadImageInitializationHarness(deps) {
     }
   `;
   globalThis.__mainGpuRetirementDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 async function loadModeSelectionHarness(deps) {
@@ -269,7 +270,7 @@ async function loadModeSelectionHarness(deps) {
     export function state() { return { mode, modeSelectionGeneration }; }
   `;
   globalThis.__mainGpuRetirementDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 test("hard retirement unpublishes immediately, drains work, and destroys only a main-owned device", async (t) => {

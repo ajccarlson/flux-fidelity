@@ -101,6 +101,12 @@ function booleanPayload(run) {
   return fieldPayload("on", (value) => typeof value === "boolean", "must be a boolean", run);
 }
 
+// These arrays must stay identical to fsrcnnx-setting-contract.js. They cannot
+// simply import it: content scripts are not ES modules, and this gate has to
+// validate commands that arrive before the pipeline module finishes loading, so
+// it cannot depend on the module being present. tests/setting-contract.test.mjs
+// fails if any of them drifts — that drift is what made the neural "native"
+// policy unreachable through the UI.
 function enumPayload(field, values, run) {
   const accepted = new Set(values);
   return fieldPayload(

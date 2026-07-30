@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { CONTRACT_IMPORT } from "./helpers/setting-contract-import.mjs";
 
 const mainUrl = new URL("../src/core/fsrcnnx-main.js", import.meta.url);
 let revision = 0;
@@ -164,7 +165,7 @@ async function loadMultiTargetLifecycle(deps) {
     export function size() { return multiTargets.size; }
   `;
   globalThis.__multiTargetLifecycleDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 async function loadIntegratedRetirement(deps) {
@@ -246,7 +247,7 @@ async function loadIntegratedRetirement(deps) {
     export function retire() { return retireGpuResources("all-features-off"); }
   `;
   globalThis.__multiTargetLifecycleDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 async function loadTargetModelPreparation(deps) {
@@ -275,7 +276,7 @@ async function loadTargetModelPreparation(deps) {
     export { ensureTargetModels };
   `;
   globalThis.__multiTargetLifecycleDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 test("MultiTarget constructor cleans partial resources at every post-allocation failure point", async (t) => {

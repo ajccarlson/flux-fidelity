@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { CONTRACT_IMPORT } from "./helpers/setting-contract-import.mjs";
 
 const mainUrl = new URL("../src/core/fsrcnnx-main.js", import.meta.url);
 let revision = 0;
@@ -172,7 +173,7 @@ async function loadCoordinator(deps) {
     }
   `;
   globalThis.__mainDeviceLossDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 async function loadInitializer(deps) {
@@ -244,7 +245,7 @@ async function loadInitializer(deps) {
     export function state() { return { device, pending: !!webGpuInitPromise, gpu: snapshotGpu() }; }
   `;
   globalThis.__mainDeviceLossDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 async function loadGpuReadiness(deps) {
@@ -295,7 +296,7 @@ async function loadGpuReadiness(deps) {
     }
   `;
   globalThis.__mainDeviceLossDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 function setup({ mode = "passthrough", images = false, interpolate = false, engine = "fsrcnnx",

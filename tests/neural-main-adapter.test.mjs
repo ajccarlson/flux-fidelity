@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { CONTRACT_IMPORT } from "./helpers/setting-contract-import.mjs";
 
 const mainUrl = new URL("../src/core/fsrcnnx-main.js", import.meta.url);
 let revision = 0;
@@ -172,7 +173,7 @@ async function loadAdapter(control, { createImageBitmapImpl } = {}) {
     export const create = () => createEmbeddedNeuralEngine({ log, warn });
   `;
   const module = await import(
-    `data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`
+    `data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`
   );
   return { engine: module.create(), deps };
 }
