@@ -6,6 +6,8 @@ import {
   StatusCoordinator,
   createPopupController,
   describeCommandFailure,
+  formatDiagnostics,
+  formatPresentation,
   isSupportedPageUrl,
   reconcileSelectOptions,
 } from "../src/popup.js";
@@ -105,7 +107,8 @@ function popupDocument() {
   const document = new FakeDocument();
 
   for (const id of [
-    "s-webgpu", "s-video", "s-model", "s-frames", "runtime-status", "drm-banner",
+    "s-webgpu", "s-video", "s-model", "s-frames", "s-resolution", "runtime-status", "drm-banner",
+    "copy-diagnostics",
     "operation-status", "neuralrow", "neural-note", "sharpen-row", "sharpen-val",
     "multi-count", "image-count", "interp-res-row",
     "interp-target-hz", "interp-avoff-val", "interp-stats",
@@ -1155,4 +1158,54 @@ test("a content-level failure surfaces its specific reason rather than only the 
     describeCommandFailure({ ok: false, error: "command-failed" }),
     "The page could not apply that setting.",
   );
+});
+
+test("diagnostics serialize the status fields the four visible rows cannot show", () => {
+  const report = formatDiagnostics({
+    mode: "upscale",
+    requestedMode: "upscale",
+    engine: "neural",
+    activeEngine: "fsrcnnx",
+    policy: "display",
+    chainDepth: 2,
+    hasVideo: true,
+    protected: false,
+    frameCount: 4821,
+    renderAttempts: 3,
+    gpuState: "ready",
+    renderer: {
+      phase: "active",
+      presentation: { source: { width: 640, height: 360 }, output: { width: 1280, height: 720 } },
+      fallback: { from: "neural", to: "fsrcnnx", code: "neural-init-failed" },
+    },
+    colorSupport: { code: "color-supported" },
+    persistence: { state: "ready" },
+  }, { version: "0.50.0" });
+
+  assert.match(report, /Flux Fidelity diagnostics \(v0\.50\.0\)/);
+  // The engine the user picked and the one actually running can differ after a
+  // fallback; a report that showed only one would hide the interesting case.
+  assert.match(report, /engine: neural \(active fsrcnnx\)/);
+  assert.match(report, /fallback: neural -> fsrcnnx \(neural-init-failed\)/);
+  assert.match(report, /presentation: 640×360 → 1280×720 \(2×\)/);
+  assert.equal(report.includes("\n"), true, "the report must be multi-line for pasting");
+
+  assert.match(formatDiagnostics(null), /status unavailable/);
+});
+
+test("presentation formatting reports source, output, and scale, or nothing at all", () => {
+  assert.equal(
+    formatPresentation({ renderer: { presentation: {
+      source: { width: 1920, height: 1080 }, output: { width: 3840, height: 2160 },
+    } } }),
+    "1920×1080 → 3840×2160 (2×)",
+  );
+  // Partial or absent dimensions must not render a misleading half-answer.
+  for (const presentation of [
+    undefined,
+    { source: { width: 640, height: 360 } },
+    { source: { width: 0, height: 0 }, output: { width: 1280, height: 720 } },
+  ]) {
+    assert.equal(formatPresentation({ renderer: { presentation } }), "—");
+  }
 });

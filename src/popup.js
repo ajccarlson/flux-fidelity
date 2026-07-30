@@ -187,6 +187,53 @@ export function reconcileSelectOptions(documentRef, select, rawItems, selected =
   return signature;
 }
 
+// Turns the status payload into a pasteable report. getStatus() already computes
+// far more than the four fields the popup shows; without this, a user whose video
+// looks wrong has nothing to hand over and no way to reach validate.html.
+export function formatDiagnostics(status, { version = null } = {}) {
+  if (!status || typeof status !== "object") return "Flux Fidelity diagnostics: status unavailable";
+  const renderer = status.renderer || {};
+  const lines = [
+    `Flux Fidelity diagnostics${version ? ` (v${version})` : ""}`,
+    `mode: ${status.mode ?? "unknown"} (requested ${status.requestedMode ?? "unknown"})`,
+    `engine: ${status.engine ?? "unknown"} (active ${status.activeEngine ?? "unknown"})`,
+    `policy: ${status.policy ?? "unknown"}  chainDepth: ${status.chainDepth ?? "?"}`,
+    `video present: ${status.hasVideo === true}  protected: ${status.protected === true}` +
+      `${status.protectedReason ? ` (${status.protectedReason})` : ""}`,
+    `presentation: ${formatPresentation(status)}`,
+    `renderer phase: ${renderer.phase ?? "unknown"}  attempts: ${status.renderAttempts ?? 0}`,
+    `frames: ${status.frameCount ?? 0}`,
+    `gpu: ${status.gpuState ?? "unknown"}`,
+  ];
+  if (renderer.fallback) {
+    lines.push(`fallback: ${renderer.fallback.from} -> ${renderer.fallback.to}` +
+      `${renderer.fallback.code ? ` (${renderer.fallback.code})` : ""}`);
+  }
+  if (status.colorSupport) {
+    lines.push(`color: ${status.colorSupport.code ?? "unknown"}`);
+  }
+  if (status.persistence) {
+    lines.push(`persistence: ${status.persistence.state ?? "unknown"}` +
+      `${status.persistence.error ? ` (${status.persistence.error})` : ""}`);
+  }
+  return lines.join("\n");
+}
+
+export function formatPresentation(status) {
+  const presentation = status?.renderer?.presentation || status?.presentation;
+  const source = presentation?.source;
+  const output = presentation?.output;
+  const dimension = (value) => (Number.isFinite(value) && value > 0 ? Math.round(value) : null);
+  const sw = dimension(source?.width), sh = dimension(source?.height);
+  const ow = dimension(output?.width), oh = dimension(output?.height);
+  if (!sw || !sh || !ow || !oh) return "—";
+  const scale = ow / sw;
+  const factor = Number.isFinite(scale) && scale > 0
+    ? `${Math.round(scale * 100) / 100}×`
+    : "";
+  return `${sw}×${sh} → ${ow}×${oh}${factor ? ` (${factor})` : ""}`;
+}
+
 export function describeCommandFailure(result) {
   const code = result?.error || result?.reason || "command-failed";
   const messages = {
@@ -514,6 +561,7 @@ export function createPopupController({
   let refreshTimer = null;
   let feedbackScope = "context";
   let forceControlSync = false;
+  let pendingRefocus = null;
 
   function feedback(message = "", tone = "", scope = "operation") {
     const element = $("operation-status");
@@ -540,7 +588,15 @@ export function createPopupController({
   function updateAvailability() {
     const globallyDisabled = !ready || commandBusy > 0;
     for (const control of controls) control.disabled = globallyDisabled;
+    // aria-busy tells assistive technology the form is intentionally inert rather
+    // than broken, which matters most on the 30 s timeout path.
+    documentRef.body?.setAttribute?.("aria-busy", globallyDisabled ? "true" : "false");
     if (globallyDisabled || !currentStatus) return;
+    if (pendingRefocus && !pendingRefocus.disabled) {
+      const target = pendingRefocus;
+      pendingRefocus = null;
+      try { target.focus?.(); } catch {}
+    }
 
     const neural = currentStatus.engine === "neural";
     $("all-videos").disabled = neural;
@@ -808,6 +864,13 @@ export function createPopupController({
     $("s-model").textContent = modelText;
     $("s-model").className = `v ${modelText === "—" ? "" : "ok"}`.trimEnd();
     $("s-frames").textContent = String(status.frameCount ?? 0);
+    // getStatus() has always reported presentation dimensions and the popup threw
+    // them away, so the one question an upscaler exists to answer — what goes in
+    // and what comes out — was unanswerable from the UI. "Frames: N" is a counter,
+    // not a quality signal.
+    const resolutionText = formatPresentation(status);
+    $("s-resolution").textContent = resolutionText;
+    $("s-resolution").className = `v ${resolutionText === "—" ? "" : "ok"}`.trimEnd();
     setText($("runtime-status"), runtimeMessage(status));
 
     const protectedMessage = status.protected ? sourceBlockMessage(status.protectedReason) : "";
@@ -944,6 +1007,13 @@ export function createPopupController({
     coordinator.invalidate();
     commandBusy++;
     feedback(`${label}…`, "pending", "operation");
+    // Every control is disabled while a command is in flight, and disabling the
+    // focused element moves focus to <body>. With no restoration a keyboard or
+    // screen-reader user was ejected to the top of the popup after every single
+    // toggle, for up to COMMAND_TIMEOUT_MS. Remember what had focus so
+    // updateAvailability() can hand it back when the controls re-enable.
+    const refocusTarget = documentRef.activeElement;
+    pendingRefocus = controls.includes(refocusTarget) ? refocusTarget : null;
     updateAvailability();
 
     const task = commandTail.catch(() => {}).then(async () => {
@@ -990,6 +1060,17 @@ export function createPopupController({
   }
 
   function bind() {
+    $("copy-diagnostics")?.addEventListener("click", async () => {
+      const report = formatDiagnostics(currentStatus, {
+        version: chromeApi?.runtime?.getManifest?.()?.version ?? null,
+      });
+      try {
+        await globalThis.navigator?.clipboard?.writeText(report);
+        feedback("Diagnostics copied to the clipboard.", "success", "operation");
+      } catch (error) {
+        feedback(`Diagnostics could not be copied: ${errorText(error)}`, "error", "operation");
+      }
+    });
     command("engine", "change", "Changing upscaler engine", "FSRCNNX_SETENGINE", () => ({ engine: $("engine").value }));
     command("artvariant", "change", "Changing ArtCNN variant", "FSRCNNX_SETARTVARIANT", () => ({ variant: $("artvariant").value }));
     command("policy", "change", "Changing upscale policy", "FSRCNNX_SETPOLICY", () => ({ policy: $("policy").value }));
