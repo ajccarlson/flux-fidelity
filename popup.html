@@ -6,41 +6,100 @@
   <meta name="color-scheme" content="light dark">
   <title>FluFi — Flux Fidelity</title>
   <style>
+    /* ---- Frame Stack -------------------------------------------------------
+       The identity is taken from the product's own icon: three offset rounded
+       frames in violet, amber and coral over warm cream, reading as successive
+       video frames stacked in time — which is exactly what this extension
+       operates on. The UI previously used an unrelated system blue that appears
+       nowhere in the icon, so the toolbar button and the panel it opened looked
+       like two different products.
+
+       These four are the icon's literal pixel values, sampled from
+       icons/icon-128.png rather than estimated, and everything below is derived
+       from them. The icon PNGs are hash-pinned, so the palette moves to the
+       artwork rather than the artwork moving to the palette.
+
+         --brand-violet  the dominant frame and the "F" card
+         --brand-amber   the middle frame
+         --brand-coral   the leading frame
+         --brand-cream   the paper behind them
+
+       Brand hues are *marks*, not text. A 6px dot or a 2px chart trace may carry
+       a vivid hue; body copy may not, so each status role has a separate
+       text-legible step. --chart-* are validated data colours: the raw brand
+       violet reads grey at chart scale and fails the chroma floor, so the trace
+       uses a lighter step of the same hue. */
     :root {
       color-scheme: light dark;
-      --bg: #f7f8fb;
+      --brand-violet: #49356f;
+      --brand-amber: #ffb21c;
+      --brand-coral: #ff4e68;
+      --brand-cream: #fff7e8;
+
+      --bg: #f6f2ea;
       --surface: #ffffff;
-      --surface-alt: #eef1f7;
-      --text: #172033;
-      --muted: #5f6879;
-      --line: #d9deea;
-      --accent: #3559d9;
-      --accent-strong: #2447c4;
-      --accent-soft: #e8edff;
-      --success: #16714c;
-      --danger: #a63434;
-      --danger-bg: #fff0f0;
-      --warn: #b26a00;
-      --focus: #6d8cff;
+      --surface-alt: #f3ede2;
+      --text: #241a38;
+      --muted: #675b7a;
+      --line: #e3dad0;
+      --line-strong: #d3c7ba;
+      --accent: #49356f;
+      --accent-strong: #33234f;
+      --accent-soft: #efe9f8;
+      --focus: #7b52c4;
+
+      /* Text-legible status steps. */
+      --success: #1c6b4a;
+      --danger: #c22a48;
+      --danger-bg: #fdeef1;
+      --warn: #8a5300;
+      /* Vivid steps for marks only — dots, rules, traces. */
+      --mark-success: #1f9268;
+      --mark-danger: var(--brand-coral);
+      --mark-warn: var(--brand-amber);
+
+      --chart-series: #7b52c4;
+      --chart-limit: var(--brand-coral);
+      --chart-fill: color-mix(in srgb, #7b52c4 14%, transparent);
+      --chart-grid: color-mix(in srgb, var(--brand-violet) 9%, transparent);
+      --scanline: color-mix(in srgb, var(--brand-violet) 6%, transparent);
+      --shadow: 0 1px 2px color-mix(in srgb, var(--brand-violet) 10%, transparent);
+
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
+    /* Dark is stepped from the same hues rather than inverted: the surfaces carry
+       the violet the icon is built on, so the panel stays recognisably the same
+       product instead of becoming neutral grey. The chart trace and limit are
+       re-picked against the dark surface, not reused from light. */
     @media (prefers-color-scheme: dark) {
       :root {
-        --bg: #111522;
-        --surface: #1a2030;
-        --surface-alt: #232a3b;
-        --text: #f0f3fa;
-        --muted: #aeb7ca;
-        --line: #343d52;
-        --accent: #8ca4ff;
-        --accent-strong: #a8b9ff;
-        --accent-soft: #27345e;
-        --success: #71d6a7;
-        --danger: #ffadad;
-        --danger-bg: #451f27;
-        --warn: #f0b357;
-        --focus: #a5b6ff;
+        --bg: #14101c;
+        --surface: #1e1830;
+        --surface-alt: #29203f;
+        --text: #f2ecfa;
+        --muted: #b0a5c4;
+        --line: #362c4e;
+        --line-strong: #493c66;
+        --accent: #b39ae8;
+        --accent-strong: #cdb8f5;
+        --accent-soft: #2e2450;
+        --focus: #b39ae8;
+
+        --success: #6fd6a4;
+        --danger: #ff8fa3;
+        --danger-bg: #3d1c28;
+        --warn: #ffc75e;
+        --mark-success: #4fc98e;
+        --mark-danger: #ff7d90;
+        --mark-warn: var(--brand-amber);
+
+        --chart-series: #9a7ce0;
+        --chart-limit: #ff7d90;
+        --chart-fill: color-mix(in srgb, #9a7ce0 20%, transparent);
+        --chart-grid: color-mix(in srgb, #b39ae8 12%, transparent);
+        --scanline: color-mix(in srgb, #b39ae8 5%, transparent);
+        --shadow: 0 1px 2px rgb(0 0 0 / 35%);
       }
     }
 
@@ -90,29 +149,78 @@
       outline-offset: 2px;
     }
 
+    /* The header carries the identity so the rest of the panel can stay quiet.
+       Two devices, both cheap: a scanline wash — the one texture that says
+       "video" without illustration — and the three-frame stack from the icon
+       rendered as a rule across the bottom edge. */
     header {
+      position: relative;
       display: flex;
       align-items: center;
-      gap: 10px;
-      padding: 14px 16px 10px;
+      gap: 11px;
+      padding: 15px 16px 13px;
+      background:
+        repeating-linear-gradient(
+          to bottom,
+          var(--scanline) 0 1px,
+          transparent 1px 3px
+        );
+    }
+
+    /* The icon's three frames, flattened into a rule. Widths are unequal and
+       ordered coral → amber → violet, matching the way they overlap in the
+       artwork, so this reads as the same object rather than a generic tricolour. */
+    header::after {
+      content: "";
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      height: 2px;
+      background: linear-gradient(
+        to right,
+        var(--brand-coral) 0 22%,
+        var(--brand-amber) 22% 46%,
+        var(--brand-violet) 46% 100%
+      );
+    }
+
+    @media (prefers-color-scheme: dark) {
+      /* The violet segment would vanish into a violet surface, so the stack is
+         lightened just enough to stay a visible edge. */
+      header::after {
+        background: linear-gradient(
+          to right,
+          var(--brand-coral) 0 22%,
+          var(--brand-amber) 22% 46%,
+          #7b5fb5 46% 100%
+        );
+      }
     }
 
     header img {
       width: 32px;
       height: 32px;
+      /* The artwork already has its own rounded frames; a soft shadow seats it
+         on the scanlines instead of letting it float. */
+      filter: drop-shadow(0 1px 2px color-mix(in srgb, var(--brand-violet) 28%, transparent));
     }
 
     h1 {
       margin: 0;
       font-size: 17px;
       line-height: 1.15;
-      letter-spacing: -0.01em;
+      letter-spacing: -0.015em;
+      font-weight: 700;
     }
 
     header p {
       margin: 2px 0 0;
       color: var(--muted);
-      font-size: 11px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
     }
 
     main {
@@ -126,7 +234,7 @@
       border: 1px solid var(--line);
       border-radius: 10px;
       background: var(--surface);
-      box-shadow: 0 1px 2px rgb(0 0 0 / 5%);
+      box-shadow: var(--shadow);
     }
 
     section { padding: 12px; }
@@ -134,10 +242,10 @@
     h2,
     legend {
       margin: 0 0 9px;
-      color: var(--muted);
+      color: var(--accent);
       font-size: 10px;
       font-weight: 700;
-      letter-spacing: 0.08em;
+      letter-spacing: 0.09em;
       text-transform: uppercase;
     }
 
@@ -164,6 +272,7 @@
       border-bottom: 1px solid var(--line);
     }
     .tabs button {
+      position: relative;
       flex: 1;
       height: 30px;
       padding: 0 8px;
@@ -174,48 +283,118 @@
       color: var(--muted);
       font: inherit;
       font-size: 12px;
+      font-weight: 600;
       cursor: pointer;
     }
+    .tabs button:hover { color: var(--text); }
     .tabs button[aria-selected="true"] {
       background: var(--surface);
       border-color: var(--line);
       color: var(--text);
-      font-weight: 600;
+      font-weight: 700;
       /* Cover the strip's own border so the active tab reads as joined to its panel. */
       margin-bottom: -1px;
       padding-bottom: 1px;
     }
+    /* The selected tab is underlined with the same three-frame stack as the
+       header, at the same coral → amber → violet order. Selection is already
+       carried by aria-selected, the background and the weight, so this is
+       decoration on top of four other cues rather than the signal itself. */
+    .tabs button[aria-selected="true"]::after {
+      content: "";
+      position: absolute;
+      right: 6px;
+      bottom: -1px;
+      left: 6px;
+      height: 2px;
+      border-radius: 1px;
+      background: linear-gradient(
+        to right,
+        var(--brand-coral) 0 22%,
+        var(--brand-amber) 22% 46%,
+        var(--accent) 46% 100%
+      );
+    }
     [role="tabpanel"]:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
     .panel-heading { margin: 12px 12px 0; font-size: 12px; }
-    .perf-heading { margin: 12px 12px 4px; font-size: 11px; color: var(--muted); font-weight: 600; }
+    .perf-heading {
+      margin: 14px 12px 4px;
+      font-size: 10px;
+      color: var(--accent);
+      font-weight: 700;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+    }
     .perf-grid { margin-top: 0; }
-    .perf-line { margin: 0 12px 4px; font-size: 11px; color: var(--muted); }
+    .perf-line {
+      margin: 0 12px 4px;
+      font-size: 11px;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+    /* The chart is a measuring instrument, so it is drawn like one: a recessive
+       grid it sits on, one filled trace, and a dashed limit. The grid is a
+       background gradient rather than markup, so it costs no elements and cannot
+       be mistaken for data. */
     .spark {
       display: block;
       width: calc(100% - 24px);
       height: 48px;
       margin: 0 12px 4px;
-      background: var(--surface-alt);
+      background:
+        repeating-linear-gradient(to right, var(--chart-grid) 0 1px, transparent 1px 24px),
+        repeating-linear-gradient(to bottom, var(--chart-grid) 0 1px, transparent 1px 12px),
+        var(--surface-alt);
       border: 1px solid var(--line);
       border-radius: 6px;
     }
-    .spark-line { fill: none; stroke: var(--accent); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
-    .spark-budget { fill: none; stroke: var(--danger); stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+    .spark-area { fill: var(--chart-fill); stroke: none; }
+    .spark-line {
+      fill: none;
+      stroke: var(--chart-series);
+      stroke-width: 1.5;
+      stroke-linejoin: round;
+      stroke-linecap: round;
+      vector-effect: non-scaling-stroke;
+    }
+    /* The limit is a reserved status colour, never a series hue, and it is always
+       restated in words beneath the chart ("2 over budget") so it never signals
+       by colour alone. */
+    .spark-budget {
+      fill: none;
+      stroke: var(--chart-limit);
+      stroke-width: 1.25;
+      stroke-dasharray: 3 3;
+      vector-effect: non-scaling-stroke;
+    }
     .tab-dot {
       display: inline-block;
-      width: 6px;
-      height: 6px;
+      width: 7px;
+      height: 7px;
       margin-left: 5px;
       border-radius: 50%;
       background: var(--muted);
       vertical-align: middle;
     }
     /* Colour is a redundant cue: every state is also written into the adjacent
-       screen-reader text, because a colour-only signal is not accessible and these
-       three are exactly the hues that colour-blind users confuse. */
-    .tab-dot[data-state="on"] { background: var(--success); }
-    .tab-dot[data-state="pending"] { background: var(--warn); }
-    .tab-dot[data-state="off"] { background: var(--danger); }
+       screen-reader text, because a colour-only signal is not accessible and
+       green/amber/red are exactly the hues that colour-blind users confuse.
+       The three states now differ in *shape* as well — solid, ringed, hollow —
+       so they separate at a glance without relying on hue at all, which is a
+       third channel on top of the colour and the text. */
+    .tab-dot[data-state="on"] {
+      background: var(--mark-success);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--mark-success) 26%, transparent);
+    }
+    .tab-dot[data-state="pending"] {
+      background: var(--surface);
+      border: 2px solid var(--mark-warn);
+    }
+    .tab-dot[data-state="off"] {
+      background: transparent;
+      border: 1.5px solid var(--mark-danger);
+      opacity: 0.75;
+    }
     .sr-only {
       position: absolute;
       width: 1px;
@@ -241,6 +420,7 @@
       overflow: hidden;
       font-size: 12px;
       font-weight: 650;
+      font-variant-numeric: tabular-nums;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
@@ -301,7 +481,7 @@
       width: 100%;
       min-height: 34px;
       padding: 5px 30px 5px 9px;
-      border: 1px solid var(--line);
+      border: 1px solid var(--line-strong);
       border-radius: 7px;
       background: var(--surface-alt);
       color: var(--text);
@@ -388,7 +568,7 @@
     .modes button {
       min-height: 36px;
       padding: 7px 5px;
-      border: 1px solid var(--line);
+      border: 1px solid var(--line-strong);
       border-radius: 8px;
       background: var(--surface-alt);
       color: var(--text);
@@ -402,6 +582,7 @@
       border-color: var(--accent);
       background: var(--accent-soft);
       color: var(--accent-strong);
+      box-shadow: inset 0 0 0 1px var(--accent);
     }
 
     details > summary {
@@ -448,6 +629,19 @@
       color: var(--muted);
       font-size: 10px;
       font-variant-numeric: tabular-nums;
+    }
+
+    /* The one place the stack appears at full strength inside the body: the
+       blocked-source banner, where the coral frame is doing real signalling work
+       rather than decoration. */
+    #drm-banner::before {
+      content: "";
+      float: left;
+      width: 3px;
+      height: 1.1em;
+      margin-right: 8px;
+      border-radius: 2px;
+      background: var(--mark-danger);
     }
 
     .av-row {
@@ -759,6 +953,7 @@
              text in #perf-encode-summary, so the panel is usable without it. -->
         <svg id="perf-encode-chart" class="spark" viewBox="0 0 240 48" preserveAspectRatio="none"
           aria-hidden="true" focusable="false">
+          <path id="perf-encode-area" class="spark-area" d=""></path>
           <path id="perf-encode-budget" class="spark-budget" d=""></path>
           <path id="perf-encode-line" class="spark-line" d=""></path>
         </svg>

@@ -136,7 +136,7 @@ function popupDocument() {
   for (const id of [
     "s-webgpu", "s-video", "s-model", "s-frames", "s-resolution", "runtime-status", "drm-banner",
     "copy-diagnostics", "forget-site",
-    "perf-idle", "perf-body", "perf-encode-line", "perf-encode-budget", "perf-encode-summary",
+    "perf-idle", "perf-body", "perf-encode-line", "perf-encode-area", "perf-encode-budget", "perf-encode-summary",
     "perf-gpu-summary", "perf-avoided-summary",
     "perf-presented", "perf-dropped", "perf-engine", "perf-output",
     "perf-interp-group", "perf-interp-fps", "perf-interp-frames", "perf-interp-infer",
