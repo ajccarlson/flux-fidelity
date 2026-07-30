@@ -1259,8 +1259,17 @@ async function runPopupSmoke(httpBase, controlClient, extensionId, expectedName,
             scriptType: document.querySelector('script[src="src/popup.js"]')?.type || null,
             webgpuText: document.getElementById("s-webgpu")?.textContent || "",
             operationText: document.getElementById("operation-status")?.textContent || "",
-            controlCount: controls.length,
-            disabledCount: controls.filter((control) => control.disabled).length,
+            // Tab buttons are navigation and are deliberately never disabled: a
+            // disabled button fires no click, which would strand the user on
+            // whichever panel happened to be open when the page went unsupported.
+            controlCount: controls.filter((control) => control.getAttribute("role") !== "tab").length,
+            disabledCount: controls.filter(
+              (control) => control.getAttribute("role") !== "tab" && control.disabled,
+            ).length,
+            tabCount: controls.filter((control) => control.getAttribute("role") === "tab").length,
+            enabledTabCount: controls.filter(
+              (control) => control.getAttribute("role") === "tab" && !control.disabled,
+            ).length,
             modeStates: [...document.querySelectorAll(".modes button")].map((button) => ({
               mode: button.dataset.mode,
               pressed: button.getAttribute("aria-pressed"),
@@ -1302,7 +1311,12 @@ async function runPopupSmoke(httpBase, controlClient, extensionId, expectedName,
     }
     if (!Number.isInteger(state?.controlCount) || state.controlCount < 20 ||
         state.disabledCount !== state.controlCount) {
-      problems.push("popup did not disable all controls on an unsupported active page");
+      problems.push("popup did not disable all settings on an unsupported active page");
+    }
+    // The panels must stay reachable on a page the extension cannot act on; that is
+    // precisely when a user goes looking for the Performance panel or diagnostics.
+    if (state?.tabCount !== 3 || state.enabledTabCount !== state.tabCount) {
+      problems.push("popup tabs must remain usable on an unsupported active page");
     }
     if (state?.modeStates?.length !== 3 ||
         state.modeStates.filter(({ pressed }) => pressed === "true").length !== 1 ||
