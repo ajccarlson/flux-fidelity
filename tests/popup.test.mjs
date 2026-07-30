@@ -244,6 +244,13 @@ function readyStatus(overrides = {}) {
   };
 }
 
+// The tab buttons are real <button> elements, so querySelectorAll returns them —
+// but they are navigation rather than settings and are deliberately never disabled.
+// Assertions about the blanket disable therefore mean command controls only.
+function commandControls(document) {
+  return document.controls.filter((control) => control.getAttribute("role") !== "tab");
+}
+
 function controllerHarness(options = {}) {
   const document = options.document ?? popupDocument();
   const intervalCallbacks = new Map();
@@ -620,13 +627,13 @@ test("controller disables every command while loading or failed and enables only
 
   controller.render({ loading: true });
   assert.equal(document.getElementById("s-webgpu").textContent, "checking…");
-  assert.ok(document.controls.every((control) => control.disabled));
+  assert.ok(commandControls(document).every((control) => control.disabled));
 
   controller.render({ failed: true, error: "startup-failed", reason: "GPU adapter rejected" });
   assert.equal(document.getElementById("s-webgpu").textContent, "failed");
   assert.match(document.getElementById("operation-status").textContent, /could not start/i);
   assert.match(document.getElementById("operation-status").textContent, /GPU adapter rejected/);
-  assert.ok(document.controls.every((control) => control.disabled));
+  assert.ok(commandControls(document).every((control) => control.disabled));
 
   controller.render(readyStatus({
     engine: "artcnn",
@@ -685,7 +692,7 @@ test("settings failures preserve the truthful WebGPU label and do not repeat the
     assert.equal(operation.textContent, message, error);
     assert.equal(operation.textContent.split(reason).length - 1, error === "preference-application-failed" ? 0 : 1,
       `${error} must not repeat its raw reason`);
-    assert.ok(document.controls.every((control) => control.disabled), error);
+    assert.ok(commandControls(document).every((control) => control.disabled), error);
   }
 });
 
@@ -978,7 +985,7 @@ test("failed commands roll focused controls back from authoritative status and k
   document.activeElement = sharpen;
   sharpen.checked = true;
   sharpen.emit("change");
-  assert.ok(document.controls.every((control) => control.disabled), "commands lock controls while in flight");
+  assert.ok(commandControls(document).every((control) => control.disabled), "commands lock controls while in flight");
   await flush(16);
 
   assert.ok(statusCalls >= 2, "a command result is followed by an authoritative status refresh");
@@ -1030,7 +1037,7 @@ test("a non-ready page state replaces stale command feedback", async () => {
   controller.render({ ok: false, error: "no-content-script" });
   assert.equal(document.getElementById("operation-status").dataset.tone, "error");
   assert.match(document.getElementById("operation-status").textContent, /Reload this page/);
-  assert.ok(document.controls.every((control) => control.disabled));
+  assert.ok(commandControls(document).every((control) => control.disabled));
 });
 
 test("stable refreshes do not rewrite live-region text", () => {
@@ -1342,4 +1349,21 @@ test("tabs expose one selected panel and keep the rest out of the tab order", ()
   assert.equal(document.getElementById("tab-video").getAttribute("aria-selected"), "true");
   document.getElementById("tab-video").emit("keydown", { key: "ArrowLeft" });
   assert.equal(document.getElementById("tab-performance").getAttribute("aria-selected"), "true");
+});
+
+test("tabs stay usable while the page is disconnected or a command is in flight", async () => {
+  const { controller, document } = controllerHarness({
+    transport: { send: async () => ({ ok: false, error: "no-content-script", reason: "not connected" }) },
+  });
+  controller.start();
+  await Promise.resolve();
+
+  // Navigation is not a setting. Sweeping the tabs into the blanket disable made
+  // them dead exactly when a user most wants the Performance panel, and a disabled
+  // button fires no click at all.
+  for (const tab of document.querySelectorAll('[role="tab"]')) {
+    assert.equal(tab.disabled, false, `${tab.id} must remain enabled`);
+  }
+  document.getElementById("tab-performance").emit("click");
+  assert.equal(document.getElementById("panel-performance").hidden, false);
 });

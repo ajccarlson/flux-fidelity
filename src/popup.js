@@ -604,7 +604,13 @@ export function createPopupController({
   const modeButtons = [...documentRef.querySelectorAll(".modes button")];
   const tabButtons = [...documentRef.querySelectorAll('[role="tab"]')];
   let activePanel = "panel-video";
-  const controls = [...documentRef.querySelectorAll("button, input, select")];
+  // Tab buttons are navigation, not settings, so they are excluded from the
+  // blanket disable applied while a command is in flight or the page is not
+  // connected. Including them meant the tabs went dead in exactly the situation
+  // where a user most wants to reach the Performance panel — and a disabled
+  // button fires no click, which is how the browser probe caught it.
+  const controls = [...documentRef.querySelectorAll("button, input, select")]
+    .filter((element) => element.getAttribute?.("role") !== "tab");
   let ready = false;
   let commandBusy = 0;
   let currentStatus = null;
