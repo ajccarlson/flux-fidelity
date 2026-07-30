@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { CONTRACT_IMPORT } from "./helpers/setting-contract-import.mjs";
 
 const mainUrl = new URL("../src/core/fsrcnnx-main.js", import.meta.url);
 const videoControllerUrl = new URL(
@@ -141,7 +142,7 @@ async function loadSelectionCoordinator(deps) {
     }
   `;
   globalThis.__videoOwnershipDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 async function loadPresentationBoundary() {
@@ -194,7 +195,7 @@ async function loadPresentationBoundary() {
     export function reset() { return resetPresentedRuntime(); }
     export function requests() { return reconcileRequests; }
   `;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 async function loadPositionBoundary() {
@@ -214,7 +215,7 @@ async function loadPositionBoundary() {
     ${production}
     export { ShadowRoot, document, positionVideoCanvas };
   `;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 async function loadEngineSelection(deps) {
@@ -274,7 +275,7 @@ async function loadEngineSelection(deps) {
     export function state() { return { engine, engineSelectionGeneration, interpPausedByNeural }; }
   `;
   globalThis.__videoOwnershipDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 async function loadNeuralModelSelection(deps) {
@@ -316,7 +317,7 @@ async function loadNeuralModelSelection(deps) {
     export function state() { return { neuralModelKey, engineSelectionGeneration }; }
   `;
   globalThis.__videoOwnershipDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 async function loadPreferenceRestore(deps) {
@@ -361,7 +362,7 @@ async function loadPreferenceRestore(deps) {
     export function state() { return { engine, neuralModelKey, engineSelectionGeneration }; }
   `;
   globalThis.__videoOwnershipDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 async function loadNeuralPresentation(deps) {
@@ -421,7 +422,7 @@ async function loadNeuralPresentation(deps) {
     export function changeSource(value) { video.currentSrc = value; video.src = value; }
   `;
   globalThis.__videoOwnershipDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 async function loadRuntimeNotifications(deps) {
@@ -457,7 +458,7 @@ async function loadRuntimeNotifications(deps) {
     }
   `;
   globalThis.__videoOwnershipDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 async function loadSecondarySourceBoundary(deps) {
@@ -478,7 +479,7 @@ async function loadSecondarySourceBoundary(deps) {
     export { handleSecondarySourceBoundary };
   `;
   globalThis.__videoOwnershipDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 async function loadVideoSelectors(deps) {
@@ -498,7 +499,7 @@ async function loadVideoSelectors(deps) {
     export { findVideo, findAllVideos };
   `;
   globalThis.__videoOwnershipDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 function setup({

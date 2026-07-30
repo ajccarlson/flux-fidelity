@@ -7,6 +7,7 @@ import {
   classifyVideoColorSpace,
   probeVideoColorSupport,
 } from "../src/core/fsrcnnx-color-support.js";
+import { CONTRACT_IMPORT } from "./helpers/setting-contract-import.mjs";
 
 const runtimeUrl = new URL("../src/core/", import.meta.url);
 const mainUrl = new URL("../src/core/fsrcnnx-main.js", import.meta.url);
@@ -79,7 +80,7 @@ async function loadMainColorPolicy(deps) {
     export function selected() { return selectedColorSupport; }
   `;
   globalThis.__colorPolicyDeps = deps;
-  return import(`data:text/javascript;base64,${Buffer.from(harness).toString("base64")}#${++revision}`);
+  return import(`data:text/javascript;base64,${Buffer.from(CONTRACT_IMPORT + harness).toString("base64")}#${++revision}`);
 }
 
 test("the processing boundary is explicit sRGB", () => {

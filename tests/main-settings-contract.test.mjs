@@ -43,9 +43,27 @@ test("performance-driven quality reductions are opt-in by default", () => {
   );
 });
 
+// The setting enums now come from a shared contract module instead of being
+// declared inline three times, so a sliced harness must import the real module by
+// absolute URL. Redeclaring the values here would recreate exactly the drift the
+// contract module exists to prevent.
+const CONTRACT_IMPORT = [
+  "import {",
+  "  ENGINES as CONTRACT_ENGINES,",
+  "  INTERPOLATION_MODELS as CONTRACT_INTERPOLATION_MODELS,",
+  "  INTERPOLATION_RES_MODES as CONTRACT_INTERPOLATION_RES_MODES,",
+  "  MODES as CONTRACT_MODES,",
+  "  UPSCALE_POLICIES as CONTRACT_UPSCALE_POLICIES,",
+  "  upscalePoliciesForEngine,",
+  `} from ${JSON.stringify(
+    new URL("../src/core/fsrcnnx-setting-contract.js", import.meta.url).href,
+  )};`,
+  "",
+].join("\n");
+
 async function importHarness(code, deps = {}) {
   globalThis.__mainSettingsContractDeps = deps;
-  const encoded = Buffer.from(code).toString("base64");
+  const encoded = Buffer.from(CONTRACT_IMPORT + code).toString("base64");
   return import(`data:text/javascript;base64,${encoded}#${++revision}`);
 }
 

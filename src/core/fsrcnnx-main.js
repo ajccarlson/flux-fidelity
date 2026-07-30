@@ -3,6 +3,14 @@
 // relays popup messages. Modes: 'off' | 'passthrough' | 'upscale'.
 
 import { FsrcnnxModel } from "./fsrcnnx-runtime.js";
+import {
+  ENGINES as CONTRACT_ENGINES,
+  INTERPOLATION_MODELS as CONTRACT_INTERPOLATION_MODELS,
+  INTERPOLATION_RES_MODES as CONTRACT_INTERPOLATION_RES_MODES,
+  MODES as CONTRACT_MODES,
+  UPSCALE_POLICIES as CONTRACT_UPSCALE_POLICIES,
+  upscalePoliciesForEngine,
+} from "./fsrcnnx-setting-contract.js";
 import { allocateModelChain, preflightModelChain } from "./fsrcnnx-model-bundle.js";
 import {
   ARTCNN_MODEL_NAMES,
@@ -352,7 +360,7 @@ function validateSitePreferencePatch(patch) {
   for (const [field, value] of Object.entries(patch)) {
     if (!known.has(field)) { invalid.add(field); continue; }
     if (value === undefined) continue;
-    if (field === "mode" && !["off", "passthrough", "upscale"].includes(value)) invalid.add(field);
+    if (field === "mode" && !CONTRACT_MODES.includes(value)) invalid.add(field);
     else if (field === "engine" && !normalizeStoredEngine(value)) invalid.add(field);
     else if (field === "artVariant" && !ART_FILES.includes(value)) invalid.add(field);
     else if (field === "policy" && !normalizeStoredUpscalePolicy(value, targetEngine)) invalid.add(field);
@@ -606,28 +614,20 @@ function neuralPresentationPlan(
 // ---- validated setting contracts ----------------------------------------
 // These values cross both a message boundary and chrome.storage. Treat them as
 // untrusted even though the current popup only emits values from fixed controls.
-const VALID_ENGINES = Object.freeze(["fsrcnnx", "fsrcnnx-hi", "artcnn", "neural"]);
-const STANDARD_UPSCALE_POLICIES = Object.freeze(["display", "auto", "force2", "force3", "force4"]);
-const FIXED_2X_UPSCALE_POLICIES = Object.freeze(["display", "auto", "force2", "force4", "force8"]);
-const NEURAL_UPSCALE_POLICIES = Object.freeze(["display", "force2", "native"]);
-const INTERPOLATION_MODEL_KEYS = Object.freeze([
-  "rife_v4.26_fp16",
-  "rife_v4.26",
-  "blend",
-]);
+// Re-exported so the content script's message gate can validate against the same
+// values this module enforces, instead of a hand-maintained second copy.
+export const VALID_ENGINES = CONTRACT_ENGINES;
+export const VALID_MODES = CONTRACT_MODES;
+export const VALID_UPSCALE_POLICIES = CONTRACT_UPSCALE_POLICIES;
+export const INTERPOLATION_MODEL_KEYS = CONTRACT_INTERPOLATION_MODELS;
+export const INTERPOLATION_RES_MODES = CONTRACT_INTERPOLATION_RES_MODES;
 const LEGACY_INTERPOLATION_MODEL = "rife_orig";
-const INTERPOLATION_RES_MODES = Object.freeze(["auto", "full", "half", "quarter"]);
 const DEFAULT_INTERPOLATION_MODEL = "rife_v4.26";
 const DEFAULT_INTERPOLATION_RES_MODE = "full";
 const DEFAULT_INTERPOLATION_TARGET_FPS = "auto";
 const DEFAULT_INTERPOLATION_AV_OFFSET_MS = 0;
 
-function policyOptionsForEngine(targetEngine) {
-  if (targetEngine === "neural") return NEURAL_UPSCALE_POLICIES;
-  return targetEngine === "artcnn" || targetEngine === "fsrcnnx-hi"
-    ? FIXED_2X_UPSCALE_POLICIES
-    : STANDARD_UPSCALE_POLICIES;
-}
+const policyOptionsForEngine = upscalePoliciesForEngine;
 
 function normalizeStoredEngine(value, fallback = null) {
   return VALID_ENGINES.includes(value) ? value : fallback;
@@ -4348,7 +4348,7 @@ function safeImportExternal() {
 }
 
 export async function setMode(next, restoreToken = null, { persist = true } = {}) {
-  if (!["off", "passthrough", "upscale"].includes(next)) return { ok: false, reason: "invalid mode" };
+  if (!CONTRACT_MODES.includes(next)) return { ok: false, reason: "invalid mode" };
   if (restoreToken == null) {
     if (persist) cancelPreferenceRestore();
   } else if (restoreToken !== preferenceRestoreGeneration) {
@@ -5311,7 +5311,7 @@ async function applyExternalSitePreferences(patch) {
 
   if (has("mode")) {
     const next = deleted("mode") ? "off" : patch.mode;
-    const normalized = ["off", "passthrough", "upscale"].includes(next) ? next : "off";
+    const normalized = CONTRACT_MODES.includes(next) ? next : "off";
     if (normalized !== next) invalid.add("mode");
     await setMode(normalized, applyToken, { persist: false });
   }
