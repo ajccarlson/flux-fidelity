@@ -5213,7 +5213,13 @@ export async function restoreSitePrefs() {
   if (typeof p.interpLadder === "boolean") interpLadderPref = p.interpLadder;
   if (typeof p.interpInvert === "boolean") interpInvertPref = p.interpInvert;
   const wantInterp = p.interpolate === true;
-  const savedMode = ["passthrough", "upscale"].includes(p.mode) ? p.mode : "off";
+  // Passthrough is no longer offered in the popup: it presents the source through
+  // the extension without enhancing it, which is a development aid rather than
+  // something a user has reason to choose. The mode itself remains valid because
+  // the renderer still falls back to it internally, but a site stored as
+  // passthrough is restored as off so it cannot be stranded in a state with no
+  // button to leave it.
+  const savedMode = p.mode === "upscale" ? "upscale" : "off";
   const wantImages = p.images === true;
 
   const modeResult = await setMode(savedMode, restoreToken, { persist: false });

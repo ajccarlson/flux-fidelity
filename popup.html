@@ -20,6 +20,7 @@
       --success: #16714c;
       --danger: #a63434;
       --danger-bg: #fff0f0;
+      --warn: #b26a00;
       --focus: #6d8cff;
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
@@ -38,6 +39,7 @@
         --success: #71d6a7;
         --danger: #ffadad;
         --danger-bg: #451f27;
+        --warn: #f0b357;
         --focus: #a5b6ff;
       }
     }
@@ -205,9 +207,15 @@
       height: 6px;
       margin-left: 5px;
       border-radius: 50%;
-      background: var(--success);
+      background: var(--muted);
       vertical-align: middle;
     }
+    /* Colour is a redundant cue: every state is also written into the adjacent
+       screen-reader text, because a colour-only signal is not accessible and these
+       three are exactly the hues that colour-blind users confuse. */
+    .tab-dot[data-state="on"] { background: var(--success); }
+    .tab-dot[data-state="pending"] { background: var(--warn); }
+    .tab-dot[data-state="off"] { background: var(--danger); }
     .sr-only {
       position: absolute;
       width: 1px;
@@ -479,9 +487,9 @@
 
     <div class="tabs" role="tablist" aria-label="Sections">
       <button id="tab-video" type="button" role="tab" aria-selected="true"
-        aria-controls="panel-video" data-panel="panel-video">Video<span class="tab-dot" id="tab-video-dot" hidden></span><span class="sr-only" id="tab-video-state"></span></button>
+        aria-controls="panel-video" data-panel="panel-video">Video<span class="tab-dot" id="tab-video-dot" data-state="off"></span><span class="sr-only" id="tab-video-state"></span></button>
       <button id="tab-interpolation" type="button" role="tab" aria-selected="false"
-        aria-controls="panel-interpolation" data-panel="panel-interpolation" tabindex="-1">Interp<span class="tab-dot" id="tab-interpolation-dot" hidden></span><span class="sr-only" id="tab-interpolation-state"></span></button>
+        aria-controls="panel-interpolation" data-panel="panel-interpolation" tabindex="-1">Interp<span class="tab-dot" id="tab-interpolation-dot" data-state="off"></span><span class="sr-only" id="tab-interpolation-state"></span></button>
       <button id="tab-advanced" type="button" role="tab" aria-selected="false"
         aria-controls="panel-advanced" data-panel="panel-advanced" tabindex="-1">Advanced</button>
       <button id="tab-performance" type="button" role="tab" aria-selected="false"
@@ -558,7 +566,6 @@
         <legend id="mode-heading">Mode</legend>
         <div class="modes" data-group="video">
           <button type="button" data-mode="off" data-active="1" aria-pressed="true">Off</button>
-          <button type="button" data-mode="passthrough" data-active="0" aria-pressed="false">Passthrough</button>
           <button type="button" data-mode="upscale" data-active="0" aria-pressed="false">Upscale</button>
         </div>
       </fieldset>
