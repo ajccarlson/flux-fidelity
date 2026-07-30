@@ -1159,9 +1159,16 @@ export function createPopupController({
   // because colour alone is not an accessible signal, and the text becomes part of
   // the tab's accessible name.
   function renderTabIndicators(status) {
+    // "On" means the feature is actually doing its job, not merely switched on.
+    // activeMode comes from currentPresentedRuntime(), which reports a mode only
+    // while frames are being presented for the current video on a live device — so
+    // it already implies a running video, and passthrough is excluded because it
+    // performs no upscaling. interpolationRuntime.phase is the equivalent for
+    // interpolation: "active" requires it enabled, not suspended or failed, with a
+    // video present and the interpolator running.
     const states = [
-      ["tab-video", status?.activeMode === "upscale" || status?.activeMode === "passthrough"],
-      ["tab-interpolation", status?.interpStats?.running === true],
+      ["tab-video", status?.activeMode === "upscale"],
+      ["tab-interpolation", status?.interpolationRuntime?.phase === "active"],
     ];
     for (const [tabId, on] of states) {
       const dot = $(`${tabId}-dot`);

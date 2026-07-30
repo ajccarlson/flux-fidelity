@@ -1414,7 +1414,10 @@ test("a routine success reports nothing while a refusal still speaks up", async 
 test("tab indicators report each feature's state as text, not colour alone", () => {
   const { controller, document } = controllerHarness();
 
-  controller.render(readyStatus({ activeMode: "upscale", interpStats: { running: true } }));
+  controller.render(readyStatus({
+    activeMode: "upscale",
+    interpolationRuntime: { requested: true, phase: "active" },
+  }));
   assert.equal(document.getElementById("tab-video-dot").hidden, false);
   assert.equal(document.getElementById("tab-interpolation-dot").hidden, false);
   // The hidden text joins the tab's accessible name, so the state is announced
@@ -1422,7 +1425,10 @@ test("tab indicators report each feature's state as text, not colour alone", () 
   assert.equal(document.getElementById("tab-video-state").textContent, " (on)");
   assert.equal(document.getElementById("tab-interpolation-state").textContent, " (on)");
 
-  controller.render(readyStatus({ activeMode: "off", interpStats: { running: false } }));
+  controller.render(readyStatus({
+    activeMode: "off",
+    interpolationRuntime: { requested: true, phase: "waiting" },
+  }));
   assert.equal(document.getElementById("tab-video-dot").hidden, true);
   assert.equal(document.getElementById("tab-interpolation-dot").hidden, true);
   assert.equal(document.getElementById("tab-video-state").textContent, " (off)");
@@ -1458,4 +1464,37 @@ test("interpolation mode buttons mirror the upscaler's mode row", async () => {
     sent.some(([type, payload]) => type === "FSRCNNX_SETINTERPOLATE" && payload?.on === false),
     "the Off button must disable interpolation",
   );
+});
+
+test("a dot means the feature is working, not merely switched on", () => {
+  const { controller, document } = controllerHarness();
+  const videoDot = () => document.getElementById("tab-video-dot").hidden === false;
+  const interpDot = () => document.getElementById("tab-interpolation-dot").hidden === false;
+
+  // Requested but not presenting: no video yet, so nothing is actually happening.
+  controller.render(readyStatus({
+    mode: "upscale", activeMode: "off", hasVideo: false,
+    interpolationRuntime: { requested: true, phase: "waiting" },
+  }));
+  assert.equal(videoDot(), false, "a requested mode that is not presenting is not on");
+  assert.equal(interpDot(), false);
+
+  // Passthrough presents frames but performs no upscaling, so the upscaler is not on.
+  controller.render(readyStatus({ mode: "passthrough", activeMode: "passthrough" }));
+  assert.equal(videoDot(), false, "passthrough does no upscaling");
+
+  // Suspended mid-playback: enabled, but not currently doing anything.
+  controller.render(readyStatus({
+    mode: "upscale", activeMode: "off", videoSuspended: true,
+    interpolationRuntime: { requested: true, phase: "suspended" },
+  }));
+  assert.equal(videoDot(), false);
+  assert.equal(interpDot(), false);
+
+  controller.render(readyStatus({
+    activeMode: "upscale",
+    interpolationRuntime: { requested: true, phase: "active" },
+  }));
+  assert.equal(videoDot(), true);
+  assert.equal(interpDot(), true);
 });
