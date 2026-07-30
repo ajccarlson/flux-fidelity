@@ -1259,8 +1259,17 @@ async function runPopupSmoke(httpBase, controlClient, extensionId, expectedName,
             scriptType: document.querySelector('script[src="src/popup.js"]')?.type || null,
             webgpuText: document.getElementById("s-webgpu")?.textContent || "",
             operationText: document.getElementById("operation-status")?.textContent || "",
-            controlCount: controls.length,
-            disabledCount: controls.filter((control) => control.disabled).length,
+            // Tab buttons are navigation and are deliberately never disabled: a
+            // disabled button fires no click, which would strand the user on
+            // whichever panel happened to be open when the page went unsupported.
+            controlCount: controls.filter((control) => control.getAttribute("role") !== "tab").length,
+            disabledCount: controls.filter(
+              (control) => control.getAttribute("role") !== "tab" && control.disabled,
+            ).length,
+            tabCount: controls.filter((control) => control.getAttribute("role") === "tab").length,
+            enabledTabCount: controls.filter(
+              (control) => control.getAttribute("role") === "tab" && !control.disabled,
+            ).length,
             modeStates: [...document.querySelectorAll(".modes button")].map((button) => ({
               mode: button.dataset.mode,
               pressed: button.getAttribute("aria-pressed"),
@@ -1302,7 +1311,12 @@ async function runPopupSmoke(httpBase, controlClient, extensionId, expectedName,
     }
     if (!Number.isInteger(state?.controlCount) || state.controlCount < 20 ||
         state.disabledCount !== state.controlCount) {
-      problems.push("popup did not disable all controls on an unsupported active page");
+      problems.push("popup did not disable all settings on an unsupported active page");
+    }
+    // The panels must stay reachable on a page the extension cannot act on; that is
+    // precisely when a user goes looking for the Performance panel or diagnostics.
+    if (state?.tabCount !== 3 || state.enabledTabCount !== state.tabCount) {
+      problems.push("popup tabs must remain usable on an unsupported active page");
     }
     if (state?.modeStates?.length !== 3 ||
         state.modeStates.filter(({ pressed }) => pressed === "true").length !== 1 ||
@@ -1983,9 +1997,17 @@ async function runRealVideoIntegration(
     // impossible: whatever the content height, the scroll container is the element
     // that actually overflows.
     const popupScroll = await evaluate(popupPage.client, `(() => {
-      const details = document.querySelector("details");
-      if (!details) return { error: "advanced details section is missing" };
-      details.open = true;
+      // Driven the way a user does, so this also proves the tab wiring works in a
+      // real browser rather than only in the synthetic test document.
+      const tab = document.getElementById("tab-advanced");
+      if (!tab) return { error: "advanced tab is missing" };
+      tab.click();
+      const panel = document.getElementById("panel-advanced");
+      if (!panel) return { error: "advanced panel is missing" };
+      if (panel.hidden) return { error: "advanced tab did not reveal its panel" };
+      if (tab.getAttribute("aria-selected") !== "true") {
+        return { error: "advanced tab did not report itself selected" };
+      }
       // Force layout so the expanded height is measured, not the collapsed one.
       void document.body.scrollHeight;
       const body = document.body;

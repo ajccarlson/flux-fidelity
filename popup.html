@@ -155,6 +155,50 @@
 
     .status div { min-width: 0; }
 
+    .tabs {
+      display: flex;
+      gap: 2px;
+      padding: 8px 12px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .tabs button {
+      flex: 1;
+      height: 30px;
+      padding: 0 8px;
+      border: 1px solid transparent;
+      border-bottom: none;
+      border-radius: 6px 6px 0 0;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .tabs button[aria-selected="true"] {
+      background: var(--surface);
+      border-color: var(--line);
+      color: var(--text);
+      font-weight: 600;
+      /* Cover the strip's own border so the active tab reads as joined to its panel. */
+      margin-bottom: -1px;
+      padding-bottom: 1px;
+    }
+    [role="tabpanel"]:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+    .panel-heading { margin: 12px 12px 0; font-size: 12px; }
+    .perf-heading { margin: 12px 12px 4px; font-size: 11px; color: var(--muted); font-weight: 600; }
+    .perf-grid { margin-top: 0; }
+    .perf-line { margin: 0 12px 4px; font-size: 11px; color: var(--muted); }
+    .spark {
+      display: block;
+      width: calc(100% - 24px);
+      height: 48px;
+      margin: 0 12px 4px;
+      background: var(--surface-alt);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+    }
+    .spark-line { fill: none; stroke: var(--accent); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+    .spark-budget { fill: none; stroke: var(--danger); stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
     .diagnostics { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
     .diagnostics a { color: var(--focus); font-size: 11px; }
     .status dt {
@@ -409,6 +453,16 @@
   </header>
 
   <main>
+    <div class="tabs" role="tablist" aria-label="Sections">
+      <button id="tab-video" type="button" role="tab" aria-selected="true"
+        aria-controls="panel-video" data-panel="panel-video">Video</button>
+      <button id="tab-advanced" type="button" role="tab" aria-selected="false"
+        aria-controls="panel-advanced" data-panel="panel-advanced" tabindex="-1">Advanced</button>
+      <button id="tab-performance" type="button" role="tab" aria-selected="false"
+        aria-controls="panel-performance" data-panel="panel-performance" tabindex="-1">Performance</button>
+    </div>
+
+    <div id="panel-video" role="tabpanel" aria-labelledby="tab-video" tabindex="0">
     <section aria-labelledby="status-heading">
       <h2 id="status-heading">Current page</h2>
       <dl class="status">
@@ -517,9 +571,10 @@
         </div>
       </fieldset>
     </section>
+    </div>
 
-    <details>
-      <summary>Advanced and site-specific</summary>
+    <div id="panel-advanced" role="tabpanel" aria-labelledby="tab-advanced" tabindex="0" hidden>
+      <h2 class="panel-heading">Advanced and site-specific</h2>
       <div class="advanced-body">
         <div class="subpanel">
           <label class="switch-row" for="hover-reveal">
@@ -652,7 +707,48 @@
 
         <p class="help">Settings are remembered separately for each site. Protected video and cross-origin sources without CORS cannot be processed.</p>
       </div>
-    </details>
+    </div>
+
+    <div id="panel-performance" role="tabpanel" aria-labelledby="tab-performance" tabindex="0" hidden>
+      <h2 class="panel-heading">Performance</h2>
+      <p class="help" id="perf-idle">Statistics appear while a video is being processed.</p>
+      <div id="perf-body" hidden>
+        <h3 class="perf-heading">Frame budget</h3>
+        <!-- The chart is decorative: every value it draws is also published as
+             text in #perf-encode-summary, so the panel is usable without it. -->
+        <svg id="perf-encode-chart" class="spark" viewBox="0 0 240 48" preserveAspectRatio="none"
+          aria-hidden="true" focusable="false">
+          <path id="perf-encode-budget" class="spark-budget" d=""></path>
+          <path id="perf-encode-line" class="spark-line" d=""></path>
+        </svg>
+        <p class="perf-line" id="perf-encode-summary">&#8212;</p>
+        <dl class="status perf-grid">
+          <div><dt>Presented</dt><dd id="perf-presented" class="v">&#8212;</dd></div>
+          <div><dt>Dropped</dt><dd id="perf-dropped" class="v">&#8212;</dd></div>
+          <div><dt>Engine</dt><dd id="perf-engine" class="v">&#8212;</dd></div>
+          <div><dt>Output</dt><dd id="perf-output" class="v">&#8212;</dd></div>
+        </dl>
+        <div id="perf-interp-group" hidden>
+          <h3 class="perf-heading">Interpolation</h3>
+          <dl class="status perf-grid">
+            <div><dt>Rate</dt><dd id="perf-interp-fps" class="v">&#8212;</dd></div>
+            <div><dt>Frames</dt><dd id="perf-interp-frames" class="v">&#8212;</dd></div>
+            <div><dt>Inference</dt><dd id="perf-interp-infer" class="v">&#8212;</dd></div>
+            <div><dt>Stutters</dt><dd id="perf-interp-stutter" class="v">&#8212;</dd></div>
+          </dl>
+        </div>
+        <div id="perf-neural-group" hidden>
+          <h3 class="perf-heading">Neural</h3>
+          <dl class="status perf-grid">
+            <div><dt>Inference</dt><dd id="perf-neural-infer" class="v">&#8212;</dd></div>
+            <div><dt>Tiles</dt><dd id="perf-neural-tiles" class="v">&#8212;</dd></div>
+            <div><dt>Temporal</dt><dd id="perf-neural-temporal" class="v">&#8212;</dd></div>
+            <div><dt>Skipped</dt><dd id="perf-neural-skip" class="v">&#8212;</dd></div>
+          </dl>
+        </div>
+        <p class="help">History covers this popup session only; the extension does not retain it after the popup closes.</p>
+      </div>
+    </div>
   </main>
 </body>
 </html>
