@@ -471,10 +471,16 @@ export class NeuralFrameBridge {
       "Neural extension frame failed to load",
       { retryable: true },
     ));
-    this._handlePageHide = () => this._fail(bridgeError(
-      "page-unloaded",
-      "The page was unloaded while Neural processing was active",
-    ), "disposed");
+    // A persisted pagehide is a bfcache entry, not an unload: the document is
+    // coming back. Tearing the bridge down there forced a full model reload and
+    // lost all recurrent temporal state on every back-button restore.
+    this._handlePageHide = (event) => {
+      if (event?.persisted) return;
+      this._fail(bridgeError(
+        "page-unloaded",
+        "The page was unloaded while Neural processing was active",
+      ), "disposed");
+    };
     this._handlePortMessage = (event) => this._onPortMessage(event);
     this._handlePortMessageError = () => this._fail(bridgeError(
       "port-message-error",
@@ -490,7 +496,9 @@ export class NeuralFrameBridge {
   get canvasElement() { return this._canvas; }
   get canvasAttached() { return this._canvasAttached; }
   get runPending() { return this._runPromise != null; }
-  get instanceNonce() { return this._nonce; }
+  // No instanceNonce getter: child-side security reduces entirely to that value,
+  // so exposing it on the bridge object put it one JSON.stringify or debug log
+  // away from disclosure for no caller's benefit.
   get origin() { return this._origin; }
   get closed() { return this._closed.promise; }
 
@@ -979,6 +987,19 @@ export class NeuralFrameBridge {
         try { this._warn("neural frame event callback failed:", error); }
         catch {}
       });
+      return;
+    }
+    // An unrecognized kind is forward compatibility, not corruption: failing the
+    // bridge here meant no new message kind — heartbeat, progress, warning —
+    // could ever be introduced without breaking every older parent. Unknown
+    // event names were already tolerated above, so this was also inconsistent.
+    // A malformed *response*, by contrast, still fails the bridge.
+    if (typeof data.kind === "string" && data.kind !== "response") {
+      safeCloseBitmap(responseBitmap);
+      if (!this._unknownKindWarned) {
+        this._unknownKindWarned = true;
+        this._warn(`Neural frame sent an unsupported message kind: ${data.kind}`);
+      }
       return;
     }
     if (data.kind !== "response" ||

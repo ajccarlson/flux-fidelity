@@ -1848,12 +1848,17 @@ export async function startNeuralFrameRuntime({
     return closePromise;
   }
 
-  function receivePageHide() {
+  // A persisted pagehide means the frame is entering the back/forward cache and
+  // will be restored, so disposing the session there discarded the model and all
+  // recurrent state on every back-button navigation. `once` is therefore dropped:
+  // a persisted hide must not consume the listener a later real unload needs.
+  function receivePageHide(event) {
+    if (event?.persisted) return;
     close();
   }
 
   windowObject.addEventListener("message", receiveWindowMessage);
-  windowObject.addEventListener?.("pagehide", receivePageHide, { once: true });
+  windowObject.addEventListener?.("pagehide", receivePageHide);
   const readyTarget = opaqueParent ? "*" : authorizedParentOrigin;
   try {
     windowObject.parent.postMessage({
