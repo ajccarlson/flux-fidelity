@@ -138,6 +138,11 @@ const COMMANDS = Object.freeze({
   FSRCNNX_SETMODE: enumPayload("mode", ["off", "passthrough", "upscale"],
     (module, msg) => module.setMode(msg.mode)),
   FSRCNNX_RESTORE: noPayload(() => restoreOnce().then(() => restoreResult)),
+  FSRCNNX_FORGETSITE: Object.freeze({
+    mutates: true,
+    validate: (msg) => validatePayloadShape(msg, []),
+    run: (module) => module.forgetSitePreferences(),
+  }),
   FSRCNNX_SETENGINE: enumPayload("engine", ["fsrcnnx", "fsrcnnx-hi", "artcnn", "neural"],
     (module, msg) => module.setEngine(msg.engine)),
   FSRCNNX_SETNEURALMODEL: fieldPayload(

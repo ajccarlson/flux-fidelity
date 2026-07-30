@@ -108,7 +108,7 @@ function popupDocument() {
 
   for (const id of [
     "s-webgpu", "s-video", "s-model", "s-frames", "s-resolution", "runtime-status", "drm-banner",
-    "copy-diagnostics",
+    "copy-diagnostics", "forget-site",
     "operation-status", "neuralrow", "neural-note", "sharpen-row", "sharpen-val",
     "multi-count", "image-count", "interp-res-row",
     "interp-target-hz", "interp-avoff-val", "interp-stats",

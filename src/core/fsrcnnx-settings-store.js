@@ -634,6 +634,26 @@ export function createSettingsStore({
     return snapshot();
   }
 
+  // Clears every field for this scope. Deliberately expressed as tombstone writes
+  // through the normal path rather than storage.remove: a raw removal would not
+  // carry a stamp, so a concurrent tab holding an older value could resurrect it,
+  // and other tabs would not observe the reset through onChanged. makeRecord()
+  // already treats undefined as a deletion, so this reuses the existing convergence
+  // rules instead of adding a second one.
+  async function reset() {
+    await ensureInitialized();
+    if (closed) throw new Error("settings store is closed");
+    const patch = Object.create(null);
+    for (const field of uniqueFields) patch[field] = undefined;
+    // Corruption is cleared too: a reset is exactly the recovery path for a record
+    // that could not be parsed, and leaving the flag set would keep reporting an
+    // error for data that no longer exists.
+    corruptFields.clear();
+    refreshCorruptionError();
+    await write(patch);
+    return snapshot();
+  }
+
   async function flush() {
     await ensureInitialized();
     if (closed) throw new Error("settings store is closed");
@@ -744,5 +764,5 @@ export function createSettingsStore({
     return closePromise;
   }
 
-  return Object.freeze({ ready, snapshot, write, flush, sync, subscribe, health, close });
+  return Object.freeze({ ready, snapshot, write, reset, flush, sync, subscribe, health, close });
 }
